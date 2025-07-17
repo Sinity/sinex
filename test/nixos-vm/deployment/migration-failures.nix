@@ -94,14 +94,14 @@
             BEGIN;
             
             -- Add column safely
-            ALTER TABLE raw.events 
+            ALTER TABLE core.events 
             ADD COLUMN IF NOT EXISTS test_flag BOOLEAN DEFAULT false;
             
             -- Create index concurrently (outside transaction)
             COMMIT;
             
             CREATE INDEX CONCURRENTLY IF NOT EXISTS 
-            idx_events_test_flag ON raw.events(test_flag) 
+            idx_events_test_flag ON core.events(test_flag) 
             WHERE test_flag = true;
             EOF
         """)
@@ -122,7 +122,7 @@
         sinex.succeed("""
             cat > /tmp/syntax_error_migration.sql << 'EOF'
             -- Migration with syntax error
-            ALTER TABLE raw.events 
+            ALTER TABLE core.events 
             ADD COLUMN bad_column TEXTTT;  -- Invalid type
             EOF
         """)
@@ -133,7 +133,7 @@
         # Database should be unchanged
         sinex.fail(
             "sudo -u postgres psql -d sinex -c "
-            "'\\d raw.events' | grep bad_column"
+            "'\\d core.events' | grep bad_column"
         )
         
         # Services should remain operational
@@ -146,7 +146,7 @@
             cat > /tmp/constraint_violation.sql << 'EOF'
             BEGIN;
             -- Add NOT NULL column without default (will fail on existing data)
-            ALTER TABLE raw.events 
+            ALTER TABLE core.events 
             ADD COLUMN required_field TEXT NOT NULL;
             COMMIT;
             EOF
@@ -158,7 +158,7 @@
         # Table structure should be unchanged
         sinex.fail(
             "sudo -u postgres psql -d sinex -c "
-            "'\\d raw.events' | grep required_field"
+            "'\\d core.events' | grep required_field"
         )
     
     # Test long-running migration timeout
@@ -170,12 +170,12 @@
             BEGIN;
             
             -- Lock table for extended period
-            LOCK TABLE raw.events IN ACCESS EXCLUSIVE MODE;
+            LOCK TABLE core.events IN ACCESS EXCLUSIVE MODE;
             
             -- Simulate work
             SELECT pg_sleep(35);  -- Exceeds statement_timeout
             
-            ALTER TABLE raw.events ADD COLUMN long_test TEXT;
+            ALTER TABLE core.events ADD COLUMN long_test TEXT;
             COMMIT;
             EOF
         """)
@@ -209,11 +209,11 @@
             );
             
             -- Step 2: Add column (will succeed)
-            ALTER TABLE raw.events 
+            ALTER TABLE core.events 
             ADD COLUMN IF NOT EXISTS migration_test_id TEXT;
             
             -- Step 3: Add constraint referencing non-existent column (will fail)
-            ALTER TABLE raw.events 
+            ALTER TABLE core.events 
             ADD CONSTRAINT fk_migration_test 
             FOREIGN KEY (nonexistent_column) 
             REFERENCES sinex_schemas.migration_test(id);
@@ -232,7 +232,7 @@
         )
         sinex.fail(
             "sudo -u postgres psql -d sinex -c "
-            "'\\d raw.events' | grep migration_test_id"
+            "'\\d core.events' | grep migration_test_id"
         )
     
     # Test migration with data integrity checks
@@ -240,7 +240,7 @@
         # Capture event count before migration
         pre_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         # Create events during migration prep
@@ -255,14 +255,14 @@
                 event_count INTEGER;
             BEGIN
                 -- Check current event count
-                SELECT COUNT(*) INTO event_count FROM raw.events;
+                SELECT COUNT(*) INTO event_count FROM core.events;
                 
                 -- Add metadata column
-                ALTER TABLE raw.events 
+                ALTER TABLE core.events 
                 ADD COLUMN IF NOT EXISTS integrity_check JSONB;
                 
                 -- Verify no data loss
-                IF (SELECT COUNT(*) FROM raw.events) < event_count THEN
+                IF (SELECT COUNT(*) FROM core.events) < event_count THEN
                     RAISE EXCEPTION 'Data loss detected during migration';
                 END IF;
             END $$;
@@ -275,7 +275,7 @@
         # Verify no events were lost
         post_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         assert post_count >= pre_count, f"Event loss: {pre_count} -> {post_count}"
@@ -287,13 +287,13 @@
             cat > /tmp/migration1.sql << 'EOF'
             BEGIN;
             SELECT pg_sleep(5);
-            ALTER TABLE raw.events ADD COLUMN IF NOT EXISTS test1 TEXT;
+            ALTER TABLE core.events ADD COLUMN IF NOT EXISTS test1 TEXT;
             COMMIT;
             EOF
             
             cat > /tmp/migration2.sql << 'EOF'
             BEGIN;
-            ALTER TABLE raw.events ADD COLUMN IF NOT EXISTS test2 TEXT;
+            ALTER TABLE core.events ADD COLUMN IF NOT EXISTS test2 TEXT;
             COMMIT;
             EOF
         """)
@@ -314,7 +314,7 @@
         
         # At least one migration should have succeeded
         columns = sinex.succeed(
-            "sudo -u postgres psql -d sinex -c '\\d raw.events' | "
+            "sudo -u postgres psql -d sinex -c '\\d core.events' | "
             "grep -E 'test1|test2' | wc -l"
         ).strip()
         

@@ -90,7 +90,7 @@ eBPF allows in-kernel execution of sandboxed programs, enabling efficient, low-o
 *   This agent would:
     1.  Identify target shell PIDs and their TTY/PTY file descriptors.
     2.  Filter and correlate eBPF events (execs, TTY I/O, ioctls) related to these sessions.
-    3.  Structure the data into appropriate `raw.events` payloads (e.g., `system.ebpf.process_exec_in_tty`, `system.ebpf.tty_output_captured`).
-    4.  Send these events to the Exocortex `raw.events` table.
+    3.  Structure the data into appropriate `core.events` payloads (e.g., `system.ebpf.process_exec_in_tty`, `system.ebpf.tty_output_captured`).
+    4.  Send these events to the Exocortex `core.events` table.
 *   This provides a very detailed, low-level stream that complements Atuin, Asciinema, and Kitty RC data.
 

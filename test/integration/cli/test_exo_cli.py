@@ -1130,7 +1130,7 @@ class TestCLIIntegration:
         
         # Clean up any existing test data
         cursor.execute("""
-            DELETE FROM raw.events 
+            DELETE FROM core.events 
             WHERE source LIKE 'test_%' 
             OR host = 'test-host'
         """)
@@ -1170,7 +1170,7 @@ class TestCLIIntegration:
         
         for event in test_events:
             cursor.execute("""
-                INSERT INTO raw.events (source, event_type, host, payload)
+                INSERT INTO core.events (source, event_type, host, payload)
                 VALUES (%(source)s, %(event_type)s, %(host)s, %(payload)s::jsonb)
             """, event)
         
@@ -1199,7 +1199,7 @@ class TestCLIIntegration:
         
         # Cleanup after test
         cursor.execute("""
-            DELETE FROM raw.events 
+            DELETE FROM core.events 
             WHERE source LIKE 'test_%' 
             OR host = 'test-host'
         """)
@@ -1417,7 +1417,7 @@ class TestCLIWithSubprocess:
         
         # Minimal test data for subprocess tests
         cursor.execute("""
-            INSERT INTO raw.events (source, event_type, host, payload)
+            INSERT INTO core.events (source, event_type, host, payload)
             VALUES ('test_subprocess', 'test_event', 'test-host', '{"test": true}'::jsonb)
             ON CONFLICT DO NOTHING
         """)
@@ -1425,7 +1425,7 @@ class TestCLIWithSubprocess:
         yield
         
         cursor.execute("""
-            DELETE FROM raw.events WHERE source = 'test_subprocess'
+            DELETE FROM core.events WHERE source = 'test_subprocess'
         """)
         cursor.close()
         conn.close()

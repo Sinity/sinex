@@ -1,14 +1,22 @@
 pub mod models;
-// Re-export RawEvent and RawEventBuilder from sinex-core for type unification
-pub use sinex_core::{RawEvent, RawEventBuilder};
+// Re-export RawEvent from sinex-events for type unification
+pub use sinex_events::RawEvent;
 // pub mod enhanced_queries; // Removed - superseded by *_correct modules
-pub mod metrics;
 pub mod pool;
 // pub mod queries; // Removed - superseded by domain-specific modules
+pub mod integrity;
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
 pub mod validation;
+
+// New centralized query system
+pub mod queries;
+pub mod query_builder;
+pub mod query_macros;
+
+#[cfg(test)]
+pub mod query_system_test;
 
 // New API modules
 pub mod annotations;
@@ -16,41 +24,23 @@ pub mod artifacts;
 pub mod knowledge_graph;
 
 // Domain-specific query modules
-pub mod agent;
 pub mod events;
-pub mod metrics_queries;
-pub mod work_queue;
 
 // Old queries module removed - all functions migrated to domain-specific modules
 
 // Re-export domain-specific query functions
-pub use agent::{update_agent_heartbeat, upsert_agent_manifest, AgentManifestParams};
 pub use annotations::{
     create_annotation, delete_annotation, get_annotation_by_id, get_annotations_for_event,
     get_recent_annotations, update_annotation_content,
 };
 pub use artifacts::{create_artifact, get_artifact_by_id, get_recent_artifacts};
-pub use events::{count_events, get_event_by_id, insert_event_with_validator};
+pub use events::{
+    attach_blob_to_event, count_events, detach_blob_from_event, get_event_by_id,
+    get_events_with_blobs, insert_event, insert_event_with_blob, insert_event_with_validator,
+};
 pub use knowledge_graph::{
     create_entity, create_relation, get_entities_by_type, get_entity_by_id, get_entity_relations,
     get_relation_by_id, search_entities,
-};
-pub use metrics_queries::{calculate_queue_depth_metrics, QueueDepthMetrics};
-pub use work_queue::{
-    add_to_work_queue,
-    add_to_work_queue_detailed,
-    claim_work_queue_items,
-    complete_work_item,
-    complete_work_queue_item,
-    fail_work_item,
-    fail_work_queue_item,
-    get_dlq_items,
-    // Compatibility functions for old queries API
-    get_next_work_item,
-    get_work_item_by_id,
-    insert_dlq_event,
-    insert_event, // Missing export - needed by tests
-    DlqEventParams,
 };
 
 // Enhanced queries have been removed - functionality moved to domain modules
@@ -61,43 +51,46 @@ pub use query_helpers::{
     with_retry_transaction, with_transaction, DbError, DbResult, RetryConfig, UlidArrayExt,
 };
 
+// Re-export centralized query system
+pub use queries::{
+    ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+};
+pub use query_builder::{QueryBuilder, QueryParam};
+
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
     pub use crate::models::{
-        AgentManifest,
         // New API models (now enabled)
         Artifact,
-        Revision,
         CreateAnnotationInput,
-        CreateRevisionInput,
         CreateArtifactInput,
         CreateEntityInput,
         CreateRelationInput,
-        DlqErrorCategory,
-        DlqEvent,
+        CreateRevisionInput,
         Entity,
         EntityRelation,
         EventAnnotation,
         EventPayloadSchema,
-        QueueStatus,
-        WorkQueueItem,
+        Revision,
     };
     // Use domain-specific modules
-    pub use crate::agent::*;
     pub use crate::events::*;
-    pub use crate::metrics_queries::*;
     pub use crate::query_helpers::{
         db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
         DbResult, RetryConfig, UlidArrayExt,
     };
-    pub use crate::work_queue::*;
     // New API services (now enabled)
     pub use crate::annotations::*;
     pub use crate::artifacts::*;
     pub use crate::knowledge_graph::*;
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, PoolConfig, Timestamp};
+    // Re-export centralized query system in prelude
+    pub use crate::queries::{
+        ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+    };
+    pub use crate::query_builder::{QueryBuilder, QueryParam};
     pub use anyhow::Result;
-    pub use sinex_core::{RawEvent, RawEventBuilder};
+    pub use sinex_events::RawEvent;
     pub use sinex_ulid::Ulid;
     pub use sqlx::{FromRow, Postgres, Transaction};
 }
@@ -113,6 +106,9 @@ use tracing::{info, warn};
 // Common type aliases for database operations
 pub type DbPool = PgPool;
 pub type DbPoolRef<'a> = &'a PgPool;
+
+// Re-export PgPool for external crates (avoiding naming conflict)
+pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from sinex-ulid and add our own
 pub use sinex_ulid::Timestamp;
@@ -289,10 +285,9 @@ pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::models::{QueueStatus, WorkQueueItem};
     use chrono::Utc;
     use serde_json::json;
-    use sinex_core::RawEvent;
+    use sinex_events::RawEvent;
     use sinex_ulid::Ulid;
 
     #[test]
@@ -307,6 +302,12 @@ mod tests {
             ingestor_version: Some("1.0.0".to_string()),
             payload_schema_id: None,
             payload: json!({"test": "data"}),
+            source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         assert_eq!(event.source, "test.source");
@@ -314,89 +315,6 @@ mod tests {
         assert_eq!(event.host, "localhost");
         assert_eq!(event.ingestor_version, Some("1.0.0".to_string()));
         assert_eq!(event.payload["test"], "data");
-    }
-
-    #[test]
-    fn test_work_queue_item_creation() {
-        let queue_item = WorkQueueItem {
-            queue_id: Ulid::new(),
-            raw_event_id: Ulid::new(),
-            target_agent_name: "test_agent".to_string(),
-            status: "pending".to_string(),
-            attempts: 0,
-            max_attempts: 3,
-            last_attempt_ts: None,
-            next_retry_ts: None,
-            error_message_last: None,
-            created_at: Utc::now(),
-            processing_worker_id: None,
-            processed_at: None,
-            failure_reason: None,
-        };
-
-        assert_eq!(queue_item.target_agent_name, "test_agent");
-        assert_eq!(queue_item.status, "pending");
-        assert_eq!(queue_item.attempts, 0);
-        assert_eq!(queue_item.max_attempts, 3);
-        assert!(queue_item.last_attempt_ts.is_none());
-        assert!(queue_item.processed_at.is_none());
-    }
-
-    #[test]
-    fn test_queue_status_enum() {
-        // Test enum variants - using Debug format since Display isn't implemented
-        assert_eq!(format!("{:?}", QueueStatus::Pending), "Pending");
-        assert_eq!(format!("{:?}", QueueStatus::Processing), "Processing");
-        assert_eq!(format!("{:?}", QueueStatus::Succeeded), "Succeeded");
-        assert_eq!(format!("{:?}", QueueStatus::Failed), "Failed");
-        assert_eq!(
-            format!("{:?}", QueueStatus::FailedRetryable),
-            "FailedRetryable"
-        );
-
-        // Test equality
-        assert_eq!(QueueStatus::Pending, QueueStatus::Pending);
-        assert_ne!(QueueStatus::Pending, QueueStatus::Processing);
-    }
-
-    #[test]
-    fn test_queue_status_from_string() {
-        // Test parsing from strings
-        assert_eq!(QueueStatus::from("pending"), QueueStatus::Pending);
-        assert_eq!(QueueStatus::from("processing"), QueueStatus::Processing);
-        assert_eq!(QueueStatus::from("succeeded"), QueueStatus::Succeeded);
-        assert_eq!(QueueStatus::from("failed"), QueueStatus::Failed);
-        assert_eq!(
-            QueueStatus::from("failed_retryable"),
-            QueueStatus::FailedRetryable
-        );
-
-        // Test that invalid values default to Pending
-
-        // Test unknown values default to Pending
-        assert_eq!(QueueStatus::from("unknown"), QueueStatus::Pending);
-        assert_eq!(QueueStatus::from(""), QueueStatus::Pending);
-        assert_eq!(QueueStatus::from("invalid"), QueueStatus::Pending);
-    }
-
-    #[test]
-    fn test_queue_status_serde() {
-        use serde_json;
-
-        // Test serialization
-        let status = QueueStatus::Succeeded;
-        let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(json, "\"succeeded\"");
-
-        // Test deserialization
-        let parsed: QueueStatus = serde_json::from_str("\"processing\"").unwrap();
-        assert_eq!(parsed, QueueStatus::Processing);
-
-        // Test round-trip
-        let original = QueueStatus::FailedRetryable;
-        let json = serde_json::to_string(&original).unwrap();
-        let restored: QueueStatus = serde_json::from_str(&json).unwrap();
-        assert_eq!(original, restored);
     }
 
     #[test]
@@ -435,6 +353,12 @@ mod tests {
             ingestor_version: None,
             payload_schema_id: None,
             payload: simple_payload.clone(),
+            source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         assert_eq!(event.payload["key"], "value");
@@ -462,6 +386,12 @@ mod tests {
             ingestor_version: None,
             payload_schema_id: None,
             payload: complex_payload,
+            source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         assert_eq!(complex_event.payload["metadata"]["version"], "1.0");
@@ -484,6 +414,12 @@ mod tests {
             ingestor_version: None,
             payload_schema_id: None,
             payload: json!({}),
+            source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         // Test that ingestion timestamp is after original timestamp
@@ -492,38 +428,6 @@ mod tests {
         // Test that timestamps are properly set
         assert_eq!(event.ts_ingest, now);
         assert_eq!(event.ts_orig.unwrap(), past);
-    }
-
-    #[test]
-    fn test_error_handling_in_work_queue() {
-        let mut queue_item = WorkQueueItem {
-            queue_id: Ulid::new(),
-            raw_event_id: Ulid::new(),
-            target_agent_name: "error_test_agent".to_string(),
-            status: "pending".to_string(),
-            attempts: 0,
-            max_attempts: 3,
-            last_attempt_ts: None,
-            next_retry_ts: None,
-            error_message_last: None,
-            created_at: Utc::now(),
-            processing_worker_id: None,
-            processed_at: None,
-            failure_reason: None,
-        };
-
-        // Simulate processing failure
-        queue_item.attempts = 1;
-        queue_item.status = "failed_retryable".to_string();
-        queue_item.error_message_last = Some("Connection timeout".to_string());
-        queue_item.last_attempt_ts = Some(Utc::now());
-        queue_item.next_retry_ts = Some(Utc::now() + chrono::Duration::minutes(5));
-
-        assert_eq!(queue_item.attempts, 1);
-        assert_eq!(queue_item.status, "failed_retryable");
-        assert!(queue_item.error_message_last.is_some());
-        assert!(queue_item.last_attempt_ts.is_some());
-        assert!(queue_item.next_retry_ts.is_some());
     }
 
     #[tokio::test]

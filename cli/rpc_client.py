@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Sinex RPC Client - JSON-RPC 2.0 client for sinex-host service
+Sinex RPC Client - JSON-RPC 2.0 client for sinex-gateway service
 """
 
 import json
@@ -22,7 +22,7 @@ class SinexRPCError(Exception):
 
 
 class SinexRPCClient:
-    """JSON-RPC 2.0 client for sinex-host service."""
+    """JSON-RPC 2.0 client for sinex-gateway service."""
     
     def __init__(self, rpc_url: str = "http://127.0.0.1:9999", timeout: int = 30):
         self.rpc_url = rpc_url

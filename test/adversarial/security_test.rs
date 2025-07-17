@@ -1,19 +1,20 @@
-//! # Security Test Suite
-//!
-//! Comprehensive security testing consolidating all security-related adversarial tests.
-//! This module validates the system's resilience against various attack vectors.
-//!
-//! ## Test Categories
-//! - **Path Traversal**: Directory traversal and filesystem attacks
-//! - **SQL Injection**: Database injection attack protection
-//! - **Input Validation**: Malformed and malicious input handling
-//! - **Resource Exhaustion**: DoS and resource consumption attacks
-//! - **Query Interface**: API security and exploit prevention
-//! - **Unicode Exploits**: Character encoding and normalization attacks
+// # Security Test Suite
+//
+// Comprehensive security testing consolidating all security-related adversarial tests.
+// This module validates the system's resilience against various attack vectors.
+//
+// ## Test Categories
+// - **Path Traversal**: Directory traversal and filesystem attacks
+// - **SQL Injection**: Database injection attack protection
+// - **Input Validation**: Malformed and malicious input handling
+// - **Resource Exhaustion**: DoS and resource consumption attacks
+// - **Query Interface**: API security and exploit prevention
+// - **Unicode Exploits**: Character encoding and normalization attacks
 
 use crate::common::prelude::*;
 use crate::common::resources;
 use sinex_db::validation::EventValidator;
+use sinex_events::{EventFactory, services, event_types};
 use std::fs;
 use std::collections::HashMap;
 
@@ -280,8 +281,8 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
         "timestamp": "2024-01-01T00:00:00Z"
     });
 
-    let event = RawEventBuilder::new("shell", "command.executed", legitimate_event)
-        .build();
+    let factory = EventFactory::new(sources::SHELL_KITTY);
+    let event = factory.create_event(event_types::shell::COMMAND_EXECUTED, legitimate_event);
     
     insert_event(ctx.pool(), &event).await?;
     

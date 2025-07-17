@@ -82,7 +82,7 @@ This TIM details the use of `git-annex` for managing large binary files (blobs) 
             ii. Agent inserts new row into `core_blobs` with `blob_id`, `annex_key`, `content_blake3_hash`, mime, size, etc.
     d.  Agent commits the symlink (and `.gitattributes` if needed) to the Git repository backing the annex.
     e.  Agent logs `sinex.blob.ingested` event (payload: `blob_id`, `annex_key`, `blake3_hash`, source info).
-2.  **Linking:** Other Exocortex entities (`core_artifacts`, `raw.events.payload`) reference blobs via `blob_id` or `annex_key`.
+2.  **Linking:** Other Exocortex entities (`core_artifacts`, `core.events.payload`) reference blobs via `blob_id` or `annex_key`.
 3.  **Accessing Content [OR2]:**
     a.  Query `core_blobs` for `annex_key` (or path to symlink).
     b.  Run `git annex get <path_to_symlink_or_annex_key>` in context of annex repo to ensure content is local.

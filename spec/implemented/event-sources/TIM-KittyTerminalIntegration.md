@@ -2,14 +2,15 @@
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
-**Implementation**: 95% (Comprehensive implementation - documented gaps were incorrect)
-**Dependencies**: kitty terminal, unix sockets, kitty @ remote control, EventSource trait
+**Implementation**: 95% (Comprehensive implementation using StatefulStreamProcessor)
+**Dependencies**: kitty terminal, unix sockets, kitty @ remote control, StatefulStreamProcessor trait
 **Blocks**: Rich terminal context, command completion tracking, pane-level monitoring
 
-## ✅ IMPLEMENTATION STATUS CORRECTED
-**Status**: FULLY IMPLEMENTED - Previous "critical blocker" claims were false
-**Evidence**: Command execution detection (kitty.rs:475-526), scrollback access (kitty.rs:592-641), OSC monitoring via shell integration (kitty.rs:409-427)
-**Reality**: No significant data loss - comprehensive 500ms polling with incremental scrollback capture
+## ✅ IMPLEMENTATION STATUS
+**Status**: FULLY IMPLEMENTED - Uses unified StatefulStreamProcessor architecture
+**Implementation**: Terminal satellite with snapshot, historical, and continuous scanning modes
+**Sources**: Atuin history, shell history files, kitty remote control, scrollback capture
+**Architecture**: Terminal satellite processor with checkpoint management and exploration support
 
 ## MVP Specification
 - Kitty socket discovery and connection
@@ -29,237 +30,88 @@
 - [x] Socket discovery mechanism
 - [x] Remote control connection
 - [x] Window/tab listing
-- [x] Basic polling infrastructure
-- [ ] **🚨 CRITICAL: Command execution detection** (Week 1 Wed-Thu)
-- [ ] **🚨 CRITICAL: Scrollback content access** (Week 1 Wed-Thu)
-- [ ] OSC sequence monitoring
-- [ ] Real-time event streaming
+- [x] Polling infrastructure with StatefulStreamProcessor
+- [x] Command execution detection
+- [x] Scrollback content access
+- [x] OSC sequence monitoring
+- [x] Real-time event streaming
 
-## PHASE 1 CRITICAL IMPLEMENTATION PLAN
+## Current Architecture
 
-### Week 1 Wednesday-Thursday: Command Detection & Scrollback
+### StatefulStreamProcessor Implementation
 ```rust
-// sinex-events-terminal/src/kitty.rs
-impl KittyIntegration {
-    async fn capture_command_execution(&mut self) -> Result<()> {
-        // CRITICAL MISSING: Command detection via prompt parsing
-        let scrollback = self.get_scrollback_buffer().await?;
-        let commands = self.parse_shell_prompts(&scrollback)?;
-        
-        for cmd in commands {
-            self.emit_command_event(&cmd).await?;
-        }
-        Ok(())
-    }
-    
-    async fn capture_scrollback(&mut self) -> Result<()> {
-        // CRITICAL MISSING: Get scrollback via kitty remote control
-        let output = Command::new("kitty")
-            .args(["@", "get-text", "--extent=scrollback"])
-            .output()?;
-            
-        let content = String::from_utf8(output.stdout)?;
-        self.process_scrollback_content(&content).await?;
-        Ok(())
-    }
-    
-    fn parse_shell_prompts(&self, content: &str) -> Result<Vec<CommandExecution>> {
-        // CRITICAL MISSING: Prompt pattern recognition
-        // Detect bash/zsh/fish prompts and extract commands
-        let prompt_patterns = [
-            regex::Regex::new(r"^\$ (.+)$")?,  // Basic bash
-            regex::Regex::new(r"^❯ (.+)$")?,   // Starship
-            regex::Regex::new(r"^➜ .+ (.+)$")?, // Oh-my-zsh
-        ];
-        
-        // Parse command execution patterns
-        Ok(vec![]) // Implementation needed
+// Terminal processor with unified scan interface
+async fn scan(&mut self, from: Checkpoint, until: TimeHorizon, args: ScanArgs) -> SatelliteResult<ScanReport> {
+    match until {
+        TimeHorizon::Snapshot => self.capture_current_state().await,
+        TimeHorizon::Historical { end_time } => self.scan_historical(from, end_time).await,
+        TimeHorizon::Continuous => self.start_continuous_monitoring(from).await,
     }
 }
 ```
 
-### Week 1 Implementation Components
-1. **Command Detection**: Shell prompt pattern recognition
-2. **Scrollback Access**: Remote control integration for buffer access
-3. **Command Exit Status**: Correlation with process monitoring
-4. **Buffer Management**: Efficient scrollback difference detection
-5. **Event Correlation**: Link with Atuin command history
+### Key Features
+- **Multi-Source Terminal Monitoring**: Atuin command history, shell history files, kitty remote control, scrollback capture
+- **Checkpoint Management**: Tracks processing state across different terminal data sources
+- **Exploration Support**: Provides coverage analysis and source state diagnostics
+- **Event Types**: Command execution, session changes, window state, scrollback content
 
-*   **Relevant ADR:** `[ADR-008-TerminalActivityCaptureStrategy.md](docs/adr/ADR-008-TerminalActivityCaptureStrategy.md)` (Kitty RC is part of layered strategy)
-*   **Original UG Context:** Section 8.1
-
-This TIM details the technical implementation for integrating with the Kitty terminal emulator, leveraging its Remote Control protocol and OSC escape sequences for capturing semantic terminal activity.
-
-## 1. Rationale Summary
-
-Kitty's advanced features provide richer semantic data than generic terminal logging alone, such as OS window/tab/pane management, CWD of active panes, and scrollback access. This complements Atuin (command history) and Asciinema (full session replay) as per ADR-008.
-
-## 2. OSC 52 and OSC 5522 Clipboard Protocols [UG Sec 8.1.1, CR4]
-
-While the primary clipboard monitoring is handled by `TIM-ClipboardMonitoring.md`, Kitty's OSC clipboard protocols are relevant if interacting with Kitty's internal clipboard or if Kitty is configured to emit OSC sequences on system clipboard changes.
-
-*   **OSC 52 (Standard Clipboard):**
-    *   Sequence: `\x1b]52;<clipboard_spec>;<base64_data>\x07` (or `\x1b\\` ST).
-    *   `<clipboard_spec>`: `c` (system clipboard), `p` (primary), `s<name>` (named).
-    *   Request content: `\x1b]52;c;?\x07`. Kitty might respond with content.
-    *   Payload Limit: ~74,994 bytes raw data before Base64.
-*   **Kitty OSC 5522 (Enhanced Clipboard & Data Transfer):**
-    *   Purpose: Overcomes OSC 52 limits, multiple formats, chunking for large data.
-    *   Chunking: Data transferred to/from Kitty via OSC 5522 should use **4KB chunks**, each as a separate OSC 5522 sequence with `m=1` (more data) or `m=0` (final chunk) flags.
-*   **Exocortex Use:** Primarily for awareness if the Exocortex Kitty ingestor needs to parse these if observed (e.g., from scrollback or PTY stream if Kitty is configured to emit them). Direct clipboard manipulation is usually via Kitty RC.
-
-## 3. Kitty Remote Control (RC) Protocol [UG Sec 8.1.2, CR4, SA4]
-
-This is the primary mechanism for the Exocortex Kitty ingestor.
-
-### 3.1. Communication Methods
-
-1.  **UNIX Domain Socket (Preferred for Exocortex Ingestor):**
-    *   Launch Kitty: `kitty --listen-on unix:/tmp/my_kitty_socket_$$` (or a fixed, permission-controlled path like `/run/user/$UID/sinex_kitty_rc.sock`).
-    *   Ingestor connects to this socket.
-    *   Protocol: Send `\x1bP@kitty-cmd<JSON_payload_as_string>\x1b\` messages over the socket.
-        *   `<JSON_payload_as_string>`: The JSON command object serialized to a string.
-    *   Responses are JSON strings, also newline-terminated or within a similar DCS/ST envelope if Kitty uses that over socket.
-2.  **Escape Sequence Method (via PTY - Fallback/Less Robust):**
-    *   Send `\x1bP@kitty-cmd<JSON_payload_as_string>\x1b\` to Kitty's PTY.
-    *   Less reliable for complex JSON or bidirectional communication.
-
-### 3.2. RC Protocol Performance [CR4]
-
-*   Simple commands (list windows, get active ID): ~1-2ms latency.
-*   Large data (get scrollback): ~100ms per MB.
-*   Socket method is ~2x faster and more reliable than PTY escapes.
-
-### 3.3. RC Command Examples (JSON Payloads)
-
-*   List all Kitty OS windows, tabs, and windows (panes):
-    `{"cmd": "ls"}`
-*   Get text from focused Kitty window (pane):
-    `{"cmd": "get-text", "match": "focused:true", "formatted": "false"}` (for raw text)
-    `{"cmd": "get-text", "match": "id:N", "extent": "scrollback"}` (get full scrollback for window ID N)
-*   Get window state (title, PID, CWD, foreground process) for focused window:
-    `{"cmd": "get-window-state", "match": "focused:true"}`
-*   Set window title:
-    `{"cmd": "set-window-title", "match": "focused:true", "title": "New Title"}`
-*   Launch a new command in a new Kitty window/tab/OS window:
-    `{"cmd": "launch", "type": "os-window|tab|window", "cwd": "/path/to/start", "args": ["htop"]}`
-*   Send text to a window (as if typed):
-    `{"cmd": "send-text", "match": "focused:true", "text": "echo 'hello'\\n"}`
-*   Get/Set Kitty internal clipboard:
-    `{"cmd": "get-clipboard", "kitty": "true"}`
-    `{"cmd": "set-clipboard", "kitty": "true", "text": "internal clip text"}`
-
-### 3.4. Rust Client for Kitty RC (Socket Mode - Conceptual)
-
+### API Signatures
 ```rust
-use tokio::net::UnixStream;
-use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, AsyncBufReadExt};
-use serde_json::{json, Value as JsonValue};
-use std::path::Path;
+// Core terminal processor operations
+async fn capture_current_state(&mut self) -> SatelliteResult<ScanReport>;
+async fn scan_historical(&mut self, from: Checkpoint, end_time: DateTime<Utc>) -> SatelliteResult<ScanReport>;
+async fn start_continuous_monitoring(&mut self, from: Checkpoint) -> SatelliteResult<ScanReport>;
 
-// async fn send_kitty_rc_command(socket_path: &Path, command_payload: JsonValue) -> Result<JsonValue, anyhow::Error> {
-//     let mut stream = UnixStream::connect(socket_path).await?;
-
-//     // Kitty's socket protocol uses a specific framing for request and response:
-//     // Request: <ESC>_Ga=1,q=1,s=1,a=1,p=1<ESC>\ (optional handshake/graphics query, may not be needed for simple cmd)
-//     //          <ESC>P@kitty-cmd<JSON_STRING><ESC>\
-//     // Response: <ESC>_Gok,aid=N,s=1,a=1,p=1,q=1,i=N,f=100,c=N,r=N,m=0<ESC>\ (graphics protocol ACK - might not appear for all cmd types)
-//     //           <ESC>P1$r<JSON_RESPONSE_STRING><ESC>\ (this is the actual command response)
-//     // Or sometimes just the JSON response string directly for simpler commands.
-//     // The exact framing needs to be verified with current Kitty versions for socket mode.
-//     // For simplicity, this example assumes direct JSON request/response after initial connection,
-//     // or that the DCS/ST framing is handled by a wrapper.
-
-//     let cmd_str = command_payload.to_string();
-//     // Actual Kitty RC over socket often wraps the JSON:
-//     let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
-
-//     stream.write_all(framed_cmd.as_bytes()).await?;
-//     stream.flush().await?; // Ensure it's sent
-
-//     // Reading response is tricky due to potential multiple parts and DCS/ST framing.
-//     // A robust parser would look for <ESC>P1$r ... <ESC>\ or handle raw JSON if that's what Kitty sends.
-//     let mut reader = BufReader::new(stream);
-//     let mut response_buffer = Vec::new();
-    
-//     // This is a simplified read, assuming response is newline-terminated JSON or within a single buffer read.
-//     // A real implementation needs a more robust framed message parser.
-//     // reader.read_to_end(&mut response_buffer).await?; // Reads until EOF, might be too much if stream is kept open.
-
-//     // Let's assume for simpler commands, Kitty might send a newline-terminated JSON string or close after response.
-//     // Or, we need to parse the specific Kitty framing.
-//     // For example, if response is <ESC>P1$rJSON_DATA<ESC>\, parse that.
-//     // This is a placeholder for robust response parsing.
-//     let mut raw_response_str = String::new();
-//     reader.read_to_string(&mut raw_response_str).await?; // This might hang if Kitty doesn't close or newline-terminate appropriately.
-
-//     // Attempt to extract JSON from the raw response (stripping potential framing)
-//     let json_response_str = if let Some(start_json) = raw_response_str.find('{') {
-//         if let Some(end_json) = raw_response_str.rfind('}') {
-//             raw_response_str[start_json..=end_json].to_string()
-//         } else {
-//             raw_response_str // Assume it's just JSON if no clear start/end
-//         }
-//     } else {
-//         raw_response_str
-//     };
-    
-//     let response_json: JsonValue = serde_json::from_str(&json_response_str)?;
-//     Ok(response_json)
-// }
-
-// Example Usage:
-// async fn get_kitty_ls(socket_path: &Path) -> Result<JsonValue, anyhow::Error> {
-//     let cmd = json!({"cmd": "ls"});
-//     send_kitty_rc_command(socket_path, cmd).await
-// }
+// Terminal-specific operations
+async fn get_kitty_state(&self) -> Result<KittyState>;
+async fn capture_scrollback(&self) -> Result<String>;
+async fn parse_command_history(&self, source: &str) -> Result<Vec<CommandEvent>>;
 ```
-**Note:** The exact framing for Kitty's socket remote control needs careful verification against Kitty's documentation or source, as it might involve specific DCS/ST sequences for requests and responses, similar to its graphics protocol or PTY control sequences. The example above simplifies this for brevity. A robust client needs a proper state machine to parse these frames.
 
-## 4. Security Considerations [UG Sec 8.1.3, CR4]
+## Kitty Remote Control Protocol
 
-*   **Risk:** Escape sequence injection if `allow_remote_control yes` and not socket-only.
-*   **Mitigations (Mandatory for Exocortex):**
-    1.  **Socket-Only Mode:** Launch Kitty with `--listen-on unix:/path/to/secure_socket` and set `allow_remote_control no` in `kitty.conf`. The Exocortex ingestor *only* connects to this socket.
-    2.  **Socket Permissions:** Ensure the UNIX domain socket file has restrictive permissions (e.g., `0600` owned by user, or accessible only by `sinex` group if ingestor runs as different user).
-    3.  **Password Protection (Optional):** Set `remote_control_password YOUR_PASSWORD` in `kitty.conf`. Client sends auth command first.
-    4.  **Input Sanitization (If Applicable):** Not generally needed for sending well-defined JSON commands to Kitty RC. If sending text that Kitty might interpret in a shell context (e.g., via `send-text` that then triggers a shell command in Kitty), sanitize that text.
+### Communication Methods
+- **UNIX Domain Socket**: Primary method for reliable communication
+- **Socket Path**: Configurable, defaults to `/tmp/kitty-*` pattern
+- **Authentication**: Optional password protection supported
 
-## 5. Race Condition Handling [UG Sec 8.1.4, CR4]
+### Core Commands
+- `{"cmd": "ls"}` - List all windows, tabs, and panes
+- `{"cmd": "get-text", "match": "focused:true", "extent": "scrollback"}` - Get scrollback content
+- `{"cmd": "get-window-state", "match": "focused:true"}` - Get window state (title, PID, CWD)
 
-*   **Issue:** Rapid-fire RC commands might be dropped or misordered by Kitty.
-*   **Mitigation:** Client-side serialization for commands. Implement a queue in the ingestor with a small delay (e.g., 1-5ms) between sending consecutive commands if issues are observed. For critical sequences, wait for response from one command before sending the next.
+### Performance Characteristics
+- Simple commands: ~1-2ms latency
+- Large data retrieval: ~100ms per MB
+- Socket method: ~2x faster than PTY escapes
 
-## 6. Kitty Ingestor (`ingestor/kitty`) Implementation Details [UG Sec 8.1.5]
+## Security Considerations
+- **Socket-Only Mode**: Disable PTY remote control, use socket only
+- **Restrictive Permissions**: Socket file permissions 0600 or group-restricted
+- **Password Protection**: Optional remote control password
+- **Input Sanitization**: Validated JSON command structure
 
-The Rust `ingestor/kitty` agent uses the RC protocol (socket mode) to capture:
+## Event Types Generated
+- `terminal.session.started/ended` - Terminal session lifecycle
+- `terminal.command.executed` - Command execution events
+- `terminal.window.focused/created/closed` - Window state changes
+- `terminal.scrollback.captured` - Scrollback content snapshots
+- `terminal.process.changed` - Foreground process changes
 
-*   **Window/Tab/OS-Window State:**
-    *   Periodically (e.g., every 1-5 seconds, or on `focus_changed` events from Hyprland if Kitty is active) poll `kitty @ ls` (JSON format).
-    *   Diff against previous state to generate `raw.events` for:
-        *   `app.terminal.kitty.os_window_created/closed/focused`
-        *   `app.terminal.kitty.tab_created/closed/focused/title_changed`
-        *   `app.terminal.kitty.window_created/closed/focused/layout_changed` (panes)
-    *   For focused Kitty window (pane), poll `kitty @ get-window-state --match focused:true` to get:
-        *   `app.terminal.kitty.cwd_changed`
-        *   `app.terminal.kitty.foreground_process_changed` (PID, name, args)
-*   **Scrollback Buffer Changes:**
-    *   Periodically (e.g., every 5-15 seconds, or on prompt appearance if detectable from foreground process changes or heuristics):
-        *   `kitty @ get-text --match focused:true --extent scrollback` (or for specific window IDs).
-        *   Compute BLAKE3 hash of the retrieved scrollback text.
-        *   If hash differs from previously stored hash for this Kitty window:
-            1.  Store the full scrollback text as a new blob in `git-annex` (via `core_blobs`).
-            2.  Emit `app.terminal.kitty.scrollback_captured` event to `raw.events`. Payload: `{ "kitty_window_id": N, "scrollback_annex_key": "...", "scrollback_blake3_hash": "...", "line_count": M }`.
-            3.  Update stored hash for this window.
-    *   On Kitty window closure (detected from `kitty @ ls` diff or `closewindow` event from Hyprland if Kitty was active): Capture final scrollback.
-*   **Internal Clipboard (If distinct from system and relevant):**
-    *   Periodically poll `kitty @ get-clipboard --kitty`. Diff content.
-    *   Emit `app.terminal.kitty.internal_clipboard_changed` event.
-*   **Command Execution (Indirect Inference):**
-    *   The Kitty RC protocol does *not* directly emit "shell command executed" events with exit status. This is primarily captured by **Atuin** (see `TIM-GenericTerminalLogging.md`).
-    *   The Kitty ingestor can infer *potential* command boundaries by:
-        *   Monitoring `app.terminal.kitty.foreground_process_changed` for new shell instances or common command PIDs.
-        *   Analyzing scrollback for shell prompt patterns and subsequent output.
-        *   This is heuristic and less reliable than Atuin. It primarily provides context around commands Atuin logs.
-*   **Event Payloads:** All generated `raw.events` should include relevant Kitty identifiers (OS window ID, tab ID, window/pane ID) and timestamps.
+## Configuration
+```rust
+pub struct TerminalConfig {
+    pub enabled_sources: HashMap<String, bool>,
+    pub atuin_db_path: Option<PathBuf>,
+    pub history_files: Vec<PathBuf>,
+    pub kitty_socket_path: Option<PathBuf>,
+    pub polling_interval_secs: u64,
+    pub batch_size: usize,
+}
+```
 
+## References
+- **Relevant ADR**: ADR-008-TerminalActivityCaptureStrategy.md
+- **Original Context**: Terminal activity capture strategy
+- **Architecture**: Unified StatefulStreamProcessor with terminal-specific implementations

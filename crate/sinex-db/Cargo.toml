@@ -12,7 +12,10 @@ description = "Database connection and query utilities for Sinex"
 
 [dependencies]
 sinex-ulid = { path = "../sinex-ulid", features = ["sqlx"] }
-sinex-core = { path = "../sinex-core" }
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-events = { path = "../sinex-events" }
+sinex-macros = { path = "../sinex-macros" }
+sinex-metrics-lib = { path = "../sinex-metrics-lib" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }
@@ -27,6 +30,7 @@ jsonschema = "0.17"
 gethostname = { workspace = true }
 urlencoding = "2.1"
 blake3 = "1.5"
+strum = { version = "0.26", features = ["derive"] }
 
 # No additional dependencies needed for declarative macros
 

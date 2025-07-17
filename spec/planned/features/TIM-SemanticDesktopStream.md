@@ -37,7 +37,7 @@ For interpreting GUIs via AT-SPI2 data.
 ## 4. Output: The Structured Semantic Contextual Stream
 
 The `SemanticDesktopContextManager` makes its synthesized context available via:
-1.  **A `raw.events` Stream (Periodic or On-Change):**
+1.  **A `core.events` Stream (Periodic or On-Change):**
     *   `source`: `"agent.semantic_desktop_manager"`
     *   `event_type`: `"desktop_semantic_context_updated"`
     *   `payload`: A rich JSON object representing the current synthesized understanding (focused app/element details, visible text summary, available actions, broader context, inferred intent). This payload should have a well-defined JSON Schema.

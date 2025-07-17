@@ -8,7 +8,7 @@ use thiserror::Error;
 use ulid::Ulid as InnerUlid;
 use uuid::Uuid;
 
-/// Type alias for timestamp values, consistent with sinex-core
+/// Type alias for timestamp values, consistent with sinex-core-types
 pub type Timestamp = DateTime<Utc>;
 
 #[derive(Error, Debug)]
@@ -323,6 +323,37 @@ mod arbitrary_impl {
                     Ulid(inner)
                 })
                 .boxed()
+        }
+    }
+}
+
+#[cfg(feature = "schema")]
+mod schema_impl {
+    use super::*;
+    use schemars::{
+        schema::{InstanceType, Schema, SchemaObject, StringValidation},
+        JsonSchema,
+    };
+
+    impl JsonSchema for Ulid {
+        fn schema_name() -> String {
+            "Ulid".to_string()
+        }
+
+        fn json_schema(_gen: &mut schemars::gen::SchemaGenerator) -> Schema {
+            let mut schema = SchemaObject {
+                instance_type: Some(InstanceType::String.into()),
+                string: Some(Box::new(StringValidation {
+                    pattern: Some("^[0-9A-HJKMNP-TV-Z]{26}$".to_string()),
+                    min_length: Some(26),
+                    max_length: Some(26),
+                })),
+                ..Default::default()
+            };
+            schema.metadata().description = Some(
+                "A Universally Unique Lexicographically Sortable Identifier (ULID)".to_string(),
+            );
+            Schema::Object(schema)
         }
     }
 }

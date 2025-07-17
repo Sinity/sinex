@@ -57,7 +57,7 @@ State diagram showing event progression:
 Entity-relationship diagram showing:
 
 ### ✅ Implemented Tables
-- `raw.events` - Core event storage (TimescaleDB hypertable)
+- `core.events` - Core event storage (TimescaleDB hypertable)
 - `sinex_schemas.event_payload_schemas` - JSON schema registry
 - `sinex_schemas.agent_manifests` - Agent registration
 - `sinex_schemas.work_queue` - Work distribution

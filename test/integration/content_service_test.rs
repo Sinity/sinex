@@ -1,15 +1,17 @@
-//! ContentService Integration Tests
-//!
-//! Tests the ContentService wrapper around BlobManager, focusing on:
-//! 1. Content storage from various sources (files, byte arrays)
-//! 2. Content retrieval and verification
-//! 3. Metadata extraction and validation
-//! 4. Deduplication behavior
-//! 5. Error handling and edge cases
-//! 6. Integration with artifact storage
-//!
-//! IMPORTANT: These tests require git-annex to be available. If git-annex
-//! is not installed, tests will be skipped with appropriate warnings.
+// ContentService Integration Tests
+//
+// Tests the ContentService wrapper around BlobManager, focusing on:
+// 1. Content storage from various sources (files, byte arrays)
+// 2. Content retrieval and verification
+// 3. Metadata extraction and validation
+// 4. Deduplication behavior
+// 5. Error handling and edge cases
+// 6. Integration with artifact storage
+//
+// IMPORTANT: These tests require git-annex to be available. If git-annex
+// is not installed, tests will be skipped with appropriate warnings.
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::resources::{create_test_file, temp_dir};
@@ -31,7 +33,7 @@ struct ContentServiceTest {
 
 impl ContentServiceTest {
     /// Create a new test fixture with ContentService and temporary git-annex repo
-    async fn new(pool: &DbPool) -> Result<Self, Box<dyn std::error::Error>> {
+    async fn new(pool: &DbPool) -> AnyhowResult<Self, Box<dyn std::error::Error>> {
         let temp_dir = temp_dir()?;
         let annex_path = temp_dir.path().join("test-annex");
 
@@ -55,7 +57,7 @@ impl ContentServiceTest {
     }
 
     /// Initialize a test git-annex repository
-    async fn init_test_annex(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    async fn init_test_annex(path: &Path) -> AnyhowResult<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(path).await?;
 
         // Check if git-annex is available

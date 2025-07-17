@@ -1,9 +1,10 @@
-//! Comprehensive tests for AnalyticsService
-//!
-//! Tests all analytics methods with focus on aggregation logic,
-//! time-based filtering, and accurate data insights.
+// Comprehensive tests for AnalyticsService
+//
+// Tests all analytics methods with focus on aggregation logic,
+// time-based filtering, and accurate data insights.
 
 use crate::common::prelude::*;
+use sinex_events::{EventFactory, services, event_types};
 use chrono::{Duration, Utc};
 use sinex_services::AnalyticsService;
 use std::collections::HashMap;
@@ -16,15 +17,17 @@ async fn create_analytics_test_event(
     payload_content: Value,
     time_offset: Option<Duration>,
 ) -> TestResult {
-    let mut builder =
-        RawEventBuilder::new(source, event_type, payload_content).with_host("analytics-test-host");
-
+    let factory = EventFactory::new(source);
+    let mut event = factory.create_event(event_type, payload_content);
+    
+    // Set host
+    event.host = "analytics-test-host".to_string();
+    
+    // Set timestamp if provided
     if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;
-        builder = builder.with_timestamp(timestamp);
+        event.ts_orig = Some(timestamp);
     }
-
-    let event = builder.build();
 
     insert_event(pool, &event).await?;
 

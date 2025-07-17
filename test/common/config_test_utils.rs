@@ -1,9 +1,111 @@
-//! Configuration testing utilities using ConfigExtractor abstractions
-//!
-//! This module provides testing utilities for configuration validation and extraction
-//! using the new ConfigExtractor and ConfigValidator abstractions.
+// Configuration testing utilities - DEPRECATED
+//
+// This module provided testing utilities for TOML-based configuration validation.
+// With the move to environment-only configuration, these utilities are deprecated.
+// This file is kept for compatibility with existing tests but will be removed.
 
+// Removed ConfigValidator import as it's no longer used
 use crate::common::prelude::*;
+
+/// Helper functions for extracting values from toml::Value
+mod toml_helpers {
+    use toml::Value as ConfigValue;
+    use anyhow::{anyhow, Result};
+
+    pub fn require_str<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a str> {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = config;
+        
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part - get the string value
+                return current
+                    .get(part)
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow!("Required string field '{}' not found", path));
+            } else {
+                // Navigate deeper
+                current = current
+                    .get(part)
+                    .ok_or_else(|| anyhow!("Path '{}' not found at '{}'", path, part))?;
+            }
+        }
+        
+        Err(anyhow!("Invalid path '{}'", path))
+    }
+
+    pub fn u64_or(config: &ConfigValue, path: &str, default: u64) -> u64 {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = config;
+        
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part - get the integer value
+                return current
+                    .get(part)
+                    .and_then(|v| v.as_integer())
+                    .map(|i| i as u64)
+                    .unwrap_or(default);
+            } else {
+                // Navigate deeper
+                match current.get(part) {
+                    Some(v) => current = v,
+                    None => return default,
+                }
+            }
+        }
+        
+        default
+    }
+
+    pub fn str_or<'a>(config: &'a ConfigValue, path: &str, default: &'a str) -> &'a str {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = config;
+        
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part - get the string value
+                return current
+                    .get(part)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(default);
+            } else {
+                // Navigate deeper
+                match current.get(part) {
+                    Some(v) => current = v,
+                    None => return default,
+                }
+            }
+        }
+        
+        default
+    }
+
+    pub fn bool_or(config: &ConfigValue, path: &str, default: bool) -> bool {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = config;
+        
+        for (i, part) in parts.iter().enumerate() {
+            if i == parts.len() - 1 {
+                // Last part - get the boolean value
+                return current
+                    .get(part)
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(default);
+            } else {
+                // Navigate deeper
+                match current.get(part) {
+                    Some(v) => current = v,
+                    None => return default,
+                }
+            }
+        }
+        
+        default
+    }
+}
+
+use self::toml_helpers::*;
 
 /// Create test configuration for various scenarios
 pub mod test_configs {
@@ -115,65 +217,127 @@ pub mod validation {
     use super::*;
 
     /// Test database configuration validation
-    pub fn validate_database_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
-        ConfigValidator::new()
-            .require("database.url")
-            .validate_custom(|config| {
-                // Validate URL format
-                if let Some(url) = config.optional_str("database.url") {
-                    ValidationChain::validate(url.to_string(), "database.url")
-                        .is_valid_url()
-                        .into_result()?;
-                }
+    pub fn validate_database_config() -> impl Fn(&ConfigValue) -> sinex_core_types::Result<()> {
+        move |config: &ConfigValue| -> sinex_core_types::Result<()> {
+            // Validate URL is present and format
+            let url = config
+                .get("database")
+                .and_then(|db| db.get("url"))
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| CoreError::configuration("database.url is required").build())?;
 
-                // Validate pool size range
-                if let Some(pool_size) = config.optional_i64("database.pool_size") {
-                    ValidationChain::validate(pool_size, "database.pool_size")
-                        .min(1)
-                        .max(100)
-                        .into_result()?;
-                }
+            ValidationChain::validate(url.to_string(), "database.url")
+                .is_valid_url()
+                .into_result()
+                .map_err(|e| CoreError::validation("URL validation failed").with_source(e).build())?;
 
-                Ok(())
-            })
-            .build()
+            // Validate pool size range if present
+            if let Some(pool_size) = config
+                .get("database")
+                .and_then(|db| db.get("pool_size"))
+                .and_then(|v| v.as_integer())
+            {
+                ValidationChain::validate(pool_size, "database.pool_size")
+                    .min(1)
+                    .max(100)
+                    .into_result()
+                    .map_err(|e| CoreError::validation("Pool size validation failed").with_source(e).build())?;
+            }
+
+            Ok(())
+        }
     }
 
     /// Test collector configuration validation
-    pub fn validate_collector_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
-        ConfigValidator::new()
-            .validate_range("collector.buffer_size", 1..=10000)
-            .validate_range("collector.batch_size", 1..=1000)
-            .validate_custom(|config| {
-                // Validate flush interval format
-                if let Some(interval) = config.optional_str("collector.flush_interval") {
-                    parse_duration(interval)?;
-                }
-                Ok(())
-            })
-            .build()
+    pub fn validate_collector_config() -> impl Fn(&ConfigValue) -> sinex_core_types::Result<()> {
+        move |config: &ConfigValue| -> sinex_core_types::Result<()> {
+            // Validate buffer size range
+            if let Some(buffer_size) = config
+                .get("collector")
+                .and_then(|c| c.get("buffer_size"))
+                .and_then(|v| v.as_integer())
+            {
+                ValidationChain::validate(buffer_size, "collector.buffer_size")
+                    .min(1)
+                    .max(10000)
+                    .into_result()
+                    .map_err(|e| CoreError::validation("Buffer size validation failed").with_source(e).build())?;
+            }
+
+            // Validate batch size range
+            if let Some(batch_size) = config
+                .get("collector")
+                .and_then(|c| c.get("batch_size"))
+                .and_then(|v| v.as_integer())
+            {
+                ValidationChain::validate(batch_size, "collector.batch_size")
+                    .min(1)
+                    .max(1000)
+                    .into_result()
+                    .map_err(|e| CoreError::validation("Batch size validation failed").with_source(e).build())?;
+            }
+
+            // Validate flush interval format
+            if let Some(interval) = config
+                .get("collector")
+                .and_then(|c| c.get("flush_interval"))
+                .and_then(|v| v.as_str())
+            {
+                parse_duration(interval)
+                    .map_err(|e| CoreError::configuration(format!("Invalid flush interval: {}", e)).build())?;
+            }
+            
+            Ok(())
+        }
     }
 
     /// Test observability configuration validation
-    pub fn validate_observability_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
-        ConfigValidator::new()
-            .validate_range("observability.metrics_port", 1024..=65535)
-            .validate_regex(
-                "observability.log_level",
-                r"^(trace|debug|info|warn|error)$",
-            )
-            .validate_custom(|config| {
-                // Validate health check interval
-                if let Some(interval) = config.optional_str("observability.health_check_interval") {
-                    parse_duration(interval)?;
+    pub fn validate_observability_config() -> impl Fn(&ConfigValue) -> sinex_core_types::Result<()>
+    {
+        move |config: &ConfigValue| -> sinex_core_types::Result<()> {
+            // Validate metrics port range
+            if let Some(metrics_port) = config
+                .get("observability")
+                .and_then(|o| o.get("metrics_port"))
+                .and_then(|v| v.as_integer())
+            {
+                ValidationChain::validate(metrics_port, "observability.metrics_port")
+                    .min(1024)
+                    .max(65535)
+                    .into_result()
+                    .map_err(|e| CoreError::validation("Metrics port validation failed").with_source(e).build())?;
+            }
+
+            // Validate log level
+            if let Some(log_level) = config
+                .get("observability")
+                .and_then(|o| o.get("log_level"))
+                .and_then(|v| v.as_str())
+            {
+                let valid_levels = ["trace", "debug", "info", "warn", "error"];
+                if !valid_levels.contains(&log_level) {
+                    return Err(CoreError::configuration(
+                        &format!("Invalid log level '{}', must be one of: {:?}", log_level, valid_levels)
+                    ).build());
                 }
-                Ok(())
-            })
-            .build()
+            }
+
+            // Validate health check interval
+            if let Some(interval) = config
+                .get("observability")
+                .and_then(|o| o.get("health_check_interval"))
+                .and_then(|v| v.as_str())
+            {
+                parse_duration(interval)
+                    .map_err(|e| CoreError::configuration(format!("Invalid health check interval: {}", e)).build())?;
+            }
+            
+            Ok(())
+        }
     }
 
     /// Comprehensive configuration validator combining all aspects
-    pub fn validate_complete_config() -> impl Fn(&ConfigValue) -> sinex_core::Result<()> {
+    pub fn validate_complete_config() -> impl Fn(&ConfigValue) -> sinex_core_types::Result<()> {
         move |config: &ConfigValue| {
             // Use MultiValidator pattern to accumulate all errors
             let multi_validator = MultiValidator::new();
@@ -193,7 +357,11 @@ pub mod validation {
             }
 
             // Validate observability section if present
-            if config.optional_str("observability.metrics_port").is_some() {
+            if config
+                .get("observability")
+                .and_then(|o| o.get("metrics_port"))
+                .is_some()
+            {
                 if let Err(e) = validate_observability_config()(config) {
                     return Err(
                         CoreError::configuration("Observability configuration invalid")
@@ -213,21 +381,23 @@ pub mod extraction {
     use super::*;
 
     /// Extract and validate database configuration
-    pub fn extract_database_config(config: &ConfigValue) -> Result<DatabaseTestConfig> {
-        let url = config.require_str("database.url")?;
-        let pool_size = config.u64_or("database.pool_size", 10);
-        let timeout_seconds = config.u64_or("database.timeout_seconds", 30);
+    pub fn extract_database_config(config: &ConfigValue) -> AnyhowResult<DatabaseTestConfig> {
+        let url = require_str(config, "database.url")?;
+        let pool_size = u64_or(config, "database.pool_size", 10);
+        let timeout_seconds = u64_or(config, "database.timeout_seconds", 30);
 
         // Validate extracted values using ValidationChain
         ValidationChain::validate(url.to_string(), "database.url")
             .not_empty()
             .is_valid_url()
-            .into_result()?;
+            .into_result()
+            .map_err(|e| anyhow::anyhow!("URL validation failed: {}", e))?;
 
         ValidationChain::validate(pool_size, "database.pool_size")
             .min(1)
             .max(100)
-            .into_result()?;
+            .into_result()
+            .map_err(|e| anyhow::anyhow!("Pool size validation failed: {}", e))?;
 
         Ok(DatabaseTestConfig {
             url: url.to_string(),
@@ -237,24 +407,27 @@ pub mod extraction {
     }
 
     /// Extract and validate collector configuration
-    pub fn extract_collector_config(config: &ConfigValue) -> Result<CollectorTestConfig> {
-        let buffer_size = config.u64_or("collector.buffer_size", 1000);
-        let batch_size = config.u64_or("collector.batch_size", 100);
-        let flush_interval_str = config.str_or("collector.flush_interval", "5s");
+    pub fn extract_collector_config(config: &ConfigValue) -> AnyhowResult<CollectorTestConfig> {
+        let buffer_size = u64_or(config, "collector.buffer_size", 1000);
+        let batch_size = u64_or(config, "collector.batch_size", 100);
+        let flush_interval_str = str_or(config, "collector.flush_interval", "5s");
 
         // Parse and validate duration
-        let flush_interval_seconds = parse_duration(flush_interval_str)?;
+        let flush_interval_seconds = parse_duration(flush_interval_str)
+            .map_err(|e| anyhow::anyhow!("Invalid flush interval: {}", e))?;
 
         // Validate ranges using ValidationChain
         ValidationChain::validate(buffer_size, "collector.buffer_size")
             .min(1)
             .max(10000)
-            .into_result()?;
+            .into_result()
+            .map_err(|e| anyhow::anyhow!("Buffer size validation failed: {}", e))?;
 
         ValidationChain::validate(batch_size, "collector.batch_size")
             .min(1)
             .max(1000)
-            .into_result()?;
+            .into_result()
+            .map_err(|e| anyhow::anyhow!("Batch size validation failed: {}", e))?;
 
         Ok(CollectorTestConfig {
             buffer_size,
@@ -264,15 +437,18 @@ pub mod extraction {
     }
 
     /// Extract sources configuration with validation
-    pub fn extract_sources_config(config: &ConfigValue) -> Result<SourcesTestConfig> {
-        let filesystem_enabled = config.bool_or("sources.filesystem", false);
-        let terminal_enabled = config.bool_or("sources.terminal", false);
-        let clipboard_enabled = config.bool_or("sources.clipboard", false);
+    pub fn extract_sources_config(config: &ConfigValue) -> AnyhowResult<SourcesTestConfig> {
+        let filesystem_enabled = bool_or(config, "sources.filesystem", false);
+        let terminal_enabled = bool_or(config, "sources.terminal", false);
+        let clipboard_enabled = bool_or(config, "sources.clipboard", false);
 
         // Extract filesystem-specific config if enabled
         let filesystem_watch_paths = if filesystem_enabled {
             config
-                .optional_str("sources.filesystem.watch_paths")
+                .get("sources")
+                .and_then(|s| s.get("filesystem"))
+                .and_then(|f| f.get("watch_paths"))
+                .and_then(|v| v.as_str())
                 .map(|s| s.split(',').map(|p| p.trim().to_string()).collect())
                 .unwrap_or_else(|| vec!["/tmp".to_string()])
         } else {
@@ -535,7 +711,11 @@ mod tests {
         let config = test_configs::invalid_values_config();
 
         // Test URL validation using ValidationChain
-        if let Some(url) = config.optional_str("database.url") {
+        if let Some(url) = config
+            .get("database")
+            .and_then(|db| db.get("url"))
+            .and_then(|v| v.as_str())
+        {
             let chain = ValidationChain::validate(url.to_string(), "database.url").is_valid_url();
 
             assert!(!chain.is_valid());

@@ -19,7 +19,6 @@ The Sinex project uses a 5-level maturity model to classify the development stat
 - Privacy-preserving federation
 - Advanced agent coordination
 
-**Typical Duration:** Months to years of research
 
 ### L1 - Concept
 **Architecture and data flow defined**
@@ -34,7 +33,6 @@ The Sinex project uses a 5-level maturity model to classify the development stat
 - Semantic Desktop Stream architecture
 - Advanced activity segmentation
 
-**Typical Duration:** Weeks of design refinement
 
 ### L2 - Technical Specification
 **APIs, schemas, and algorithms specified**
@@ -45,11 +43,10 @@ The Sinex project uses a 5-level maturity model to classify the development stat
 - Missing some implementation details or dependency resolution
 
 **Examples:**
-- LLM integration framework
-- Embedding generation pipeline
-- Browser extension architecture
+- LLM integration framework with StatefulStreamProcessor
+- Embedding generation pipeline for core.events
+- Browser extension architecture with processor manifests
 
-**Typical Duration:** Days to weeks of implementation
 
 ### L3 - Ready for Implementation
 **All dependencies met, clear acceptance criteria**
@@ -60,11 +57,10 @@ The Sinex project uses a 5-level maturity model to classify the development stat
 - Can be implemented without additional design work
 
 **Examples:**
-- Hyprland IPC rich context extraction
-- pgBackRest backup setup
-- Audio capture via PipeWire
+- Hyprland IPC rich context extraction via StatefulStreamProcessor
+- pgBackRest backup setup for core.events
+- Audio capture via PipeWire with source material registry
 
-**Typical Duration:** Days of focused implementation
 
 ### L4 - Implemented
 **Built with measurable coverage**
@@ -75,14 +71,10 @@ The Sinex project uses a 5-level maturity model to classify the development stat
 - Coverage percentage tracked
 
 **Examples:**
-- Event storage infrastructure (90% coverage)
-- Basic event sources (filesystem, terminal, clipboard)
-- Git-annex blob storage integration
+- Event storage infrastructure with core.events table (90% coverage)
+- Basic event sources with StatefulStreamProcessor interface (filesystem, terminal, clipboard)
+- Git-annex blob storage integration with source material registry
 
-**Tracking Metrics:**
-- Test coverage percentage
-- Documentation completeness
-- Performance benchmarks
 
 ## Maturity Progression
 
@@ -128,7 +120,7 @@ Each Technical Implementation Memo (TIM) should include a status section:
 ## Status Dashboard
 **Maturity Level**: L2 - Technical Specification
 **Implementation**: 30% (basic events only)
-**Dependencies**: PostgreSQL, EventSource trait
+**Dependencies**: PostgreSQL, StatefulStreamProcessor interface
 **Blocks**: Rich context features, AI analysis
 **Blocked By**: None
 **To Reach L3**: Define message protocol, security model
@@ -182,8 +174,4 @@ Maintain features across all maturity levels:
 
 ## Review and Updates
 
-This maturity model is reviewed quarterly and updated based on:
-- Implementation experience and lessons learned
-- Contributor feedback on classification accuracy
-- Changes in project scope or technical landscape
-- Discovery of new dependencies or blockers
+This maturity model is reviewed quarterly and updated based on implementation experience, contributor feedback, and changes in project scope or technical landscape.

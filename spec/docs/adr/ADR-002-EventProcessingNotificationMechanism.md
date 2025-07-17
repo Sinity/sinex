@@ -1,9 +1,11 @@
 # ADR-002: Event Processing Notification/Triggering Mechanism
 
-*   **Status:** Accepted
+*   **Status:** Superseded
 *   **Date:** 2024-03-11
+*   **Superseded By:** Redis Streams Architecture
+*   **Superseded Date:** 2025-07-17
 *   **Context & Problem Statement:**
-    After new events are ingested into the `raw.events` table, subsequent processing (promotion to domain tables, enrichment, analysis) needs to be triggered for various agents. The mechanism for notifying these agents about new work must be reliable, performant, and integrate well with the Exocortex architecture. Key considerations include:
+    After new events are ingested into the `core.events` table, subsequent processing (promotion to domain tables, enrichment, analysis) needs to be triggered for various agents. The mechanism for notifying these agents about new work must be reliable, performant, and integrate well with the Exocortex architecture. Key considerations include:
     1.  **Decoupling:** Ingestion should be decoupled from processing to handle bursts and allow agents to work at their own pace.
     2.  **Reliability:** Ensure events are not lost if a processing agent is temporarily down.
     3.  **Scalability:** Handle potentially high volumes of events and a growing number of diverse processing agents.
@@ -14,7 +16,7 @@
 *   **Discussed Options:**
 
     1.  **PostgreSQL `LISTEN/NOTIFY`:**
-        *   **Description:** A trigger on `raw.events` `AFTER INSERT` issues a `NOTIFY channel_name, payload` command. Agents connect to PostgreSQL and `LISTEN` on specific channels.
+        *   **Description:** A trigger on `core.events` `AFTER INSERT` issues a `NOTIFY channel_name, payload` command. Agents connect to PostgreSQL and `LISTEN` on specific channels.
         *   **Pros:**
             *   Built into PostgreSQL, no external dependencies.
             *   Transactional: Notifications are sent only upon successful commit of the inserting transaction.
@@ -62,7 +64,7 @@
             *   Adds some complexity compared to pure polling. The queue table remains the source of truth for work items.
 
 *   **Decision:**
-    The initial and primary mechanism for triggering agent processing of new `raw.events` will be **Option 2: Worker polling of a dedicated PostgreSQL queue table (`sinex_schemas.work_queue`)**.
+    The initial and primary mechanism for triggering agent processing of new `core.events` will be **Option 2: Worker polling of a dedicated PostgreSQL queue table (`sinex_schemas.work_queue`)**.
     `LISTEN/NOTIFY` (as per Option 4) may be used as an *optional optimization* by specific worker agents to reduce polling latency. If used, the `NOTIFY` payload will be a simple "wake-up" signal (e.g., just the `target_agent_name`), and the queue table remains the authoritative source for work items. The decision to add this `NOTIFY`-based wake-up will be made on a per-agent basis if polling latency becomes a demonstrable issue for its specific workload and the `LISTEN/NOTIFY` limitations are acceptable for that agent.
     External message queues (Option 3) are deferred as a future scaling optimization if the PostgreSQL-based queue and optional `NOTIFY` wake-up prove insufficient.
 
@@ -71,7 +73,7 @@
     2.  **Simplicity for MVP & Single-Host:** Leverages the existing PostgreSQL database, avoiding the introduction and management of an additional external dependency (like Redis or Kafka) in the core architecture of a single-host system. This aligns with keeping the initial operational footprint lean.
     3.  **Decoupling and Scalability:** Effectively decouples ingestion from processing. Multiple worker instances can pull from the queue, allowing for horizontal scaling of processing logic if needed. `FOR UPDATE SKIP LOCKED` ensures efficient concurrent access.
     4.  **Rich Feature Support:** The queue table model naturally supports tracking processing status, retry counts, error messages, and scheduled retry times (for exponential backoff) per item, directly within the database.
-    5.  **Transactional Coherence:** If a trigger on `raw.events` populates the `work_queue` within the same transaction, the queuing of work is atomic with the ingestion of the event.
+    5.  **Transactional Coherence:** If a trigger on `core.events` populates the `work_queue` within the same transaction, the queuing of work is atomic with the ingestion of the event.
     6.  **Flexibility for `LISTEN/NOTIFY` Augmentation:** The polling model can be enhanced with `LISTEN/NOTIFY` as a "nudge" without fundamentally changing the reliability model, as the queue table remains the source of truth. This allows targeted optimization where latency is critical and `NOTIFY` constraints are manageable.
 
 *   **Consequences:**
@@ -80,4 +82,26 @@
     *   There will be a baseline polling latency. The frequency of polling is a tunable parameter, balancing responsiveness against database load.
     *   If `LISTEN/NOTIFY` is added for specific agents, those agents will need to manage a PostgreSQL connection suitable for `LISTEN` (e.g., direct connection or session pooling).
     *   The `sinex_router.route_raw_event_to_work_queue` function (or similar logic) is responsible for populating the queue based on agent subscriptions defined in `sinex_schemas.agent_manifests`.
+
+## Current Implementation Status
+
+**SUPERSEDED** - This ADR has been superseded by Redis Streams architecture:
+
+**What Changed:**
+- Moved from PostgreSQL work queue to Redis Streams
+- Implemented Redis consumer groups for reliable processing
+- Added hybrid checkpoint system (Redis + PostgreSQL persistence)
+- Eliminated polling in favor of push-based processing
+
+**Current Architecture:**
+- Events flow: gRPC → PostgreSQL → Redis Streams → Consumer Groups
+- Processors use `StatefulStreamProcessor` trait with Redis stream consumption
+- Automatic retry and dead letter queue handling via Redis
+- Checkpoint persistence in PostgreSQL for durability
+
+**Performance Improvements:**
+- Sub-second event processing latency
+- Horizontal scaling via consumer groups
+- Reduced database load through streaming architecture
+- Real-time processing without polling overhead
 

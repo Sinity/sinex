@@ -1,0 +1,30 @@
+[package]
+name = "sinex-core-runtime"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core types
+sinex-core-types = { path = "../sinex-core-types" }
+
+# Event and validation support
+sinex-events = { path = "../sinex-events" }
+sinex-validation = { path = "../sinex-validation" }
+
+# Async runtime
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# Utilities
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio-test = "0.4"

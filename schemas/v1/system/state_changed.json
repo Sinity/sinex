@@ -1,0 +1,21 @@
+{
+  "$id": "https://sinex.io/schemas/v1/system/state_changed.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "changed_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "state_data": true,
+    "state_type": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "changed_at",
+    "state_data",
+    "state_type"
+  ],
+  "title": "SystemStatePayload",
+  "type": "object"
+}

@@ -56,7 +56,7 @@
       import re
       
       def query_events(limit=10):
-          cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest FROM raw.events ORDER BY ts_ingest DESC LIMIT {limit};\""
+          cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest FROM core.events ORDER BY ts_ingest DESC LIMIT {limit};\""
           result = subprocess.run([
               "su", "-", "postgres", "-c", cmd
           ], capture_output=True, text=True)
@@ -73,7 +73,7 @@
               print(f"Query failed: {result.stderr}")
       
       def stats():
-          cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'"
+          cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'"
           result = subprocess.run([
               "su", "-", "postgres", "-c", cmd
           ], capture_output=True, text=True)

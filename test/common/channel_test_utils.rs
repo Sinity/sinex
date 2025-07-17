@@ -1,10 +1,10 @@
-//! Channel testing utilities using ChannelSenderExt and ChannelReceiverExt abstractions
-//!
-//! This module provides testing utilities for async channel patterns using the new
-//! channel extension traits, backpressure management, and monitoring capabilities.
+// Channel testing utilities using ChannelSenderExt and ChannelReceiverExt abstractions
+//
+// This module provides testing utilities for async channel patterns using the new
+// channel extension traits, backpressure management, and monitoring capabilities.
 
 use crate::common::prelude::*;
-use sinex_core::ErrorContext;
+use sinex_core_types::ErrorContext;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
@@ -67,17 +67,10 @@ pub mod behavior {
             .recv_timeout(Duration::from_secs(1))
             .await
             .map_err(|e| {
-                ErrorContext::new(CoreError::Other(
-                    "Failed to receive from channel".to_string(),
-                ))
-                .with_context("test_name", test_name)
-                .with_source(e)
-                .build()
+                CoreError::Unknown(format!("Failed to receive from channel in test {}: {}", test_name, e))
             })?
             .ok_or_else(|| {
-                ErrorContext::new(CoreError::Other("Channel closed unexpectedly".to_string()))
-                    .with_context("test_name", test_name)
-                    .build()
+                CoreError::Unknown(format!("Channel closed unexpectedly in test {}", test_name))
             })?;
 
         Ok(())
@@ -100,16 +93,16 @@ pub mod behavior {
         ) {
             (true, true) => Ok(()),   // Expected timeout
             (false, false) => Ok(()), // Expected receive
-            (false, true) => Err(Box::new(
+            (false, true) => Err(
                 CoreError::validation("Expected timeout but received value")
                     .with_context("timeout_duration", format!("{:?}", timeout))
-                    .build(),
-            )),
-            (true, false) => Err(Box::new(
+                    .build().into()
+            ),
+            (true, false) => Err(
                 CoreError::validation("Expected receive but got timeout/close")
                     .with_context("timeout_duration", format!("{:?}", timeout))
-                    .build(),
-            )),
+                    .build().into()
+            ),
         }
     }
 
@@ -137,12 +130,12 @@ pub mod behavior {
             let batch = receiver.recv_batch(max_batch_size, batch_timeout).await;
 
             if batch.is_empty() {
-                return Err(Box::new(
+                return Err(
                     CoreError::validation("Received empty batch before all items collected")
                         .with_context("total_received", total_received)
                         .with_context("expected_total", items.len())
-                        .build(),
-                ));
+                        .build().into()
+                );
             }
 
             total_received += batch.len();
@@ -150,11 +143,11 @@ pub mod behavior {
 
             // Prevent infinite loops
             if batch_count > 100 {
-                return Err(Box::new(
+                return Err(
                     CoreError::validation("Too many batches - possible infinite loop")
                         .with_context("batch_count", batch_count)
-                        .build(),
-                ));
+                        .build().into()
+                );
             }
         }
 
@@ -304,7 +297,7 @@ pub mod performance {
         mut receiver: impl ChannelReceiverExt<T> + Send + 'static,
         item_count: usize,
         test_item: T,
-    ) -> Result<ChannelPerformanceReport, Box<dyn std::error::Error>>
+    ) -> AnyhowResult<ChannelPerformanceReport>
     where
         T: Send + Clone + 'static,
     {
@@ -414,11 +407,7 @@ pub mod performance {
         // Wait for all senders to complete
         for handle in handles {
             handle.await.map_err(|e| {
-                ErrorContext::new(CoreError::Other(
-                    "Concurrent sender task failed".to_string(),
-                ))
-                .with_source(e)
-                .build()
+                CoreError::Unknown(format!("Concurrent sender task failed: {}", e))
             })?;
         }
 

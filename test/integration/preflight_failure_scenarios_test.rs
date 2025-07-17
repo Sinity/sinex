@@ -1,8 +1,9 @@
-//! Preflight Failure Scenarios Tests - Comprehensive failure handling and error reporting
+// Preflight Failure Scenarios Tests - Comprehensive failure handling and error reporting
 
 use crate::common::prelude::*;
-use serde_json::{json, Value};
-use std::collections::HashMap;
+
+use crate::common::prelude::*;
+use serde_json::json;
 use std::env;
 use std::fs;
 use std::process::Command;

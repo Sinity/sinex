@@ -1,7 +1,8 @@
 # ADR-007: Large-Scale Vector Search Strategy
 
-*   **Status:** Accepted
+*   **Status:** Implemented
 *   **Date:** 2024-03-11
+*   **Implementation Date:** 2025-07-17
 *   **Context & Problem Statement:**
     Semantic search using vector embeddings is a core capability of the Exocortex. As the volume of embeddable content (PKM notes, web archives, event payloads) grows potentially into millions or tens of millions of vectors, the performance (latency, QPS) and scalability of the vector search solution become critical. The default approach is to use `pgvector` within PostgreSQL, which is CPU-bound. For very large scale, GPU-accelerated dedicated vector databases are an option.
 
@@ -11,7 +12,7 @@
         *   **Description:** Use `pgvector` extension in PostgreSQL with HNSW or IVFFlat indexes. All indexing and search operations run on the CPU cores available to the PostgreSQL server.
         *   **Pros:**
             *   **Simplicity:** Integrated directly into the primary Exocortex datastore. No additional services to deploy or manage.
-            *   **Unified Data Management:** Embeddings live alongside their source metadata (`core_artifact_contents`, `raw.events`), simplifying queries that combine vector search with metadata filtering.
+            *   **Unified Data Management:** Embeddings live alongside their source metadata (`core_artifact_contents`, `core.events`), simplifying queries that combine vector search with metadata filtering.
             *   **Cost-Effective at Small to Medium Scale:** Leverages existing PostgreSQL hardware. No separate licensing or infrastructure costs for a dedicated vector DB.
             *   **Good Performance for Many Use Cases:** `pgvector` with HNSW can provide excellent performance (e.g., ~1800 QPS at 91% recall on 50M vectors in one cited test [CR4], sub-100ms p99 latency for 1M document hybrid search [CR3]) on commodity CPU hardware for typical Exocortex scales.
         *   **Cons:**

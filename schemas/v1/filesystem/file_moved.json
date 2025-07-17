@@ -1,0 +1,25 @@
+{
+  "$id": "https://sinex.io/schemas/v1/filesystem/file_moved.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "moved_at": {
+      "format": "date-time",
+      "type": "string"
+    },
+    "old_path": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "path": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "moved_at",
+    "path"
+  ],
+  "title": "FileMovedPayload",
+  "type": "object"
+}

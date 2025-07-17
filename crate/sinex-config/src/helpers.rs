@@ -18,6 +18,9 @@ impl Default for DatabaseConfig {
     }
 }
 
+// DEPRECATED: CollectorConfig is no longer used after modernization to environment-only configuration
+// This struct is preserved for backward compatibility but should not be used in new code
+#[deprecated(note = "Use environment-only configuration instead")]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct CollectorConfig {
     pub enabled_events: Vec<String>,
@@ -25,6 +28,7 @@ pub struct CollectorConfig {
     pub database: DatabaseConfig,
 }
 
+#[allow(deprecated)]
 impl CollectorConfig {
     pub fn get_validation_report(&self) -> ValidationReport {
         ValidationReport::default()
@@ -66,8 +70,5 @@ impl ConfigFactory {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct ConfigExtraction;
-
-#[derive(Debug, Clone)]
-pub struct ConfigMerger;
+// ConfigExtraction and ConfigMerger are deprecated
+// These were used for file-based configuration merging which is no longer supported

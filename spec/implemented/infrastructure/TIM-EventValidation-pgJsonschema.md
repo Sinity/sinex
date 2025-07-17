@@ -35,7 +35,7 @@
 *   **Relevant ADR:** (N/A directly, supports data integrity principle)
 *   **Original UG Context:** Section 2.2
 
-This TIM details the use of the `pg_jsonschema` PostgreSQL extension for validating `raw.events.payload` JSONB data against schemas registered in `sinex_schemas.event_payload_schemas`, directly within the database.
+This TIM details the use of the `pg_jsonschema` PostgreSQL extension for validating `core.events.payload` JSONB data against schemas registered in `sinex_schemas.event_payload_schemas`, directly within the database.
 
 ## 1. Rationale Summary
 
@@ -57,19 +57,19 @@ In-database validation using `pg_jsonschema` provides a performant (C-based exte
     CREATE EXTENSION IF NOT EXISTS pg_jsonschema;
     ```
 
-## 3. Validation `CHECK` Constraint on `raw.events`
+## 3. Validation `CHECK` Constraint on `core.events`
 
-A `CHECK` constraint on `raw.events` enforces that if a `payload_schema_id` is provided and the referenced schema is active, the `payload` must conform to it.
+A `CHECK` constraint on `core.events` enforces that if a `payload_schema_id` is provided and the referenced schema is active, the `payload` must conform to it.
 
 *   **DDL (from UG Sec 2.2.3, refined):**
     ```sql
-    -- Ensure this runs after raw.events and sinex_schemas.event_payload_schemas tables are created
-    -- and after the FK from raw.events.payload_schema_id to event_payload_schemas.id is established.
+    -- Ensure this runs after core.events and sinex_schemas.event_payload_schemas tables are created
+    -- and after the FK from core.events.payload_schema_id to event_payload_schemas.id is established.
 
-    ALTER TABLE raw.events
+    ALTER TABLE core.events
     DROP CONSTRAINT IF EXISTS chk_payload_conforms_to_schema; -- Drop if exists for idempotency
 
-    ALTER TABLE raw.events
+    ALTER TABLE core.events
     ADD CONSTRAINT chk_payload_conforms_to_schema
     CHECK (
         payload_schema_id IS NULL OR -- If no schema is specified, validation is skipped
@@ -78,7 +78,7 @@ A `CHECK` constraint on `raw.events` enforces that if a `payload_schema_id` is p
             WITH schema_info AS (
                 SELECT ps.json_schema_definition, ps.is_active
                 FROM sinex_schemas.event_payload_schemas ps
-                WHERE ps.id = raw.events.payload_schema_id
+                WHERE ps.id = core.events.payload_schema_id
             )
             -- Only attempt validation if the schema was found and is active
             (SELECT si.is_active FROM schema_info si) = TRUE
@@ -90,8 +90,8 @@ A `CHECK` constraint on `raw.events` enforces that if a `payload_schema_id` is p
             )
         )
     );
-    COMMENT ON CONSTRAINT chk_payload_conforms_to_schema ON raw.events
-        IS 'Ensures that raw.events.payload conforms to the JSON schema specified by payload_schema_id, if that schema is active.';
+    COMMENT ON CONSTRAINT chk_payload_conforms_to_schema ON core.events
+        IS 'Ensures that core.events.payload conforms to the JSON schema specified by payload_schema_id, if that schema is active.';
     ```
 *   **Performance Note on Subselects in `CHECK`:** For extremely high ingestion rates, the subselects within the `CHECK` constraint could introduce latency. If this becomes a bottleneck:
     1.  **Asynchronous Validation:** Remove the `CHECK` constraint. Implement validation in an early-stage promotion agent. Non-compliant events are flagged or quarantined.

@@ -298,155 +298,11 @@ in
       ];
     };
 
-    # Core Sinex services
-    systemd.services = {
-      sinex-unified-collector = mkIf cfg.services.collector.enable {
-        description = "Sinex Unified Event Collector";
-        wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "network.target" ];
-        wants = [ "postgresql.service" ];
-
-        # Pre-flight verification dependency
-        requisite = mkIf cfg.preflightVerification.enable [ "sinex-preflight.service" ];
-
-        environment = {
-          DATABASE_URL = "postgresql:///${cfg.database.name}?host=/run/postgresql";
-          SINEX_ANNEX_REPO = cfg.annexRepo;
-          RUST_LOG = if cfg.observability.enable then "info" else "warn";
-        };
-
-        serviceConfig = {
-          Type = "simple";
-          User = cfg.database.user;
-          Group = cfg.database.user;
-          Restart = "always";
-          RestartSec = "10s";
-          MemoryMax = cfg.services.collector.memoryLimit;
-          
-          # Generate configuration from NixOS options
-          ExecStart = pkgs.writeShellScript "sinex-collector" ''
-            set -euo pipefail
-            
-            # Generate runtime configuration
-            config_file="$(mktemp)"
-            cat > "$config_file" <<EOF
-            [collector]
-            annex_repo_path = "${cfg.annexRepo}"
-            database_pool_size = ${toString cfg.database.connectionPoolSize}
-            blob_threshold = "${cfg.storage.blobThreshold}"
-            
-            [event_sources]
-            filesystem = ${if cfg.eventSources.filesystem then "true" else "false"}
-            terminal = ${if cfg.eventSources.terminal then "true" else "false"}
-            window_manager = ${if cfg.eventSources.windowManager then "true" else "false"}
-            clipboard = ${if cfg.eventSources.clipboard then "true" else "false"}
-            system_events = ${if cfg.eventSources.systemEvents then "true" else "false"}
-            process_monitoring = ${if cfg.eventSources.processMonitoring then "true" else "false"}
-            network_monitoring = ${if cfg.eventSources.networkMonitoring then "true" else "false"}
-            screen_capture = ${if cfg.eventSources.screenCapture then "true" else "false"}
-            
-            [storage]
-            compression_level = "${cfg.storage.compressionLevel}"
-            ${optionalString (cfg.storage.dataRetention != null) ''data_retention = "${cfg.storage.dataRetention}"''}
-            EOF
-            
-            exec ${pkgs.sinex}/bin/sinex-collector --config "$config_file"
-          '';
-        };
-      };
-
-      sinex-promo-worker = mkIf cfg.services.worker.enable {
-        description = "Sinex Event Processing Worker";
-        wantedBy = [ "multi-user.target" ];
-        after = [ "postgresql.service" "sinex-unified-collector.service" ];
-        wants = [ "postgresql.service" ];
-
-        environment = {
-          DATABASE_URL = "postgresql:///${cfg.database.name}?host=/run/postgresql";
-          RUST_LOG = if cfg.observability.enable then "info" else "warn";
-        };
-
-        serviceConfig = {
-          Type = "simple";
-          User = cfg.database.user;
-          Group = cfg.database.user;
-          Restart = "always";
-          RestartSec = "10s";
-          
-          ExecStart = "${pkgs.sinex}/bin/sinex-promo-worker --concurrency ${toString cfg.services.worker.concurrency}";
-        };
-      };
-
-      # Pre-flight verification service
-      sinex-preflight = mkIf cfg.preflightVerification.enable {
-        description = "Sinex Pre-Flight Verification";
-        serviceConfig = {
-          Type = "oneshot";
-          User = cfg.database.user;
-          Group = cfg.database.user;
-          TimeoutSec = cfg.preflightVerification.timeout;
-          
-          ExecStart = pkgs.writeShellScript "sinex-preflight" ''
-            set -euo pipefail
-            
-            if ! ${pkgs.sinex}/bin/sinex-preflight verify --timeout ${toString cfg.preflightVerification.timeout}; then
-              ${if cfg.preflightVerification.failureAction == "abort" then ''
-                echo "Pre-flight verification failed, aborting deployment"
-                exit 1
-              '' else ''
-                echo "Pre-flight verification failed, but continuing due to warn mode"
-                exit 0
-              ''}
-            fi
-          '';
-        };
-      };
-
-      # Update service with pre-flight verification
-      sinex-update = mkIf cfg.services.updateService.enable {
-        description = "Sinex Update Service with Pre-Flight Verification";
-        serviceConfig = {
-          Type = "oneshot";
-          User = cfg.database.user;
-          Group = cfg.database.user;
-          
-          ExecStart = pkgs.writeShellScript "sinex-update" ''
-            set -euo pipefail
-            
-            echo "Starting Sinex update with pre-flight verification..."
-            
-            # Run pre-flight verification
-            ${optionalString cfg.preflightVerification.enable ''
-              if ! systemctl start sinex-preflight; then
-                echo "Pre-flight verification failed, update aborted"
-                exit 1
-              fi
-            ''}
-            
-            # Graceful shutdown
-            echo "Stopping Sinex services gracefully..."
-            systemctl stop sinex-unified-collector sinex-promo-worker || true
-            sleep ${toString cfg.services.updateService.gracePeriod}
-            
-            # Start services (they will use new configuration)
-            echo "Starting updated Sinex services..."
-            systemctl start sinex-unified-collector sinex-promo-worker
-            
-            # Health check
-            sleep 10
-            if ! systemctl is-active sinex-unified-collector; then
-              echo "Collector failed to start, rolling back"
-              # TODO: Implement automatic rollback
-              exit 1
-            fi
-            
-            echo "Sinex update completed successfully"
-          '';
-        };
-      };
-    };
-
-    # Full observability stack (when enabled)
+    # Legacy service definitions have been removed
+    # Use satellite architecture via satellite-services.nix module
+    warnings = [ "sinex-config.nix service definitions are deprecated. Use satellite-services.nix for the new architecture." ];
+    
+    # Observability stack (retained for backward compatibility)
     services.prometheus = mkIf cfg.observability.enable {
       enable = true;
       port = cfg.observability.prometheusPort;
@@ -592,8 +448,9 @@ in
         echo ""
         
         echo "🏥 Services:"
-        systemctl is-active sinex-unified-collector && echo "✅ Collector" || echo "❌ Collector"
-        systemctl is-active sinex-promo-worker && echo "✅ Worker" || echo "❌ Worker"
+        systemctl is-active sinex-ingestd && echo "✅ Ingestion Daemon" || echo "❌ Ingestion Daemon"
+        systemctl is-active sinex-gateway && echo "✅ API Gateway" || echo "❌ API Gateway"
+        systemctl is-active sinex-fs-watcher && echo "✅ Filesystem Watcher" || echo "❌ Filesystem Watcher"
         
         ${optionalString cfg.observability.enable ''
           echo ""

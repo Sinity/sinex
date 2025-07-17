@@ -18,7 +18,7 @@ let
         if after:
             where_clause += f" AND ts_ingest > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM raw.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -35,7 +35,7 @@ let
             print(f"Query failed: {result.stderr}")
 
     def stats_by_source():
-        cmd = "psql -d sinex -t -c \"SELECT source, COUNT(*) FROM raw.events GROUP BY source ORDER BY COUNT(*) DESC;\""
+        cmd = "psql -d sinex -t -c \"SELECT source, COUNT(*) FROM core.events GROUP BY source ORDER BY COUNT(*) DESC;\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -50,7 +50,7 @@ let
 
     def performance_stats():
         # Get event rate over last minute
-        cmd = "psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '1 minute';\""
+        cmd = "psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '1 minute';\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -67,7 +67,7 @@ let
             print(f"Performance stats failed: {result.stderr}")
 
     def total_stats():
-        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'"
+        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'"
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)

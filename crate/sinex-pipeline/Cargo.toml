@@ -1,0 +1,19 @@
+[package]
+name = "sinex-pipeline"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+sinex-error = { path = "../sinex-error" }
+sinex-events = { path = "../sinex-events" }
+sinex-channel = { path = "../sinex-channel" }
+tokio = { workspace = true, features = ["sync", "time"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+chrono.workspace = true
+
+[lints]
+workspace = true

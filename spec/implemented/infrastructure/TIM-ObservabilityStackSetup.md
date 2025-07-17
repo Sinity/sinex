@@ -105,20 +105,18 @@ Example configuration in `configuration.nix`.
 **Custom PostgreSQL Queries for `postgres_exporter` (`sinex_pg_custom_queries.yaml`):**
 (From UG Sec 24.2)
 ```yaml
-sinex_dlq_items_total: # Metric name prefix
-  query: "SELECT status, source_queue_name, processing_agent_name, count(*) AS count FROM core.dead_letter_queue GROUP BY status, source_queue_name, processing_agent_name;"
+sinex_events_total: # Metric name prefix
+  query: "SELECT source, event_type, count(*) AS count FROM core.events GROUP BY source, event_type;"
   metrics:
-    - status: { usage: "LABEL", description: "Status of DLQ item" }
-    - source_queue_name: { usage: "LABEL", description: "Original source queue of DLQ item" }
-    - processing_agent_name: { usage: "LABEL", description: "Agent responsible for DLQ item" }
-    - count:  { usage: "GAUGE", description: "Number of items in DLQ by status and source" }
+    - source: { usage: "LABEL", description: "Event source (processor name)" }
+    - event_type: { usage: "LABEL", description: "Type of event" }
+    - count:  { usage: "GAUGE", description: "Number of events by source and type" }
 
-sinex_work_queue_items_total:
-  query: "SELECT target_agent_name, status, count(*) AS count FROM sinex_schemas.work_queue GROUP BY target_agent_name, status;"
+sinex_processor_checkpoints:
+  query: "SELECT automaton_name, processed_count FROM core.automaton_checkpoints;"
   metrics:
-    - target_agent_name: { usage: "LABEL", description: "Target agent for work processing" }
-    - status: { usage: "LABEL", description: "Status of promotion queue item" }
-    - count:  { usage: "GAUGE", description: "Number of items in promotion queue by agent and status" }
+    - automaton_name: { usage: "LABEL", description: "Automaton processor name" }
+    - processed_count: { usage: "GAUGE", description: "Number of events processed by automaton" }
 ```
 
 ### 3.2. Grafana
@@ -276,9 +274,9 @@ Exocortex services (Rust, Python agents) expose an HTTP `/metrics` endpoint serv
 
 *   Dashboards are JSON models. Create via UI then export, or provision declaratively.
 *   **Key Panels/Visualizations:**
-    *   Event Ingestion Rates (`rate(raw_events_inserted_total[5m])`).
-    *   Promotion Worker Stats (processed rates, queue depths, latency histograms - see UG Sec 24.5 for PromQL).
-    *   DLQ Metrics (current size, rate of items added).
+    *   Event Ingestion Rates (`rate(sinex_events_total[5m])`).
+    *   Processor Stats (processed rates, checkpoint progress, latency histograms).
+    *   Redis Stream Metrics (stream length, consumer group lag).
     *   LLM Usage (calls, tokens, cost - from `sinex.agent.llm_api_call` derived metrics).
     *   System Resources (CPU, RAM, Disk, Network from `node_exporter`).
     *   PostgreSQL Health (QPS, connections, locks, cache hits from `postgres_exporter`).

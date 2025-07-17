@@ -1,28 +1,29 @@
-//! Property-based tests for event model robustness
-//!
-//! This module implements comprehensive property-based testing (fuzzing) for the Sinex event
-//! processing pipeline to ensure robustness against malformed, extreme, or unexpected data.
-//!
-//! # Goals
-//!
-//! 1. **Prevent panics in production**: Any possible input should either process successfully
-//!    or fail gracefully, never crash the system
-//! 2. **Test boundary conditions**: Empty strings, max values, unicode edge cases
-//! 3. **Validate error handling**: Ensure all error paths are robust
-//! 4. **Comprehensive coverage**: Test all major event types and payload structures
-//!
-//! # Strategy
-//!
-//! - Use proptest to generate 1000+ test cases per event type
-//! - Test with extreme values: empty strings, very long strings, unicode, control chars
-//! - Test with edge case numbers: negative, zero, max values, floating point precision
-//! - Test with malformed but parseable JSON structures
-//! - Focus on the `output_event` function which is the main processing pipeline entry point
+// Property-based tests for event model robustness
+//
+// This module implements comprehensive property-based testing (fuzzing) for the Sinex event
+// processing pipeline to ensure robustness against malformed, extreme, or unexpected data.
+//
+// # Goals
+//
+// 1. **Prevent panics in production**: Any possible input should either process successfully
+//    or fail gracefully, never crash the system
+// 2. **Test boundary conditions**: Empty strings, max values, unicode edge cases
+// 3. **Validate error handling**: Ensure all error paths are robust
+// 4. **Comprehensive coverage**: Test all major event types and payload structures
+//
+// # Strategy
+//
+// - Use proptest to generate 1000+ test cases per event type
+// - Test with extreme values: empty strings, very long strings, unicode, control chars
+// - Test with edge case numbers: negative, zero, max values, floating point precision
+// - Test with malformed but parseable JSON structures
+// - Focus on the `output_event` function which is the main processing pipeline entry point
+
+use crate::common::prelude::*;
 
 use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use sinex_collector::{output_event, OutputConfig};
 use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
 
@@ -60,7 +61,7 @@ fn problematic_strings() -> impl Strategy<Value = String> {
         Just("/dev/null".to_string()),
         Just("\\\\server\\share\\file".to_string()),
         // Regular problematic strings
-        prop::string::string_regex("[\\x00-\\x1F\\x7F-\\x9F]*").unwrap(),
+        prop::string::string_regex("[\\x00-\\x1F\\u{007F}-\\u{009F}]*").unwrap(),
         prop::string::string_regex("[\\p{C}]*").unwrap(), // Control characters
         prop::string::string_regex("[\\p{M}]*").unwrap(), // Mark characters
     ]

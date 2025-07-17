@@ -1,18 +1,19 @@
-//! # Boundary Test Suite
-//!
-//! Comprehensive boundary testing for system limits and edge cases.
-//! This module tests behavior at the boundaries of system capabilities.
-//!
-//! ## Test Categories
-//! - **Database Boundaries**: Payload size limits, connection pool exhaustion
-//! - **Network Boundaries**: DNS timeouts, network partitions, connection limits
-//! - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
-//! - **Resource Boundaries**: Memory limits, disk space, file handle limits
+// # Boundary Test Suite
+//
+// Comprehensive boundary testing for system limits and edge cases.
+// This module tests behavior at the boundaries of system capabilities.
+//
+// ## Test Categories
+// - **Database Boundaries**: Payload size limits, connection pool exhaustion
+// - **Network Boundaries**: DNS timeouts, network partitions, connection limits
+// - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
+// - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
 use crate::common::events;
 use crate::common::prelude::*;
 use chrono::Datelike;
 use futures::future::join_all;
+use sinex_events::{EventFactory, services, event_types};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -59,14 +60,14 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
                 let extra_data = "y".repeat(100 * 1024 * 1024); // 100MB more
                 let update_result = sqlx::query!(
                     r#"
-                    UPDATE raw.events
+                    UPDATE core.events
                     SET payload = payload || jsonb_build_object('extra_data', $2::text)
-                    WHERE id::uuid = $1::uuid
+                    WHERE event_id::uuid = $1::uuid
                     "#,
                     event.id.to_uuid(),
                     extra_data
                 )
-                .execute(pool)
+                .execute(&pool)
                 .await;
 
                 match update_result {
@@ -189,14 +190,13 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
 
     let start = Instant::now();
     for i in 0..operation_count {
-        let event = RawEventBuilder::new(
-            "boundary_test",
+        let factory = EventFactory::new("boundary_test");
+        let event = factory.create_event(
             "transaction.test",
             json!({"operation_id": i}),
-        )
-        .build();
+        );
 
-        match sinex_db::events::insert_event_with_validator(pool, &event, None).await {
+        match sinex_db::insert_event_with_validator(pool, &event, None).await {
             Ok(_) => {}
             Err(e) => {
                 println!("Transaction failed at operation {}: {}", i, e);
@@ -222,12 +222,11 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
 
     // Insert test data
     for i in 0..100 {
-        let event = RawEventBuilder::new(
-            "complexity_test",
+        let factory = EventFactory::new("complexity_test");
+        let event = factory.create_event(
             "query.test",
             json!({"value": i, "category": i % 10}),
-        )
-        .build();
+        );
 
         insert_event(pool, &event).await?;
     }
@@ -235,20 +234,20 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
     // Test increasingly complex queries
     let complex_queries = vec![
         // Simple query
-        ("SELECT COUNT(*) FROM raw.events WHERE source = 'complexity_test'", "simple_count"),
+        ("SELECT COUNT(*) FROM core.events WHERE source = 'complexity_test'", "simple_count"),
         
         // Complex aggregation
-        ("SELECT source, event_type, COUNT(*), AVG((payload->>'value')::int) FROM raw.events WHERE source = 'complexity_test' GROUP BY source, event_type", "complex_aggregation"),
+        ("SELECT source, event_type, COUNT(*), AVG((payload->>'value')::int) FROM core.events WHERE source = 'complexity_test' GROUP BY source, event_type", "complex_aggregation"),
         
         // Very complex query with multiple joins and subqueries
-        ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM raw.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM raw.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
+        ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM core.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM core.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
     ];
 
     for (query, description) in complex_queries {
         println!("Testing query complexity: {}", description);
 
         let start = Instant::now();
-        match timeout(Duration::from_secs(10), sqlx::query(query).fetch_all(pool)).await {
+        match timeout(Duration::from_secs(10), sqlx::query(query).fetch_all(&pool)).await {
             Ok(Ok(rows)) => {
                 let elapsed = start.elapsed();
                 println!("  SUCCESS: {} rows in {:?}", rows.len(), elapsed);
@@ -592,15 +591,14 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
     for (test_value, description) in test_values {
         println!("Testing numeric boundary: {} ({})", test_value, description);
 
-        let event = RawEventBuilder::new(
-            "numeric_test",
+        let factory = EventFactory::new("numeric_test");
+        let event = factory.create_event(
             "boundary.test",
             json!({
                 "counter": test_value,
                 "description": description
             }),
-        )
-        .build();
+        );
 
         match insert_event(pool, &event).await {
             Ok(_) => {
@@ -608,10 +606,10 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
 
                 // Try to query it back
                 match sqlx::query!(
-                    "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 {
                     Ok(row) => {
@@ -663,15 +661,14 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
             test_value, description
         );
 
-        let event = RawEventBuilder::new(
-            "float_test",
+        let factory = EventFactory::new("float_test");
+        let event = factory.create_event(
             "precision.test",
             json!({
                 "value": test_value,
                 "description": description
             }),
-        )
-        .build();
+        );
 
         match insert_event(pool, &event).await {
             Ok(_) => {
@@ -679,10 +676,10 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
 
                 // Try to query it back
                 match sqlx::query!(
-                    "SELECT payload FROM raw.events WHERE id::uuid = $1::uuid",
+                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 {
                     Ok(row) => {
@@ -793,8 +790,8 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
                     "large_data": "x".repeat(1024 * 1024) // 1MB string
                 });
 
-                let event =
-                    RawEventBuilder::new("resource_test", "exhaustion.test", large_payload).build();
+                let factory = EventFactory::new("resource_test");
+                let event = factory.create_event("exhaustion.test", large_payload);
 
                 match timeout(Duration::from_secs(5), insert_event(&pool_clone, &event)).await {
                     Ok(Ok(_)) => {

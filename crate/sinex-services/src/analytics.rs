@@ -1,10 +1,24 @@
 //! Analytics service for event analysis and insights
 
 use crate::error::ServiceResult;
+use sinex_db::queries::{OperationQueries, EventQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_db::DbPool;
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
+use sqlx::FromRow;
 use std::collections::HashMap;
+
+#[derive(FromRow)]
+struct SourceActivityRow {
+    source: String,
+    event_count: i64,
+    #[allow(dead_code)] // Used by database query but not in code
+    event_types: i64,
+    last_event: DateTime<Utc>,
+    #[allow(dead_code)] // Used by database query but not in code
+    first_event: DateTime<Utc>,
+}
 
 pub struct AnalyticsService {
     pool: DbPool,
@@ -25,42 +39,26 @@ impl AnalyticsService {
 
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT source, COUNT(*) as count
-                    FROM raw.events
-                    WHERE ts_ingest >= $1 AND ts_ingest <= $2
-                    GROUP BY source
-                    ORDER BY count DESC
-                    "#,
-                    start,
-                    end
-                )
-                .fetch_all(&self.pool)
-                .await?;
+                let rows: Vec<SourceActivityRow> = OperationQueries::get_source_activity(start)
+                    .fetch_all(&self.pool)
+                    .await?;
 
                 for row in rows {
-                    if let Some(count) = row.count {
-                        result.insert(row.source, count);
+                    // Filter by end time on client side
+                    if row.last_event <= end {
+                        result.insert(row.source, row.event_count);
                     }
                 }
             }
             _ => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT source, COUNT(*) as count
-                    FROM raw.events
-                    GROUP BY source
-                    ORDER BY count DESC
-                    "#
-                )
-                .fetch_all(&self.pool)
-                .await?;
+                // For all-time stats, use a timestamp far in the past
+                let very_old = DateTime::from_timestamp(0, 0).unwrap();
+                let rows: Vec<SourceActivityRow> = OperationQueries::get_source_activity(very_old)
+                    .fetch_all(&self.pool)
+                    .await?;
 
                 for row in rows {
-                    if let Some(count) = row.count {
-                        result.insert(row.source, count);
-                    }
+                    result.insert(row.source, row.event_count);
                 }
             }
         };
@@ -78,42 +76,21 @@ impl AnalyticsService {
 
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT event_type, COUNT(*) as count
-                    FROM raw.events
-                    WHERE ts_ingest >= $1 AND ts_ingest <= $2
-                    GROUP BY event_type
-                    ORDER BY count DESC
-                    "#,
-                    start,
-                    end
-                )
-                .fetch_all(&self.pool)
-                .await?;
+                let rows = EventQueries::count_by_type_in_range(start, end)
+                    .fetch_all(&self.pool)
+                    .await?;
 
                 for row in rows {
-                    if let Some(count) = row.count {
-                        result.insert(row.event_type, count);
-                    }
+                    result.insert(row.event_type, row.count);
                 }
             }
             _ => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT event_type, COUNT(*) as count
-                    FROM raw.events
-                    GROUP BY event_type
-                    ORDER BY count DESC
-                    "#
-                )
-                .fetch_all(&self.pool)
-                .await?;
+                let rows = EventQueries::count_by_type_all_time()
+                    .fetch_all(&self.pool)
+                    .await?;
 
                 for row in rows {
-                    if let Some(count) = row.count {
-                        result.insert(row.event_type, count);
-                    }
+                    result.insert(row.event_type, row.count);
                 }
             }
         };
@@ -139,7 +116,7 @@ impl AnalyticsService {
             SELECT 
                 time_bucket($1::interval, ts_ingest) as bucket,
                 COUNT(*) as count
-            FROM raw.events
+            FROM core.events
             WHERE ts_ingest >= $2 AND ts_ingest <= $3
             GROUP BY bucket
             ORDER BY bucket ASC
@@ -169,59 +146,22 @@ impl AnalyticsService {
     ) -> ServiceResult<Vec<(String, i64)>> {
         let mut result = Vec::new();
 
-        match (start_time, end_time) {
+        let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT 
-                        payload->>'command' as command,
-                        COUNT(*) as count
-                    FROM raw.events
-                    WHERE event_type = 'command.executed'
-                        AND payload ? 'command'
-                        AND ts_ingest >= $1 AND ts_ingest <= $2
-                    GROUP BY payload->>'command'
-                    ORDER BY count DESC
-                    LIMIT $3
-                    "#,
-                    start,
-                    end,
-                    limit as i64
-                )
-                .fetch_all(&self.pool)
-                .await?;
-
-                for row in rows {
-                    if let (Some(cmd), Some(count)) = (row.command, row.count) {
-                        result.push((cmd, count));
-                    }
-                }
+                EventQueries::top_commands_in_range(start, end, limit)
+                    .fetch_all(&self.pool)
+                    .await?
             }
             _ => {
-                let rows = sqlx::query!(
-                    r#"
-                    SELECT 
-                        payload->>'command' as command,
-                        COUNT(*) as count
-                    FROM raw.events
-                    WHERE event_type = 'command.executed'
-                        AND payload ? 'command'
-                    GROUP BY payload->>'command'
-                    ORDER BY count DESC
-                    LIMIT $1
-                    "#,
-                    limit as i64
-                )
-                .fetch_all(&self.pool)
-                .await?;
-
-                for row in rows {
-                    if let (Some(cmd), Some(count)) = (row.command, row.count) {
-                        result.push((cmd, count));
-                    }
-                }
+                EventQueries::top_commands_all_time(limit)
+                    .fetch_all(&self.pool)
+                    .await?
             }
         };
+
+        for row in rows {
+            result.push((row.command, row.count));
+        }
 
         Ok(result)
     }
@@ -243,7 +183,7 @@ impl AnalyticsService {
             SELECT 
                 time_bucket($1::interval, ts_ingest) as bucket,
                 COUNT(*) as count
-            FROM raw.events
+            FROM core.events
             GROUP BY bucket
             ORDER BY count DESC
             LIMIT $2

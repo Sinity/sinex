@@ -1,22 +1,24 @@
-//! # External System Integration Tests
-//!
-//! Integration tests with external systems and services:
-//! - Git Annex for blob storage
-//! - PostgreSQL with TimescaleDB extensions
-//! - Operating system interfaces
-//! - External command execution
-//!
-//! ## Test Categories
-//!
-//! - **Git Annex Integration**: File storage, retrieval, and deduplication
-//! - **External Command Execution**: System interaction validation
-//! - **Database Integration**: External database service integration
-//!
-//! ## Performance Expectations
-//!
-//! - **Individual tests**: 10-60 seconds
-//! - **Resource usage**: Significant disk I/O, external process spawning
-//! - **Dependencies**: Git Annex, external command tools, filesystem access
+// # External System Integration Tests
+//
+// Integration tests with external systems and services:
+// - Git Annex for blob storage
+// - PostgreSQL with TimescaleDB extensions
+// - Operating system interfaces
+// - External command execution
+//
+// ## Test Categories
+//
+// - **Git Annex Integration**: File storage, retrieval, and deduplication
+// - **External Command Execution**: System interaction validation
+// - **Database Integration**: External database service integration
+//
+// ## Performance Expectations
+//
+// - **Individual tests**: 10-60 seconds
+// - **Resource usage**: Significant disk I/O, external process spawning
+// - **Dependencies**: Git Annex, external command tools, filesystem access
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::resources;
@@ -26,7 +28,8 @@ use tokio::fs;
 
 // ==================== GIT ANNEX INTEGRATION TESTS ====================
 
-async fn setup_test_annex() -> Result<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error>> {
+async fn setup_test_annex(
+) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error>> {
     let temp_dir = resources::temp_dir()?;
     let repo_path = temp_dir.path().to_path_buf();
 
@@ -521,7 +524,7 @@ async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestR
         .await?;
 
     // Verify data exists within transaction
-    let result = sqlx::query("SELECT value FROM test_isolation WHERE id = 1")
+    let result = sqlx::query("SELECT value FROM test_isolation WHERE event_id = 1")
         .fetch_one(&mut *tx)
         .await?;
 

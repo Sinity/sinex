@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 90% (Full database schema, indexes, vector support, triggers - missing Rust models and CRUD API layer)
-**Dependencies**: `pgx_ulid` extension, `pgvector` extension, `raw.events` table
+**Dependencies**: `pgx_ulid` extension, `pgvector` extension, `core.events` table
 **Blocks**: Annotation agents, event interpretation workflows, collaborative tagging
 
 ## MVP Specification
@@ -23,7 +23,7 @@
 ## Implementation Checklist
 - [x] Database migration to create `event_annotations` table - `migrations/20250103120013_create_event_relations_and_annotations.sql`
 - [x] ULID primary key implementation with pgx_ulid - `gen_ulid()` default
-- [x] Foreign key constraint to `raw.events` table - CASCADE DELETE implemented
+- [x] Foreign key constraint to `core.events` table - CASCADE DELETE implemented
 - [x] Support for textual content and JSONB metadata - `content TEXT` + `metadata JSONB`
 - [x] Actor identification and annotation type classification - `created_by` + `annotation_type` fields
 - [x] Vector embedding support with pgvector integration - `migrations/20250103120012_create_llm_and_embeddings_tables.sql`
@@ -36,18 +36,18 @@
 - [ ] Automated annotation agents and workflows
 - [ ] Tests for annotation operations and searches
 
-*   **Purpose:** Provides the canonical Data Definition Language (DDL) for the `event_annotations` table. This table allows users and agents to attach flexible, evolving metadata, comments, flags, or preliminary interpretations directly to individual `raw.events` entries without altering the immutable event itself.
+*   **Purpose:** Provides the canonical Data Definition Language (DDL) for the `event_annotations` table. This table allows users and agents to attach flexible, evolving metadata, comments, flags, or preliminary interpretations directly to individual `core.events` entries without altering the immutable event itself.
 *   **Source:** Derived from conceptual descriptions in Vision Document Part V.3.3.
-*   **Dependencies:** `pgx_ulid` extension. Relies on `raw.events` table being defined. `pgvector` for optional annotation embeddings. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.
+*   **Dependencies:** `pgx_ulid` extension. Relies on `core.events` table being defined. `pgvector` for optional annotation embeddings. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.
 
 ## 1. `event_annotations` Table
 
-Stores annotations linked to specific `raw.events`.
+Stores annotations linked to specific `core.events`.
 
 ```sql
 CREATE TABLE IF NOT EXISTS event_annotations (
     annotation_id           ULID PRIMARY KEY DEFAULT gen_ulid(), -- pgx_ulid
-    target_event_id         ULID NOT NULL REFERENCES raw.events(id) ON DELETE CASCADE, -- The event being annotated
+    target_event_id         ULID NOT NULL REFERENCES core.events(id) ON DELETE CASCADE, -- The event being annotated
     
     annotator_actor         TEXT NOT NULL, 
                             -- Identifier for who/what created the annotation.
@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS event_annotations (
     CONSTRAINT chk_event_annotation_content_defined CHECK (content_text IS NOT NULL OR content_jsonb IS NOT NULL)
 );
 
-COMMENT ON TABLE event_annotations IS 'Stores user and agent annotations layered on top of raw.events entries, providing a flexible way to add evolving insights or operational metadata.';
+COMMENT ON TABLE event_annotations IS 'Stores user and agent annotations layered on top of core.events entries, providing a flexible way to add evolving insights or operational metadata.';
 COMMENT ON COLUMN event_annotations.target_event_id IS 'The raw.event ULID that this annotation pertains to.';
 COMMENT ON COLUMN event_annotations.annotator_actor IS 'Identifier for the user, agent, or specific process that created the annotation.';
 COMMENT ON COLUMN event_annotations.annotation_type IS 'Categorizes the type/purpose of the annotation (e.g., user_comment, agent_flag_for_review).';

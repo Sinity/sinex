@@ -7,7 +7,7 @@ This TIM details the Native Messaging mechanism used by the Exocortex browser ex
 
 ## 1. Rationale Summary
 
-Native Messaging is essential for Manifest V3 extensions to offload complex processing, access system resources beyond browser sandbox capabilities (e.g., writing to `raw.events` DB), and manage persistent state or connections that are difficult with service worker lifecycles.
+Native Messaging is essential for Manifest V3 extensions to offload complex processing, access system resources beyond browser sandbox capabilities (e.g., writing to `core.events` DB), and manage persistent state or connections that are difficult with service worker lifecycles.
 
 ## 2. Protocol Details [UG Sec 10.2.1, OR2]
 
@@ -82,7 +82,7 @@ Typically a small Rust or Python application.
     1.  Reads 4-byte length prefix from `stdin`.
     2.  Reads `length` bytes of JSON message from `stdin`.
     3.  Deserializes JSON.
-    4.  Processes the message (e.g., validates, transforms, inserts into Exocortex `raw.events` DB via `sqlx` or `psycopg2`).
+    4.  Processes the message (e.g., validates, transforms, inserts into Exocortex `core.events` DB via `sqlx` or `psycopg2`).
     5.  (Optional) Sends a JSON response back to extension via `stdout`, using same length-prefixing.
     6.  Must **not** write any non-protocol debug output to `stdout`. Debug logs to `stderr` or a file.
     7.  Handles `stdin` closing (extension disconnected) and exits gracefully.

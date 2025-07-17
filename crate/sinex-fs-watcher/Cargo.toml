@@ -1,0 +1,47 @@
+[package]
+name = "sinex-fs-watcher"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinex-fs-watcher"
+path = "src/main.rs"
+
+[dependencies]
+# Core dependencies
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+chrono = { workspace = true, features = ["serde"] }
+
+# Filesystem watching
+notify = "6.1"
+notify-debouncer-full = "0.3"
+dirs.workspace = true
+
+# Pattern matching and path validation  
+glob = "0.3"
+shellexpand = "3.1"
+walkdir = "2.3"
+
+# Local dependencies
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-events = { path = "../sinex-events" }
+sinex-ulid = { path = "../sinex-ulid" }
+sinex-macros = { path = "../sinex-macros" }
+sinex-metrics-lib = { path = "../sinex-metrics-lib" }
+
+[features]
+default = []
+metrics = []

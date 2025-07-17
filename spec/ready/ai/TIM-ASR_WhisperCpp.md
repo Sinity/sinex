@@ -113,7 +113,7 @@ Whisper.cpp provides a high-performance C++ port of OpenAI's Whisper ASR models,
         *   Array of segments, each with `text`, `start_ms`, `end_ms`, tokens, confidence scores.
 *   **Eventification & Storage:**
     1.  Store the full transcript text and/or detailed segment JSON in `core_artifact_contents` linked to a new `core_artifacts` entry (type `audio_transcript`). This artifact is also linked to the original audio `core_blobs` entry.
-    2.  Emit `audio.transcript.completed` event to `raw.events`.
+    2.  Emit `audio.transcript.completed` event to `core.events`.
         *   `source`: `"agent.s2t_whisper"`
         *   `event_type`: `"transcript_completed"`
         *   `payload`:

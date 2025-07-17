@@ -74,7 +74,7 @@ An `EmbeddingAgent` (or batch script) generates embeddings for new and existing 
 
 *   **Target Content:**
     *   Text from `core.artifact_contents` (PKM notes, web archive Markdown).
-    *   Selected textual fields from `raw.events.payload`.
+    *   Selected textual fields from `core.events.payload`.
     *   Segments from the Living Document.
 *   **Python/SentenceTransformers Batch Backfill Script (Conceptual Core from UG Sec 16.4):**
     This script fetches text from `core.artifact_contents` that hasn't been embedded with a specific model, chunks it, generates embeddings, and stores them in `artifact_embeddings` and `embedding_cache`.
@@ -307,14 +307,14 @@ CREATE INDEX IF NOT EXISTS idx_artifact_embeddings_model_name ON artifact_embedd
 CREATE INDEX IF NOT EXISTS idx_artifact_embeddings_input_hash ON artifact_embeddings (input_text_hash_blake3, model_name) WHERE input_text_hash_blake3 IS NOT NULL;
 ```
 
-### 5.2. `event_embeddings` (For Direct `raw.events` Payloads)
+### 5.2. `event_embeddings` (For Direct `core.events` Payloads)
 
-Stores embeddings for selected textual fields directly from `raw.events.payload`.
+Stores embeddings for selected textual fields directly from `core.events.payload`.
 ```sql
 CREATE TABLE IF NOT EXISTS event_embeddings (
-    event_id                ULID NOT NULL REFERENCES raw.events(id) ON DELETE CASCADE,
+    event_id                ULID NOT NULL REFERENCES core.events(id) ON DELETE CASCADE,
     embedding_name          TEXT NOT NULL, -- e.g., "payload_field_description_chunk_0001", "payload_summary_v1"
-    jsonpath_to_text        TEXT NULLABLE, -- JSONPath expression used to extract text from raw.events.payload
+    jsonpath_to_text        TEXT NULLABLE, -- JSONPath expression used to extract text from core.events.payload
     model_name              TEXT NOT NULL,
     model_dimension         INT NOT NULL,
     embedding_vector        VECTOR,
@@ -322,7 +322,7 @@ CREATE TABLE IF NOT EXISTS event_embeddings (
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (event_id, embedding_name, model_name)
 );
-COMMENT ON TABLE event_embeddings IS 'Vector embeddings for textual content extracted directly from raw.events payloads.';
+COMMENT ON TABLE event_embeddings IS 'Vector embeddings for textual content extracted directly from core.events payloads.';
 CREATE INDEX IF NOT EXISTS idx_event_embeddings_hnsw_cosine ON event_embeddings
   USING hnsw (embedding_vector vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);

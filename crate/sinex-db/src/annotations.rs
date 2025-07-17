@@ -1,41 +1,44 @@
 use crate::models::{CreateAnnotationInput, EventAnnotation};
-use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use crate::queries::AnnotationQueries;
+use crate::query_helpers::uuid_to_ulid;
 use crate::DbPoolRef;
 use anyhow::Result;
+use chrono::{DateTime, Utc};
+use serde_json::Value as JsonValue;
 use sinex_ulid::Ulid;
-use sqlx::types::Uuid;
+use sqlx::FromRow;
+
+/// Database record structure for annotations
+#[derive(Debug, FromRow)]
+pub struct AnnotationRecord {
+    pub id: sqlx::types::Uuid,
+    pub event_id: sqlx::types::Uuid,
+    pub annotation_type: String,
+    pub content: String,
+    pub metadata: JsonValue,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub created_by: String,
+}
 
 /// Create a new event annotation following the exact same pattern as add_to_work_queue
+#[sinex_macros::auto_db_metrics(operation = "create_annotation")]
 pub async fn create_annotation(
     pool: DbPoolRef<'_>,
     input: CreateAnnotationInput,
 ) -> Result<EventAnnotation> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
-    let event_uuid: Uuid = ulid_to_uuid(input.event_id);
 
-    let record = sqlx::query!(
-        r#"
-        INSERT INTO core.event_annotations (
-            event_id, annotation_type, content, metadata, created_by
-        ) VALUES ($1::uuid, $2, $3, $4, $5)
-        RETURNING 
-            id::uuid as "id!",
-            event_id::uuid as "event_id!",
-            annotation_type as "annotation_type!",
-            content as "content!",
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            created_by as "created_by!"
-        "#,
-        event_uuid,
+    let record = AnnotationQueries::insert_annotation(
+        input.event_id,
         input.annotation_type,
         input.content,
         metadata,
-        input.created_by
+        input.created_by,
     )
-    .fetch_one(pool)
-    .await?;
+    .fetch_one::<AnnotationRecord>(pool)
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to create annotation: {}", e))?;
 
     Ok(EventAnnotation {
         annotation_id: uuid_to_ulid(record.id),
@@ -50,31 +53,15 @@ pub async fn create_annotation(
 }
 
 /// Get annotations for a specific event
+#[sinex_macros::auto_db_metrics(operation = "get_annotations_for_event")]
 pub async fn get_annotations_for_event(
     pool: DbPoolRef<'_>,
     event_id: Ulid,
 ) -> Result<Vec<EventAnnotation>> {
-    let event_uuid: Uuid = ulid_to_uuid(event_id);
-
-    let records = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!",
-            event_id::uuid as "event_id!",
-            annotation_type as "annotation_type!",
-            content as "content!",
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            created_by as "created_by!"
-        FROM core.event_annotations 
-        WHERE event_id::uuid = $1
-        ORDER BY created_at DESC
-        "#,
-        event_uuid
-    )
-    .fetch_all(pool)
-    .await?;
+    let records = AnnotationQueries::get_by_event_id(event_id)
+        .fetch_all::<AnnotationRecord>(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get annotations for event: {}", e))?;
 
     let annotations = records
         .into_iter()
@@ -98,26 +85,10 @@ pub async fn get_annotation_by_id(
     pool: DbPoolRef<'_>,
     annotation_id: Ulid,
 ) -> Result<Option<EventAnnotation>> {
-    let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
-
-    let record = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!",
-            event_id::uuid as "event_id!",
-            annotation_type as "annotation_type!",
-            content as "content!",
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            created_by as "created_by!"
-        FROM core.event_annotations 
-        WHERE id::uuid = $1
-        "#,
-        annotation_uuid
-    )
-    .fetch_optional(pool)
-    .await?;
+    let record = AnnotationQueries::get_by_id(annotation_id)
+        .fetch_optional::<AnnotationRecord>(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get annotation by ID: {}", e))?;
 
     Ok(record.map(|r| EventAnnotation {
         annotation_id: uuid_to_ulid(r.id),
@@ -137,28 +108,10 @@ pub async fn update_annotation_content(
     annotation_id: Ulid,
     new_content: &str,
 ) -> Result<EventAnnotation> {
-    let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
-
-    let record = sqlx::query!(
-        r#"
-        UPDATE core.event_annotations 
-        SET content = $2, updated_at = NOW()
-        WHERE id::uuid = $1
-        RETURNING 
-            id::uuid as "id!",
-            event_id::uuid as "event_id!",
-            annotation_type as "annotation_type!",
-            content as "content!",
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            created_by as "created_by!"
-        "#,
-        annotation_uuid,
-        new_content
-    )
-    .fetch_one(pool)
-    .await?;
+    let record = AnnotationQueries::update_content(annotation_id, new_content.to_string())
+        .fetch_one::<AnnotationRecord>(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to update annotation content: {}", e))?;
 
     Ok(EventAnnotation {
         annotation_id: uuid_to_ulid(record.id),
@@ -174,14 +127,10 @@ pub async fn update_annotation_content(
 
 /// Delete annotation
 pub async fn delete_annotation(pool: DbPoolRef<'_>, annotation_id: Ulid) -> Result<bool> {
-    let annotation_uuid: Uuid = ulid_to_uuid(annotation_id);
-
-    let result = sqlx::query!(
-        "DELETE FROM core.event_annotations WHERE id::uuid = $1",
-        annotation_uuid
-    )
-    .execute(pool)
-    .await?;
+    let result = AnnotationQueries::delete_by_id(annotation_id)
+        .execute(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to delete annotation: {}", e))?;
 
     Ok(result.rows_affected() > 0)
 }
@@ -191,25 +140,10 @@ pub async fn get_recent_annotations(
     pool: DbPoolRef<'_>,
     limit: i64,
 ) -> Result<Vec<EventAnnotation>> {
-    let records = sqlx::query!(
-        r#"
-        SELECT 
-            id::uuid as "id!",
-            event_id::uuid as "event_id!",
-            annotation_type as "annotation_type!",
-            content as "content!",
-            metadata as "metadata!",
-            created_at as "created_at!",
-            updated_at as "updated_at!",
-            created_by as "created_by!"
-        FROM core.event_annotations 
-        ORDER BY created_at DESC
-        LIMIT $1
-        "#,
-        limit
-    )
-    .fetch_all(pool)
-    .await?;
+    let records = AnnotationQueries::get_recent(limit)
+        .fetch_all::<AnnotationRecord>(pool)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to get recent annotations: {}", e))?;
 
     let annotations = records
         .into_iter()

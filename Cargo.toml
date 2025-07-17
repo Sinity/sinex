@@ -1,21 +1,11 @@
 [workspace]
 members = [
-    "crate/sinex-core",
     "crate/sinex-ulid",
     "crate/sinex-db", 
-    "crate/sinex-worker",
-    "crate/sinex-automaton",
     "crate/sinex-events",
-    "crate/sinex-events-terminal",
-    "crate/sinex-events-desktop",
-    "crate/sinex-events-system", 
-    "crate/sinex-events-fs",
-    "crate/sinex-events-shell",
-    "crate/sinex-shell-integration",
     "crate/sinex-validation",
     "crate/sinex-service-base",
     "crate/sinex-identifiers",
-    "crate/sinex-collector",
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
     "crate/sinex-preflight",
@@ -23,7 +13,26 @@ members = [
     "crate/sinex-macros",
     "crate/sinex-services",
     "crate/sinex-config",
-    "crate/sinex-host",
+    "crate/sinex-gateway",
+    "crate/sinex-satellite-sdk",
+    "crate/sinex-ingestd",
+    "crate/sinex-fs-watcher",
+    "crate/sinex-terminal-command-canonicalizer",
+    "crate/sinex-terminal-satellite",
+    "crate/sinex-desktop-satellite",
+    "crate/sinex-system-satellite",
+    # Service automata (Phase 4: Gateway dissolution)
+    "crate/sinex-analytics-automaton",
+    "crate/sinex-pkm-automaton",
+    "crate/sinex-search-automaton",
+    "crate/sinex-content-automaton",
+    "crate/sinex-rpc-dispatcher",
+    # New consolidated crates (replacing sinex-core split)
+    "crate/sinex-core-types",
+    "crate/sinex-core-utils",
+    "crate/sinex-core-runtime",
+    "crate/sinex-core-fs",
+    "crate/sinex-metrics-lib",
 ]
 resolver = "2"
 
@@ -66,30 +75,24 @@ async-trait.workspace = true
 gethostname.workspace = true
 
 # Local crate dependencies
-sinex-core = { path = "crate/sinex-core" }
+sinex-core-types = { path = "crate/sinex-core-types" }
+sinex-core-utils = { path = "crate/sinex-core-utils" }
+sinex-core-runtime = { path = "crate/sinex-core-runtime" }
+sinex-core-fs = { path = "crate/sinex-core-fs" }
 sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid", features = ["arbitrary"] }
 sinex-events = { path = "crate/sinex-events" }
-sinex-events-terminal = { path = "crate/sinex-events-terminal" }
-sinex-events-desktop = { path = "crate/sinex-events-desktop" }
-sinex-events-system = { path = "crate/sinex-events-system" }
-sinex-events-fs = { path = "crate/sinex-events-fs" }
-sinex-worker = { path = "crate/sinex-worker" }
-sinex-collector = { path = "crate/sinex-collector" }
 sinex-annex = { path = "crate/sinex-annex" }
 sinex-preflight = { path = "crate/sinex-preflight" }
-sinex-services = { path = "crate/sinex-services" }
-sinex-host = { path = "crate/sinex-host" }
+sinex-gateway = { path = "crate/sinex-gateway" }
+sinex-satellite-sdk = { path = "crate/sinex-satellite-sdk" }
+sinex-error = { path = "crate/sinex-error" }
+sinex-validation = { path = "crate/sinex-validation" }
+sinex-channel = { path = "crate/sinex-channel" }
+sinex-config = { path = "crate/sinex-config" }
 
 # Testing dependencies needed for integration tests
-futures = "0.3"
-toml = "0.8"
-tempfile = "3.10"
-rand = "0.8"
 lazy_static = "1.4"
-fastrand = "2.0"
-jsonschema = "0.17"
-schemars = { workspace = true }
 
 # Example dependencies
 tracing-subscriber = { workspace = true }
@@ -97,15 +100,12 @@ tracing-subscriber = { workspace = true }
 [features]
 default = []
 arbitrary = ["sinex-ulid/arbitrary"]
+metrics = []
 
 [dev-dependencies]
 proptest.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 rusqlite = { version = "0.30", features = ["bundled"] }
-sinex-events-terminal = { path = "crate/sinex-events-terminal" }
-sinex-events-desktop = { path = "crate/sinex-events-desktop" }
-sinex-events-system = { path = "crate/sinex-events-system" }
-sinex-events-fs = { path = "crate/sinex-events-fs" }
 sinex-test-macros = { path = "crate/sinex-test-macros" }
 criterion.workspace = true
 pretty_assertions = "1.4"
@@ -115,11 +115,23 @@ rstest = "0.18"
 num_cpus = "1.16"
 ctor = "0.2"
 parking_lot = "0.12"
-once_cell = "1"
+once_cell.workspace = true
+toml.workspace = true
+fastrand.workspace = true
+rand.workspace = true
+futures.workspace = true
+jsonschema.workspace = true
 ctrlc = "3"
 reqwest = { version = "0.11", features = ["json"] }
 tower = "0.4"
 tower-http = "0.4"
+# Test dependencies needed for integration tests
+redis.workspace = true
+tonic.workspace = true
+tokio-stream.workspace = true
+# Additional test-specific dependencies
+sinex-services = { path = "crate/sinex-services" }
+sinex-ingestd = { path = "crate/sinex-ingestd" }
 
 [workspace.package]
 version = "0.4.2"
@@ -139,7 +151,6 @@ sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "uuid", "chro
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
 
 # Error handling
 anyhow = "1"
@@ -156,29 +167,50 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # HTTP and metrics
 axum = "0.7"
-prometheus = "0.13"
 
 # Utils
 rand = "0.8"
 once_cell = "1"
 blake3 = "1"
 glob = "0.3"
+toml = "0.8"
+fastrand = "2.0"
+
+# gRPC and protocol buffers
+tonic = "0.11"
+prost = "0.12"
+tonic-build = "0.11"
+
+# Redis for message bus
+redis = { version = "0.24", features = ["tokio-comp", "streams"] }
+
+# System integration
+sd-notify = "0.4"
+
+# Additional utilities
+tokio-stream = "0.1"
+futures = "0.3"
+dirs = "5.0"
+
+# File system watching
+notify = "6.1"
 
 # Testing
 proptest = "1"
 criterion = "0.5"
-fastrand = "2.0"
 
 # System
 gethostname = "0.4"
 clap = { version = "4", features = ["derive", "env"] }
 which = "5.0"
-tempfile = "3.0"
 
 # Configuration and validation
 regex = "1"
 url = "2"
-jsonschema = "0.17"
 unicode-normalization = "0.1"
 schemars = "0.8"
-dirs = "5.0"
+tempfile = "3.0"
+jsonschema = "0.17"
+
+# Database (for Atuin integration)
+rusqlite = { version = "0.30", features = ["bundled"] }

@@ -1,7 +1,11 @@
-//! Event builders for test code
-//!
-//! This module re-exports the event builders from sinex-core for test compatibility
-//! and provides additional test-specific builders not suitable for production code.
+// Event builders for test code
+//
+// This module re-exports the event builders from sinex-events for test compatibility
+// and provides additional test-specific builders not suitable for production code.
+
+// Re-export everything from sinex-events event builders
+
+use crate::common::prelude::*;
 
 // Re-export everything from sinex-events event builders
 pub use sinex_events::event_builders::*;
@@ -37,7 +41,7 @@ impl GenericEventBuilder {
         self
     }
 
-    pub fn build(self) -> sinex_core::RawEvent {
+    pub fn build(self) -> sinex_core_types::RawEvent {
         let payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         self.factory.create_event(&self.event_type, payload)
     }
@@ -82,7 +86,7 @@ impl GenericEventBuilder {
 
     pub fn heartbeat(self) -> Self {
         let mut new_builder = Self {
-            event_type: "agent.heartbeat".to_string(),
+            event_type: "automaton.heartbeat".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -93,7 +97,7 @@ impl GenericEventBuilder {
 
     pub fn startup(self) -> Self {
         let mut new_builder = Self {
-            event_type: "agent.startup".to_string(),
+            event_type: "automaton.startup".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -104,7 +108,7 @@ impl GenericEventBuilder {
 
     pub fn error(self, error_msg: impl Into<String>) -> Self {
         let mut new_builder = Self {
-            event_type: "agent.error".to_string(),
+            event_type: "automaton.error".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -176,6 +180,6 @@ impl EventBuilder {
 
     /// Create an agent event builder
     pub fn agent() -> GenericEventBuilder {
-        GenericEventBuilder::new("sinex", "agent.heartbeat")
+        GenericEventBuilder::new("sinex", "automaton.heartbeat")
     }
 }

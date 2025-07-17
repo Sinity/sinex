@@ -1,4 +1,4 @@
-# TIM-TimescaleDBConfiguration: `raw.events` Hypertable
+# TIM-TimescaleDBConfiguration: `core.events` Hypertable
 
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
@@ -8,7 +8,7 @@
 
 ## MVP Specification
 - TimescaleDB extension installation and activation
-- raw.events hypertable creation with ts_ingest partitioning
+- core.events hypertable creation with ts_ingest partitioning
 - Basic chunk interval configuration (1 day)
 - Automatic data migration support
 - Core time-series query optimization
@@ -23,7 +23,7 @@
 ## Implementation Checklist
 - [x] TimescaleDB extension available in NixOS
 - [x] Database extension activation
-- [x] Hypertable creation for raw.events
+- [x] Hypertable creation for core.events
 - [x] Time-based partitioning configuration
 - [x] Basic chunk interval setup
 - [x] Data migration support
@@ -35,11 +35,11 @@
 *   **Relevant ADR:** (Implicitly supported by choice of TimescaleDB in Vision Doc III.3.1.2)
 *   **Original UG Context:** Section 1.2
 
-This TIM details the configuration of TimescaleDB for managing the `raw.events` table as a hypertable, optimized for time-series data.
+This TIM details the configuration of TimescaleDB for managing the `core.events` table as a hypertable, optimized for time-series data.
 
 ## 1. Rationale Summary
 
-TimescaleDB is used for `raw.events` due to its ability to efficiently partition large time-series tables, provide performant time-based queries, and offer features like native compression. This is essential for handling the high volume of events the Exocortex will ingest over time.
+TimescaleDB is used for `core.events` due to its ability to efficiently partition large time-series tables, provide performant time-based queries, and offer features like native compression. This is essential for handling the high volume of events the Exocortex will ingest over time.
 
 ## 2. Installation and Setup
 
@@ -63,15 +63,15 @@ TimescaleDB is used for `raw.events` due to its ability to efficiently partition
     ```
     This typically needs to be run by a superuser. `timescaledb_tune` utility can be run on the server to suggest optimal `postgresql.conf` settings based on system resources.
 
-## 3. Hypertable Creation for `raw.events`
+## 3. Hypertable Creation for `core.events`
 
-The `raw.events` table (DDL in `TIM-EventSubstrateDDL.md` - *assuming this TIM would be generated later*) is converted into a hypertable partitioned by `ts_ingest`.
+The `core.events` table (DDL in `TIM-EventSubstrateDDL.md` - *assuming this TIM would be generated later*) is converted into a hypertable partitioned by `ts_ingest`.
 
 *   **DDL (from UG Sec 1.2.3, Primary Document Appendix A):**
     ```sql
-    -- Assuming raw.events table already exists
+    -- Assuming core.events table already exists
     SELECT create_hypertable(
-      'raw.events',
+      'core.events',
       'ts_ingest',                   -- Time partitioning column
       if_not_exists => TRUE,
       chunk_time_interval => INTERVAL '1 day', -- Initial interval, adjust based on volume
@@ -87,7 +87,7 @@ The `raw.events` table (DDL in `TIM-EventSubstrateDDL.md` - *assuming this TIM w
     *   Avoid excessively large chunks (slows down maintenance, compression, reordering).
 *   **Monitoring Chunk Size:** Use TimescaleDB functions like `chunk_relation_size_pretty('chunk_name')` or query `timescaledb_information.chunks`.
 
-## 5. Compression for `raw.events`
+## 5. Compression for `core.events`
 
 TimescaleDB's native columnar compression can significantly reduce storage for older data.
 
@@ -95,18 +95,18 @@ TimescaleDB's native columnar compression can significantly reduce storage for o
 *   **JSONB Compression [SR1, SA1]:**
     *   PostgreSQL's TOAST already compresses JSONB (default `lz4`).
     *   TimescaleDB's specialized columnar compression is less effective on opaque JSONB blobs compared to structured native columns.
-    *   **Recommendation:** Extract frequently queried, common, or high-cardinality fields from `raw.events.payload` into separate, strongly-typed columns in `raw.events` itself or in promoted domain tables. These will benefit fully from TimescaleDB compression. Use GIN indexes on the JSONB `payload` for querying truly dynamic fields.
+    *   **Recommendation:** Extract frequently queried, common, or high-cardinality fields from `core.events.payload` into separate, strongly-typed columns in `core.events` itself or in promoted domain tables. These will benefit fully from TimescaleDB compression. Use GIN indexes on the JSONB `payload` for querying truly dynamic fields.
 *   **Configuring Compression Policy (from UG Sec 1.2.3):**
     ```sql
     -- Enable compression on the hypertable
-    ALTER TABLE raw.events SET (
+    ALTER TABLE core.events SET (
       timescaledb.compress,
       timescaledb.compress_orderby = 'ts_orig DESC, id', -- Order data within segments for better compression/querying
       timescaledb.compress_segmentby = 'source, host' -- Columns defining segments; choose high-cardinality but not too many
     );
 
     -- Add a policy to compress chunks older than a certain age (e.g., 7 days)
-    SELECT add_compression_policy('raw.events', INTERVAL '7 days');
+    SELECT add_compression_policy('core.events', INTERVAL '7 days');
     ```
     *   `compress_orderby`: Sorts data within each segment. Ordering by time first, then a unique key like `id` is common.
     *   `compress_segmentby`: Groups data into segments for compression. Columns used here should ideally be those frequently used in `WHERE` clauses or `GROUP BY` clauses on compressed data, as TimescaleDB can sometimes skip decompressing segments that don't match the `segmentby` filters.

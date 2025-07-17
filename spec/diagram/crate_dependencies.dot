@@ -37,7 +37,7 @@ digraph SinexCrateDependencies {
         fontname="JetBrains Mono Bold";
         
         sinex_core [
-            label="sinex-core\n• RawEvent types\n• EventType/EventSource traits\n• Error handling",
+            label="sinex-core\n• RawEvent types\n• EventType/StatefulStreamProcessor traits\n• Error handling",
             fillcolor="#90EE90"
         ];
         

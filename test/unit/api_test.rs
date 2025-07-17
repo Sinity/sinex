@@ -1,12 +1,66 @@
-//! API Unit Tests
-//!
-//! Consolidated API layer tests covering:
-//! - Annotations API functionality and operations
-//! - Artifacts API management and storage
-//! - Knowledge Graph API queries and relationships
-//! - Configuration validation and parsing
-//! - Test context validation and infrastructure
-//! - Comprehensive ULID functionality
+// API Unit Tests
+//
+// Consolidated API layer tests covering:
+// - Annotations API functionality and operations
+// - Artifacts API management and storage
+// - Knowledge Graph API queries and relationships
+// - Configuration validation and parsing
+// - Test context validation and infrastructure
+// - Comprehensive ULID functionality
+
+/// Helper functions for extracting values from toml::Value
+mod toml_helpers {
+    use toml::Value as ConfigValue;
+    use anyhow::{anyhow, Result};
+
+    fn navigate_to_value<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a ConfigValue> {
+        let parts: Vec<&str> = path.split('.').collect();
+        let mut current = config;
+        
+        for part in &parts {
+            current = current
+                .get(part)
+                .ok_or_else(|| anyhow!("Path '{}' not found at '{}'", path, part))?;
+        }
+        
+        Ok(current)
+    }
+    
+    pub fn require_str<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a str> {
+        let value = navigate_to_value(config, path)?;
+        value.as_str()
+            .ok_or_else(|| anyhow!("Required string field '{}' not found or not a string", path))
+    }
+    
+    pub fn require_u64(config: &ConfigValue, path: &str) -> Result<u64> {
+        let value = navigate_to_value(config, path)?;
+        value.as_integer()
+            .and_then(|i| u64::try_from(i).ok())
+            .ok_or_else(|| anyhow!("Required u64 field '{}' not found or not a valid u64", path))
+    }
+    
+    pub fn require_i64(config: &ConfigValue, path: &str) -> Result<i64> {
+        let value = navigate_to_value(config, path)?;
+        value.as_integer()
+            .ok_or_else(|| anyhow!("Required i64 field '{}' not found or not an integer", path))
+    }
+    
+    pub fn require_bool(config: &ConfigValue, path: &str) -> Result<bool> {
+        let value = navigate_to_value(config, path)?;
+        value.as_bool()
+            .ok_or_else(|| anyhow!("Required bool field '{}' not found or not a boolean", path))
+    }
+    
+    pub fn require_array<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a Vec<ConfigValue>> {
+        let value = navigate_to_value(config, path)?;
+        value.as_array()
+            .ok_or_else(|| anyhow!("Required array field '{}' not found or not an array", path))
+    }
+}
+
+use self::toml_helpers::*;
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use sinex_db::{
@@ -24,17 +78,7 @@ async fn create_and_insert_test_event(
 ) -> anyhow::Result<RawEvent> {
     let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     // Insert the event and return the inserted event (which has the actual DB ID)
-    let inserted_event = crate::common::insert_event_with_validator(
-        pool,
-        &event.source,
-        &event.event_type,
-        &event.host,
-        event.payload.clone(),
-        event.ts_orig,
-        event.ingestor_version.as_deref(),
-        event.payload_schema_id,
-    )
-    .await?;
+    let inserted_event = sinex_db::insert_event_with_validator(pool, &event, None).await?;
     Ok(inserted_event)
 }
 
@@ -519,9 +563,7 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
 
     let artifact = create_artifact(ctx.pool(), input).await?;
 
-    // TODO: Delete functionality not implemented yet
-
-    // Verify it exists (delete functionality pending)
+    // Verify it exists
     let retrieved = get_artifact_by_id(ctx.pool(), artifact.artifact_id).await?;
     assert!(retrieved.is_some());
 
@@ -730,14 +772,14 @@ async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
     )
     .unwrap();
 
-    // Use proper ConfigExtractor methods
-    let db_url = config.require_str("database.url")?;
+    // Use TOML parsing methods (DEPRECATED - was for file-based config)
+    let db_url = require_str(&config, "database.url")?;
     assert_eq!(db_url, "postgresql://localhost/test");
 
-    let pool_size = config.require_u64("database.pool_size")?;
+    let pool_size = require_u64(&config, "database.pool_size")?;
     assert_eq!(pool_size, 10);
 
-    let fs_enabled = config.require_bool("event_sources.filesystem.enabled")?;
+    let fs_enabled = require_bool(&config, "event_sources.filesystem.enabled")?;
     assert!(fs_enabled);
 
     Ok(())
@@ -760,8 +802,8 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
     )
     .unwrap();
 
-    // Test validation with ConfigExtractor methods
-    let url = config.require_str("database.url")?;
+    // Test validation with TOML parsing methods (DEPRECATED)
+    let url = require_str(&config, "database.url")?;
 
     // Test validation chains for empty URL
     let url_validation = ValidationChain::validate(url, "database.url")
@@ -770,14 +812,14 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
     assert!(url_validation.is_err(), "Empty URL should fail validation");
 
     // Test negative pool size handling (TOML parses -1 as i64)
-    let pool_size_result = config.require_u64("database.pool_size");
+    let pool_size_result = require_u64(&config, "database.pool_size");
     assert!(
         pool_size_result.is_err(),
         "Negative pool size should fail u64 extraction"
     );
 
     // Test empty paths array validation
-    let paths = config.require_array("event_sources.filesystem.paths")?;
+    let paths = require_array(&config, "event_sources.filesystem.paths")?;
     let paths_validation = ValidationChain::validate(paths, "filesystem.paths")
         .custom(|paths| !paths.is_empty(), "paths cannot be empty")
         .into_result();
@@ -802,17 +844,17 @@ async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> Test
     )
     .unwrap();
 
-    // Test ConfigExtractor methods with missing fields
+    // Test TOML parsing methods with missing fields (DEPRECATED)
     // Should be able to get existing field
-    let db_url = config.require_str("database.url")?;
+    let db_url = require_str(&config, "database.url")?;
     assert_eq!(db_url, "postgresql://localhost/test");
 
     // Should fail for missing field
-    let pool_size_result = config.require_u64("database.pool_size");
+    let pool_size_result = require_u64(&config, "database.pool_size");
     assert!(pool_size_result.is_err(), "Missing pool_size should fail");
 
     // Should fail for missing nested field
-    let fs_enabled_result = config.require_bool("event_sources.filesystem.enabled");
+    let fs_enabled_result = require_bool(&config, "event_sources.filesystem.enabled");
     assert!(
         fs_enabled_result.is_err(),
         "Missing event_sources should fail"
@@ -838,20 +880,20 @@ async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> Tes
     )
     .unwrap();
 
-    // Test ConfigExtractor type conversion methods
+    // Test TOML type conversion methods (DEPRECATED)
     // TOML parses "42" as string, number as i64, float as f64
-    let num_str = config.require_str("numbers.as_string")?;
+    let num_str = require_str(&config, "numbers.as_string")?;
     assert_eq!(num_str, "42");
 
-    let num_value = config.require_i64("numbers.as_number")?;
+    let num_value = require_i64(&config, "numbers.as_number")?;
     assert_eq!(num_value, 42);
 
     // Test boolean extraction
-    let bool_value = config.require_bool("booleans.as_bool")?;
+    let bool_value = require_bool(&config, "booleans.as_bool")?;
     assert!(bool_value);
 
     // Test string extraction for boolean string
-    let bool_str = config.require_str("booleans.as_string")?;
+    let bool_str = require_str(&config, "booleans.as_string")?;
     assert_eq!(bool_str, "true");
 
     Ok(())
@@ -875,7 +917,7 @@ async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
     .unwrap();
 
     // Test direct validation using ValidationChain (simpler approach)
-    let host = config.require_str("server.host")?;
+    let host = require_str(&config, "server.host")?;
     ValidationChain::validate(host, "server.host")
         .not_empty()
         .custom(
@@ -884,13 +926,13 @@ async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
         )
         .into_result()?;
 
-    let port = config.require_i64("server.port")?;
+    let port = require_i64(&config, "server.port")?;
     ValidationChain::validate(port, "server.port")
         .min(1)
         .max(65535)
         .into_result()?;
 
-    let pool_size = config.require_i64("database.pool_size")?;
+    let pool_size = require_i64(&config, "database.pool_size")?;
     ValidationChain::validate(pool_size, "database.pool_size")
         .min(1)
         .max(100)
@@ -978,7 +1020,7 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
             let event = EventBuilder::generic("test", "background")
                 .payload(json!({"index": i}))
                 .build();
-            sinex_db::events::insert_event_with_validator(&pool, &event, None)
+            sinex_db::insert_event_with_validator(&pool, &event, None)
                 .await
                 .unwrap();
         }
@@ -990,29 +1032,6 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
 
     let final_count = ctx.event_count().await?;
     assert_eq!(final_count, initial_count + 3, "Should have 3 more events");
-
-    Ok(())
-}
-
-/// Test TestContext work queue operations
-#[sinex_test]
-async fn test_test_context_work_queue_operations(ctx: TestContext) -> TestResult {
-    // Test work queue operations
-    ctx.assert_work_queue_empty().await?;
-
-    // Test wait for work queue
-    // This is mainly testing that the method exists and doesn't panic
-    let timeout_result = tokio::time::timeout(
-        std::time::Duration::from_millis(100),
-        ctx.wait_for_work_queue(0),
-    )
-    .await;
-
-    // Should either complete immediately or timeout
-    assert!(
-        timeout_result.is_ok() || timeout_result.is_err(),
-        "Should handle wait appropriately"
-    );
 
     Ok(())
 }

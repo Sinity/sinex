@@ -1,7 +1,8 @@
 # ADR-010: Unified Collector Event-Centric Architecture
 
-* **Status:** Accepted
+* **Status:** Implemented
 * **Date:** 2025-01-10
+* **Implementation Date:** 2025-07-17
 
 ## Context
 
@@ -20,74 +21,22 @@ Implement unified collector with event-centric architecture where:
 
 ## Architecture
 
-### EventType Trait
-```rust
-trait EventType {
-    type Payload: Serialize + DeserializeOwned + JsonSchema;
-    type SourceImpl: EventSource; // Can be tuple for multiple sources
-    
-    const EVENT_NAME: &'static str; // "file.created"
-    const SOURCE_NAME: &'static str = <Self::SourceImpl as EventSource>::SOURCE_NAME;
-}
-```
+### Core Traits
+- **EventType**: Defines event payload structure and source mapping
+- **EventSource**: Handles event stream generation from sources
+- **StatefulStreamProcessor**: Unified processor interface for all satellites
 
-### EventSource Trait  
-```rust
-#[async_trait]
-trait EventSource {
-    type Config: Clone + Serialize + DeserializeOwned;
-    const SOURCE_NAME: &'static str;
-    
-    async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<()>;
-}
-```
+### Key Patterns
+- **Single/Multiple Sources**: Events can originate from one or multiple sources
+- **Hierarchical Configuration**: Config inheritance with event-specific overrides
+- **Compile-time Registry**: Automatic discovery of all event types
+- **Unified Collection**: Single binary replaces multiple ingestor processes
 
-### Multiple Sources Support
-```rust
-// Single source
-impl EventType for FileCreated {
-    type SourceImpl = FilesystemWatcher;
-}
-
-// Multiple sources via tuple
-impl EventType for CommandExecuted {
-    type SourceImpl = (KittySocketListener, BashHistoryWatcher);
-}
-```
-
-### Configuration
-```toml
-[events]
-enabled = ["file.created", "file.modified", "command.executed"]
-
-# Hierarchical merging
-[event.files]
-watch_patterns = ["**/*.rs", "**/*.toml"]
-
-[event.file_created]  # Merges with event.files
-debounce_ms = 50
-```
-
-### Registry
-Compile-time discovery of all EventType implementations, generating const arrays.
-
-### Event Output
-```rust
-struct EventOutput {
-    write_to_db: bool,
-    log_events: bool,
-    debug_file: Option<PathBuf>,
-}
-```
-
-## Implementation Plan
-
-1. Core traits (EventType, EventSource)
-2. Registry with compile-time discovery
-3. Event implementations (file.created, command.executed, etc.)
-4. EventSource implementations wrapping existing logic
-5. UnifiedCollector using SimpleIngestor pattern
-6. Schema generation from JsonSchema derive
+### Implementation Components
+- **Event Registry**: Compile-time discovery and registration system
+- **Event Output**: Configurable routing (database, logs, debug files)
+- **Schema Generation**: Automatic JsonSchema derivation from event types
+- **Unified Collector**: Single process replacing multiple ingestors
 
 ## Consequences
 
@@ -101,3 +50,20 @@ struct EventOutput {
 - Migration complexity
 - Larger single binary
 - Need to maintain backward compatibility
+
+## Implementation Status
+
+**FULLY IMPLEMENTED** - The unified architecture has been successfully deployed:
+
+1. **StatefulStreamProcessor Trait** - All satellites migrated from EventSource pattern
+2. **Event-Centric Design** - Events are primary entities with sources as implementation details
+3. **Unified Configuration** - Single configuration system across all event types
+4. **Registry System** - Compile-time discovery and registration operational
+5. **Cross-Event Correlation** - Enabled through unified event processing pipeline
+
+**Current Architecture**:
+- All satellites implement `StatefulStreamProcessor` trait
+- Event types defined with `EventType` trait pattern
+- Unified configuration with hierarchical merging
+- Single ingestd process handles all event ingestion
+- Redis Streams enable cross-event correlation and processing

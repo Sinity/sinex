@@ -1,0 +1,41 @@
+{
+  "$id": "https://sinex.io/schemas/v1/shell/command_executed.json",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "properties": {
+    "command": {
+      "type": "string"
+    },
+    "execution_time_ms": {
+      "format": "uint64",
+      "minimum": 0.0,
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "exit_status": {
+      "format": "int32",
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "shell_type": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "working_directory": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "command"
+  ],
+  "title": "CommandExecutedPayload",
+  "type": "object"
+}

@@ -5,10 +5,10 @@
  -->
 <!-- Title: SinexDatabaseSchema Pages: 1 -->
 <svg  
- viewBox="0.00 0.00 3210.00 716.25" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+ viewBox="0.00 0.00 3204.00 716.25" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
 <g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(4 712.25)">
 <title>SinexDatabaseSchema</title>
-<polygon fill="white" stroke="none" points="-4,4 -4,-712.25 3206,-712.25 3206,4 -4,4"/>
+<polygon fill="white" stroke="none" points="-4,4 -4,-712.25 3200,-712.25 3200,4 -4,4"/>
 <g id="clust1" class="cluster">
 <title>cluster_raw</title>
 <polygon fill="#e8f8e8" stroke="black" points="983,-319.25 983,-403 2211,-403 2211,-319.25 983,-319.25"/>
@@ -31,13 +31,13 @@
 </g>
 <g id="clust5" class="cluster">
 <title>cluster_constraints</title>
-<polygon fill="#f9f9f9" stroke="black" points="2484,-519 2484,-700.25 2746,-700.25 2746,-519 2484,-519"/>
-<text text-anchor="middle" x="2615" y="-688.65" font-family="JetBrains Mono Bold" font-size="8.00">Key Constraints &amp; Indexes</text>
+<polygon fill="#f9f9f9" stroke="black" points="2484,-519 2484,-700.25 2740,-700.25 2740,-519 2484,-519"/>
+<text text-anchor="middle" x="2612" y="-688.65" font-family="JetBrains Mono Bold" font-size="8.00">Key Constraints &amp; Indexes</text>
 </g>
 <g id="clust6" class="cluster">
 <title>cluster_legend</title>
-<polygon fill="#ffffff" stroke="black" points="2754,-574.75 2754,-652 3194,-652 3194,-574.75 2754,-574.75"/>
-<text text-anchor="middle" x="2974" y="-634.7" font-family="JetBrains Mono Bold" font-size="14.00">Legend</text>
+<polygon fill="#ffffff" stroke="black" points="2748,-574.75 2748,-652 3188,-652 3188,-574.75 2748,-574.75"/>
+<text text-anchor="middle" x="2968" y="-634.7" font-family="JetBrains Mono Bold" font-size="14.00">Legend</text>
 </g>
 <!-- events -->
 <g id="node1" class="node">
@@ -169,11 +169,11 @@
 <polyline fill="none" stroke="#006400" points="1029,-580 1029,-600.75"/>
 <text text-anchor="middle" x="1145.38" y="-587.25" font-family="JetBrains Mono" font-size="10.00">registered_at: TIMESTAMPTZ DEFAULT now()</text>
 </g>
-<!-- promotion_queue -->
+<!-- work_queue -->
 <g id="node4" class="node">
-<title>promotion_queue</title>
+<title>work_queue</title>
 <polygon fill="#90ee90" stroke="#006400" points="79,-439.25 79,-480.75 1775,-480.75 1775,-439.25 79,-439.25"/>
-<text text-anchor="middle" x="927" y="-467.25" font-family="JetBrains Mono" font-size="10.00">promotion_queue</text>
+<text text-anchor="middle" x="927" y="-467.25" font-family="JetBrains Mono" font-size="10.00">work_queue</text>
 <polyline fill="none" stroke="#006400" points="79,-460 1775,-460"/>
 <text text-anchor="middle" x="157.88" y="-446.5" font-family="JetBrains Mono" font-size="10.00">queue_id: ULID PRIMARY KEY</text>
 <polyline fill="none" stroke="#006400" points="236.75,-439.25 236.75,-460"/>
@@ -195,16 +195,16 @@
 <polyline fill="none" stroke="#006400" points="1655.5,-439.25 1655.5,-460"/>
 <text text-anchor="middle" x="1715.25" y="-446.5" font-family="JetBrains Mono" font-size="10.00">error_message: TEXT</text>
 </g>
-<!-- agent_manifests&#45;&gt;promotion_queue -->
+<!-- agent_manifests&#45;&gt;work_queue -->
 <g id="edge2" class="edge">
-<title>agent_manifests&#45;&gt;promotion_queue</title>
+<title>agent_manifests&#45;&gt;work_queue</title>
 <path fill="none" stroke="#006400" d="M680.88,-579.57C732.17,-554.86 819.09,-512.99 874.72,-486.19"/>
 <polygon fill="#006400" stroke="#006400" points="876.22,-489.35 883.71,-481.86 873.18,-483.04 876.22,-489.35"/>
 <text text-anchor="middle" x="881.65" y="-501.4" font-family="JetBrains Mono" font-size="8.00" fill="#006400">target_agent_name</text>
 </g>
-<!-- promotion_queue&#45;&gt;events -->
+<!-- work_queue&#45;&gt;events -->
 <g id="edge1" class="edge">
-<title>promotion_queue&#45;&gt;events</title>
+<title>work_queue&#45;&gt;events</title>
 <path fill="none" stroke="#006400" d="M1050.67,-438.79C1167.36,-419.72 1341.87,-391.2 1462.1,-371.55"/>
 <polygon fill="#006400" stroke="#006400" points="1462.4,-375.04 1471.71,-369.98 1461.27,-368.14 1462.4,-375.04"/>
 <text text-anchor="middle" x="1228.61" y="-413.15" font-family="JetBrains Mono" font-size="8.00" fill="#006400">raw_event_id</text>
@@ -298,35 +298,35 @@
 <!-- constraints -->
 <g id="node10" class="node">
 <title>constraints</title>
-<polygon fill="#f0f0f0" stroke="black" points="2738.12,-674.5 2491.88,-674.5 2491.88,-527 2738.12,-527 2738.12,-674.5"/>
-<text text-anchor="start" x="2499.88" y="-661" font-family="JetBrains Mono" font-size="10.00">✅ IMPLEMENTED:</text>
-<text text-anchor="start" x="2499.88" y="-648.25" font-family="JetBrains Mono" font-size="10.00">• events: Hypertable on ts_ingest</text>
-<text text-anchor="start" x="2499.88" y="-635.5" font-family="JetBrains Mono" font-size="10.00">• events: ULID → TIMESTAMPTZ extraction</text>
-<text text-anchor="start" x="2499.88" y="-622.75" font-family="JetBrains Mono" font-size="10.00">• promotion_queue: FOR UPDATE SKIP LOCKED</text>
-<text text-anchor="start" x="2499.88" y="-610" font-family="JetBrains Mono" font-size="10.00">• agent_manifests: Heartbeat tracking</text>
-<text text-anchor="start" x="2499.88" y="-585.25" font-family="JetBrains Mono" font-size="10.00">❌ PLANNED:</text>
-<text text-anchor="start" x="2499.88" y="-572.5" font-family="JetBrains Mono" font-size="10.00">• JSON Schema validation via pg_jsonschema</text>
-<text text-anchor="start" x="2499.88" y="-559.75" font-family="JetBrains Mono" font-size="10.00">• Vector similarity indexes (pgvector)</text>
-<text text-anchor="start" x="2499.88" y="-547" font-family="JetBrains Mono" font-size="10.00">• Entity uniqueness constraints</text>
-<text text-anchor="middle" x="2615" y="-534.25" font-family="JetBrains Mono" font-size="10.00">• Referential integrity for future tables</text>
+<polygon fill="#f0f0f0" stroke="black" points="2731.75,-674.5 2492.25,-674.5 2492.25,-527 2731.75,-527 2731.75,-674.5"/>
+<text text-anchor="start" x="2500.25" y="-661" font-family="JetBrains Mono" font-size="10.00">✅ IMPLEMENTED:</text>
+<text text-anchor="start" x="2500.25" y="-648.25" font-family="JetBrains Mono" font-size="10.00">• events: Hypertable on ts_ingest</text>
+<text text-anchor="start" x="2500.25" y="-635.5" font-family="JetBrains Mono" font-size="10.00">• events: ULID → TIMESTAMPTZ extraction</text>
+<text text-anchor="start" x="2500.25" y="-622.75" font-family="JetBrains Mono" font-size="10.00">• work_queue: FOR UPDATE SKIP LOCKED</text>
+<text text-anchor="start" x="2500.25" y="-610" font-family="JetBrains Mono" font-size="10.00">• agent_manifests: Heartbeat tracking</text>
+<text text-anchor="start" x="2500.25" y="-585.25" font-family="JetBrains Mono" font-size="10.00">❌ PLANNED:</text>
+<text text-anchor="start" x="2500.25" y="-572.5" font-family="JetBrains Mono" font-size="10.00">• JSON Schema validation via pg_jsonschema</text>
+<text text-anchor="start" x="2500.25" y="-559.75" font-family="JetBrains Mono" font-size="10.00">• Vector similarity indexes (pgvector)</text>
+<text text-anchor="start" x="2500.25" y="-547" font-family="JetBrains Mono" font-size="10.00">• Entity uniqueness constraints</text>
+<text text-anchor="middle" x="2612" y="-534.25" font-family="JetBrains Mono" font-size="10.00">• Referential integrity for future tables</text>
 </g>
 <!-- legend_impl -->
 <g id="node11" class="node">
 <title>legend_impl</title>
-<polygon fill="#90ee90" stroke="black" points="2879.62,-618.75 2762.38,-618.75 2762.38,-582.75 2879.62,-582.75 2879.62,-618.75"/>
-<text text-anchor="middle" x="2821" y="-598.02" font-family="JetBrains Mono" font-size="8.00">✅ Implemented &amp; Active</text>
+<polygon fill="#90ee90" stroke="black" points="2873.62,-618.75 2756.38,-618.75 2756.38,-582.75 2873.62,-582.75 2873.62,-618.75"/>
+<text text-anchor="middle" x="2815" y="-598.02" font-family="JetBrains Mono" font-size="8.00">✅ Implemented &amp; Active</text>
 </g>
 <!-- legend_partial -->
 <g id="node12" class="node">
 <title>legend_partial</title>
-<polygon fill="#ffd700" stroke="black" points="3032.25,-618.75 2897.75,-618.75 2897.75,-582.75 3032.25,-582.75 3032.25,-618.75"/>
-<text text-anchor="middle" x="2965" y="-598.02" font-family="JetBrains Mono" font-size="8.00">🟡 Implemented, Limited Use</text>
+<polygon fill="#ffd700" stroke="black" points="3026.25,-618.75 2891.75,-618.75 2891.75,-582.75 3026.25,-582.75 3026.25,-618.75"/>
+<text text-anchor="middle" x="2959" y="-598.02" font-family="JetBrains Mono" font-size="8.00">🟡 Implemented, Limited Use</text>
 </g>
 <!-- legend_future -->
 <g id="node13" class="node">
 <title>legend_future</title>
-<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="3186,-618.75 3050,-618.75 3050,-582.75 3186,-582.75 3186,-618.75"/>
-<text text-anchor="middle" x="3118" y="-598.02" font-family="JetBrains Mono" font-size="8.00">❌ Planned, Not Implemented</text>
+<polygon fill="none" stroke="black" stroke-dasharray="5,2" points="3180,-618.75 3044,-618.75 3044,-582.75 3180,-582.75 3180,-618.75"/>
+<text text-anchor="middle" x="3112" y="-598.02" font-family="JetBrains Mono" font-size="8.00">❌ Planned, Not Implemented</text>
 </g>
 </g>
 </svg>

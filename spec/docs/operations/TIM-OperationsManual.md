@@ -50,7 +50,7 @@ systemctl status postgresql
 # 2. Verify event flow (last 5 minutes)
 psql $DATABASE_URL -c "
   SELECT source, COUNT(*) as events
-  FROM raw.events 
+  FROM core.events 
   WHERE ts_ingest > NOW() - INTERVAL '5 minutes'
   GROUP BY source
   ORDER BY events DESC;"
@@ -58,7 +58,7 @@ psql $DATABASE_URL -c "
 # 3. Check for errors in last hour
 psql $DATABASE_URL -c "
   SELECT source, COUNT(*) as error_count
-  FROM raw.events
+  FROM core.events
   WHERE ts_ingest > NOW() - INTERVAL '1 hour'
     AND (event_type LIKE '%error%' OR payload->>'level' = 'error')
   GROUP BY source
@@ -337,7 +337,7 @@ pg_restore --list /var/backup/postgresql/latest.dump | head
 pg_dump -Fc $DATABASE_URL > sinex_$(date +%Y%m%d_%H%M%S).dump
 
 # Events only (last 24h)
-pg_dump -Fc -t raw.events --where="ts_ingest > NOW() - INTERVAL '24 hours'" \
+pg_dump -Fc -t core.events --where="ts_ingest > NOW() - INTERVAL '24 hours'" \
   $DATABASE_URL > events_24h_$(date +%Y%m%d_%H%M%S).dump
 
 # Configuration backup
@@ -357,7 +357,7 @@ sudo systemctl stop sinex-unified-collector
 pg_restore -d $DATABASE_URL -c backup.dump
 
 # Verify recovery
-psql $DATABASE_URL -c "SELECT COUNT(*) FROM raw.events;"
+psql $DATABASE_URL -c "SELECT COUNT(*) FROM core.events;"
 
 # Restart services
 sudo systemctl start sinex-unified-collector
@@ -441,12 +441,12 @@ journalctl --vacuum-time=1d
 
 # 3. Emergency event cleanup (CAUTION)
 psql $DATABASE_URL -c "
-  DELETE FROM raw.events
+  DELETE FROM core.events
   WHERE ts_ingest < NOW() - INTERVAL '7 days'
     AND source LIKE 'sinex.metrics.%';"
 
 # 4. Vacuum to reclaim space
-psql $DATABASE_URL -c "VACUUM FULL raw.events;"
+psql $DATABASE_URL -c "VACUUM FULL core.events;"
 ```
 
 ## 8. Security Procedures
@@ -495,7 +495,7 @@ WITH daily_counts AS (
     DATE(ts_ingest) as date,
     COUNT(*) as event_count,
     pg_size_pretty(SUM(pg_column_size(payload))) as data_size
-  FROM raw.events
+  FROM core.events
   WHERE ts_ingest > NOW() - INTERVAL '30 days'
   GROUP BY DATE(ts_ingest)
 )

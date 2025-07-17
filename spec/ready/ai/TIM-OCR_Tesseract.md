@@ -113,7 +113,7 @@ Tesseract OCR is a mature, open-source engine for converting images of text into
         *   If HOCR/TSV: Parse XML/TSV to extract text per word/line, bounding boxes (`bbox x0 y0 x1 y1`), and confidence scores (`x_wconf`).
 *   **Eventification & Storage:**
     1.  Store original screenshot (if not already) and preprocessed image as `core_blobs`.
-    2.  Emit `ocr.text_recognized.completed` event to `raw.events`.
+    2.  Emit `ocr.text_recognized.completed` event to `core.events`.
         *   `source`: `"agent.ocr_processor"`
         *   `event_type`: `"text_recognition_completed"`
         *   `payload`:

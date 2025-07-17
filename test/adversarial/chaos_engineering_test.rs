@@ -1,18 +1,21 @@
-//! # Chaos Engineering Test Suite
-//!
-//! Comprehensive chaos engineering tests that simulate system failures and edge cases.
-//! This module tests system resilience under various failure scenarios.
-//!
-//! ## Test Categories
-//! - **Agent Lifecycle Chaos**: Concurrent registration, heartbeat failures
-//! - **Filesystem Edge Cases**: Permission changes, mount failures, file system chaos
-//! - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
-//! - **System Resource Chaos**: Memory exhaustion, disk full, network failures
+// # Chaos Engineering Test Suite
+//
+// Comprehensive chaos engineering tests that simulate system failures and edge cases.
+// This module tests system resilience under various failure scenarios.
+//
+// ## Test Categories
+// - **Automaton Lifecycle Chaos**: Concurrent registration, heartbeat failures
+// - **Filesystem Edge Cases**: Permission changes, mount failures, file system chaos
+// - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
+// - **System Resource Chaos**: Memory exhaustion, disk full, network failures
+
+use redis::cmd;
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::{events, resources};
 use chrono::Utc;
-use sinex_db::{models::AgentManifest, queries};
+use sinex_db::{models::AutomatonManifest, queries};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
@@ -28,7 +31,7 @@ use tokio::task::yield_now;
 async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
-    let agent_name = "chaos-agent";
+    let automaton_name = "chaos-agent";
     let successful_registrations = Arc::new(AtomicU64::new(0));
     let failed_registrations = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -41,7 +44,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 
         let handle = tokio::spawn(async move {
             let manifest = AgentManifest {
-                agent_name: agent_name.to_string(),
+                automaton_name: automaton_name.to_string(),
                 description: Some(format!("Chaos agent instance {}", instance_id)),
                 version: format!("1.0.{}", instance_id), // Slightly different versions
                 status: "running".to_string(),
@@ -64,9 +67,9 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 updated_at: Utc::now(),
             };
 
-            match sinex_db::agent::upsert_agent_manifest(
+            match sinex_db::upsert_automaton_manifest(
                 &pool_clone,
-                &manifest.agent_name,
+                &manifest.automaton_name,
                 &manifest.version,
                 manifest.description.as_deref(),
                 &manifest.agent_type,
@@ -80,14 +83,14 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 Ok(_) => {
                     println!(
                         "Instance {} successfully registered agent {}",
-                        instance_id, agent_name
+                        instance_id, automaton_name
                     );
                     success_count.fetch_add(1, Ordering::SeqCst);
                 }
                 Err(e) => {
                     println!(
                         "Instance {} failed to register agent {}: {}",
-                        instance_id, agent_name, e
+                        instance_id, automaton_name, e
                     );
                     fail_count.fetch_add(1, Ordering::SeqCst);
                 }
@@ -127,19 +130,19 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
             last_error_summary,
             registered_at,
             updated_at
-        FROM sinex_schemas.agent_manifests
-        WHERE agent_name = $1
+        FROM sinex_schemas.processor_manifests
+        WHERE processor_name = $1 AND processor_type = 'automaton'
         "#,
-        agent_name
+        automaton_name
     )
     .fetch_all(ctx.pool())
     .await?;
 
-    println!("Agents in database: {}", agents.len());
+    println!("Agents in database: {}", agents.keys.len());
 
     // The system should handle concurrent registration gracefully
     assert!(successes > 0, "At least one registration should succeed");
-    assert!(agents.len() > 0, "Agent should be registered in database");
+    assert!(agents.keys.len() > 0, "Agent should be registered in database");
 
     Ok(())
 }
@@ -148,15 +151,15 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 #[sinex_test]
 async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    let agent_name = "heartbeat-chaos-agent";
+    let automaton_name = "heartbeat-chaos-agent";
     
     // Register initial agent
     let manifest = AgentManifest {
-        agent_name: agent_name.to_string(),
+        automaton_name: automaton_name.to_string(),
         description: Some("Heartbeat chaos test agent".to_string()),
         version: "1.0.0".to_string(),
         status: "running".to_string(),
-        agent_type: "test".to_string(),
+        automaton_type: "test".to_string(),
         config_template_json: Some(json!({})),
         produces_event_types: Some(json!(["test.event"])),
         subscribes_to_event_types: None,
@@ -170,9 +173,9 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
         updated_at: Utc::now(),
     };
     
-    sinex_db::agent::upsert_agent_manifest(
+    sinex_db::upsert_automaton_manifest(
         pool,
-        &manifest.agent_name,
+        &manifest.automaton_name,
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
@@ -204,12 +207,12 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
             
             // Attempt heartbeat update
             match sqlx::query!(
-                "UPDATE sinex_schemas.agent_manifests 
+                "UPDATE sinex_schemas.processor_manifests 
                  SET last_heartbeat_ts = $1, updated_at = $2 
-                 WHERE agent_name = $3",
+                 WHERE processor_name = $3 AND processor_type = 'automaton'",
                 Utc::now(),
                 Utc::now(),
-                agent_name
+                automaton_name
             )
             .execute(&pool_clone)
             .await
@@ -251,7 +254,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
 #[sinex_test]
 async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    let base_agent_name = "lifecycle-chaos";
+    let base_automaton_name = "lifecycle-chaos";
     
     let registration_count = Arc::new(AtomicU64::new(0));
     let heartbeat_count = Arc::new(AtomicU64::new(0));
@@ -265,11 +268,11 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
         let reg_count = registration_count.clone();
         let hb_count = heartbeat_count.clone();
         let dereg_count = deregistration_count.clone();
-        let agent_name = format!("{}-{}", base_agent_name, agent_id);
+        let automaton_name = format!("{}-{}", base_automaton_name, agent_id);
         
         let handle = tokio::spawn(async move {
             // Register agent
-            match sinex_db::agent::upsert_agent_manifest(
+            match sinex_db::upsert_automaton_manifest(
                 &pool_clone,
                 &agent_name,
                 "1.0.0",
@@ -284,10 +287,10 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             {
                 Ok(_) => {
                     reg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} registered", agent_name);
+                    println!("Agent {} registered", automaton_name);
                 }
                 Err(e) => {
-                    println!("Agent {} registration failed: {}", agent_name, e);
+                    println!("Agent {} registration failed: {}", automaton_name, e);
                     return;
                 }
             }
@@ -295,12 +298,12 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             // Send some heartbeats
             for _ in 0..3 {
                 match sqlx::query!(
-                    "UPDATE sinex_schemas.agent_manifests 
+                    "UPDATE sinex_schemas.processor_manifests 
                      SET last_heartbeat_ts = $1, updated_at = $2 
-                     WHERE agent_name = $3",
+                     WHERE processor_name = $3 AND processor_type = 'automaton",
                     Utc::now(),
                     Utc::now(),
-                    agent_name
+                    automaton_name
                 )
                 .execute(&pool_clone)
                 .await
@@ -309,7 +312,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
                         hb_count.fetch_add(1, Ordering::SeqCst);
                     }
                     Err(e) => {
-                        println!("Heartbeat failed for {}: {}", agent_name, e);
+                        println!("Heartbeat failed for {}: {}", automaton_name, e);
                     }
                 }
                 
@@ -318,18 +321,18 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             
             // Deregister agent
             match sqlx::query!(
-                "DELETE FROM sinex_schemas.agent_manifests WHERE agent_name = $1",
-                agent_name
+                "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton",
+                automaton_name
             )
             .execute(&pool_clone)
             .await
             {
                 Ok(_) => {
                     dereg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} deregistered", agent_name);
+                    println!("Agent {} deregistered", automaton_name);
                 }
                 Err(e) => {
-                    println!("Agent {} deregistration failed: {}", agent_name, e);
+                    println!("Agent {} deregistration failed: {}", automaton_name, e);
                 }
             }
         });
@@ -350,8 +353,8 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
     
     // Verify final database state
     let remaining_agents = sqlx::query!(
-        "SELECT COUNT(*) as count FROM sinex_schemas.agent_manifests WHERE agent_name LIKE $1",
-        format!("{}%", base_agent_name)
+        "SELECT COUNT(*) as count FROM sinex_schemas.processor_manifests WHERE processor_name LIKE $1 AND processor_type = 'automaton",
+        format!("{}%", base_automaton_name)
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -671,7 +674,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
             }
 
             // Simulate database operations during init
-            match sinex_db::crate::common::insert_event_with_validator(
+            match sinex_db::crate::common::sinex_db::insert_event_with_validator(
                 &pool_clone,
                 "init",
                 &format!("init.step_{}", step),
@@ -726,7 +729,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
 
     // Check database state - might be partially initialized
     let event_count =
-        sqlx::query!("SELECT COUNT(*) as count FROM raw.events WHERE source = 'init'")
+        sqlx::query!("SELECT COUNT(*) as count FROM core.events WHERE source = 'init'")
             .fetch_one(ctx.pool())
             .await
             .unwrap();
@@ -815,7 +818,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                 transitions.fetch_add(1, Ordering::SeqCst);
                 
                 // Simulate state transition by updating agent status
-                let agent_name = format!("state-test-{}", worker_id);
+                let automaton_name = format!("state-test-{}", worker_id);
                 let new_status = match transition_id % 4 {
                     0 => "initializing",
                     1 => "running",
@@ -826,10 +829,10 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                 
                 // Try to update agent status
                 match sqlx::query!(
-                    "INSERT INTO sinex_schemas.agent_manifests 
-                     (agent_name, version, status, agent_type, registered_at, updated_at) 
-                     VALUES ($1, $2, $3, $4, $5, $6) 
-                     ON CONFLICT (agent_name) DO UPDATE SET 
+                    "INSERT INTO sinex_schemas.processor_manifests 
+                     (processor_name, processor_type, version, status, registered_at, updated_at) 
+                     VALUES ($1, 'automaton', $2, $3, $4, $5) 
+                     ON CONFLICT (processor_name, version, git_commit_sha) DO UPDATE SET 
                      status = $3, updated_at = $6",
                     agent_name,
                     "1.0.0",
@@ -869,19 +872,783 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
     
     // Check final state consistency
     let final_agents = sqlx::query!(
-        "SELECT agent_name, status FROM sinex_schemas.agent_manifests WHERE agent_name LIKE 'state-test-%'"
+        "SELECT processor_name as automaton_name, status FROM sinex_schemas.processor_manifests WHERE processor_name LIKE 'state-test-%' AND processor_type = 'automaton'"
     )
     .fetch_all(ctx.pool())
     .await?;
     
     println!("Final agent states:");
     for agent in &final_agents {
-        println!("  {}: {}", agent.agent_name, agent.status);
+        println!("  {}: {}", agent.automaton_name, agent.status);
     }
     
     // Most transitions should succeed
     assert!(total_transitions > 0, "State transitions should occur");
     assert!(invalid_count < total_transitions / 2, "Most transitions should succeed");
+    
+    Ok(())
+}
+
+// =============================================================================
+// Comprehensive Chaos Engineering Tests
+// =============================================================================
+
+/// Test system resilience under database connection failures
+#[sinex_test]
+async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+    let failure_count = Arc::new(AtomicU64::new(0));
+    let recovery_count = Arc::new(AtomicU64::new(0));
+    let event_count = Arc::new(AtomicU64::new(0));
+    
+    let mut handles = vec![];
+    
+    // Simulate database operations under failure conditions
+    for worker_id in 0..5 {
+        let pool_clone = pool.clone();
+        let failures = failure_count.clone();
+        let recoveries = recovery_count.clone();
+        let events = event_count.clone();
+        
+        let handle = tokio::spawn(async move {\n            for operation_id in 0..20 {
+                events.fetch_add(1, Ordering::SeqCst);
+                
+                // Simulate database operation with potential failure
+                let result = if operation_id % 7 == 0 {
+                    // Simulate database failure
+                    failures.fetch_add(1, Ordering::SeqCst);
+                    println!("Worker {} operation {} - simulated database failure", worker_id, operation_id);
+                    Err(sqlx::Error::Database(Box::new(sqlx::postgres::PgDatabaseError::new(
+                        sqlx::postgres::PgErrorPosition::Original(0),
+                        sqlx::postgres::PgSeverity::Error,
+                        "connection_failure".to_string(),
+                        "53300".to_string(),
+                        "too_many_connections".to_string(),
+                        None,
+                        None,
+                        None,
+                        None,
+                        None,
+                    ))))
+                } else {
+                    // Normal database operation
+                    match sinex_db::common::sinex_db::insert_event_with_validator(
+                        &pool_clone,
+                        &format!("chaos-worker-{}", worker_id),
+                        &format!("database.operation.{}", operation_id),
+                        "test",
+                        serde_json::json!({"worker": worker_id, "operation": operation_id}),
+                        None,
+                        Some("chaos-test-0.1.0"),
+                        None,
+                    ).await {
+                        Ok(_) => {
+                            recoveries.fetch_add(1, Ordering::SeqCst);
+                            Ok(())
+                        }
+                        Err(e) => {
+                            failures.fetch_add(1, Ordering::SeqCst);
+                            Err(e)
+                        }
+                    }
+                };
+                
+                if let Err(e) = result {
+                    println!("Worker {} operation {} failed: {}", worker_id, operation_id, e);
+                    
+                    // Simulate retry logic with exponential backoff
+                    for retry in 0..3 {
+                        tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
+                        
+                        match sinex_db::common::sinex_db::insert_event_with_validator(
+                            &pool_clone,
+                            &format!("chaos-worker-{}", worker_id),
+                            &format!("database.retry.{}.{}", operation_id, retry),
+                            "test",
+                            serde_json::json!({"worker": worker_id, "operation": operation_id, "retry": retry}),
+                            None,
+                            Some("chaos-test-0.1.0"),
+                            None,
+                        ).await {
+                            Ok(_) => {
+                                recoveries.fetch_add(1, Ordering::SeqCst);
+                                println!("Worker {} operation {} retry {} succeeded", worker_id, operation_id, retry);
+                                break;
+                            }
+                            Err(e) => {
+                                println!("Worker {} operation {} retry {} failed: {}", worker_id, operation_id, retry, e);
+                            }
+                        }
+                    }
+                }
+                
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        });
+        
+        handles.push(handle);
+    }
+    
+    join_all(handles).await;
+    
+    let total_events = event_count.load(Ordering::SeqCst);
+    let total_failures = failure_count.load(Ordering::SeqCst);
+    let total_recoveries = recovery_count.load(Ordering::SeqCst);
+    
+    println!("Database failure resilience test results:");
+    println!("- Total events attempted: {}", total_events);
+    println!("- Total failures: {}", total_failures);
+    println!("- Total recoveries: {}", total_recoveries);
+    
+    // Verify database state after chaos
+    let final_events = sqlx::query!(
+        "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'chaos-worker-%'"
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    
+    println!("Events successfully stored: {}", final_events.count.unwrap_or(0));
+    
+    // System should show resilience - some operations should succeed
+    assert!(total_recoveries > 0, "Some operations should recover from failures");
+    assert!(total_failures > 0, "Failures should be simulated");
+    
+    Ok(())
+}
+
+/// Test Redis failure resilience with stream operations
+#[sinex_test]
+async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
+    use crate::common::mocks::{MockRedis, MockRedisConfig, FailureInjector, FailurePattern};
+    
+    let mut mock_redis = MockRedis::new(MockRedisConfig {
+        max_connections: 100,
+        max_memory_mb: 100,
+        failure_rate: 0.2, // 20% failure rate
+        connection_timeout_ms: 1000,
+        enable_auth: false,
+        enable_clustering: false,
+    });
+    
+    // Configure failure patterns for Redis operations
+    mock_redis.configure_failure_pattern(FailurePattern::Intermittent {
+        operation: "XADD".to_string(),
+        failure_rate: 0.3,
+        failure_duration: Duration::from_secs(2),
+    });
+    
+    mock_redis.configure_failure_pattern(FailurePattern::Probabilistic {
+        operation: "XREADGROUP".to_string(),
+        failure_rate: 0.15,
+    });
+    
+    let stream_operations = Arc::new(AtomicU64::new(0));
+    let stream_failures = Arc::new(AtomicU64::new(0));
+    let stream_recoveries = Arc::new(AtomicU64::new(0));
+    
+    let mut handles = vec![];
+    
+    // Simulate Redis stream operations under failure conditions
+    for worker_id in 0..3 {
+        let operations = stream_operations.clone();
+        let failures = stream_failures.clone();
+        let recoveries = stream_recoveries.clone();
+        let redis_clone = mock_redis.clone();
+        
+        let handle = tokio::spawn(async move {
+            for stream_id in 0..30 {
+                operations.fetch_add(1, Ordering::SeqCst);
+                
+                let stream_key = format!("sinex:chaos:stream:{}", worker_id);
+                let event_data = serde_json::json!({
+                    "worker": worker_id,
+                    "stream": stream_id,
+                    "timestamp": chrono::Utc::now().to_rfc3339(),
+                    "data": format!("chaos-event-{}-{}", worker_id, stream_id)
+                });
+                
+                // Attempt to add event to stream
+                match redis_clone.xadd(&stream_key, "*", &event_data).await {
+                    Ok(_) => {
+                        recoveries.fetch_add(1, Ordering::SeqCst);
+                        println!("Worker {} stream {} - XADD succeeded", worker_id, stream_id);
+                    }
+                    Err(e) => {
+                        failures.fetch_add(1, Ordering::SeqCst);
+                        println!("Worker {} stream {} - XADD failed: {}", worker_id, stream_id, e);
+                        
+                        // Simulate retry with exponential backoff
+                        for retry in 0..3 {
+                            tokio::time::sleep(Duration::from_millis(200 * (1 << retry))).await;
+                            
+                            match redis_clone.xadd(&stream_key, "*", &event_data).await {
+                                Ok(_) => {
+                                    recoveries.fetch_add(1, Ordering::SeqCst);
+                                    println!("Worker {} stream {} retry {} - XADD succeeded", worker_id, stream_id, retry);
+                                    break;
+                                }
+                                Err(e) => {
+                                    println!("Worker {} stream {} retry {} - XADD failed: {}", worker_id, stream_id, retry, e);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Simulate stream reading
+                if stream_id % 5 == 0 {
+                    match cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg("chaos-consumer-group")
+                        .arg(&format!("consumer-{}", worker_id))
+                        .arg("COUNT")
+                        .arg(1)
+                        .arg("STREAMS")
+                        .arg(&stream_key)
+                        .arg(">")
+                        .query_async::<_, redis::streams::StreamReadReply>(&mut redis_clone)
+                        .await {
+                        Ok(messages) => {
+                            println!("Worker {} - XREADGROUP returned {} messages", worker_id, messages.keys.len());
+                        }
+                        Err(e) => {
+                            println!("Worker {} - XREADGROUP failed: {}", worker_id, e);
+                        }
+                    }
+                }
+                
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        
+        handles.push(handle);
+    }
+    
+    join_all(handles).await;
+    
+    let total_operations = stream_operations.load(Ordering::SeqCst);
+    let total_failures = stream_failures.load(Ordering::SeqCst);
+    let total_recoveries = stream_recoveries.load(Ordering::SeqCst);
+    
+    println!("Redis failure resilience test results:");
+    println!("- Total stream operations: {}", total_operations);
+    println!("- Total failures: {}", total_failures);
+    println!("- Total recoveries: {}", total_recoveries);
+    
+    // Verify stream state
+    let stream_lengths = mock_redis.get_stream_lengths().await;
+    println!("Final stream lengths: {:?}", stream_lengths);
+    
+    // System should show resilience with Redis failures
+    assert!(total_operations > 0, "Stream operations should be attempted");
+    assert!(total_recoveries > 0, "Some operations should succeed");
+    
+    Ok(())
+}
+
+/// Test network partition resilience
+#[sinex_test]
+async fn test_network_partition_resilience(ctx: TestContext) -> TestResult {
+    use crate::common::mocks::{MockNetwork, MockNetworkConfig, FailurePattern};
+    
+    let mut mock_network = MockNetwork::new(MockNetworkConfig {
+        packet_loss_rate: 0.1,
+        latency_ms: 50,
+        bandwidth_limit_kbps: 1000,
+        connection_failure_rate: 0.05,
+        enable_partition_simulation: true,
+    });
+    
+    // Configure network partition
+    mock_network.configure_failure_pattern(FailurePattern::Temporary {
+        operation: "tcp_connect".to_string(),
+        failure_rate: 0.5,
+        duration: Duration::from_secs(3),
+    });
+    
+    let connection_attempts = Arc::new(AtomicU64::new(0));
+    let successful_connections = Arc::new(AtomicU64::new(0));
+    let partition_detections = Arc::new(AtomicU64::new(0));
+    
+    let mut handles = vec![];
+    
+    // Simulate network operations under partition conditions
+    for node_id in 0..4 {
+        let attempts = connection_attempts.clone();
+        let successes = successful_connections.clone();
+        let partitions = partition_detections.clone();
+        let network_clone = mock_network.clone();
+        
+        let handle = tokio::spawn(async move {
+            for connection_id in 0..25 {
+                attempts.fetch_add(1, Ordering::SeqCst);
+                
+                let target_address = format!("node-{}.sinex.internal", (node_id + 1) % 4);
+                
+                // Simulate connection attempt
+                match network_clone.connect(&target_address, 8080).await {
+                    Ok(_) => {
+                        successes.fetch_add(1, Ordering::SeqCst);
+                        println!("Node {} connection {} to {} succeeded", node_id, connection_id, target_address);
+                        
+                        // Simulate data transfer
+                        let data = format!("heartbeat-{}-{}", node_id, connection_id);
+                        match network_clone.send_data(&target_address, data.as_bytes()).await {
+                            Ok(_) => {
+                                println!("Node {} data transfer {} succeeded", node_id, connection_id);
+                            }
+                            Err(e) => {
+                                println!("Node {} data transfer {} failed: {}", node_id, connection_id, e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        partitions.fetch_add(1, Ordering::SeqCst);
+                        println!("Node {} connection {} to {} failed: {}", node_id, connection_id, target_address, e);
+                        
+                        // Simulate partition detection and recovery attempts
+                        for retry in 0..3 {
+                            tokio::time::sleep(Duration::from_millis(500 * (1 << retry))).await;
+                            
+                            match network_clone.connect(&target_address, 8080).await {
+                                Ok(_) => {
+                                    successes.fetch_add(1, Ordering::SeqCst);
+                                    println!("Node {} connection {} retry {} to {} succeeded", node_id, connection_id, retry, target_address);
+                                    break;
+                                }
+                                Err(e) => {
+                                    println!("Node {} connection {} retry {} to {} failed: {}", node_id, connection_id, retry, target_address, e);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                tokio::time::sleep(Duration::from_millis(200)).await;
+            }
+        });
+        
+        handles.push(handle);
+    }
+    
+    join_all(handles).await;
+    
+    let total_attempts = connection_attempts.load(Ordering::SeqCst);
+    let total_successes = successful_connections.load(Ordering::SeqCst);
+    let total_partitions = partition_detections.load(Ordering::SeqCst);
+    
+    println!("Network partition resilience test results:");
+    println!("- Total connection attempts: {}", total_attempts);
+    println!("- Successful connections: {}", total_successes);
+    println!("- Partition detections: {}", total_partitions);
+    
+    // Verify network state
+    let network_stats = mock_network.get_connection_stats().await;
+    println!("Final network stats: {:?}", network_stats);
+    
+    // System should show resilience during network partitions
+    assert!(total_attempts > 0, "Connection attempts should be made");
+    assert!(total_partitions > 0, "Network partitions should be detected");
+    assert!(total_successes > 0, "Some connections should eventually succeed");
+    
+    Ok(())
+}
+
+/// Test cascading failure resilience
+#[sinex_test]
+async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
+    use crate::common::mocks::{FailureInjector, FailurePattern};
+    
+    let mut failure_injector = FailureInjector::new();
+    
+    // Configure cascading failure pattern
+    failure_injector.add_pattern(FailurePattern::Cascade {
+        trigger_operation: "satellite_health_check".to_string(),
+        cascade_operations: vec![
+            "event_ingestion".to_string(),
+            "stream_processing".to_string(),
+            "checkpoint_save".to_string(),
+        ],
+        cascade_delay: Duration::from_millis(500),
+    });
+    
+    let pool = ctx.pool();
+    let total_operations = Arc::new(AtomicU64::new(0));
+    let cascade_triggers = Arc::new(AtomicU64::new(0));
+    let recovery_attempts = Arc::new(AtomicU64::new(0));
+    let circuit_breaker_activations = Arc::new(AtomicU64::new(0));
+    
+    let mut handles = vec![];
+    
+    // Simulate system components under cascading failure
+    for component_id in 0..3 {
+        let pool_clone = pool.clone();
+        let operations = total_operations.clone();
+        let triggers = cascade_triggers.clone();
+        let recoveries = recovery_attempts.clone();
+        let circuit_breakers = circuit_breaker_activations.clone();
+        let injector = failure_injector.clone();
+        
+        let handle = tokio::spawn(async move {
+            let mut circuit_breaker_active = false;
+            let mut consecutive_failures = 0;
+            
+            for operation_id in 0..20 {
+                operations.fetch_add(1, Ordering::SeqCst);
+                
+                // Circuit breaker logic
+                if consecutive_failures >= 5 && !circuit_breaker_active {
+                    circuit_breaker_active = true;
+                    circuit_breakers.fetch_add(1, Ordering::SeqCst);
+                    println!("Component {} - Circuit breaker activated", component_id);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                }
+                
+                // Simulate health check that might trigger cascade
+                if operation_id % 8 == 0 {
+                    match injector.should_fail("satellite_health_check").await {
+                        Ok(()) => {
+                            println!("Component {} - Health check passed", component_id);
+                            consecutive_failures = 0;
+                            circuit_breaker_active = false;
+                        }
+                        Err(_) => {
+                            triggers.fetch_add(1, Ordering::SeqCst);
+                            consecutive_failures += 1;
+                            println!("Component {} - Health check failed, cascading failure triggered", component_id);
+                            
+                            // Simulate cascade effects
+                            for cascade_op in &["event_ingestion", "stream_processing", "checkpoint_save"] {
+                                match injector.should_fail(cascade_op).await {
+                                    Ok(()) => {
+                                        println!("Component {} - {} survived cascade", component_id, cascade_op);
+                                    }
+                                    Err(_) => {
+                                        println!("Component {} - {} failed due to cascade", component_id, cascade_op);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // Simulate normal operation if circuit breaker is not active
+                if !circuit_breaker_active {
+                    match injector.should_fail("event_ingestion").await {
+                        Ok(()) => {
+                            // Simulate successful event ingestion
+                            match sinex_db::common::sinex_db::insert_event_with_validator(
+                                &pool_clone,
+                                &format!("cascade-component-{}", component_id),
+                                &format!("component.operation.{}", operation_id),
+                                "test",
+                                serde_json::json!({"component": component_id, "operation": operation_id}),
+                                None,
+                                Some("cascade-test-0.1.0"),
+                                None,
+                            ).await {
+                                Ok(_) => {
+                                    consecutive_failures = 0;
+                                    println!("Component {} operation {} succeeded", component_id, operation_id);
+                                }
+                                Err(e) => {
+                                    consecutive_failures += 1;
+                                    println!("Component {} operation {} failed: {}", component_id, operation_id, e);
+                                }
+                            }
+                        }
+                        Err(_) => {
+                            consecutive_failures += 1;
+                            println!("Component {} operation {} failed due to injected failure", component_id, operation_id);
+                        }
+                    }
+                } else {
+                    println!("Component {} operation {} skipped due to circuit breaker", component_id, operation_id);
+                }
+                
+                // Simulate recovery attempts
+                if consecutive_failures > 0 && operation_id % 4 == 0 {
+                    recoveries.fetch_add(1, Ordering::SeqCst);
+                    println!("Component {} attempting recovery", component_id);
+                    tokio::time::sleep(Duration::from_millis(200)).await;
+                }
+                
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        
+        handles.push(handle);
+    }
+    
+    join_all(handles).await;
+    
+    let total_ops = total_operations.load(Ordering::SeqCst);
+    let total_triggers = cascade_triggers.load(Ordering::SeqCst);
+    let total_recoveries = recovery_attempts.load(Ordering::SeqCst);
+    let total_circuit_breakers = circuit_breaker_activations.load(Ordering::SeqCst);
+    
+    println!("Cascading failure resilience test results:");
+    println!("- Total operations: {}", total_ops);
+    println!("- Cascade triggers: {}", total_triggers);
+    println!("- Recovery attempts: {}", total_recoveries);
+    println!("- Circuit breaker activations: {}", total_circuit_breakers);
+    
+    // Verify database state after cascading failures
+    let successful_events = sqlx::query!(
+        "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'cascade-component-%'"
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    
+    println!("Events successfully stored: {}", successful_events.count.unwrap_or(0));
+    
+    // System should show resilience with cascading failures
+    assert!(total_ops > 0, "Operations should be attempted");
+    assert!(total_triggers > 0, "Cascading failures should be triggered");
+    assert!(total_recoveries > 0, "Recovery attempts should be made");
+    
+    Ok(())
+}
+
+/// Test post-chaos recovery and system state consistency
+#[sinex_test]
+async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
+    use crate::common::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
+    
+    let pool = ctx.pool();
+    
+    // Phase 1: Create chaos with multiple failure modes
+    println!("Phase 1: Inducing chaos across multiple subsystems");
+    
+    let mut mock_redis = MockRedis::new(MockRedisConfig {
+        max_connections: 50,
+        max_memory_mb: 50,
+        failure_rate: 0.4,
+        connection_timeout_ms: 500,
+        enable_auth: false,
+        enable_clustering: false,
+    });
+    
+    let mut mock_db = MockDatabase::new(MockDatabaseConfig {
+        max_connections: 20,
+        query_timeout_ms: 2000,
+        failure_rate: 0.3,
+        enable_transactions: true,
+        enable_prepared_statements: true,
+    });
+    
+    let mut mock_fs = MockFilesystem::new(MockFilesystemConfig {
+        failure_rate: 0.2,
+        disk_full_threshold: 0.9,
+        permission_errors: true,
+        enable_file_locking: true,
+    });
+    
+    // Simulate chaotic operations
+    let chaos_operations = Arc::new(AtomicU64::new(0));
+    let chaos_failures = Arc::new(AtomicU64::new(0));
+    let mut chaos_handles = vec![];
+    
+    for chaos_id in 0..5 {
+        let operations = chaos_operations.clone();
+        let failures = chaos_failures.clone();
+        let redis_clone = mock_redis.clone();
+        let db_clone = mock_db.clone();
+        let fs_clone = mock_fs.clone();
+        let pool_clone = pool.clone();
+        
+        let handle = tokio::spawn(async move {
+            for op in 0..10 {
+                operations.fetch_add(1, Ordering::SeqCst);
+                
+                // Chaotic Redis operations
+                match redis_clone.xadd(&format!("chaos:stream:{}", chaos_id), "*", &serde_json::json!({"chaos": op})).await {
+                    Ok(_) => println!("Chaos {} Redis op {} succeeded", chaos_id, op),
+                    Err(e) => {
+                        failures.fetch_add(1, Ordering::SeqCst);
+                        println!("Chaos {} Redis op {} failed: {}", chaos_id, op, e);
+                    }
+                }
+                
+                // Chaotic database operations
+                match db_clone.execute_query("INSERT INTO test_table VALUES ($1, $2)", &[&chaos_id, &op]).await {
+                    Ok(_) => println!("Chaos {} DB op {} succeeded", chaos_id, op),
+                    Err(e) => {
+                        failures.fetch_add(1, Ordering::SeqCst);
+                        println!("Chaos {} DB op {} failed: {}", chaos_id, op, e);
+                    }
+                }
+                
+                // Chaotic filesystem operations
+                let file_path = format!("/tmp/chaos_{}_{}.txt", chaos_id, op);
+                match fs_clone.write_file(&file_path, &format!("chaos data {} {}", chaos_id, op)).await {
+                    Ok(_) => println!("Chaos {} FS op {} succeeded", chaos_id, op),
+                    Err(e) => {
+                        failures.fetch_add(1, Ordering::SeqCst);
+                        println!("Chaos {} FS op {} failed: {}", chaos_id, op, e);
+                    }
+                }
+                
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        
+        chaos_handles.push(handle);
+    }
+    
+    join_all(chaos_handles).await;
+    
+    let total_chaos_ops = chaos_operations.load(Ordering::SeqCst);
+    let total_chaos_failures = chaos_failures.load(Ordering::SeqCst);
+    
+    println!("Chaos phase completed:");
+    println!("- Total chaos operations: {}", total_chaos_ops);
+    println!("- Total chaos failures: {}", total_chaos_failures);
+    
+    // Phase 2: Recovery and consistency checks
+    println!("\nPhase 2: Recovery and consistency verification");
+    
+    // Reset failure rates to simulate recovery
+    mock_redis.set_failure_rate(0.0).await;
+    mock_db.set_failure_rate(0.0).await;
+    mock_fs.set_failure_rate(0.0).await;
+    
+    // Wait for recovery period
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    
+    let recovery_operations = Arc::new(AtomicU64::new(0));
+    let recovery_successes = Arc::new(AtomicU64::new(0));
+    let consistency_checks = Arc::new(AtomicU64::new(0));
+    let mut recovery_handles = vec![];
+    
+    for recovery_id in 0..3 {
+        let operations = recovery_operations.clone();
+        let successes = recovery_successes.clone();
+        let checks = consistency_checks.clone();
+        let redis_clone = mock_redis.clone();
+        let db_clone = mock_db.clone();
+        let fs_clone = mock_fs.clone();
+        let pool_clone = pool.clone();
+        
+        let handle = tokio::spawn(async move {
+            for op in 0..15 {
+                operations.fetch_add(1, Ordering::SeqCst);
+                
+                // Recovery Redis operations
+                match redis_clone.xadd(&format!("recovery:stream:{}", recovery_id), "*", &serde_json::json!({"recovery": op})).await {
+                    Ok(_) => {
+                        successes.fetch_add(1, Ordering::SeqCst);
+                        println!("Recovery {} Redis op {} succeeded", recovery_id, op);
+                    }
+                    Err(e) => {
+                        println!("Recovery {} Redis op {} failed: {}", recovery_id, op, e);
+                    }
+                }
+                
+                // Recovery database operations
+                match sinex_db::common::sinex_db::insert_event_with_validator(
+                    &pool_clone,
+                    &format!("recovery-component-{}", recovery_id),
+                    &format!("recovery.operation.{}", op),
+                    "test",
+                    serde_json::json!({"recovery": recovery_id, "operation": op}),
+                    None,
+                    Some("recovery-test-0.1.0"),
+                    None,
+                ).await {
+                    Ok(_) => {
+                        successes.fetch_add(1, Ordering::SeqCst);
+                        println!("Recovery {} DB op {} succeeded", recovery_id, op);
+                    }
+                    Err(e) => {
+                        println!("Recovery {} DB op {} failed: {}", recovery_id, op, e);
+                    }
+                }
+                
+                // Consistency checks
+                if op % 5 == 0 {
+                    checks.fetch_add(1, Ordering::SeqCst);
+                    
+                    // Check Redis stream consistency
+                    match redis_clone.xlen(&format!("recovery:stream:{}", recovery_id)).await {
+                        Ok(len) => {
+                            println!("Recovery {} consistency check: Redis stream length = {}", recovery_id, len);
+                        }
+                        Err(e) => {
+                            println!("Recovery {} consistency check failed: {}", recovery_id, e);
+                        }
+                    }
+                    
+                    // Check database consistency
+                    match sqlx::query!(
+                        "SELECT COUNT(*) as count FROM core.events WHERE source = $1",
+                        format!("recovery-component-{}", recovery_id)
+                    ).fetch_one(&pool_clone).await {
+                        Ok(row) => {
+                            println!("Recovery {} consistency check: DB events count = {}", recovery_id, row.count.unwrap_or(0));
+                        }
+                        Err(e) => {
+                            println!("Recovery {} DB consistency check failed: {}", recovery_id, e);
+                        }
+                    }
+                }
+                
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+        
+        recovery_handles.push(handle);
+    }
+    
+    join_all(recovery_handles).await;
+    
+    let total_recovery_ops = recovery_operations.load(Ordering::SeqCst);
+    let total_recovery_successes = recovery_successes.load(Ordering::SeqCst);
+    let total_consistency_checks = consistency_checks.load(Ordering::SeqCst);
+    
+    println!("\nRecovery phase completed:");
+    println!("- Total recovery operations: {}", total_recovery_ops);
+    println!("- Successful recovery operations: {}", total_recovery_successes);
+    println!("- Consistency checks performed: {}", total_consistency_checks);
+    
+    // Phase 3: Final system state validation
+    println!("\nPhase 3: Final system state validation");
+    
+    // Check database state
+    let total_events = sqlx::query!(
+        "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'recovery-component-%'"
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    
+    println!("Total events in database: {}", total_events.count.unwrap_or(0));
+    
+    // Check Redis state
+    let redis_stats = mock_redis.get_connection_stats().await;
+    println!("Redis connection stats: {:?}", redis_stats);
+    
+    // Check filesystem state
+    let fs_stats = mock_fs.get_file_stats().await;
+    println!("Filesystem stats: {:?}", fs_stats);
+    
+    // Verify system recovered properly
+    assert!(total_chaos_ops > 0, "Chaos operations should have been attempted");
+    assert!(total_chaos_failures > 0, "Some chaos operations should have failed");
+    assert!(total_recovery_ops > 0, "Recovery operations should have been attempted");
+    assert!(total_recovery_successes > 0, "Some recovery operations should have succeeded");
+    assert!(total_consistency_checks > 0, "Consistency checks should have been performed");
+    
+    // Recovery rate should be significantly better than chaos phase
+    let chaos_success_rate = (total_chaos_ops - total_chaos_failures) as f64 / total_chaos_ops as f64;
+    let recovery_success_rate = total_recovery_successes as f64 / total_recovery_ops as f64;
+    
+    println!("Chaos phase success rate: {:.2}%", chaos_success_rate * 100.0);
+    println!("Recovery phase success rate: {:.2}%", recovery_success_rate * 100.0);
+    
+    assert!(recovery_success_rate > chaos_success_rate, 
+        "Recovery success rate should be higher than chaos phase");
+    assert!(recovery_success_rate > 0.7, 
+        "Recovery success rate should be > 70%");
     
     Ok(())
 }

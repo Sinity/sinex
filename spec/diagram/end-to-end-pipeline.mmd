@@ -11,7 +11,7 @@ graph TD
     
     %% Data Layer
     DB[(PostgreSQL + TimescaleDB)]
-    Events[raw.events<br/>Immutable Event Log]
+    Events[core.events<br/>Immutable Event Log]
     Schemas[event_payload_schemas<br/>JSON Schema Validation]
     
     %% Routing Layer

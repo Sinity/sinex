@@ -1,0 +1,17 @@
+[package]
+name = "sinex-error"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+chrono.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+sinex-ulid = { path = "../sinex-ulid" }
+
+[lints]
+workspace = true

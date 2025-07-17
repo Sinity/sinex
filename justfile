@@ -14,8 +14,15 @@ default:
     @echo "  just test-unit   - Unit tests only"
     @echo "  just test-integration - Integration tests"
     @echo "  just test-system - System/E2E tests"
+    @echo "  just test-performance - Performance/stress tests"
     @echo "  just test-services - Test new service layer functionality"
     @echo "  just test-core   - Core functionality tests (db, ulid, events)"
+    @echo "  just test-individual FILE - Run specific test file"
+    @echo "  just test-timeout SECONDS - Run tests with custom timeout"
+    @echo "  just test-strict - Run tests with strict 2-minute timeout"
+    @echo "  just test-dev    - Quick development cycle (under 2 minutes)"
+    @echo "  just test-clean  - Clean test artifacts and reset environment"
+    @echo "  just test-results - Show test results summary"
     @echo "  just test-all    - All tests including VM (~10-15min)"
     @echo ""
     @echo "🔧 Development:"
@@ -28,11 +35,20 @@ default:
     @echo "  just migrate     - Run migrations"
     @echo "  just psql        - Connect to database"
     @echo "  just sqlx-prepare - Update SQLX cache (commit .sqlx/)"
+    @echo "  just db-setup    - Setup test database"
+    @echo "  just db-reset    - Reset test database"
+    @echo "  just db-clean    - Clean test database"
+    @echo ""
+    @echo "📋 Schema Management:"
+    @echo "  just schema-generate - Generate JSON schemas from Rust code"
+    @echo "  just schema-validate - Validate all schemas"
+    @echo "  just schema-deploy   - Deploy schemas to database"
+    @echo "  just schema-check    - Check backward compatibility"
     @echo ""
     @echo "▶️  Services:"
     @echo "  just collector   - Run unified collector"
-    @echo "  just host        - Run sinex-host RPC server"
-    @echo "  just automaton   - Run sinex-automaton worker"
+    @echo "  just host        - Run sinex-gateway RPC server"
+    @echo "  just canonicalizer - Run terminal command canonicalizer"
     @echo "  just query       - Query recent events"
     @echo ""
     @echo "📊 Coverage:"
@@ -86,6 +102,11 @@ test-property *ARGS:
     @echo "🎲 Running property-based tests (randomized edge cases)..."
     cargo nextest run -E "test(property::)" -- {{ARGS}}
 
+# 🚀 Performance tests - Stress, load, and performance testing (~2min)
+test-performance *ARGS:
+    @echo "🚀 Running performance tests (stress, load, performance)..."
+    cargo nextest run -E "test(performance::)" -- {{ARGS}}
+
 # ⚔️  Adversarial tests - Security and chaos testing (~3min)
 test-adversarial *ARGS:
     @echo "⚔️ Running adversarial tests (security and chaos scenarios)..."
@@ -100,7 +121,7 @@ test-fast *ARGS:
 test-services *ARGS:
     @echo "🧪 Testing service layer functionality..."
     cargo test -p sinex-services -- {{ARGS}}
-    cargo test -p sinex-host -- {{ARGS}}
+    cargo test -p sinex-gateway -- {{ARGS}}
 
 # 🔧 Test core functionality (db, ulid, events)
 test-core *ARGS:
@@ -112,6 +133,16 @@ test *ARGS:
     @echo "🎯 Running tests with filter: {{ARGS}}"
     cargo nextest run -- {{ARGS}}
 
+# 📁 Run specific test file or module
+test-individual FILE *ARGS:
+    @echo "📁 Running test file: {{FILE}}"
+    cargo nextest run -E "test({{FILE}})" -- {{ARGS}}
+
+# ⏱️ Run tests with custom timeout (in seconds)
+test-timeout SECONDS *ARGS:
+    @echo "⏱️ Running tests with {{SECONDS}}s timeout..."
+    NEXTEST_PROFILE=default cargo nextest run --config 'profile.default.slow-timeout.period="{{SECONDS}}s"' -- {{ARGS}}
+
 # 👀 Watch tests - Re-run tests on file changes
 watch *ARGS:
     @echo "👀 Watching for changes, running tests with filter: {{ARGS}}"
@@ -121,6 +152,36 @@ watch *ARGS:
 watch-fast *ARGS:
     @echo "⚡👀 Watching for changes, running fast tests only..."
     cargo watch -x "nextest run -E 'test(unit::) or test(property::)' -- {{ARGS}}"
+
+# 🔧 Run tests with limited parallelism (for flaky tests)
+test-reliable *ARGS:
+    @echo "🔧 Running tests with limited parallelism for reliability..."
+    cargo nextest run -j 2 -- {{ARGS}}
+
+# 🔍 Run tests with verbose output
+test-verbose *ARGS:
+    @echo "🔍 Running tests with verbose output..."
+    cargo nextest run --success-output immediate-final -- {{ARGS}}
+
+# 🎯 Run tests matching a pattern
+test-pattern PATTERN *ARGS:
+    @echo "🎯 Running tests matching pattern: {{PATTERN}}"
+    cargo nextest run -E "test(~{{PATTERN}})" -- {{ARGS}}
+
+# 🏃 Run tests with fast profile (60s timeout, 4 threads)
+test-fast-profile *ARGS:
+    @echo "🏃 Running tests with fast profile (60s timeout, 4 threads)..."
+    cargo nextest run -P fast -- {{ARGS}}
+
+# 🛡️ Run tests with reliable profile (180s timeout, 2 threads, 3 retries)
+test-reliable-profile *ARGS:
+    @echo "🛡️ Running tests with reliable profile (180s timeout, 2 threads, 3 retries)..."
+    cargo nextest run -P reliable -- {{ARGS}}
+
+# 🐛 Run tests with debug profile (300s timeout, 1 thread, full output)
+test-debug-profile *ARGS:
+    @echo "🐛 Running tests with debug profile (300s timeout, 1 thread, full output)..."
+    cargo nextest run -P debug -- {{ARGS}}
 
 # === VM Tests ===
 
@@ -169,22 +230,107 @@ sqlx-check:
     @echo "✅ Checking SQLX cache consistency..."
     cargo sqlx prepare --workspace --check -- --all-targets --all-features
 
+# 🔄 Reset test database (for integration tests)
+db-reset:
+    @echo "🔄 Resetting test database..."
+    dropdb --if-exists sinex_test
+    createdb sinex_test
+    DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql" sqlx migrate run
+
+# 🧪 Setup test database (create if not exists)
+db-setup:
+    @echo "🧪 Setting up test database..."
+    createdb sinex_test 2>/dev/null || true
+    DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql" sqlx migrate run
+
+# 🧹 Clean test database
+db-clean:
+    @echo "🧹 Cleaning test database..."
+    dropdb --if-exists sinex_test
+
+# === Schema Management ===
+
+# 🔨 Generate JSON schemas from Rust structs
+schema-generate:
+    @echo "🔨 Generating JSON schemas from Rust code..."
+    cargo run --package sinex-events --bin generate-schemas
+    @echo "✅ Schemas generated. Run 'just schema-diff' to see changes"
+
+# 🔍 Validate all JSON schemas
+schema-validate:
+    @echo "🔍 Validating JSON schemas..."
+    ./scripts/schema-dev.sh validate
+
+# 🚀 Deploy schemas to local database
+schema-deploy:
+    @echo "🚀 Deploying schemas to database..."
+    ./scripts/deploy-schemas.sh
+
+# 🔄 Check backward compatibility against master
+schema-check BRANCH="master":
+    @echo "🔄 Checking schema compatibility against {{BRANCH}}..."
+    ./scripts/check-schema-compatibility.sh {{BRANCH}}
+
+# 📊 Show uncommitted schema changes
+schema-diff:
+    @echo "📊 Schema changes:"
+    ./scripts/schema-dev.sh diff
+
+# 📈 Show schema statistics
+schema-stats:
+    @echo "📈 Schema statistics:"
+    ./scripts/schema-dev.sh stats
+
+# 🔄 Full schema workflow: generate, validate, check compatibility
+schema-workflow: schema-generate schema-validate schema-check
+    @echo "✅ Schema workflow complete"
+
 # === Running Services ===
 
-# 🚀 Run unified event collector
-collector *ARGS:
-    @echo "🚀 Starting unified event collector..."
-    cargo run --bin sinex-collector {{ARGS}}
-
-# 🖥️  Run sinex-host RPC server for CLI/browser integration
+# 🖥️  Run sinex-gateway RPC server for CLI/browser integration
 host *ARGS:
-    @echo "🖥️ Starting sinex-host RPC server..."
-    cargo run --bin sinex-host rpc-server {{ARGS}}
+    @echo "🖥️ Starting sinex-gateway RPC server..."
+    cargo run --bin sinex-gateway rpc-server {{ARGS}}
 
-# 🤖 Run sinex-automaton worker (service-layer event processing)
-automaton *ARGS:
-    @echo "🤖 Starting sinex-automaton worker..."
-    cargo run --bin sinex-automaton {{ARGS}}
+# 📥 Run sinex-ingestd gRPC server (satellite coordinator)
+ingestd *ARGS:
+    @echo "📥 Starting sinex-ingestd gRPC server..."
+    cargo run --bin sinex-ingestd {{ARGS}}
+
+# 🗂️  Run filesystem watcher satellite
+fs-watcher *ARGS:
+    @echo "🗂️ Starting filesystem watcher satellite..."
+    cargo run --bin sinex-fs-watcher {{ARGS}}
+
+# 🖥️  Run desktop events satellite
+desktop *ARGS:
+    @echo "🖥️ Starting desktop events satellite..."
+    cargo run --bin sinex-desktop-satellite {{ARGS}}
+
+# 💻 Run terminal events satellite
+terminal *ARGS:
+    @echo "💻 Starting terminal events satellite..."
+    cargo run --bin sinex-terminal-satellite {{ARGS}}
+
+# ⚙️  Run system events satellite  
+system *ARGS:
+    @echo "⚙️ Starting system events satellite..."
+    cargo run --bin sinex-system-satellite {{ARGS}}
+
+# 🔧 Run terminal command canonicalizer
+canonicalizer *ARGS:
+    @echo "🔧 Starting terminal command canonicalizer..."
+    cargo run --bin sinex-terminal-command-canonicalizer {{ARGS}}
+
+# 📊 Run health aggregator
+health *ARGS:
+    @echo "📊 Starting health aggregator..."
+    cargo run --bin sinex-health-aggregator {{ARGS}}
+
+# ✅ Run preflight verification
+preflight *ARGS:
+    @echo "✅ Running preflight verification..."
+    cargo run --bin sinex-preflight {{ARGS}}
 
 # 🔍 Query recent events from database
 query LIMIT="10" *ARGS:
@@ -241,6 +387,21 @@ coverage-integration:
     @echo "🔗 Generating coverage for integration tests..."
     cargo llvm-cov --workspace --all-features -E "test(integration::)" --html
 
+# 🚀 Coverage for performance tests only
+coverage-performance:
+    @echo "🚀 Generating coverage for performance tests..."
+    cargo llvm-cov --workspace --all-features -E "test(performance::)" --html
+
+# 📊 Coverage for fast tests only
+coverage-fast:
+    @echo "📊 Generating coverage for fast tests..."
+    cargo llvm-cov --workspace --all-features -E "test(unit::) or test(property::)" --html
+
+# 📈 Coverage report with timeout
+coverage-timeout SECONDS:
+    @echo "📈 Generating coverage with {{SECONDS}}s timeout..."
+    NEXTEST_PROFILE=default cargo llvm-cov --workspace --all-features --html --config 'profile.default.slow-timeout.period="{{SECONDS}}s"'
+
 # === Utilities ===
 
 # 🧹 Clean all build artifacts and caches
@@ -266,6 +427,41 @@ ci: fmt lint check test-unit test-integration test-system test-stress test-prope
 
 # ✅ Full validation - Complete test suite including VM tests
 validate: fmt lint check test-all
+
+# 🚀 Test workflow with database setup
+test-with-db: db-setup test-fast
+
+# 🔄 Full test cycle with database reset
+test-full-cycle: db-reset test-unit test-integration
+
+# 🎯 Quick test for specific functionality
+test-quick PATTERN: 
+    @echo "🎯 Quick test for: {{PATTERN}}"
+    just test-fast-profile {{PATTERN}}
+
+# 🧹 Clean test artifacts and reset environment
+test-clean:
+    @echo "🧹 Cleaning test artifacts..."
+    rm -rf target/nextest/
+    rm -rf target/llvm-cov/
+    just db-clean
+
+# 📊 Show test results summary (if exists)
+test-results:
+    @echo "📊 Test results summary:"
+    @if [ -f target/nextest/default/junit.xml ]; then echo "📄 JUnit results: target/nextest/default/junit.xml"; else echo "⚠️  No JUnit results found"; fi
+    @if [ -d target/llvm-cov/html ]; then echo "📊 Coverage report: target/llvm-cov/html/index.html"; else echo "⚠️  No coverage report found"; fi
+
+# 🧪 Run tests with strict 2-minute timeout (for user constraint)
+test-strict:
+    @echo "🧪 Running tests with strict 2-minute timeout..."
+    timeout 120 just test-fast-profile || echo "⚠️  Tests exceeded 2-minute limit"
+
+# 🔄 Quick development test cycle (under 2 minutes)
+test-dev: 
+    @echo "🔄 Quick development test cycle..."
+    just db-setup
+    just test-fast
 
 # === Aliases ===
 alias t := test

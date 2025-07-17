@@ -1,26 +1,27 @@
-//! Core Unit Tests
-//!
-//! Consolidated core functionality tests covering:
-//! - Basic event creation with RawEventBuilder
-//! - Error propagation and handling
-//! - Event registry creation and management
-//! - Event source context configuration
-//! - Auto-registration patterns
-//! - Event constants and source identifiers
+// Core Unit Tests
+//
+// Consolidated core functionality tests covering:
+// - Basic event creation with EventFactory
+// - Error propagation and handling
+// - Event registry creation and management
+// - Event source context configuration
+// - Auto-registration patterns
+// - Event constants and source identifiers
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_core::{
-    event_type_constants, sources, unified_collector::EventRegistryBuilder, CoreError, EventSource,
-    EventSourceContext, RawEventBuilder, Result as CoreResult,
-};
+use sinex_core_types::{event_type_constants, CoreError};
+use sinex_core_types::Result as CoreResult;
+use sinex_events::{sources, EventFactory, event_types};
 use std::io;
 
 // =============================================================================
 // BASIC FUNCTIONALITY TESTS
 // =============================================================================
 
-// Basic event builder test removed - superseded by test_raw_event_builder_complete_creation
+// Basic event builder test removed - superseded by test_event_factory_complete_creation
 
 /// Test creating multiple events with different sources
 ///
@@ -32,24 +33,18 @@ use std::io;
 #[sinex_test]
 async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     let events = vec![
-        RawEventBuilder::new(
-            sources::FS,
+        EventFactory::new(sources::FS).create_event(
             event_type_constants::filesystem::FILE_CREATED,
             json!({"path": "/test/file1.txt"}),
-        )
-        .build(),
-        RawEventBuilder::new(
-            sources::SHELL_KITTY,
+        ),
+        EventFactory::new(sources::SHELL_KITTY).create_event(
             event_type_constants::shell::COMMAND_EXECUTED,
             json!({"command": "ls -la"}),
-        )
-        .build(),
-        RawEventBuilder::new(
-            sources::SINEX,
-            event_type_constants::sinex::AGENT_HEARTBEAT,
+        ),
+        EventFactory::new(sources::SINEX).create_event(
+            event_type_constants::sinex::AUTOMATON_HEARTBEAT,
             json!({"status": "running"}),
-        )
-        .build(),
+        ),
     ];
 
     pretty_assertions::assert_eq!(events.len(), 3);
@@ -65,18 +60,16 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
 }
 
 // =============================================================================
-// RAW EVENT BUILDER TESTS
+// EVENT FACTORY TESTS
 // =============================================================================
 
-/// Test RawEventBuilder with complete event creation
+/// Test EventFactory with complete event creation
 #[sinex_test]
-async fn test_raw_event_builder_complete_creation(_ctx: TestContext) -> TestResult {
-    let event = RawEventBuilder::new(
-        sources::FS,
+async fn test_event_factory_complete_creation(_ctx: TestContext) -> TestResult {
+    let event = EventFactory::new(sources::FS).create_event(
         event_type_constants::filesystem::FILE_CREATED,
         json!({"path": "/test/file.txt", "size": 1024}),
-    )
-    .build();
+    );
 
     pretty_assertions::assert_eq!(event.source, sources::FS);
     pretty_assertions::assert_eq!(
@@ -90,20 +83,18 @@ async fn test_raw_event_builder_complete_creation(_ctx: TestContext) -> TestResu
     Ok(())
 }
 
-/// Test RawEventBuilder with custom host and timestamps
+/// Test EventFactory with custom host and timestamps
 #[sinex_test]
-async fn test_raw_event_builder_with_custom_fields(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_with_custom_fields(_ctx: TestContext) -> TestResult {
     let custom_host = "custom-host";
     let custom_timestamp = Utc::now();
 
-    let event = RawEventBuilder::new(
-        sources::SHELL_KITTY,
+    let mut event = EventFactory::new(sources::SHELL_KITTY).create_event(
         event_type_constants::shell::COMMAND_EXECUTED,
         json!({"command": "echo hello", "exit_code": 0}),
-    )
-    .with_host(custom_host)
-    .with_timestamp(custom_timestamp)
-    .build();
+    );
+    event.host = custom_host.to_string();
+    event.ts_orig = Some(custom_timestamp);
 
     pretty_assertions::assert_eq!(event.source, sources::SHELL_KITTY);
     pretty_assertions::assert_eq!(
@@ -124,9 +115,9 @@ async fn test_raw_event_builder_with_custom_fields(_ctx: TestContext) -> TestRes
     Ok(())
 }
 
-/// Test RawEventBuilder with complex nested payloads
+/// Test EventFactory with complex nested payloads
 #[sinex_test]
-async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_complex_payload(_ctx: TestContext) -> TestResult {
     let complex_payload = json!({
         "file_info": {
             "path": "/test/complex.txt",
@@ -148,12 +139,10 @@ async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult
         }
     });
 
-    let event = RawEventBuilder::new(
-        sources::FS,
+    let event = EventFactory::new(sources::FS).create_event(
         event_type_constants::filesystem::FILE_CREATED,
         complex_payload.clone(),
-    )
-    .build();
+    );
 
     pretty_assertions::assert_eq!(event.payload, complex_payload);
     pretty_assertions::assert_eq!(event.payload["file_info"]["path"], "/test/complex.txt");
@@ -166,18 +155,16 @@ async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult
     Ok(())
 }
 
-/// Test RawEventBuilder with ingestor version
+/// Test EventFactory with ingestor version
 #[sinex_test]
-async fn test_raw_event_builder_with_ingestor_version(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_with_ingestor_version(_ctx: TestContext) -> TestResult {
     let ingestor_version = "1.2.3";
 
-    let event = RawEventBuilder::new(
-        sources::WM_HYPRLAND,
+    let mut event = EventFactory::new(sources::WM_HYPRLAND).create_event(
         event_type_constants::window_manager::WINDOW_FOCUSED,
         json!({"window_id": 42, "title": "Test Window"}),
-    )
-    .with_ingestor_version(ingestor_version)
-    .build();
+    );
+    event.ingestor_version = Some(ingestor_version.to_string());
 
     pretty_assertions::assert_eq!(event.source, sources::WM_HYPRLAND);
     pretty_assertions::assert_eq!(
@@ -286,11 +273,11 @@ async fn test_error_chain_propagation(_ctx: TestContext) -> TestResult {
     }
 
     fn middle_operation() -> CoreResult<String> {
-        inner_operation().map_err(|e| CoreError::Other(format!("Middle layer: {}", e)))
+        inner_operation().map_err(|e| CoreError::Unknown(format!("Middle layer: {}", e)))
     }
 
     fn outer_operation() -> CoreResult<String> {
-        middle_operation().map_err(|e| CoreError::Other(format!("Outer layer: {}", e)))
+        middle_operation().map_err(|e| CoreError::Unknown(format!("Outer layer: {}", e)))
     }
 
     let result = outer_operation();
@@ -328,7 +315,7 @@ async fn test_error_display_implementation(_ctx: TestContext) -> TestResult {
             "IO error: File not found",
         ),
         (
-            CoreError::Other("Unknown error".to_string()),
+            CoreError::Unknown("Unknown error".to_string()),
             "Other error: Unknown error",
         ),
     ];
@@ -389,50 +376,14 @@ async fn test_validation_error_propagation(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test EventSource error propagation in async context
-#[derive(Debug)]
-struct FailingEventSource;
-
-#[async_trait]
-impl EventSource for FailingEventSource {
-    type Config = serde_json::Value;
-    const SOURCE_NAME: &'static str = "failing_source";
-
-    async fn initialize(_ctx: EventSourceContext) -> CoreResult<Self> {
-        // Simulate initialization failure
-        Err(CoreError::Configuration(
-            "Missing required field".to_string(),
-        ))
-    }
-
-    async fn stream_events(&mut self, _tx: mpsc::Sender<RawEvent>) -> CoreResult<()> {
-        Err(CoreError::Io("Stream failed".to_string()))
-    }
-}
-
-#[sinex_test]
-async fn test_event_source_error_propagation(_ctx: TestContext) -> TestResult {
-    let ctx_local = crate::common::event_sources::test_context(json!({}));
-    let result = FailingEventSource::initialize(ctx_local).await;
-
-    assert!(result.is_err());
-    match result.unwrap_err() {
-        CoreError::Configuration(msg) => {
-            pretty_assertions::assert_eq!(msg, "Missing required field")
-        }
-        _ => panic!("Expected Configuration error"),
-    }
-    Ok(())
-}
-
 // =============================================================================
-// RAW EVENT BUILDER EDGE CASES
+// EVENT FACTORY EDGE CASES
 // =============================================================================
 
-/// Test RawEventBuilder with empty payload - critical edge case
+/// Test EventFactory with empty payload - critical edge case
 #[sinex_test]
-async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
-    let event = RawEventBuilder::new(sources::SINEX, "system.startup", json!({})).build();
+async fn test_event_factory_empty_payload(_ctx: TestContext) -> TestResult {
+    let event = EventFactory::new(sources::SINEX).create_event("system.startup", json!({}));
 
     pretty_assertions::assert_eq!(event.payload, json!({}));
     pretty_assertions::assert_eq!(event.source, sources::SINEX);
@@ -440,15 +391,14 @@ async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test RawEventBuilder ULID ordering in tight loop - critical for time ordering
+/// Test EventFactory ULID ordering in tight loop - critical for time ordering
 #[sinex_test]
-async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_ulid_ordering(_ctx: TestContext) -> TestResult {
     let mut events = Vec::new();
 
     // Create events in rapid succession
     for i in 0..10 {
-        let event =
-            RawEventBuilder::new(sources::SINEX, "test.sequence", json!({"sequence": i})).build();
+        let event = EventFactory::new(sources::SINEX).create_event("test.sequence", json!({"sequence": i}));
         events.push(event);
 
         // Small delay to ensure timestamp progression
@@ -463,12 +413,12 @@ async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test RawEventBuilder multiple builds - verify independence
+/// Test EventFactory multiple builds - verify independence
 #[sinex_test]
-async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_multiple_builds(_ctx: TestContext) -> TestResult {
     // Create two events with same configuration
-    let event1 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
-    let event2 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
+    let event1 = EventFactory::new("test").create_event("test.event", json!({"key": "value"}));
+    let event2 = EventFactory::new("test").create_event("test.event", json!({"key": "value"}));
 
     // Events should have different IDs and timestamps
     pretty_assertions::assert_ne!(event1.id, event2.id);
@@ -478,259 +428,6 @@ async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult
     pretty_assertions::assert_eq!(event1.source, event2.source);
     pretty_assertions::assert_eq!(event1.event_type, event2.event_type);
     pretty_assertions::assert_eq!(event1.payload, event2.payload);
-    Ok(())
-}
-
-// =============================================================================
-// EVENT REGISTRY TESTS
-// =============================================================================
-
-/// Test event registry creation and basic functionality
-#[sinex_test]
-async fn test_event_registry_creation(_ctx: TestContext) -> TestResult {
-    let registry = create_registry();
-
-    // Verify registry is not empty
-    assert!(
-        !registry.event_types.is_empty(),
-        "Registry should contain event types"
-    );
-
-    // Verify some expected event types are present
-    assert!(
-        registry.event_types.contains(&"file.created"),
-        "Registry should contain file.created event type"
-    );
-    assert!(
-        registry.event_types.contains(&"command.executed"),
-        "Registry should contain command.executed event type"
-    );
-    assert!(
-        registry.event_types.contains(&"window.focused"),
-        "Registry should contain window.focused event type"
-    );
-    Ok(())
-}
-
-/// Test event registry source lookup functionality
-#[sinex_test]
-async fn test_event_registry_source_lookup(_ctx: TestContext) -> TestResult {
-    let registry = create_registry();
-
-    // Test getting source for event type
-    let source = registry.source_for_event("file.created");
-    assert!(
-        source.is_some(),
-        "Should find source for file.created event"
-    );
-    pretty_assertions::assert_eq!(
-        source.unwrap(),
-        "fs",
-        "file.created should map to filesystem source"
-    );
-
-    // Test getting non-existent event type
-    let unknown = registry.source_for_event("nonexistent.event");
-    assert!(
-        unknown.is_none(),
-        "Should not find source for nonexistent event type"
-    );
-    Ok(())
-}
-
-/// Test event registry validation of event types
-#[sinex_test]
-async fn test_event_registry_validation(_ctx: TestContext) -> TestResult {
-    let registry = create_registry();
-
-    // Test validation of known event types
-    assert!(registry.is_valid_event_type("file.created"));
-    assert!(registry.is_valid_event_type("command.executed"));
-    assert!(registry.is_valid_event_type("window.focused"));
-
-    // Test validation of unknown event types
-    assert!(!registry.is_valid_event_type("unknown.event"));
-    assert!(!registry.is_valid_event_type("invalid-format"));
-    assert!(!registry.is_valid_event_type(""));
-
-    Ok(())
-}
-
-/// Test event registry enumeration
-#[sinex_test]
-async fn test_event_registry_enumeration(_ctx: TestContext) -> TestResult {
-    let registry = create_registry();
-
-    // Test getting all event types
-    let all_types = registry.all_event_types();
-    assert!(!all_types.is_empty());
-
-    // Verify some expected categories are present
-    let filesystem_types: Vec<_> = all_types
-        .iter()
-        .filter(|t| t.starts_with("file.") || t.starts_with("dir."))
-        .collect();
-    assert!(!filesystem_types.is_empty());
-
-    let shell_types: Vec<_> = all_types
-        .iter()
-        .filter(|t| t.starts_with("command.") || t.starts_with("session."))
-        .collect();
-    assert!(!shell_types.is_empty());
-
-    let wm_types: Vec<_> = all_types
-        .iter()
-        .filter(|t| t.starts_with("window.") || t.starts_with("workspace."))
-        .collect();
-    assert!(!wm_types.is_empty());
-
-    Ok(())
-}
-
-// =============================================================================
-// EVENT REGISTRY AUTO-REGISTRATION TESTS
-// =============================================================================
-
-/// Test that demonstrates auto-registration pattern working
-#[test]
-fn test_auto_registration_pattern() -> TestResult {
-    let builder = EventRegistryBuilder::new();
-
-    // Before auto-registration, builder should be empty
-    let empty_registry = builder.build();
-    assert_eq!(empty_registry.event_types.len(), 0);
-
-    // Create a new builder and use auto-registration
-    let mut builder = EventRegistryBuilder::new();
-    sinex_events_fs::register_events(&mut builder);
-    let registry = builder.build();
-
-    // After auto-registration, we should have filesystem events
-    assert!(!registry.event_types.is_empty());
-    assert!(registry.event_types.contains(&"file.created"));
-    assert!(registry.event_types.contains(&"file.modified"));
-    assert!(registry.event_types.contains(&"file.deleted"));
-
-    Ok(())
-}
-
-/// Test auto-registration for multiple event source types
-#[test]
-fn test_auto_registration_multiple_sources() -> TestResult {
-    let mut builder = EventRegistryBuilder::new();
-
-    // Register events from multiple sources
-    sinex_events_fs::register_events(&mut builder);
-    sinex_events_terminal::register_events(&mut builder);
-    sinex_events_desktop::register_events(&mut builder);
-
-    let registry = builder.build();
-
-    // Should have events from all sources
-    assert!(registry.event_types.contains(&"file.created")); // fs
-    assert!(registry.event_types.contains(&"command.executed")); // terminal
-    assert!(registry.event_types.contains(&"copied")); // desktop
-
-    // Verify source mappings work correctly
-    assert_eq!(registry.source_for_event("file.created"), Some("fs"));
-    assert_eq!(
-        registry.source_for_event("command.executed"),
-        Some("shell.kitty")
-    );
-    assert_eq!(registry.source_for_event("copied"), Some("clipboard"));
-
-    Ok(())
-}
-
-/// Test auto-registration builder pattern
-#[test]
-fn test_auto_registration_builder_pattern() -> TestResult {
-    let registry = EventRegistryBuilder::new()
-        .with_auto_registration(sinex_events_fs::register_events)
-        .with_auto_registration(sinex_events_terminal::register_events)
-        .build();
-
-    assert!(!registry.event_types.is_empty());
-    assert!(registry.event_types.contains(&"file.created"));
-    assert!(registry.event_types.contains(&"command.executed"));
-
-    Ok(())
-}
-
-/// Test event registry deduplication behavior - critical for plugin architecture
-#[test]
-fn test_event_registry_deduplication_behavior() -> TestResult {
-    let mut builder = EventRegistryBuilder::new();
-
-    // Simulate registering the same event type from different sources
-    builder.add_event_type("test.event", "source1", || {
-        let gen = schemars::gen::SchemaGenerator::default();
-        gen.into_root_schema_for::<serde_json::Value>()
-    });
-
-    builder.add_event_type("test.event", "source2", || {
-        let gen = schemars::gen::SchemaGenerator::default();
-        gen.into_root_schema_for::<serde_json::Value>()
-    });
-
-    let registry = builder.build();
-
-    // Event type should appear only once in the list
-    let event_count = registry
-        .event_types
-        .iter()
-        .filter(|&&e| e == "test.event")
-        .count();
-    assert_eq!(event_count, 1);
-
-    // But both source mappings should be preserved
-    let sources_for_event: Vec<_> = registry
-        .event_to_source
-        .iter()
-        .filter(|(event, _)| *event == "test.event")
-        .map(|(_, source)| *source)
-        .collect();
-
-    assert!(sources_for_event.contains(&"source1"));
-    assert!(sources_for_event.contains(&"source2"));
-    assert_eq!(sources_for_event.len(), 2);
-
-    Ok(())
-}
-
-/// Test event registry concurrent access safety
-#[sinex_test]
-async fn test_event_registry_concurrent_access(_ctx: TestContext) -> TestResult {
-    use std::sync::Arc;
-    use tokio::task;
-
-    let registry = Arc::new(create_registry());
-    let mut handles = vec![];
-
-    // Spawn multiple tasks that read from the registry concurrently
-    for i in 0..10 {
-        let registry_clone = Arc::clone(&registry);
-        let handle = task::spawn(async move {
-            // Read operations should be thread-safe
-            let _event_types = registry_clone.all_event_types();
-            let _source = registry_clone.source_for_event("file.created");
-            let _valid = registry_clone.is_valid_event_type("command.executed");
-
-            // Return task number to verify all completed
-            i
-        });
-        handles.push(handle);
-    }
-
-    // Wait for all tasks to complete
-    let results = futures::future::join_all(handles).await;
-
-    // All tasks should complete successfully
-    assert_eq!(results.len(), 10);
-    for (i, result) in results.into_iter().enumerate() {
-        assert_eq!(result.unwrap(), i);
-    }
-
     Ok(())
 }
 

@@ -34,7 +34,7 @@
         echo "✅ Sinex collector is running"
         
         # Check if collector is processing events
-        EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'" 2>/dev/null | tr -d ' ' || echo "0")
+        EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
         if [[ "$EVENT_COUNT" == "0" ]]; then
           echo "⚠️  No events captured yet"
         else
@@ -144,8 +144,8 @@
         
         echo ""
         echo "Events:"
-        EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'" 2>/dev/null | tr -d ' ' || echo "0")
-        RECENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL \"1 minute\";'" 2>/dev/null | tr -d ' ' || echo "0")
+        EVENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'" 2>/dev/null | tr -d ' ' || echo "0")
+        RECENT_COUNT=$(su - postgres -c "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL \"1 minute\";'" 2>/dev/null | tr -d ' ' || echo "0")
         echo "  Total: $EVENT_COUNT"
         echo "  Last minute: $RECENT_COUNT"
         
