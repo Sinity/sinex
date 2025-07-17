@@ -1,58 +1,60 @@
-//! # Integration Tests
-//!
-//! Tests that verify different components work together correctly without requiring
-//! complete end-to-end system validation. Integration tests focus on the boundaries
-//! and interactions between major system components.
-//!
-//! ## Scope & Purpose
-//!
-//! **Integration tests verify:**
-//! - Component interactions and interfaces
-//! - Database operations with business logic
-//! - Event flow between components
-//! - Configuration parsing and validation
-//! - Service startup and coordination
-//! - Failure handling across component boundaries
-//!
-//! **Integration tests do NOT:**
-//! - Test complete end-to-end workflows (see `system/`)
-//! - Test individual functions in isolation (see `unit/`)
-//! - Test extreme edge cases or attacks (see `adversarial/`)
-//!
-//! ## Test Categories
-//!
-//! ### Consolidated Integration Tests
-//! - **`database_test`**: Database operations with business logic
-//! - **`event_sources_test`**: Event source implementations and coordination
-//! - **`worker_test`**: Event processing and work distribution  
-//! - **`collector_test`**: Event collection and coordination
-//! - **`failure_modes_test`**: Graceful degradation and error handling
-//! - **`system_integration_test`**: High-level system coordination
-//!
-//! ### Additional Integration Coverage
-//! - Configuration validation across components
-//! - Health monitoring integration  
-//! - Git Annex storage integration
-//! - Query interface functionality
-//! - Failure recovery mechanisms
-//!
-//! ## Running Integration Tests
-//!
-//! ```bash
-//! cargo test --test integration           # All integration tests
-//! cargo test --test integration::database # Database integration only
-//! just test-integration                   # Via just command
-//! ```
-//!
-//! ## Test Infrastructure
-//!
-//! Integration tests use shared database pools with transaction isolation,
-//! providing faster test execution while maintaining perfect isolation between tests.
+// # Integration Tests
+//
+// Tests that verify different components work together correctly without requiring
+// complete end-to-end system validation. Integration tests focus on the boundaries
+// and interactions between major system components.
+//
+// ## Scope & Purpose
+//
+// **Integration tests verify:**
+// - Component interactions and interfaces
+// - Database operations with business logic
+// - Event flow between components
+// - Configuration parsing and validation
+// - Service startup and coordination
+// - Failure handling across component boundaries
+//
+// **Integration tests do NOT:**
+// - Test complete end-to-end workflows (see `system/`)
+// - Test individual functions in isolation (see `unit/`)
+// - Test extreme edge cases or attacks (see `adversarial/`)
+//
+// ## Test Categories
+//
+// ### Consolidated Integration Tests
+// - **`database_test`**: Database operations with business logic
+// - **`event_sources_test`**: Event source implementations and coordination
+// - **`worker_test`**: Event processing and work distribution
+// - **`collector_test`**: Event collection and coordination
+// - **`failure_modes_test`**: Graceful degradation and error handling
+// - **`system_integration_test`**: High-level system coordination
+//
+// ### Additional Integration Coverage
+// - Configuration validation across components
+// - Health monitoring integration
+// - Git Annex storage integration
+// - Query interface functionality
+// - Failure recovery mechanisms
+//
+// ## Running Integration Tests
+//
+// ```bash
+// cargo test --test integration           # All integration tests
+// cargo test --test integration::database # Database integration only
+// just test-integration                   # Via just command
+// ```
+//
+// ## Test Infrastructure
+//
+// Integration tests use shared database pools with transaction isolation,
+// providing faster test execution while maintaining perfect isolation between tests.
+
+use crate::common::prelude::*;
 
 // === Core Component Integration ===
 
 /// Consolidated database integration tests
-use sinex_satellite_sdk::EventSourceContext;
+use sinex_satellite_sdk::EventSourceConfig;
 
 pub mod database_test;
 
@@ -69,7 +71,7 @@ pub mod event_sources_test;
 // Note: Functionality covered by existing satellite_architecture_test.rs
 // pub mod automaton_processing_test;
 
-/// Ingestor coordination tests (replaces collector_test) 
+/// Ingestor coordination tests (replaces collector_test)
 // Note: Functionality covered by existing event_sources_test.rs
 // pub mod ingestor_coordination_test;
 
@@ -156,3 +158,17 @@ pub mod provenance_tracking_test;
 
 /// End-to-end workflow integration tests
 pub mod end_to_end_workflows_test;
+
+// === Data Integrity Testing Modules ===
+
+/// Comprehensive schema validation and malformed event detection tests
+pub mod schema_validation_comprehensive_test;
+
+/// ULID ordering verification and corruption detection tests  
+pub mod ulid_ordering_verification_test;
+
+/// Checkpoint consistency and gap detection tests
+pub mod checkpoint_consistency_test;
+
+/// Data corruption detection and recovery guidance tests
+pub mod data_corruption_detection_test;

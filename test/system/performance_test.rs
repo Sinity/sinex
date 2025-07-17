@@ -1,27 +1,29 @@
-//! # Performance and Load Testing
-//!
-//! System performance validation tests that measure:
-//! - Load testing with realistic data volumes
-//! - Throughput and latency measurements
-//! - Resource usage profiling
-//! - Scaling behavior validation
-//!
-//! ## Test Categories
-//!
-//! - **Database Performance**: Insertion and query performance
-//! - **Concurrent Processing**: Multi-worker performance validation
-//! - **Memory Usage**: Memory consumption under load
-//! - **Query Latency**: Database query response times
-//! - **Scaling Tests**: Performance scaling with load
-//!
-//! ## Performance Expectations
-//!
-//! - **Individual tests**: 30-120 seconds
-//! - **Resource usage**: High CPU/memory usage during tests
-//! - **Baseline performance**: 1000+ events/second insertion rate
+// # Performance and Load Testing
+//
+// System performance validation tests that measure:
+// - Load testing with realistic data volumes
+// - Throughput and latency measurements
+// - Resource usage profiling
+// - Scaling behavior validation
+//
+// ## Test Categories
+//
+// - **Database Performance**: Insertion and query performance
+// - **Concurrent Processing**: Multi-worker performance validation
+// - **Memory Usage**: Memory consumption under load
+// - **Query Latency**: Database query response times
+// - **Scaling Tests**: Performance scaling with load
+//
+// ## Performance Expectations
+//
+// - **Individual tests**: 30-120 seconds
+// - **Resource usage**: High CPU/memory usage during tests
+// - **Baseline performance**: 1000+ events/second insertion rate
 
 use crate::common::prelude::*;
+
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use sinex_events::{EventFactory, services, event_types};
 use sqlx::Row;
 use std::time::{Duration, Instant};
 
@@ -38,15 +40,13 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Insert events sequentially to avoid overwhelming test DB
     for i in 0..target_events {
-        let event = RawEventBuilder::new(
-            "load_test",
-            "performance_test",
+        let event = EventFactory::new("load_test").create_event(
+            event_types::test::PERFORMANCE_TEST,
             json!({
                 "sequence": i,
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
-        )
-        .build();
+        );
 
         match insert_event(pool, &event).await {
             Ok(_) => {
@@ -123,16 +123,14 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
             let mut inserted = 0;
 
             for i in 0..events_per_worker {
-                let event = RawEventBuilder::new(
-                    "concurrent_load_test",
+                let event = EventFactory::new("concurrent_load_test").create_event(
                     "worker_test",
                     json!({
                         "worker_id": worker_id,
                         "sequence": i,
                         "timestamp": chrono::Utc::now().to_rfc3339()
                     }),
-                )
-                .build();
+                );
 
                 if insert_event(&pool_clone, &event).await.is_ok() {
                     inserted += 1;
@@ -203,7 +201,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 // ==================== PERFORMANCE TESTS FROM MOD.RS ====================
 
 #[sinex_test]
-async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Error> {
+async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow::Error> {
     let start = Instant::now();
     let mut handles = vec![];
 
@@ -212,18 +210,16 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
         let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
-                sinex_db::events::insert_event_with_validator(
+                sinex_db::insert_event_with_validator(
                     &pool,
-                    &RawEventBuilder::new(
-                        format!("perf_test_{}", i),
-                        format!("test_event_{}", j),
+                    &EventFactory::new(&format!("perf_test_{}", i)).create_event(
+                        &format!("test_event_{}", j),
                         serde_json::json!({
                             "task": i,
                             "event": j,
                             "data": "performance test payload"
                         }),
-                    )
-                    .build(),
+                    ),
                     None,
                 )
                 .await?;
@@ -235,7 +231,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
 
     // Wait for all tasks
     for handle in handles {
-        handle.await??;
+        handle.await?;
     }
 
     let elapsed = start.elapsed();
@@ -261,14 +257,12 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> Result<(), anyhow::Erro
 async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult {
     // Insert test events
     for i in 0..100 {
-        sinex_db::events::insert_event_with_validator(
+        sinex_db::insert_event_with_validator(
             ctx.pool(),
-            &RawEventBuilder::new(
-                "concurrent_test",
+            &EventFactory::new("concurrent_test").create_event(
                 "process_me",
                 serde_json::json!({ "id": i }),
-            )
-            .build(),
+            ),
             None,
         )
         .await?;
@@ -296,7 +290,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                         SELECT 1 FROM core.events processed
                         WHERE processed.source = 'concurrent_test'
                           AND processed.event_type = 'processed'
-                          AND processed.payload->>'original_id' = core.events.id::text
+                          AND processed.payload->>'original_id' = core.events.event_id::text
                       )
                     LIMIT 1
                     FOR UPDATE SKIP LOCKED
@@ -310,17 +304,15 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                     tokio::task::yield_now().await;
 
                     // Mark as processed
-                    sinex_db::events::insert_event_with_validator(
+                    sinex_db::insert_event_with_validator(
                         &pool,
-                        &RawEventBuilder::new(
-                            "concurrent_test",
+                        &EventFactory::new("concurrent_test").create_event(
                             "processed",
                             serde_json::json!({
                                 "worker_id": worker_id,
                                 "original_id": event_id.to_string()
                             }),
-                        )
-                        .build(),
+                        ),
                         None,
                     )
                     .await?;
@@ -363,17 +355,15 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
 async fn test_query_latency(ctx: TestContext) -> TestResult {
     // Insert test data
     for i in 0..1000 {
-        sinex_db::events::insert_event_with_validator(
+        sinex_db::insert_event_with_validator(
             ctx.pool(),
-            &RawEventBuilder::new(
-                "latency_test",
+            &EventFactory::new("latency_test").create_event(
                 if i % 2 == 0 { "type_a" } else { "type_b" },
                 serde_json::json!({
                     "value": i,
                     "category": if i % 10 == 0 { "special" } else { "normal" }
                 }),
-            )
-            .build(),
+            ),
             None,
         )
         .await?;
@@ -417,16 +407,14 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     let mut events = Vec::with_capacity(num_events);
 
     for i in 0..num_events {
-        let event = RawEventBuilder::new(
-            "memory_test",
+        let event = EventFactory::new("memory_test").create_event(
             "load_event",
             json!({
                 "sequence": i,
                 "large_data": "x".repeat(1000), // 1KB per event
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
-        )
-        .build();
+        );
         events.push(event);
     }
 
@@ -504,15 +492,13 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
 
         // Insert test events
         for i in 0..events_per_test {
-            let event = RawEventBuilder::new(
-                "scaling_test",
+            let event = EventFactory::new("scaling_test").create_event(
                 "worker_event",
                 json!({
                     "sequence": i,
                     "worker_test": worker_count,
                 }),
-            )
-            .build();
+            );
             insert_event(pool, &event).await?;
         }
 
@@ -537,7 +523,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                             SELECT 1 FROM core.events processed
                             WHERE processed.source = 'scaling_test'
                               AND processed.event_type = 'processed'
-                              AND processed.payload->>'original_id' = core.events.id::text
+                              AND processed.payload->>'original_id' = core.events.event_id::text
                           )
                         LIMIT 1
                         FOR UPDATE SKIP LOCKED
@@ -551,17 +537,15 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                         tokio::time::sleep(Duration::from_millis(1)).await;
 
                         // Mark as processed
-                        sinex_db::events::insert_event_with_validator(
+                        sinex_db::insert_event_with_validator(
                             &pool_clone,
-                            &RawEventBuilder::new(
-                                "scaling_test",
+                            &EventFactory::new("scaling_test").create_event(
                                 "processed",
                                 serde_json::json!({
                                     "worker_id": worker_id,
                                     "original_id": event_id.to_string()
                                 }),
-                            )
-                            .build(),
+                            ),
                             None,
                         )
                         .await?;
@@ -690,16 +674,14 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
         let start = Instant::now();
 
         for i in 0..num_events {
-            let event = RawEventBuilder::new(
-                "large_payload_test",
+            let event = EventFactory::new("large_payload_test").create_event(
                 "large_event",
                 json!({
                     "sequence": i,
                     "large_data": large_data,
                     "size": payload_size,
                 }),
-            )
-            .build();
+            );
 
             insert_event(pool, &event).await?;
         }
@@ -741,15 +723,13 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
     for i in 0..burst_size {
         let pool_clone = pool.clone();
         let handle = tokio::spawn(async move {
-            let event = RawEventBuilder::new(
-                "burst_test",
+            let event = EventFactory::new("burst_test").create_event(
                 "burst_event",
                 json!({
                     "burst_id": i,
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 }),
-            )
-            .build();
+            );
 
             insert_event(&pool_clone, &event).await
         });

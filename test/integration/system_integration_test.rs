@@ -1,21 +1,25 @@
-//! System Integration Tests
-//!
-//! This file consolidates all system-level integration tests including:
-//! - Full system startup testing
-//! - Deployment validation and pre-flight verification
-//! - Abstraction integration testing  
-//! - Event source resilience testing
-//! - Failure recovery scenarios
-//! - Health monitoring integration
-//! - Payload boundary testing
-//! - Query interface testing
+// System Integration Tests
+//
+// This file consolidates all system-level integration tests including:
+// - Full system startup testing
+// - Deployment validation and pre-flight verification
+// - Abstraction integration testing  
+// - Event source resilience testing
+// - Failure recovery scenarios
+// - Health monitoring integration
+// - Payload boundary testing
+// - Query interface testing
 
 use crate::common::prelude::*;
-use sinex_satellite_sdk::EventSourceContext;
+use sinex_events::{event_types, EventFactory, sources};
+use crate::common::mocks::EventSourceContext;
 use crate::common::{assertions, events};
 use async_trait::async_trait;
-use sinex_collector::config::CollectorConfig;
-use sinex_core::{CoreError, EventSender, EventSource, EventSourceContext};
+// DEPRECATED: CollectorConfig no longer exists after modernization to environment-only configuration
+// use sinex_collector::config::CollectorConfig;
+use sinex_core_types::{CoreError, EventSender, EventSource, EventSourceContext};
+use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -125,7 +129,7 @@ async fn test_system_startup_with_all_configurations(ctx: TestContext) -> TestRe
     Ok(())
 }
 
-async fn test_database_startup_health(pool: &DbPool) -> Result<bool> {
+async fn test_database_startup_health(pool: &DbPool) -> AnyhowResult<bool> {
     let tables = vec![
         "core.events",
         "sinex_schemas.work_queue",
@@ -133,16 +137,11 @@ async fn test_database_startup_health(pool: &DbPool) -> Result<bool> {
     ];
 
     for table in tables {
-        let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {}", table))
-            .fetch_one(pool)
-            .await?;
-        assert!(count >= 0, "Table {} should be accessible", table);
+        let table_accessible = OperationQueries::check_table_accessible(pool, table).await?;
+        assert!(table_accessible, "Table {} should be accessible", table);
     }
 
-    let hypertable_check: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM timescaledb_information.hypertables WHERE hypertable_name = 'events')"
-    ).fetch_one(pool).await?;
-
+    let hypertable_check = OperationQueries::check_timescaledb_hypertable(pool, "events").await?;
     assert!(
         hypertable_check,
         "Events table should be a TimescaleDB hypertable"
@@ -156,7 +155,7 @@ async fn test_database_startup_health(pool: &DbPool) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_git_annex_startup(annex_path: &std::path::Path) -> Result<bool> {
+async fn test_git_annex_startup(annex_path: &std::path::Path) -> AnyhowResult<bool> {
     let git_init = Command::new("git")
         .args(["init"])
         .current_dir(annex_path)
@@ -187,8 +186,8 @@ async fn test_git_annex_startup(annex_path: &std::path::Path) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_event_sources_startup(config: &CollectorConfig) -> Result<bool> {
-    let (_tx, _rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
+async fn test_event_sources_startup(config: &CollectorConfig) -> AnyhowResult<bool> {
+    let (_tx, _rx) = mpsc::channel::<sinex_core_types::RawEvent>(1000);
     let _source_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let healthy_sources = Arc::new(AtomicBool::new(true));
 
@@ -230,7 +229,7 @@ async fn test_event_sources_startup(config: &CollectorConfig) -> Result<bool> {
     Ok(healthy_sources.load(Ordering::SeqCst))
 }
 
-async fn test_filesystem_source_health(_ctx: EventSourceContext) -> Result<bool> {
+async fn test_filesystem_source_health(_ctx: EventSourceContext) -> AnyhowResult<bool> {
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("startup_test.txt");
     std::fs::write(&test_file, b"filesystem source health check")?;
@@ -238,7 +237,7 @@ async fn test_filesystem_source_health(_ctx: EventSourceContext) -> Result<bool>
     Ok(true)
 }
 
-async fn test_terminal_source_health() -> Result<bool> {
+async fn test_terminal_source_health() -> AnyhowResult<bool> {
     let kitty_check = Command::new("kitty").args(["@", "ls"]).output();
 
     if let Ok(output) = kitty_check {
@@ -251,7 +250,7 @@ async fn test_terminal_source_health() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_window_manager_source_health() -> Result<bool> {
+async fn test_window_manager_source_health() -> AnyhowResult<bool> {
     let hypr_check = Command::new("hyprctl").args(["version"]).output();
 
     if let Ok(output) = hypr_check {
@@ -264,7 +263,7 @@ async fn test_window_manager_source_health() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_clipboard_source_health() -> Result<bool> {
+async fn test_clipboard_source_health() -> AnyhowResult<bool> {
     let wl_check = Command::new("wl-paste").args(["--version"]).output();
 
     if let Ok(output) = wl_check {
@@ -285,9 +284,9 @@ async fn test_clipboard_source_health() -> Result<bool> {
     Ok(true)
 }
 
-async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
-    let test_event = EventFactory::new("worker_startup_test")
-        .create_event("system.health_check", json!({"test": true}));
+async fn test_worker_system_startup(pool: &DbPool) -> AnyhowResult<bool> {
+    let factory = EventFactory::new("worker_startup_test");
+    let test_event = factory.create_event("system.health_check", json!({"test": true}));
     let inserted_event_id = insert_event(pool, &test_event).await?;
 
     add_to_work_queue(pool, inserted_event_id, "test-agent", 3).await?;
@@ -304,7 +303,7 @@ async fn test_worker_system_startup(pool: &DbPool) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_monitoring_system_startup(_config: &CollectorConfig) -> Result<bool> {
+async fn test_monitoring_system_startup(_config: &CollectorConfig) -> AnyhowResult<bool> {
     let start_time = Instant::now();
 
     let health_checks = vec![
@@ -337,9 +336,9 @@ async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> Tes
     let mut config = create_comprehensive_config();
 
     config.enabled_events = vec![
-        "filesystem.file.created".to_string(),
+        event_types::filesystem::FILESYSTEM_FILE_CREATED.to_string(),
         "nonexistent.source.event".to_string(),
-        "terminal.command.executed".to_string(),
+        event_types::shell::TERMINAL_COMMAND_EXECUTED.to_string(),
     ];
 
     let startup_result = test_partial_system_startup(&config).await?;
@@ -360,7 +359,7 @@ async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> Tes
     Ok(())
 }
 
-async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
+async fn test_partial_system_startup(config: &CollectorConfig) -> AnyhowResult<bool> {
     let successful_sources = Arc::new(AtomicBool::new(false));
     let _failed_sources = Arc::new(AtomicBool::new(false));
 
@@ -381,10 +380,10 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> Result<bool> {
     Ok(successful_sources.load(Ordering::SeqCst))
 }
 
-async fn test_database_recovery_scenario(pool: &DbPool) -> Result<bool> {
-    let test_event =
-        EventFactory::new("recovery_test").create_event("system.test", json!({"test": true}));
-    let insert_result = insert_event(pool, &test_event).await;
+async fn test_database_recovery_scenario(pool: &DbPool) -> AnyhowResult<bool> {
+    let factory = EventFactory::new("recovery_test");
+    let test_event = factory.create_event("system.test", json!({"test": true}));
+    let insert_result = EventQueries::insert_raw_event(pool, &test_event).await;
 
     assert!(
         insert_result.is_ok(),
@@ -394,7 +393,7 @@ async fn test_database_recovery_scenario(pool: &DbPool) -> Result<bool> {
     Ok(true)
 }
 
-async fn test_annex_fallback_scenario() -> Result<bool> {
+async fn test_annex_fallback_scenario() -> AnyhowResult<bool> {
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("fallback_test.txt");
     std::fs::write(&test_file, b"test content without annex")?;
@@ -557,15 +556,15 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     println!("✓ Configuration validation and extraction completed");
 
-    let test_event = RawEventBuilder::new(
-        "integration_test",
+    let factory = EventFactory::new("integration_test");
+    let test_event = factory.create_event(
         "comprehensive.test",
         json!({
             "test_phase": "abstraction_integration", 
-            "abstractions": ["ValidationChain", "ErrorContext", "ChannelSenderExt", "ConfigExtractor"],
+            "abstractions": ["ValidationChain", "ErrorContext", "ChannelSenderExt"],
             "db_url": db_url,
         })
-    ).build();
+    );
 
     let event_id = assert_event_inserted_with_context(
         ctx.pool(),
@@ -599,12 +598,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     println!("✓ Channel operations testing completed");
 
     // Test database state
-    let event_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.events WHERE source = $1",
-        "integration_test"
-    )
-    .fetch_one(ctx.pool())
-    .await?.unwrap_or(0);
+    let event_count = EventQueries::count_events_by_source(ctx.pool(), "integration_test").await?;
 
     assert_with_context(
         event_count >= 1,
@@ -614,7 +608,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     println!("✓ Database state validation completed");
 
-    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved_event = EventQueries::get_event_by_id(ctx.pool(), event_id).await?;
     assert_events_equivalent(&retrieved_event, &test_event)?;
 
     println!("✅ Comprehensive abstraction integration test completed successfully!");
@@ -622,7 +616,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     println!("   • ValidationChain: ✅ Fluent validation with error accumulation");
     println!("   • ErrorContext: ✅ Rich error context with chaining");
     println!("   • ChannelSenderExt: ✅ Enhanced channel operations");
-    println!("   • ConfigExtractor: ✅ Type-safe configuration access");
+    println!("   • Environment Config: ✅ Environment-based configuration");
     println!("   • Enhanced Assertions: ✅ Context-aware test failures");
 
     Ok(())
@@ -682,7 +676,7 @@ impl EventSource for ChaosEventSource {
     type Config = serde_json::Value;
     const SOURCE_NAME: &'static str = "test.chaos";
 
-    async fn initialize(_ctx: EventSourceContext) -> sinex_core::Result<Self>
+    async fn initialize(_ctx: EventSourceContext) -> sinex_core_types::Result<Self>
     where
         Self: Sized,
     {
@@ -691,7 +685,7 @@ impl EventSource for ChaosEventSource {
             .and_then(|v| v.as_bool())
             .unwrap_or(false)
         {
-            return Err(CoreError::Other(
+            return Err(CoreError::Unknown(
                 "Simulated initialization failure".to_string(),
             ));
         }
@@ -699,50 +693,46 @@ impl EventSource for ChaosEventSource {
         Ok(Self::new(FailureMode::StreamingCrash { after_events: 5 }))
     }
 
-    async fn stream_events(&mut self, tx: EventSender) -> sinex_core::Result<()> {
+    async fn stream_events(&mut self, tx: EventSender) -> sinex_core_types::Result<()> {
         match &self.failure_mode {
             FailureMode::InitializationFailure => {
-                return Err(CoreError::Other("Initialization failed".to_string()));
+                return Err(CoreError::Unknown("Initialization failed".to_string()));
             }
 
             FailureMode::StreamingCrash { after_events } => {
                 for i in 0..*after_events {
-                    let event = sinex_core::RawEventBuilder::new(
-                        "test.chaos",
+                    let factory = EventFactory::new("test.chaos");
+                    let event = factory.create_event(
                         "test.event",
                         json!({"event_num": i, "message": "test event"}),
-                    )
-                    .build();
+                    );
 
                     if tx.send(event).await.is_err() {
-                        return Err(CoreError::Other("Channel closed".to_string()));
+                        return Err(CoreError::Unknown("Channel closed".to_string()));
                     }
 
                     self.events_sent.fetch_add(1, Ordering::Relaxed);
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
 
-                return Err(CoreError::Other("Simulated crash after events".to_string()));
+                return Err(CoreError::Unknown("Simulated crash after events".to_string()));
             }
 
             FailureMode::CorruptedEvents { corruption_rate } => {
                 for i in 0..100 {
                     let is_corrupted = (i as f32 / 100.0) < *corruption_rate;
 
+                    let factory = EventFactory::new("test.chaos");
                     let event = if is_corrupted {
-                        sinex_core::RawEventBuilder::new(
-                            "test.chaos",
+                        factory.create_event(
                             "corrupted.event",
                             json!({"corrupted": true, "invalid_data": null}),
                         )
-                        .build()
                     } else {
-                        sinex_core::RawEventBuilder::new(
-                            "test.chaos",
+                        factory.create_event(
                             "test.event",
                             json!({"event_num": i, "valid": true}),
                         )
-                        .build()
                     };
 
                     if tx.send(event).await.is_err() {
@@ -822,7 +812,7 @@ async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
         }
 
         if event.event_type == "test.event" {
-            sinex_db::insert_event(ctx.pool(), &event).await?;
+            EventQueries::insert_raw_event(ctx.pool(), &event).await?;
         }
     }
 
@@ -836,7 +826,7 @@ async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
         "Not all events should be corrupted"
     );
 
-    let stored_count = sinex_db::count_events(ctx.pool()).await?;
+    let stored_count = EventQueries::count_all_events(ctx.pool()).await?;
     assert_eq!(
         stored_count,
         received_events - corrupted_events,
@@ -873,25 +863,24 @@ async fn test_database_disconnection_recovery(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-async fn test_database_connection_recovery(pool: &DbPool) -> Result<bool> {
-    let test_event = RawEventBuilder::new(
-        "database_recovery_test",
+async fn test_database_connection_recovery(pool: &DbPool) -> AnyhowResult<bool> {
+    let factory = EventFactory::new("database_recovery_test");
+    let test_event = factory.create_event(
         "connection.test",
         json!({
             "phase": "normal_operation",
             "timestamp": chrono::Utc::now().to_rfc3339()
         }),
-    )
-    .build();
+    );
 
-    let normal_insert = insert_event(pool, &test_event).await;
+    let normal_insert = EventQueries::insert_raw_event(pool, &test_event).await;
     assert!(
         normal_insert.is_ok(),
         "Normal database operation should work"
     );
 
     let timeout_result =
-        tokio::time::timeout(Duration::from_millis(100), insert_event(pool, &test_event)).await;
+        tokio::time::timeout(Duration::from_millis(100), EventQueries::insert_raw_event(pool, &test_event)).await;
 
     let connection_resilient = match timeout_result {
         Ok(Ok(_)) => true,
@@ -900,39 +889,37 @@ async fn test_database_connection_recovery(pool: &DbPool) -> Result<bool> {
     };
 
     tokio::task::yield_now().await;
-    let recovery_event = RawEventBuilder::new(
-        "database_recovery_test",
+    let factory = EventFactory::new("database_recovery_test");
+    let recovery_event = factory.create_event(
         "recovery.test",
         json!({
             "phase": "post_timeout",
             "timestamp": chrono::Utc::now().to_rfc3339()
         }),
-    )
-    .build();
+    );
 
-    let recovery_insert = insert_event(pool, &recovery_event).await;
+    let recovery_insert = EventQueries::insert_raw_event(pool, &recovery_event).await;
     let system_recovered = recovery_insert.is_ok();
 
     Ok(connection_resilient && system_recovered)
 }
 
-async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
-    let (_event_tx, mut _event_rx) = mpsc::channel::<sinex_core::RawEvent>(1000);
+async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool> {
+    let (_event_tx, mut _event_rx) = mpsc::channel::<sinex_core_types::RawEvent>(1000);
     let buffered_events = Arc::new(Mutex::new(Vec::new()));
     let _events_processed = Arc::new(AtomicU32::new(0));
 
     let producer_events = buffered_events.clone();
     let producer = tokio::spawn(async move {
         for i in 0..50 {
-            let event = RawEventBuilder::new(
-                "buffering_test",
+            let factory = EventFactory::new("buffering_test");
+            let event = factory.create_event(
                 "event.during_outage",
                 json!({
                     "sequence": i,
                     "generated_at": chrono::Utc::now().to_rfc3339()
                 }),
-            )
-            .build();
+            );
 
             producer_events.lock().await.push(event);
             tokio::task::yield_now().await;
@@ -945,7 +932,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
     let mut successful_inserts = 0;
 
     for event in buffered.iter() {
-        if (insert_event(pool, event).await).is_ok() {
+        if EventQueries::insert_raw_event(pool, event).await.is_ok() {
             successful_inserts += 1;
         }
     }
@@ -956,17 +943,13 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> Result<bool> {
         "All buffered events should be processed on recovery"
     );
 
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = 'buffering_test'")
-            .fetch_one(pool)
-            .await?;
-
+    let count = EventQueries::count_events_by_source(pool, "buffering_test").await?;
     pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
 
     Ok(true)
 }
 
-async fn test_connection_pool_recovery(pool: &DbPool) -> Result<bool> {
+async fn test_connection_pool_recovery(pool: &DbPool) -> AnyhowResult<bool> {
     let mut connections = Vec::new();
     let max_connections = 20;
 
@@ -1156,7 +1139,7 @@ async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestRe
 async fn test_component_health_checks(
     monitor: &SystemHealthMonitor,
     pool: &DbPool,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     let db_health = check_database_health(pool).await?;
     monitor
         .update_component_health("database", db_health, None)
@@ -1184,22 +1167,19 @@ async fn test_component_health_checks(
     Ok(())
 }
 
-async fn check_database_health(pool: &DbPool) -> Result<HealthStatus> {
-    match sqlx::query("SELECT 1").fetch_one(pool).await {
-        Ok(_) => {
-            match sqlx::query("SELECT COUNT(*) FROM core.events")
-                .fetch_one(pool)
-                .await
-            {
+async fn check_database_health(pool: &DbPool) -> AnyhowResult<HealthStatus> {
+    match OperationQueries::health_check_basic(pool).await {
+        Ok(true) => {
+            match EventQueries::count_all_events(pool).await {
                 Ok(_) => Ok(HealthStatus::Healthy),
                 Err(_) => Ok(HealthStatus::Degraded),
             }
         }
-        Err(_) => Ok(HealthStatus::Unhealthy),
+        _ => Ok(HealthStatus::Unhealthy),
     }
 }
 
-async fn check_filesystem_source_health() -> Result<HealthStatus> {
+async fn check_filesystem_source_health() -> AnyhowResult<HealthStatus> {
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("health_check.txt");
 
@@ -1214,7 +1194,7 @@ async fn check_filesystem_source_health() -> Result<HealthStatus> {
 
 async fn test_failure_detection_and_recovery(
     monitor: &SystemHealthMonitor,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     monitor
         .update_component_health(
             "filesystem_source",
@@ -1250,7 +1230,7 @@ async fn test_failure_detection_and_recovery(
 
 async fn test_system_health_aggregation(
     monitor: &SystemHealthMonitor,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     let components = [
         "database",
         "filesystem_source",
@@ -1307,11 +1287,12 @@ async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
         }
     });
 
-    let event = RawEventBuilder::new("test.boundary", "small.payload", payload).build();
+    let factory = EventFactory::new("test.boundary");
+    let event = factory.create_event("small.payload", payload);
 
-    sinex_db::insert_event(ctx.pool(), &event).await?;
+    EventQueries::insert_raw_event(ctx.pool(), &event).await?;
 
-    let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
+    let retrieved = EventQueries::get_event_by_id(ctx.pool(), event.id).await?;
     assert_eq!(retrieved.id, event.id);
     assert_eq!(
         retrieved.payload["content"].as_str().unwrap().len(),
@@ -1330,10 +1311,11 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
         "type": "large_payload_test"
     });
 
-    let event = RawEventBuilder::new("test.boundary", "large.payload", payload).build();
+    let factory = EventFactory::new("test.boundary");
+    let event = factory.create_event("large.payload", payload);
 
     let start = std::time::Instant::now();
-    let result = sinex_db::insert_event(ctx.pool(), &event).await;
+    let result = EventQueries::insert_raw_event(ctx.pool(), &event).await;
     let duration = start.elapsed();
 
     match result {
@@ -1341,7 +1323,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
             println!("Large payload insert took: {:?}", duration);
 
             let start_retrieval = std::time::Instant::now();
-            let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
+            let retrieved = EventQueries::get_event_by_id(ctx.pool(), event.id).await?;
             let retrieval_duration = start_retrieval.elapsed();
 
             println!("Large payload retrieval took: {:?}", retrieval_duration);
@@ -1372,9 +1354,10 @@ async fn test_extreme_payload_rejection(ctx: TestContext) -> TestResult {
         "warning": "This should probably be rejected"
     });
 
-    let event = RawEventBuilder::new("test.boundary", "extreme.payload", payload).build();
+    let factory = EventFactory::new("test.boundary");
+    let event = factory.create_event("extreme.payload", payload);
 
-    let result = sinex_db::insert_event(ctx.pool(), &event).await;
+    let result = EventQueries::insert_raw_event(ctx.pool(), &event).await;
     assert!(result.is_err(), "Extreme payloads should be rejected");
 
     let error_msg = result.unwrap_err().to_string();
@@ -1518,7 +1501,7 @@ mod mock_types {
             self.events.lock().unwrap().clone()
         }
 
-        pub fn verify_sequence(&self, expected: &[SystemdEvent]) -> Result<(), String> {
+        pub fn verify_sequence(&self, expected: &[SystemdEvent]) -> AnyhowResult<(), String> {
             let events = self.events.lock().unwrap();
             if events.len() < expected.len() {
                 return Err(format!(
@@ -1545,7 +1528,7 @@ mod mock_types {
             Ok(())
         }
 
-        pub fn notify_ready(&self) -> Result<(), anyhow::Error> {
+        pub fn notify_ready(&self) -> AnyhowResult<(), anyhow::Error> {
             self.events
                 .lock()
                 .unwrap()
@@ -1553,7 +1536,7 @@ mod mock_types {
             Ok(())
         }
 
-        pub fn notify_watchdog(&self) -> Result<(), anyhow::Error> {
+        pub fn notify_watchdog(&self) -> AnyhowResult<(), anyhow::Error> {
             if *self.fail_watchdog.lock().unwrap() {
                 return Err(anyhow::anyhow!("Simulated watchdog failure"));
             }
@@ -1564,7 +1547,7 @@ mod mock_types {
             Ok(())
         }
 
-        pub fn notify_status(&self, status: &str) -> Result<(), anyhow::Error> {
+        pub fn notify_status(&self, status: &str) -> AnyhowResult<(), anyhow::Error> {
             self.events
                 .lock()
                 .unwrap()
@@ -1572,7 +1555,7 @@ mod mock_types {
             Ok(())
         }
 
-        pub fn notify_stopping(&self) -> Result<(), anyhow::Error> {
+        pub fn notify_stopping(&self) -> AnyhowResult<(), anyhow::Error> {
             self.events
                 .lock()
                 .unwrap()
@@ -1643,7 +1626,7 @@ mod mock_types {
                 .push((name, Box::new(move || Box::pin(check()))));
         }
 
-        pub async fn run_all(&self) -> Result<Vec<(&str, bool)>, anyhow::Error> {
+        pub async fn run_all(&self) -> AnyhowResult<Vec<(&str, bool)>, anyhow::Error> {
             let mut results = vec![];
             for (name, check) in &self.checks {
                 let passed = check().await?;
@@ -1666,7 +1649,7 @@ struct GitAnnexTestRepo {
 }
 
 impl GitAnnexTestRepo {
-    pub async fn new() -> Result<Self> {
+    pub async fn new() -> AnyhowResult<Self> {
         let temp_dir = TempDir::new()?;
         let path = temp_dir.path().to_path_buf();
 
@@ -1718,7 +1701,7 @@ impl GitAnnexTestRepo {
         self.available
     }
 
-    pub async fn add_file(&self, relative_path: &str, content: &[u8]) -> Result<String> {
+    pub async fn add_file(&self, relative_path: &str, content: &[u8]) -> AnyhowResult<String> {
         if !self.available {
             return Err(anyhow::anyhow!("Git-annex not available"));
         }
@@ -1769,7 +1752,7 @@ impl GitAnnexTestRepo {
         }
     }
 
-    pub async fn get_file_content(&self, relative_path: &str) -> Result<Vec<u8>> {
+    pub async fn get_file_content(&self, relative_path: &str) -> AnyhowResult<Vec<u8>> {
         if !self.available {
             return Err(anyhow::anyhow!("Git-annex not available"));
         }
@@ -1813,7 +1796,7 @@ async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> Tes
 async fn test_large_file_event_capture(
     pool: &DbPool,
     annex_repo: &GitAnnexTestRepo,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     let large_content = "x".repeat(2048);
     let medium_content = "y".repeat(512);
 
@@ -1824,9 +1807,9 @@ async fn test_large_file_event_capture(
         .add_file("medium_file.txt", medium_content.as_bytes())
         .await?;
 
-    let large_file_event = RawEventBuilder::new(
-        "fs",
-        "file.created",
+    let factory = EventFactory::new(sources::FS);
+    let large_file_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "path": "/test/large_file.txt",
             "size": large_content.len(),
@@ -1834,12 +1817,11 @@ async fn test_large_file_event_capture(
             "storage_type": "git_annex",
             "content_hash": "sha256:placeholder"
         }),
-    )
-    .build();
+    );
 
-    let medium_file_event = RawEventBuilder::new(
-        "fs",
-        "file.created",
+    let factory = EventFactory::new(sources::FS);
+    let medium_file_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "path": "/test/medium_file.txt",
             "size": medium_content.len(),
@@ -1847,14 +1829,13 @@ async fn test_large_file_event_capture(
             "storage_type": "git_annex",
             "content_hash": "sha256:placeholder"
         }),
-    )
-    .build();
+    );
 
-    let large_event_id = insert_event(pool, &large_file_event).await?;
-    let medium_event_id = insert_event(pool, &medium_file_event).await?;
+    let large_event_id = EventQueries::insert_raw_event(pool, &large_file_event).await?;
+    let medium_event_id = EventQueries::insert_raw_event(pool, &medium_file_event).await?;
 
-    let retrieved_large = sinex_db::get_event_by_id(pool, large_event_id).await?;
-    let retrieved_medium = sinex_db::get_event_by_id(pool, medium_event_id).await?;
+    let retrieved_large = EventQueries::get_event_by_id(pool, large_event_id).await?;
+    let retrieved_medium = EventQueries::get_event_by_id(pool, medium_event_id).await?;
 
     pretty_assertions::assert_eq!(retrieved_large.source, "fs");
     pretty_assertions::assert_eq!(retrieved_large.event_type, "file.created");
@@ -1881,7 +1862,7 @@ async fn test_large_file_event_capture(
 async fn test_event_processing_with_annex_blobs(
     pool: &DbPool,
     annex_repo: &GitAnnexTestRepo,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     let text_content = "This is a test document with important content for processing.";
     let binary_content = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
     let json_content = r#"{"type": "document", "content": "structured data", "version": 1}"#;
@@ -1895,53 +1876,56 @@ async fn test_event_processing_with_annex_blobs(
         .await?;
 
     let events = vec![
-        RawEventBuilder::new(
-            "document_processor",
-            "document.analyze",
-            json!({
-                "document_path": "/docs/document.txt",
-                "git_annex_key": text_key,
-                "processing_type": "text_analysis",
-                "priority": "high"
-            }),
-        )
-        .build(),
-        RawEventBuilder::new(
-            "image_processor",
-            "image.process",
-            json!({
-                "image_path": "/images/image.jpg",
-                "git_annex_key": binary_key,
-                "processing_type": "metadata_extraction",
-                "priority": "medium"
-            }),
-        )
-        .build(),
-        RawEventBuilder::new(
-            "data_processor",
-            "data.validate",
-            json!({
-                "data_path": "/data/data.json",
-                "git_annex_key": json_key,
-                "processing_type": "schema_validation",
-                "priority": "low"
-            }),
-        )
-        .build(),
+        {
+            let factory = EventFactory::new("document_processor");
+            factory.create_event(
+                "document.analyze",
+                json!({
+                    "document_path": "/docs/document.txt",
+                    "git_annex_key": text_key,
+                    "processing_type": "text_analysis",
+                    "priority": "high"
+                }),
+            )
+        },
+        {
+            let factory = EventFactory::new("image_processor");
+            factory.create_event(
+                "image.process",
+                json!({
+                    "image_path": "/images/image.jpg",
+                    "git_annex_key": binary_key,
+                    "processing_type": "metadata_extraction",
+                    "priority": "medium"
+                }),
+            )
+        },
+        {
+            let factory = EventFactory::new("data_processor");
+            factory.create_event(
+                "data.validate",
+                json!({
+                    "data_path": "/data/data.json",
+                    "git_annex_key": json_key,
+                    "processing_type": "schema_validation",
+                    "priority": "low"
+                }),
+            )
+        },
     ];
 
     let mut event_ids = Vec::new();
     for event in &events {
-        let inserted_event_id = insert_event(pool, event).await?;
+        let inserted_event_id = EventQueries::insert_raw_event(pool, event).await?;
         event_ids.push(inserted_event_id);
-        add_to_work_queue(pool, inserted_event_id, "annex-test-agent", 3).await?;
+        OperationQueries::add_to_work_queue(pool, inserted_event_id, "annex-test-agent", 3).await?;
     }
 
     let mut processed_events = Vec::new();
 
     for (i, event_id) in event_ids.iter().enumerate() {
         let claimed_items =
-            claim_work_queue_items(pool, "annex-test-agent", &format!("annex-worker-{}", i), 1)
+            OperationQueries::claim_work_queue_items(pool, "annex-test-agent", &format!("annex-worker-{}", i), 1)
                 .await?;
 
         assert!(
@@ -1951,7 +1935,7 @@ async fn test_event_processing_with_annex_blobs(
         );
 
         let queue_item = &claimed_items[0];
-        let event = sinex_db::get_event_by_id(pool, *event_id).await?;
+        let event = EventQueries::get_event_by_id(pool, *event_id).await?;
 
         if let Some(_annex_key) = event.payload["git_annex_key"].as_str() {
             let file_name = match event.source.as_str() {
@@ -1980,13 +1964,13 @@ async fn test_event_processing_with_annex_blobs(
             processed_events.push((event_id, event.source.clone(), content.len()));
         }
 
-        complete_work_queue_item(pool, queue_item.queue_id).await?;
+        OperationQueries::complete_work_queue_item(pool, queue_item.queue_id).await?;
     }
 
     pretty_assertions::assert_eq!(processed_events.len(), 3, "All events should be processed");
 
     let remaining_work =
-        claim_work_queue_items(pool, "annex-test-agent", "cleanup-worker", 10).await?;
+        OperationQueries::claim_work_queue_items(pool, "annex-test-agent", "cleanup-worker", 10).await?;
     assert!(remaining_work.is_empty(), "No work should remain in queue");
 
     println!("✅ Event processing with git-annex blob integration successful");
@@ -2003,12 +1987,12 @@ async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-async fn test_annex_unavailable_fallback(pool: &DbPool) -> Result<(), anyhow::Error> {
+async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
     let large_file_content = "x".repeat(2048);
 
-    let fallback_event = RawEventBuilder::new(
-        "fs",
-        "file.created",
+    let factory = EventFactory::new(sources::FS);
+    let fallback_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "path": "/test/large_file_no_annex.txt",
             "size": large_file_content.len(),
@@ -2016,12 +2000,11 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> Result<(), anyhow::Er
             "storage_type": "inline",
             "fallback_reason": "git_annex_unavailable"
         }),
-    )
-    .build();
+    );
 
-    let inserted_event_id = insert_event(pool, &fallback_event).await?;
+    let inserted_event_id = EventQueries::insert_raw_event(pool, &fallback_event).await?;
 
-    let retrieved_event = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
+    let retrieved_event = EventQueries::get_event_by_id(pool, inserted_event_id).await?;
     pretty_assertions::assert_eq!(
         retrieved_event.payload["storage_type"].as_str().unwrap(),
         "inline"
@@ -2045,7 +2028,7 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> Result<(), anyhow::Er
     Ok(())
 }
 
-async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyhow::Error> {
+async fn test_annex_operation_failure_handling(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
     let failure_scenarios = vec![
         ("corrupted_repo", "Repository corruption detected"),
         ("disk_full", "No space left on device"),
@@ -2054,9 +2037,9 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
     ];
 
     for (scenario, error_message) in failure_scenarios {
-        let failure_event = RawEventBuilder::new(
-            "fs",
-            "file.created",
+        let factory = EventFactory::new(sources::FS);
+        let failure_event = factory.create_event(
+            event_types::filesystem::FILE_CREATED,
             json!({
                 "path": format!("/test/{}_test.txt", scenario),
                 "size": 1024,
@@ -2065,12 +2048,11 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
                 "storage_type": "failed_annex",
                 "fallback_applied": true
             }),
-        )
-        .build();
+        );
 
-        let inserted_event_id = insert_event(pool, &failure_event).await?;
+        let inserted_event_id = EventQueries::insert_raw_event(pool, &failure_event).await?;
 
-        let retrieved = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
+        let retrieved = EventQueries::get_event_by_id(pool, inserted_event_id).await?;
         pretty_assertions::assert_eq!(
             retrieved.payload["git_annex_error"].as_str().unwrap(),
             error_message
@@ -2081,11 +2063,7 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> Result<(), anyh
         );
     }
 
-    let error_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM core.events WHERE payload->>'storage_type' = 'failed_annex'",
-    )
-    .fetch_one(pool)
-    .await?;
+    let error_count = EventQueries::count_events_by_payload_field(pool, "storage_type", "failed_annex").await?;
 
     pretty_assertions::assert_eq!(error_count, 4, "All failure scenarios should be recorded");
 
@@ -2264,7 +2242,8 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     // Create event and promotion queue item
     let event_id = sinex_ulid::Ulid::new();
     sqlx::query(
-        "INSERT INTO core.events (id, source, event_type, host, payload)
+        "INSERT INTO core.events (
+            event_id, source, event_type, host, payload)
          VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
     )
     .bind(event_id.to_uuid())
@@ -2277,7 +2256,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO sinex_schemas.work_queue (raw_event_id, target_automaton_name)
+        "INSERT INTO sinex_schemas.work_queue (event_id, target_automaton_name)
          VALUES ($1::uuid, $2)",
     )
     .bind(event_id.to_uuid())

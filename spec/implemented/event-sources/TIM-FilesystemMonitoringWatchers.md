@@ -140,7 +140,7 @@ The `notify` crate (Rust) provides a cross-platform abstraction, using `inotify`
 //                 // The `notify` crate tries to provide higher-level events.
 
 //                 // For Exocortex, we'd map these `notify::Event`s to our internal representation
-//                 // and then to raw.events payloads.
+//                 // and then to core.events payloads.
 //                 // We are particularly interested in:
 //                 // - Create events for new files/dirs.
 //                 // - Modify events that signal a completed write (often need to check if file is still open or use IN_CLOSE_WRITE semantics).

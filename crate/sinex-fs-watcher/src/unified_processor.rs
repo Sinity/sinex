@@ -5,15 +5,18 @@
 //! continuous scanning modes.
 
 use async_trait::async_trait;
-use notify::{Event, Watcher};
 use chrono::{DateTime, Utc};
+use notify::{Event, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent, sources};
+use sinex_macros::with_context;
 use sinex_satellite_sdk::{
-    cli::{ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, MissingItem, SourceState},
     checkpoint::CheckpointManager,
+    cli::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
+    },
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -21,13 +24,13 @@ use sinex_satellite_sdk::{
     SatelliteError, SatelliteResult,
 };
 use std::collections::{HashMap, HashSet};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,16 +69,16 @@ pub struct RenameOperation {
 pub struct FilesystemState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,
-    
+
     /// File count by directory
     pub file_counts: HashMap<PathBuf, u64>,
-    
+
     /// Total files discovered
     pub total_files: u64,
-    
+
     /// Directories being monitored
     pub directories: Vec<PathBuf>,
-    
+
     /// Sample file paths for diagnostics (limited to 100)
     pub sample_paths: Vec<PathBuf>,
 }
@@ -87,19 +90,19 @@ pub struct FilesystemState {
 pub struct FilesystemProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
-    
+
     /// Filesystem monitoring configuration
     config: FilesystemConfig,
-    
+
     /// Root directories being watched for validation
     watch_roots: Vec<PathBuf>,
-    
+
     /// Rename operation tracking for enhanced move detection
     rename_tracker: Arc<Mutex<HashMap<u32, RenameOperation>>>,
-    
+
     /// Last captured filesystem state for snapshots
     last_state: Option<FilesystemState>,
-    
+
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
 }
@@ -116,7 +119,7 @@ impl FilesystemProcessor {
             checkpoint_manager: None,
         }
     }
-    
+
     /// Create processor with custom configuration
     pub fn with_config(config: FilesystemConfig) -> Self {
         Self {
@@ -130,19 +133,27 @@ impl FilesystemProcessor {
     }
 
     /// Take a snapshot of current filesystem state
+    #[with_context(
+        operation = "take_filesystem_snapshot",
+        retry_count = 2,
+        timeout_ms = 30000,
+        enable_metrics
+    )]
     async fn take_snapshot(&mut self) -> SatelliteResult<FilesystemState> {
         let mut file_counts = HashMap::new();
         let mut total_files = 0;
         let mut sample_paths = Vec::new();
-        
+
         for watch_root in &self.watch_roots {
             if watch_root.exists() {
-                let count = self.count_files_in_directory(watch_root, &mut sample_paths).await?;
+                let count = self
+                    .count_files_in_directory(watch_root, &mut sample_paths)
+                    .await?;
                 file_counts.insert(watch_root.clone(), count);
                 total_files += count;
             }
         }
-        
+
         let state = FilesystemState {
             captured_at: Utc::now(),
             file_counts,
@@ -150,12 +161,17 @@ impl FilesystemProcessor {
             directories: self.watch_roots.clone(),
             sample_paths,
         };
-        
+
         self.last_state = Some(state.clone());
         Ok(state)
     }
-    
+
     /// Count files in a directory and collect samples
+    #[with_context(
+        operation = "count_files_in_directory",
+        timeout_ms = 15000,
+        context = "component=filesystem_scanning"
+    )]
     async fn count_files_in_directory(
         &self,
         path: &Path,
@@ -163,26 +179,36 @@ impl FilesystemProcessor {
     ) -> SatelliteResult<u64> {
         let mut count = 0;
         let mut walker = WalkDir::new(path).follow_links(false).into_iter();
-        
+
         if let Some(max_depth) = self.config.max_depth {
-            walker = WalkDir::new(path).follow_links(false).max_depth(max_depth).into_iter();
+            walker = WalkDir::new(path)
+                .follow_links(false)
+                .max_depth(max_depth)
+                .into_iter();
         }
-        
+
         for entry in walker.filter_map(|e| e.ok()) {
             if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
                 count += 1;
-                
+
                 // Collect samples for diagnostics (limit to 100)
                 if sample_paths.len() < 100 {
                     sample_paths.push(entry.path().to_path_buf());
                 }
             }
         }
-        
+
         Ok(count)
     }
-    
+
     /// Scan directory and emit events for discovered files/directories
+    #[with_context(
+        operation = "scan_directory_with_checkpoint",
+        retry_count = 1,
+        timeout_ms = 60000,
+        enable_metrics,
+        context = "component=directory_scanning"
+    )]
     async fn scan_directory_with_checkpoint(
         &self,
         path: &Path,
@@ -191,7 +217,7 @@ impl FilesystemProcessor {
         emit_events: bool,
     ) -> SatelliteResult<u64> {
         let mut event_count = 0;
-        
+
         // Determine cutoff time based on checkpoint
         let cutoff_time = match checkpoint {
             Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
@@ -201,21 +227,24 @@ impl FilesystemProcessor {
             }
             _ => None,
         };
-        
+
         // Determine end time for historical scans
         let end_time = match until {
             TimeHorizon::Historical { end_time } => Some(*end_time),
             _ => None,
         };
-        
+
         info!(path = %path.display(), "Starting directory scan");
-        
+
         let mut walker = WalkDir::new(path).follow_links(false).into_iter();
-        
+
         if let Some(max_depth) = self.config.max_depth {
-            walker = WalkDir::new(path).follow_links(false).max_depth(max_depth).into_iter();
+            walker = WalkDir::new(path)
+                .follow_links(false)
+                .max_depth(max_depth)
+                .into_iter();
         }
-        
+
         for entry in walker.filter_map(|e| e.ok()) {
             let entry_path = entry.path();
             let metadata = match entry.metadata() {
@@ -225,18 +254,18 @@ impl FilesystemProcessor {
                     continue;
                 }
             };
-            
+
             // Apply time filtering based on checkpoint and horizon
             if let Ok(modified) = metadata.modified() {
                 let modified_dt: DateTime<Utc> = modified.into();
-                
+
                 // Skip files older than checkpoint
                 if let Some(cutoff) = cutoff_time {
                     if modified_dt <= cutoff {
                         continue;
                     }
                 }
-                
+
                 // Skip files newer than end time for historical scans
                 if let Some(end) = end_time {
                     if modified_dt > end {
@@ -244,15 +273,15 @@ impl FilesystemProcessor {
                     }
                 }
             }
-            
+
             // Apply pattern filtering
             if !self.matches_patterns(entry_path) {
                 continue;
             }
-            
+
             if emit_events {
                 let events = self.create_discovery_events(entry_path, &metadata)?;
-                
+
                 if let Some(ref context) = self.context {
                     for event in events {
                         context.emit_event(event).await?;
@@ -263,15 +292,15 @@ impl FilesystemProcessor {
                 event_count += 1;
             }
         }
-        
+
         debug!(path = %path.display(), events = event_count, "Directory scan completed");
         Ok(event_count)
     }
-    
+
     /// Check if a path matches the configured patterns
     fn matches_patterns(&self, path: &Path) -> bool {
         let path_str = path.to_string_lossy();
-        
+
         // Check if path matches any watch pattern
         let mut matches_watch = false;
         for pattern in &self.config.watch_patterns {
@@ -283,11 +312,11 @@ impl FilesystemProcessor {
                 }
             }
         }
-        
+
         if !matches_watch {
             return false;
         }
-        
+
         // Check ignore patterns
         for pattern in &self.config.ignore_patterns {
             let expanded = shellexpand::tilde(pattern);
@@ -297,14 +326,19 @@ impl FilesystemProcessor {
                 }
             }
         }
-        
+
         true
     }
-    
+
     /// Check if a pattern matches a path with proper handling of different pattern types
-    fn pattern_matches_path(&self, glob_pattern: &glob::Pattern, pattern: &str, path: &Path) -> bool {
+    fn pattern_matches_path(
+        &self,
+        glob_pattern: &glob::Pattern,
+        pattern: &str,
+        path: &Path,
+    ) -> bool {
         let path_str = path.to_string_lossy();
-        
+
         if pattern.contains('/') || pattern.contains("**") {
             // Pattern contains path separators
             if pattern.starts_with('/') || pattern.contains("**/") {
@@ -314,7 +348,7 @@ impl FilesystemProcessor {
                 // Relative path pattern, check if it matches any suffix of the path
                 let normalized_path = path_str.replace('\\', "/");
                 let path_components: Vec<&str> = normalized_path.split('/').collect();
-                
+
                 // Try matching the pattern against all possible suffixes
                 for i in 0..path_components.len() {
                     let suffix = path_components[i..].join("/");
@@ -333,43 +367,46 @@ impl FilesystemProcessor {
             }
         }
     }
-    
+
     /// Create discovery events for a file or directory
-    fn create_discovery_events(&self, path: &Path, metadata: &std::fs::Metadata) -> SatelliteResult<Vec<RawEvent>> {
+    fn create_discovery_events(
+        &self,
+        path: &Path,
+        metadata: &std::fs::Metadata,
+    ) -> SatelliteResult<Vec<RawEvent>> {
         let path_str = path.to_string_lossy().to_string();
         let now = Utc::now();
         let mut events = Vec::new();
-        
+
         if metadata.is_file() {
             let mut payload = json!({
                 "path": path_str,
                 "size": metadata.len(),
                 "discovered_at": now,
             });
-            
+
             if let Some(perms) = Self::get_permissions(metadata) {
                 payload["permissions"] = json!(perms);
             }
-            
-            let event = RawEventBuilder::new("fs", "file.discovered", payload)
-                .build();
+
+            let factory = EventFactory::new(sources::FS);
+            let event = factory.create_event("file.discovered", payload);
             events.push(event);
-            
         } else if metadata.is_dir() {
             let mut payload = json!({
                 "path": path_str,
                 "discovered_at": now,
             });
-            
+
             if let Some(perms) = Self::get_permissions(metadata) {
                 payload["permissions"] = json!(perms);
             }
-            
-            let event = RawEventBuilder::new("fs", "dir.discovered", payload)
-                .build();
+
+            let factory = EventFactory::new(sources::FS);
+            let event = factory.create_event("dir.discovered", payload);
             events.push(event);
         }
-        
+
         Ok(events)
     }
 
@@ -383,11 +420,19 @@ impl FilesystemProcessor {
     fn get_permissions(_metadata: &std::fs::Metadata) -> Option<u32> {
         None
     }
-    
+
     /// Start continuous filesystem monitoring
-    async fn start_continuous_monitoring(&mut self, _from_checkpoint: Checkpoint) -> SatelliteResult<()> {
+    #[with_context(
+        operation = "start_continuous_filesystem_monitoring",
+        enable_metrics,
+        context = "component=continuous_monitoring"
+    )]
+    async fn start_continuous_monitoring(
+        &mut self,
+        _from_checkpoint: Checkpoint,
+    ) -> SatelliteResult<()> {
         info!("Starting continuous filesystem monitoring with debouncing");
-        
+
         // Set up filesystem watcher with debouncing
         let (notify_tx, notify_rx) = std::sync::mpsc::channel();
         let mut debouncer = notify_debouncer_full::new_debouncer(
@@ -398,19 +443,19 @@ impl FilesystemProcessor {
         .map_err(|e| {
             SatelliteError::General(anyhow::anyhow!("Failed to create debouncer: {}", e))
         })?;
-        
+
         // Set up watch paths
         self.setup_watch_paths(&mut debouncer).await?;
-        
+
         // Start continuous processing
         let config = self.config.clone();
         let watch_roots = self.watch_roots.clone();
         let rename_tracker = self.rename_tracker.clone();
-        
+
         if let Some(ref context) = self.context {
             let host = context.host.clone();
             let event_sender = context.event_sender.clone();
-            
+
             // Start the event processing loop
             let processing_task = tokio::task::spawn_blocking(move || {
                 for result in notify_rx {
@@ -418,7 +463,7 @@ impl FilesystemProcessor {
                         Ok(events) => {
                             for event in events {
                                 debug!("Processing debounced event: {:?}", event);
-                                
+
                                 // Create a temporary processor instance for processing
                                 let temp_processor = FilesystemProcessor {
                                     context: None,
@@ -428,14 +473,14 @@ impl FilesystemProcessor {
                                     last_state: None,
                                     checkpoint_manager: None,
                                 };
-                                
+
                                 // Convert the notify event to our Event type
                                 let notify_event = Event {
                                     kind: event.kind,
                                     paths: event.paths.clone(),
                                     attrs: Default::default(),
                                 };
-                                
+
                                 match temp_processor.convert_fs_event(notify_event, &host) {
                                     Ok(raw_events) => {
                                         for raw_event in raw_events {
@@ -459,7 +504,7 @@ impl FilesystemProcessor {
                     }
                 }
             });
-            
+
             // Start rename cleanup task
             let cleanup_tracker = self.rename_tracker.clone();
             let cleanup_task = tokio::task::spawn(async move {
@@ -469,7 +514,7 @@ impl FilesystemProcessor {
                     Self::cleanup_old_rename_operations(&cleanup_tracker);
                 }
             });
-            
+
             // Wait for either task to complete
             tokio::select! {
                 result = processing_task => {
@@ -483,19 +528,25 @@ impl FilesystemProcessor {
                 }
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Set up filesystem watch paths from configuration
-    async fn setup_watch_paths(&mut self, debouncer: &mut notify_debouncer_full::Debouncer<notify::RecommendedWatcher, notify_debouncer_full::FileIdMap>) -> SatelliteResult<()> {
+    async fn setup_watch_paths(
+        &mut self,
+        debouncer: &mut notify_debouncer_full::Debouncer<
+            notify::RecommendedWatcher,
+            notify_debouncer_full::FileIdMap,
+        >,
+    ) -> SatelliteResult<()> {
         let mut watched_paths = HashSet::new();
         self.watch_roots.clear();
-        
+
         for pattern in &self.config.watch_patterns {
             // Expand home directory
             let expanded = shellexpand::tilde(pattern);
-            
+
             // Extract the base directory from the pattern
             let base_path_str = if expanded.contains("**") {
                 // Find the path before the first wildcard
@@ -514,9 +565,9 @@ impl FilesystemProcessor {
             } else {
                 expanded.to_string()
             };
-            
+
             let base_path = std::path::Path::new(&base_path_str);
-            
+
             // Create directory if it doesn't exist (for testing)
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.display());
@@ -528,7 +579,7 @@ impl FilesystemProcessor {
                     ))
                 })?;
             }
-            
+
             // Watch the base directory
             if base_path.exists() && !watched_paths.contains(base_path) {
                 info!("Watching directory: {}", base_path.display());
@@ -543,20 +594,20 @@ impl FilesystemProcessor {
                         ))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
-                
+
                 // Add to watch roots for validation
                 if let Ok(canonical) = base_path.canonicalize() {
                     self.watch_roots.push(canonical);
                 }
             }
         }
-        
+
         if self.watch_roots.is_empty() {
             return Err(SatelliteError::General(anyhow::anyhow!(
                 "No valid watch roots found"
             )));
         }
-        
+
         Ok(())
     }
 
@@ -599,6 +650,7 @@ impl Default for FilesystemProcessor {
     }
 }
 
+#[sinex_macros::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=filesystem"])]
 #[async_trait]
 impl StatefulStreamProcessor for FilesystemProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
@@ -607,10 +659,10 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             service = %ctx.service_name,
             "Initializing filesystem processor"
         );
-        
+
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
-        
+
         // Parse configuration from processor context
         if let Some(config_json) = ctx.config.get("filesystem") {
             match serde_json::from_value::<FilesystemConfig>(config_json.clone()) {
@@ -693,7 +745,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
         let mut warnings = Vec::new();
-        
+
         info!(
             processor = self.processor_name(),
             from = %from.description(),
@@ -702,23 +754,29 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             dry_run = args.dry_run,
             "Starting filesystem scan"
         );
-        
+
         match until {
             TimeHorizon::Snapshot => {
                 // Take current state snapshot
                 let _state = self.take_snapshot().await?;
-                
+
                 // Scan watch roots or specified targets
                 let targets = if args.targets.is_empty() {
-                    self.watch_roots.iter().map(|p| p.to_string_lossy().to_string()).collect()
+                    self.watch_roots
+                        .iter()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect()
                 } else {
                     args.targets.clone()
                 };
-                
+
                 for target in targets {
                     let path = std::path::Path::new(&target);
                     if path.exists() {
-                        match self.scan_directory_with_checkpoint(path, &from, &until, !args.dry_run).await {
+                        match self
+                            .scan_directory_with_checkpoint(path, &from, &until, !args.dry_run)
+                            .await
+                        {
                             Ok(count) => {
                                 events_processed += count;
                                 successful_targets.push(target);
@@ -732,21 +790,29 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                     }
                 }
             }
-            
+
             TimeHorizon::Historical { end_time } => {
                 // Historical scan from checkpoint to end_time
-                warnings.push("Historical filesystem scanning is limited to modification times".to_string());
-                
+                warnings.push(
+                    "Historical filesystem scanning is limited to modification times".to_string(),
+                );
+
                 let targets = if args.targets.is_empty() {
-                    self.watch_roots.iter().map(|p| p.to_string_lossy().to_string()).collect()
+                    self.watch_roots
+                        .iter()
+                        .map(|p| p.to_string_lossy().to_string())
+                        .collect()
                 } else {
                     args.targets.clone()
                 };
-                
+
                 for target in targets {
                     let path = std::path::Path::new(&target);
                     if path.exists() {
-                        match self.scan_directory_with_checkpoint(path, &from, &until, !args.dry_run).await {
+                        match self
+                            .scan_directory_with_checkpoint(path, &from, &until, !args.dry_run)
+                            .await
+                        {
                             Ok(count) => {
                                 events_processed += count;
                                 successful_targets.push(target);
@@ -759,10 +825,10 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                         warnings.push(format!("Path does not exist: {}", target));
                     }
                 }
-                
+
                 debug!(end_time = %end_time, "Historical scan completed");
             }
-            
+
             TimeHorizon::Continuous => {
                 // Start continuous monitoring
                 info!("Starting continuous filesystem monitoring");
@@ -771,9 +837,9 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 events_processed = 0; // Can't count events in continuous mode
             }
         }
-        
+
         let final_checkpoint = Checkpoint::timestamp(Utc::now(), None);
-        
+
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
@@ -787,7 +853,10 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             )),
             processor_stats: HashMap::from([
                 ("watch_roots".to_string(), self.watch_roots.len() as u64),
-                ("successful_targets".to_string(), successful_targets.len() as u64),
+                (
+                    "successful_targets".to_string(),
+                    successful_targets.len() as u64,
+                ),
                 ("failed_targets".to_string(), failed_targets.len() as u64),
             ]),
             successful_targets,
@@ -795,15 +864,15 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             warnings,
         })
     }
-    
+
     fn processor_name(&self) -> &str {
         "fs-processor"
     }
-    
+
     fn processor_type(&self) -> ProcessorType {
         ProcessorType::Ingestor
     }
-    
+
     fn capabilities(&self) -> ProcessorCapabilities {
         ProcessorCapabilities {
             supports_continuous: true,
@@ -814,12 +883,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             supports_concurrent: false,
         }
     }
-    
+
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For filesystem monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
-    
+
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
@@ -828,14 +897,18 @@ impl StatefulStreamProcessor for FilesystemProcessor {
     ) -> SatelliteResult<ScanEstimate> {
         let mut estimated_events = 0;
         let mut warnings = Vec::new();
-        
+
         // Estimate based on current directory contents
         let targets = if args.targets.is_empty() {
-            &self.watch_roots.iter().map(|p| p.to_string_lossy().to_string()).collect()
+            &self
+                .watch_roots
+                .iter()
+                .map(|p| p.to_string_lossy().to_string())
+                .collect()
         } else {
             &args.targets
         };
-        
+
         for target in targets {
             let path = std::path::Path::new(target);
             if path.exists() {
@@ -847,16 +920,16 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 warnings.push(format!("Cannot access path: {}", target));
             }
         }
-        
+
         // Adjust estimate based on time horizon
         let (duration_factor, confidence) = match until {
             TimeHorizon::Snapshot => (1.0, 0.9),
             TimeHorizon::Historical { .. } => (0.3, 0.6), // Fewer files modified recently
             TimeHorizon::Continuous => (f64::INFINITY, 0.1), // Unknown duration
         };
-        
+
         let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
-        
+
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
             estimated_duration: std::time::Duration::from_millis(adjusted_events * 10), // ~10ms per file
@@ -884,27 +957,46 @@ impl ExplorationProvider for FilesystemProcessor {
         } else {
             vec![]
         };
-        
+
         Ok(SourceState {
             description: format!(
                 "Filesystem processor monitoring {} paths with {} patterns",
                 self.watch_roots.len(),
                 self.config.watch_patterns.len()
             ),
-            last_updated: self.last_state.as_ref().map(|s| s.captured_at).unwrap_or_else(Utc::now),
+            last_updated: self
+                .last_state
+                .as_ref()
+                .map(|s| s.captured_at)
+                .unwrap_or_else(Utc::now),
             total_items: self.last_state.as_ref().map(|s| s.total_files),
             metadata: HashMap::from([
-                ("watch_patterns".to_string(), serde_json::to_value(&self.config.watch_patterns)?),
-                ("ignore_patterns".to_string(), serde_json::to_value(&self.config.ignore_patterns)?),
-                ("debounce_ms".to_string(), serde_json::to_value(self.config.debounce_ms)?),
-                ("max_depth".to_string(), serde_json::to_value(self.config.max_depth)?),
-                ("processor_type".to_string(), serde_json::Value::String("ingestor".to_string())),
+                (
+                    "watch_patterns".to_string(),
+                    serde_json::to_value(&self.config.watch_patterns)?,
+                ),
+                (
+                    "ignore_patterns".to_string(),
+                    serde_json::to_value(&self.config.ignore_patterns)?,
+                ),
+                (
+                    "debounce_ms".to_string(),
+                    serde_json::to_value(self.config.debounce_ms)?,
+                ),
+                (
+                    "max_depth".to_string(),
+                    serde_json::to_value(self.config.max_depth)?,
+                ),
+                (
+                    "processor_type".to_string(),
+                    serde_json::Value::String("ingestor".to_string()),
+                ),
             ]),
             healthy: true,
             recent_activity,
         })
     }
-    
+
     fn get_ingestion_history(
         &self,
         _limit: u64,
@@ -913,7 +1005,7 @@ impl ExplorationProvider for FilesystemProcessor {
         // For now, return empty as this requires database access
         Ok(vec![])
     }
-    
+
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
@@ -924,9 +1016,9 @@ impl ExplorationProvider for FilesystemProcessor {
             let hour_ago = now - chrono::Duration::hours(1);
             (hour_ago, now)
         });
-        
+
         let source_total = self.last_state.as_ref().map(|s| s.total_files).unwrap_or(0);
-        
+
         Ok(CoverageAnalysis {
             time_range: (start_time, end_time),
             source_total,
@@ -947,7 +1039,7 @@ impl ExplorationProvider for FilesystemProcessor {
             ],
         })
     }
-    
+
     fn export_data(
         &self,
         path: &PathBuf,
@@ -966,7 +1058,7 @@ impl ExplorationProvider for FilesystemProcessor {
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
-            
+
             std::fs::write(path, content)?;
         } else {
             // Export configuration if no state available
@@ -977,16 +1069,16 @@ impl ExplorationProvider for FilesystemProcessor {
                 "max_depth": self.config.max_depth,
                 "watch_roots": self.watch_roots
             });
-            
+
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(&config_data)?,
                 ExportFormat::Raw => format!("{:#?}", config_data),
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
-            
+
             std::fs::write(path, content)?;
         }
-        
+
         Ok(())
     }
 }

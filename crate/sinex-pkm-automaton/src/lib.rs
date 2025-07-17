@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sinex_satellite_sdk::{SatelliteResult, SatelliteError};
 use sinex_satellite_sdk::{
     EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult,
 };
+use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 use sinex_services::PkmService;
 use sinex_ulid::Ulid;
 use std::sync::Arc;
@@ -126,13 +126,17 @@ impl PkmServiceAutomaton {
             .get("from_entity_id")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<Ulid>().ok())
-            .ok_or_else(|| SatelliteError::Automaton("Invalid or missing from_entity_id".to_string()))?;
+            .ok_or_else(|| {
+                SatelliteError::Automaton("Invalid or missing from_entity_id".to_string())
+            })?;
 
         let to_entity_id = params
             .get("to_entity_id")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<Ulid>().ok())
-            .ok_or_else(|| SatelliteError::Automaton("Invalid or missing to_entity_id".to_string()))?;
+            .ok_or_else(|| {
+                SatelliteError::Automaton("Invalid or missing to_entity_id".to_string())
+            })?;
 
         let relationship_type = params
             .get("relationship_type")
@@ -165,16 +169,16 @@ impl HotlogAutomaton for PkmServiceAutomaton {
     fn automaton_name(&self) -> &str {
         "pkm-service"
     }
-    
+
     async fn initialize(&mut self, ctx: HotlogAutomatonContext) -> SatelliteResult<()> {
         info!("Initializing PKM service automaton");
-        
+
         // Initialize the PKM service
         let service = Arc::new(PkmService::new(ctx.db_pool.clone()));
-        
+
         self.service = Some(service);
         self.context = Some(ctx);
-        
+
         info!("PKM service automaton initialized successfully");
         Ok(())
     }
@@ -186,16 +190,19 @@ impl HotlogAutomaton for PkmServiceAutomaton {
         ]
     }
 
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         let payload = event.event.payload.clone();
-        
+
         // Handle PKM RPC requests
         if event.event.source == "rpc.pkm" && event.event.event_type == "request" {
             match self.handle_pkm_request(payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
                     let _ctx = self.context.as_ref().unwrap();
-                    
+
                     let _response_event = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "response": response,
@@ -205,11 +212,13 @@ impl HotlogAutomaton for PkmServiceAutomaton {
                     // For now, just log - synthesis events need to be implemented in gRPC
                     info!("Service response logged");
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
                 Err(e) => {
                     warn!("PKM request failed: {}", e);
-                    
+
                     // Submit error response
                     let _ctx = self.context.as_ref().unwrap();
                     let _error_response = serde_json::json!({
@@ -224,11 +233,15 @@ impl HotlogAutomaton for PkmServiceAutomaton {
                     // For now, just log - synthesis events need to be implemented in gRPC
                     info!("Service response logged");
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
             }
         } else {
-            Ok(ProcessingResult::Skip { reason: "Not a PKM request".to_string() })
+            Ok(ProcessingResult::Skip {
+                reason: "Not a PKM request".to_string(),
+            })
         }
     }
 }

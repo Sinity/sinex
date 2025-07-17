@@ -79,7 +79,7 @@
 //! ```
 
 use crate::{DbPool, DbPoolRef};
-use sinex_core::{retry, timeouts};
+use sinex_core_types::{retry, timeouts};
 use sinex_ulid::Ulid;
 use sqlx::{Error as SqlxError, Postgres, Transaction};
 use std::future::Future;
@@ -111,6 +111,13 @@ pub fn db_error(err: SqlxError, context: &str) -> DbError {
 
 /// Result type using DbError
 pub type DbResult<T> = std::result::Result<T, DbError>;
+
+/// Convert DbError to CoreError
+impl From<DbError> for sinex_core_types::CoreError {
+    fn from(err: DbError) -> Self {
+        sinex_core_types::CoreError::Database(err.to_string())
+    }
+}
 
 // ===== Removed Query Execution Helpers =====
 // These were unused abstractions that added complexity without value.

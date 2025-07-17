@@ -162,14 +162,14 @@ General guidelines for building robust and maintainable Exocortex agents/ingesto
 
 ### 2.2. Main Loop and Event Processing
 
-*   **Ingestors:** Monitor source (filesystem, socket, API). On new data, format into `raw.events` structure, assign `payload_schema_id` (looked up from `sinex_schemas.event_payload_schemas` or cached), generate `id` ULID, set `ts_orig`, and insert into `raw.events` (batch inserts preferred). Handle local file-based DLQ on DB write failure.
+*   **Ingestors:** Monitor source (filesystem, socket, API). On new data, format into `core.events` structure, assign `payload_schema_id` (looked up from `sinex_schemas.event_payload_schemas` or cached), generate `id` ULID, set `ts_orig`, and insert into `core.events` (batch inserts preferred). Handle local file-based DLQ on DB write failure.
 *   **Processing Agents (e.g., for `work_queue`):** Implement polling loop as in `TIM-EventIngestionProcessing.md`.
     *   Fetch batch of items (`SELECT ... FOR UPDATE SKIP LOCKED`).
     *   For each item:
-        *   Fetch corresponding `raw.events.payload`.
+        *   Fetch corresponding `core.events.payload`.
         *   Validate payload against schema (optional, can assume valid if DB constraint used).
         *   Perform processing logic (transform, enrich, link, call LLM).
-        *   Write results to domain tables or create new `raw.events`.
+        *   Write results to domain tables or create new `core.events`.
         *   On success, delete item from queue.
         *   On failure, update item for retry (exponential backoff) or move to `core.dead_letter_queue`.
 *   Implement graceful shutdown (Ctrl+C / SIGTERM handler) to finish processing in-flight items, update agent status, close DB connections.

@@ -2,8 +2,9 @@
 
 use crate::{SatelliteError, SatelliteResult};
 use redis::{
-    aio::Connection, AsyncCommands, Client, RedisResult,
+    aio::Connection,
     streams::{StreamReadOptions, StreamReadReply},
+    AsyncCommands, Client, RedisResult,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -41,10 +42,15 @@ impl RedisStreamClient {
         fields: &HashMap<String, String>,
     ) -> SatelliteResult<String> {
         let _conn = self.get_connection().await?;
-        let field_pairs: Vec<(&str, &str)> = fields.iter()
+        let field_pairs: Vec<(&str, &str)> = fields
+            .iter()
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
-        let id: String = self.get_connection().await?.xadd(stream, "*", &field_pairs).await?;
+        let id: String = self
+            .get_connection()
+            .await?
+            .xadd(stream, "*", &field_pairs)
+            .await?;
         debug!(stream = %stream, id = %id, "Published message to stream");
         Ok(id)
     }
@@ -59,9 +65,8 @@ impl RedisStreamClient {
         let mut conn = self.get_connection().await?;
 
         // Use XGROUP CREATE with MKSTREAM to create the stream if it doesn't exist
-        let result: RedisResult<String> = conn
-            .xgroup_create_mkstream(stream, group, start_id)
-            .await;
+        let result: RedisResult<String> =
+            conn.xgroup_create_mkstream(stream, group, start_id).await;
 
         match result {
             Ok(_) => {
@@ -296,7 +301,10 @@ impl StreamMessage {
     }
 
     /// Get a JSON field and deserialize it
-    pub fn get_json<T: for<'de> Deserialize<'de>>(&self, field: &str) -> SatelliteResult<Option<T>> {
+    pub fn get_json<T: for<'de> Deserialize<'de>>(
+        &self,
+        field: &str,
+    ) -> SatelliteResult<Option<T>> {
         if let Some(json_str) = self.get_string(field) {
             let value = serde_json::from_str(&json_str)?;
             Ok(Some(value))
@@ -308,7 +316,10 @@ impl StreamMessage {
     /// Convert the entire message to a JSON object
     pub fn to_json(&self) -> SatelliteResult<serde_json::Value> {
         let mut map = serde_json::Map::new();
-        map.insert("stream".to_string(), serde_json::Value::String(self.stream.clone()));
+        map.insert(
+            "stream".to_string(),
+            serde_json::Value::String(self.stream.clone()),
+        );
         map.insert("id".to_string(), serde_json::Value::String(self.id.clone()));
 
         let mut fields = serde_json::Map::new();

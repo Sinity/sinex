@@ -1,10 +1,11 @@
-//! # RPC Server Request/Response Handler Tests
-//!
-//! Comprehensive tests for the sinex-gateway JSON-RPC server that verify end-to-end
-//! request/response handling including serialization, method routing, error handling,
-//! and JSON-RPC 2.0 specification compliance.
+// # RPC Server Request/Response Handler Tests
+//
+// Comprehensive tests for the sinex-gateway JSON-RPC server that verify end-to-end
+// request/response handling including serialization, method routing, error handling,
+// and JSON-RPC 2.0 specification compliance.
 
 use crate::common::prelude::*;
+use sinex_events::{EventFactory, services, event_types};
 use serde_json::{json, Value};
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_gateway::handlers::{
@@ -87,9 +88,8 @@ async fn create_test_events_for_analytics(pool: &DbPool) -> TestResult {
     ];
 
     for (source, event_type, payload) in test_events {
-        let event = RawEventBuilder::new(source, event_type, payload)
-            .with_host("test-host")
-            .build();
+        let event = EventFactory::new(source)
+            .create_event(event_type, payload);
         insert_event(pool, &event).await?;
     }
 
@@ -125,9 +125,8 @@ async fn create_test_events_for_search(pool: &DbPool) -> TestResult {
     ];
 
     for (source, event_type, payload) in test_events {
-        let event = RawEventBuilder::new(source, event_type, payload)
-            .with_host("test-host")
-            .build();
+        let event = EventFactory::new(source)
+            .create_event(event_type, payload);
         insert_event(pool, &event).await?;
     }
 
@@ -140,7 +139,7 @@ async fn invoke_rpc_method(
     services: &ServiceContainer,
     method: &str,
     params: Value,
-) -> Result<Value, Box<dyn std::error::Error>> {
+) -> AnyhowResult<Value, Box<dyn std::error::Error>> {
     // Direct handler invocation for testing RPC logic without HTTP server complexity
 
     match method {
@@ -204,7 +203,7 @@ async fn invoke_rpc_method(
 }
 
 /// Create service container for testing
-async fn create_test_services() -> Result<ServiceContainer, Box<dyn std::error::Error>> {
+async fn create_test_services() -> AnyhowResult<ServiceContainer, Box<dyn std::error::Error>> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
@@ -443,9 +442,8 @@ async fn test_pkm_create_note_success(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
 
     // Create a test event to annotate
-    let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-        .with_host("test-host")
-        .build();
+    let event = EventFactory::new("test")
+        .create_event("test.event", json!({"data": "test"}));
     let event_id = event.id;
     insert_event(ctx.pool(), &event).await?;
 
@@ -503,9 +501,8 @@ async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> TestResult {
 async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
 
-    let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-        .with_host("test-host")
-        .build();
+    let event = EventFactory::new("test")
+        .create_event("test.event", json!({"data": "test"}));
     let event_id = event.id;
     insert_event(ctx.pool(), &event).await?;
 
@@ -660,9 +657,8 @@ async fn test_rpc_request_with_string_id(ctx: TestContext) -> TestResult {
 async fn test_parameter_serialization_all_types(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
 
-    let event = RawEventBuilder::new("test", "test.event", json!({"data": "test"}))
-        .with_host("test-host")
-        .build();
+    let event = EventFactory::new("test")
+        .create_event("test.event", json!({"data": "test"}));
     let event_id = event.id;
     insert_event(ctx.pool(), &event).await?;
 
@@ -717,16 +713,11 @@ async fn test_full_workflow_integration(ctx: TestContext) -> TestResult {
     let services = create_test_services().await?;
 
     // 1. Create test data
-    let event = RawEventBuilder::new(
-        "fs",
-        "file.created",
-        json!({
+    let event = EventFactory::new("fs")
+        .create_event("file.created", json!({
             "path": "/important/document.txt",
             "content": "This document contains sensitive information"
-        }),
-    )
-    .with_host("test-host")
-    .build();
+        }));
     let event_id = event.id;
     insert_event(ctx.pool(), &event).await?;
 

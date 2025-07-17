@@ -4,12 +4,14 @@
 //! unifying ingestors and automata as both being "Stateful Stream Processors" with a single
 //! scan(from: Checkpoint, until: TimeHorizon) interface.
 
-use crate::{checkpoint::CheckpointManager, grpc_client::IngestClient, SatelliteError, SatelliteResult};
+use crate::{
+    checkpoint::CheckpointManager, grpc_client::IngestClient, SatelliteError, SatelliteResult,
+};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::RawEvent;
 use sinex_db::SqlxPgPool as PgPool;
+use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -152,13 +154,13 @@ impl Checkpoint {
     /// # Examples
     /// ```
     /// use sinex_satellite_sdk::Checkpoint;
-    /// 
+    ///
     /// // File position
     /// let pos = Checkpoint::external(
     ///     serde_json::json!({"file": "/var/log/app.log", "offset": 1024}),
     ///     "Processing from byte 1024 of app.log"
     /// );
-    /// 
+    ///
     /// // Database sequence
     /// let seq = Checkpoint::external(
     ///     serde_json::json!({"table": "events", "last_id": 12345}),
@@ -213,7 +215,10 @@ impl Checkpoint {
     /// - `timestamp`: The last processed timestamp
     /// - `metadata`: Optional source-specific metadata for context
     pub fn timestamp(timestamp: DateTime<Utc>, metadata: Option<serde_json::Value>) -> Self {
-        Self::Timestamp { timestamp, metadata }
+        Self::Timestamp {
+            timestamp,
+            metadata,
+        }
     }
 
     /// Get a human-readable description of this checkpoint
@@ -221,10 +226,16 @@ impl Checkpoint {
         match self {
             Checkpoint::None => "start".to_string(),
             Checkpoint::External { description, .. } => description.clone(),
-            Checkpoint::Internal { event_id, message_count } => {
+            Checkpoint::Internal {
+                event_id,
+                message_count,
+            } => {
                 format!("event {} (#{message_count})", event_id)
             }
-            Checkpoint::Stream { message_id, event_id } => {
+            Checkpoint::Stream {
+                message_id,
+                event_id,
+            } => {
                 if let Some(event_id) = event_id {
                     format!("stream {} (event {})", message_id, event_id)
                 } else {
@@ -249,19 +260,19 @@ pub type EventSender = mpsc::UnboundedSender<RawEvent>;
 pub struct ScanArgs {
     /// Paths to scan (for ingestors) or filters (for automata)
     pub targets: Vec<String>,
-    
+
     /// Dry run mode - analyze but don't emit events
     pub dry_run: bool,
-    
+
     /// Interactive mode - prompt user for decisions
     pub interactive: bool,
-    
+
     /// Maximum events to process (0 = unlimited)
     pub max_events: u64,
-    
+
     /// Skip duplicate detection
     pub skip_duplicates: bool,
-    
+
     /// Processor-specific configuration
     pub config: HashMap<String, serde_json::Value>,
 }
@@ -284,25 +295,25 @@ impl Default for ScanArgs {
 pub struct ScanReport {
     /// Total events processed/generated
     pub events_processed: u64,
-    
+
     /// Duration of the scan operation
     pub duration: std::time::Duration,
-    
+
     /// Final checkpoint after scan
     pub final_checkpoint: Checkpoint,
-    
+
     /// Time range covered by the scan
     pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    
+
     /// Processor-specific statistics
     pub processor_stats: HashMap<String, u64>,
-    
+
     /// Targets that were successfully processed
     pub successful_targets: Vec<String>,
-    
+
     /// Targets that failed processing with error messages
     pub failed_targets: Vec<(String, String)>,
-    
+
     /// Warnings encountered during processing
     pub warnings: Vec<String>,
 }
@@ -340,6 +351,7 @@ pub struct StreamProcessorContext {
 
 impl StreamProcessorContext {
     /// Send an event through the event channel
+    #[sinex_macros::auto_event_metrics(event_type = "emit")]
     pub async fn emit_event(&self, event: RawEvent) -> SatelliteResult<()> {
         if self.dry_run {
             info!(
@@ -416,26 +428,26 @@ pub trait StatefulStreamProcessor: Send + Sync {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()>;
 
     /// Core scan method - the heart of the unified architecture.
-    /// 
+    ///
     /// This method implements the unified interface that replaces both:
     /// - EventSource::start_streaming() + run_scanner() for ingestors
     /// - Automaton event processing for automata
-    /// 
+    ///
     /// # Parameters
     /// - `from`: Starting checkpoint (where to resume processing)
     /// - `until`: Time horizon (how far/long to process)
     /// - `args`: Additional scan configuration and filters
-    /// 
+    ///
     /// # Behavior by TimeHorizon
     /// - **Historical**: Bounded scan from checkpoint to end_time
     /// - **Continuous**: Unbounded scan from checkpoint (sensor mode) - should not return
     /// - **Snapshot**: Instantaneous state capture
-    /// 
+    ///
     /// # Error Handling
     /// - Return `SatelliteError::Processing` for recoverable errors
     /// - Use `SatelliteError::Lifecycle` for initialization/shutdown issues
     /// - Database errors are typically non-recoverable
-    /// 
+    ///
     /// # Performance Notes
     /// - Emit events incrementally via `StreamProcessorContext::emit_event()`
     /// - Use `args.max_events` to limit processing scope
@@ -503,19 +515,19 @@ pub enum ProcessorType {
 pub struct ProcessorCapabilities {
     /// Supports continuous scanning (sensor mode)
     pub supports_continuous: bool,
-    
+
     /// Supports historical scanning
     pub supports_historical: bool,
-    
+
     /// Supports snapshot scanning
     pub supports_snapshot: bool,
-    
+
     /// Supports interactive mode
     pub supports_interactive: bool,
-    
+
     /// Maximum recommended scan size
     pub max_scan_size: Option<u64>,
-    
+
     /// Supports concurrent processing
     pub supports_concurrent: bool,
 }
@@ -538,19 +550,19 @@ impl Default for ProcessorCapabilities {
 pub struct ScanEstimate {
     /// Estimated number of events to be processed
     pub estimated_events: u64,
-    
+
     /// Estimated processing duration
     pub estimated_duration: std::time::Duration,
-    
+
     /// Estimated data size to be processed
     pub estimated_data_size: u64,
-    
+
     /// Number of targets that will be processed
     pub estimated_targets: u64,
-    
+
     /// Warnings about potential issues
     pub warnings: Vec<String>,
-    
+
     /// Confidence level of estimate (0.0 to 1.0)
     pub confidence: f32,
 }
@@ -662,7 +674,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         let start_time = std::time::Instant::now();
         let result = self.processor.scan(from, until, args).await;
-        
+
         match &result {
             Ok(report) => {
                 info!(
@@ -703,13 +715,9 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             info!("Phase 1: Taking initial snapshot");
             let snapshot_report = self
                 .processor
-                .scan(
-                    Checkpoint::None,
-                    TimeHorizon::Snapshot,
-                    ScanArgs::default(),
-                )
+                .scan(Checkpoint::None, TimeHorizon::Snapshot, ScanArgs::default())
                 .await?;
-            
+
             debug!(
                 events = snapshot_report.events_processed,
                 "Snapshot phase completed"
@@ -719,7 +727,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Phase 2: Gap-filling (if supported and needed)
         if self.processor.capabilities().supports_historical {
             let current_checkpoint = self.processor.current_checkpoint().await?;
-            
+
             // Only gap-fill if we have a previous checkpoint
             if !matches!(current_checkpoint, Checkpoint::None) {
                 info!("Phase 2: Gap-filling from last checkpoint");
@@ -733,7 +741,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                         ScanArgs::default(),
                     )
                     .await?;
-                
+
                 debug!(
                     events = gap_fill_report.events_processed,
                     "Gap-fill phase completed"
@@ -745,7 +753,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         if self.processor.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
             let current_checkpoint = self.processor.current_checkpoint().await?;
-            
+
             // This should run indefinitely until shutdown
             let _continuous_report = self
                 .processor

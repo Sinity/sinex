@@ -1,22 +1,23 @@
-//! Common test utilities and helpers
-//!
-//! This module provides the foundational testing infrastructure for Sinex,
-//! including database management, event creation, timing utilities, and
-//! comprehensive test context management.
-//!
-//! # Key Modules
-//! - `prelude` - Common imports for all test files
-//! - `test_context` - Unified test context with database and timing helpers
-//! - Event creation using production `EventFactory`
-//! - `database` - Database pool management and cleanup
-//! - `timing_optimization` - Deterministic wait utilities
-//! - `validation_test_utils` - Event validation testing
-//! - `worker_test_utils` - Worker and work queue testing
-//! - `schema_test_utils` - JSON schema validation testing
+// Common test utilities and helpers
+//
+// This module provides the foundational testing infrastructure for Sinex,
+// including database management, event creation, timing utilities, and
+// comprehensive test context management.
+//
+// # Key Modules
+// - `prelude` - Common imports for all test files
+// - `test_context` - Unified test context with database and timing helpers
+// - Event creation using production `EventFactory`
+// - `database` - Database pool management and cleanup
+// - `timing_optimization` - Deterministic wait utilities
+// - `validation_test_utils` - Event validation testing
+// - `worker_test_utils` - Worker and work queue testing
+// - `schema_test_utils` - JSON schema validation testing
 
-#![allow(dead_code)] // Test utilities may not all be used
-#![allow(unused_variables)] // Test patterns
+use crate::common::prelude::*;
 
+#[allow(dead_code)] // Test utilities may not all be used
+#[allow(unused_variables)] // Test patterns
 
 // Test prelude for standardized imports
 pub mod prelude;
@@ -32,9 +33,12 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core::{event_type_constants, sources, EventFactory};
+use sinex_core_types::event_type_constants;
 use sinex_db::events as db_events;
+use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_db::query_helpers::uuid_to_ulid;
+use sinex_events::{sources, EventFactory};
 
 /// Get test database URL with fallback
 pub fn test_database_url() -> String {
@@ -45,27 +49,36 @@ pub fn test_database_url() -> String {
 use tokio::net::UnixListener;
 
 /// Start a test ingestd server for integration tests
-pub async fn start_test_ingestd(ctx: &crate::common::test_context::TestContext) -> Result<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
-    let socket_path = ctx.work_dir().join("test-ingestd.sock").to_string_lossy().to_string();
+pub async fn start_test_ingestd(
+    ctx: &crate::common::test_context::TestContext,
+) -> AnyhowResult<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
+    let socket_path = ctx
+        .work_dir()
+        .join("test-ingestd.sock")
+        .to_string_lossy()
+        .to_string();
     start_test_ingestd_at_path(ctx, &socket_path).await
 }
 
 /// Start ingestd at specific socket path
-pub async fn start_test_ingestd_at_path(ctx: &crate::common::test_context::TestContext, socket_path: &str) -> Result<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
+pub async fn start_test_ingestd_at_path(
+    ctx: &crate::common::test_context::TestContext,
+    socket_path: &str,
+) -> AnyhowResult<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
     use std::time::Duration;
-    
+
     // Remove socket if it exists
     let _ = std::fs::remove_file(socket_path);
-    
+
     // Create a simple test ingestd that accepts events and stores them
     let pool = ctx.pool().clone();
     let socket_path_for_server = socket_path.to_string();
-    
+
     let handle = tokio::spawn(async move {
         // This is a simplified ingestd for testing
         // In real implementation, this would use sinex_ingestd::IngestServer
         let listener = UnixListener::bind(&socket_path_for_server).unwrap();
-        
+
         loop {
             match listener.accept().await {
                 Ok((stream, _)) => {
@@ -78,35 +91,35 @@ pub async fn start_test_ingestd_at_path(ctx: &crate::common::test_context::TestC
             }
         }
     });
-    
+
     // Wait for server to start
     tokio::time::sleep(Duration::from_millis(100)).await;
-    
+
     Ok((handle, socket_path.to_string()))
 }
 
 /// Count events from a specific satellite source
-pub async fn count_events_from_source(pool: &DbPool, source: &str) -> Result<u64, Box<dyn std::error::Error>> {
-    let count = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.events WHERE source = $1",
-        source
-    )
-    .fetch_one(pool)
-    .await?;
-    
+pub async fn count_events_from_source(
+    pool: &DbPool,
+    source: &str,
+) -> AnyhowResult<u64, Box<dyn std::error::Error>> {
+    let count = EventQueries::count_by_source(source).fetch_one(pool)
+        .fetch_one(pool)
+        .await?;
+
     Ok(count.unwrap_or(0) as u64)
 }
 
 /// Create a test database pool with high concurrency settings
-pub async fn create_test_db_pool() -> Result<DbPool> {
+pub async fn create_test_db_pool() -> AnyhowResult<DbPool> {
     let test_db = database_pool::acquire_test_database().await?;
     Ok(test_db.pool().clone())
 }
 
 /// Insert any event into database (renamed for clarity)
 #[allow(dead_code)]
-pub async fn insert_event(pool: &DbPool, event: &sinex_db::RawEvent) -> Result<Ulid> {
-    let inserted = db_events::insert_event_with_validator(pool, event, None).await?;
+pub async fn insert_event(pool: &DbPool, event: &sinex_db::RawEvent) -> AnyhowResult<Ulid> {
+    let inserted = sinex_db::insert_event_with_validator(pool, event, None).await?;
     Ok(inserted.id)
 }
 
@@ -174,6 +187,11 @@ pub mod events {
             payload_schema_id: None,
             payload: json!(null),
             source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         }
     }
 
@@ -377,8 +395,8 @@ pub mod assertions {
     }
 
     /// Assert that an event was inserted successfully
-    pub async fn assert_event_inserted(pool: &DbPool, event: &RawEvent) -> Result<Ulid> {
-        let inserted = db_events::insert_event_with_validator(pool, event, None).await?;
+    pub async fn assert_event_inserted(pool: &DbPool, event: &RawEvent) -> AnyhowResult<Ulid> {
+        let inserted = sinex_db::insert_event_with_validator(pool, event, None).await?;
         assert!(!inserted.id.to_string().is_empty());
         Ok(inserted.id)
     }
@@ -387,8 +405,8 @@ pub mod assertions {
     pub async fn assert_event_insertion_fails(
         pool: &DbPool,
         event: &RawEvent,
-    ) -> Result<(), anyhow::Error> {
-        let result = db_events::insert_event_with_validator(pool, event, None).await;
+    ) -> AnyhowResult<(), anyhow::Error> {
+        let result = sinex_db::insert_event_with_validator(pool, event, None).await;
         assert!(
             result.is_err(),
             "Expected event insertion to fail, but it succeeded"
@@ -400,7 +418,7 @@ pub mod assertions {
     pub async fn assert_manifest_registered(
         pool: &DbPool,
         manifest: &AutomatonManifest,
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         // NOTE: upsert_automaton_manifest function has been removed from this architecture
         assert!(!manifest.automaton_name.is_empty());
         assert!(!manifest.version.is_empty());
@@ -574,58 +592,27 @@ pub mod generators {
 // Query functions are available directly from sinex_db::queries - no need for wrappers
 
 /// Helper for getting event count from database
-pub async fn get_event_count(pool: &DbPool) -> Result<i64> {
-    let record = sqlx::query!("SELECT COUNT(*) as count FROM core.events")
+pub async fn get_event_count(pool: &DbPool) -> AnyhowResult<i64> {
+    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool)
         .fetch_one(pool)
         .await?;
-    Ok(record.count.unwrap_or(0i64))
+    Ok(count.unwrap_or(0i64))
 }
 
 /// Helper for checking if an event exists by ULID
-pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> Result<bool> {
-    let exists = sqlx::query!(
-        r#"
-        SELECT EXISTS(
-            SELECT 1 FROM core.events WHERE event_id::uuid = $1
-        ) as "exists!"
-        "#,
-        event_id.to_uuid()
-    )
-    .fetch_one(pool)
-    .await?;
+pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> AnyhowResult<bool> {
+    let exists = EventQueries::exists(event_id).fetch_one(pool)
+        .fetch_one(pool)
+        .await?;
 
-    Ok(exists.exists)
+    Ok(exists)
 }
 
 /// Helper for getting recent events
-pub async fn get_recent_events(pool: &DbPool, limit: i64) -> Result<Vec<RawEvent>> {
-    let records = sqlx::query!(
-        r#"
-        SELECT event_id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
-        FROM core.events
-        ORDER BY ts_ingest DESC
-        LIMIT $1
-        "#,
-        limit
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut events = Vec::new();
-    for record in records {
-        events.push(RawEvent {
-            id: uuid_to_ulid(record.id),
-            source: record.source,
-            event_type: record.event_type,
-            host: record.host,
-            payload: record.payload,
-            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
-            ts_orig: record.ts_orig,
-            ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
-            source_event_ids: None,
-        });
-    }
+pub async fn get_recent_events(pool: &DbPool, limit: i64) -> AnyhowResult<Vec<RawEvent>> {
+    let events = EventQueries::get_recent(limit).fetch_all(pool)
+        .fetch_all(pool)
+        .await?;
     Ok(events)
 }
 
@@ -634,64 +621,19 @@ pub async fn get_events_by_type(
     pool: &DbPool,
     event_type: &str,
     limit: i64,
-) -> Result<Vec<RawEvent>> {
-    let records = sqlx::query!(
-        r#"
-        SELECT event_id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
-        FROM core.events
-        WHERE event_type = $1
-        ORDER BY ts_ingest DESC
-        LIMIT $2
-        "#,
-        event_type,
-        limit
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut events = Vec::new();
-    for record in records {
-        events.push(RawEvent {
-            id: uuid_to_ulid(record.id),
-            source: record.source,
-            event_type: record.event_type,
-            host: record.host,
-            payload: record.payload,
-            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
-            ts_orig: record.ts_orig,
-            ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
-            source_event_ids: None,
-        });
-    }
+) -> AnyhowResult<Vec<RawEvent>> {
+    let events = EventQueries::get_by_type(event_type, limit)
+        .fetch_all(pool)
+        .await?;
     Ok(events)
 }
 
 /// Helper for getting a single event by ID
-pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> Result<RawEvent> {
-    let record = sqlx::query!(
-        r#"
-        SELECT event_id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
-        FROM core.events
-        WHERE event_id::uuid = $1
-        "#,
-        event_id.to_uuid()
-    )
-    .fetch_one(pool)
-    .await?;
-
-    Ok(RawEvent {
-        id: uuid_to_ulid(record.id),
-        source: record.source,
-        event_type: record.event_type,
-        host: record.host,
-        payload: record.payload,
-        ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
-        ts_orig: record.ts_orig,
-        ingestor_version: record.ingestor_version,
-        payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
-        source_event_ids: None,
-    })
+pub async fn get_event_by_id(pool: &DbPool, event_id: Ulid) -> AnyhowResult<RawEvent> {
+    let event = EventQueries::get_by_id(event_id)
+        .fetch_one(pool)
+        .await?;
+    Ok(event)
 }
 
 /// Helper for getting events by source
@@ -699,36 +641,10 @@ pub async fn get_events_by_source(
     pool: &DbPool,
     source: &str,
     limit: i64,
-) -> Result<Vec<RawEvent>> {
-    let records = sqlx::query!(
-        r#"
-        SELECT event_id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
-        FROM core.events
-        WHERE source = $1
-        ORDER BY ts_ingest DESC
-        LIMIT $2
-        "#,
-        source,
-        limit
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut events = Vec::new();
-    for record in records {
-        events.push(RawEvent {
-            id: uuid_to_ulid(record.id),
-            source: record.source,
-            event_type: record.event_type,
-            host: record.host,
-            payload: record.payload,
-            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
-            ts_orig: record.ts_orig,
-            ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
-            source_event_ids: None,
-        });
-    }
+) -> AnyhowResult<Vec<RawEvent>> {
+    let events = EventQueries::get_by_source(source, limit).fetch_all(pool)
+        .fetch_all(pool)
+        .await?;
     Ok(events)
 }
 
@@ -737,35 +653,10 @@ pub async fn get_events_in_time_range(
     pool: &DbPool,
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
-) -> Result<Vec<RawEvent>> {
-    let records = sqlx::query!(
-        r#"
-        SELECT event_id::uuid as "id!", source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version, payload_schema_id::uuid as "payload_schema_id"
-        FROM core.events
-        WHERE ts_ingest >= $1 AND ts_ingest <= $2
-        ORDER BY ts_ingest ASC
-        "#,
-        start_time,
-        end_time
-    )
-    .fetch_all(pool)
-    .await?;
-
-    let mut events = Vec::new();
-    for record in records {
-        events.push(RawEvent {
-            id: uuid_to_ulid(record.id),
-            source: record.source,
-            event_type: record.event_type,
-            host: record.host,
-            payload: record.payload,
-            ts_ingest: record.ts_ingest.expect("ts_ingest should not be null"),
-            ts_orig: record.ts_orig,
-            ingestor_version: record.ingestor_version,
-            payload_schema_id: record.payload_schema_id.map(uuid_to_ulid),
-            source_event_ids: None,
-        });
-    }
+) -> AnyhowResult<Vec<RawEvent>> {
+    let events = EventQueries::get_by_time_range(start_time, end_time).fetch_all(pool)
+        .fetch_all(pool)
+        .await?;
     Ok(events)
 }
 
@@ -839,7 +730,7 @@ pub fn create_test_event_with_payload(
 }
 
 /// Helper for creating a test agent with default settings
-pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), anyhow::Error> {
+pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> AnyhowResult<(), anyhow::Error> {
     let manifest = generators::test_agent_manifest(agent_name);
     // NOTE: upsert_automaton_manifest function has been removed from this architecture
     Ok(())
@@ -847,7 +738,11 @@ pub async fn create_test_agent(pool: &DbPool, agent_name: &str) -> Result<(), an
 
 /// Quick test event insertion - creates minimal event
 #[allow(dead_code)]
-pub async fn insert_test_event(pool: &DbPool, source: &str, event_type: &str) -> Result<Ulid> {
+pub async fn insert_test_event(
+    pool: &DbPool,
+    source: &str,
+    event_type: &str,
+) -> AnyhowResult<Ulid> {
     let event = EventFactory::new(source).create_event(event_type, json!({"test": true}));
     insert_event(pool, &event).await
 }
@@ -863,7 +758,7 @@ pub async fn insert_event_with_validator(
     ts_orig: Option<chrono::DateTime<chrono::Utc>>,
     ingestor_version: Option<&str>,
     payload_schema_id: Option<sinex_ulid::Ulid>,
-) -> Result<RawEvent> {
+) -> AnyhowResult<RawEvent> {
     let mut event = EventFactory::new(source).create_event(event_type, payload);
     event.host = host.to_string();
     if let Some(ts) = ts_orig {
@@ -876,7 +771,7 @@ pub async fn insert_event_with_validator(
         event.payload_schema_id = Some(schema_id);
     }
 
-    db_events::insert_event_with_validator(pool, &event, None).await
+    sinex_db::insert_event_with_validator(pool, &event, None).await
 }
 
 /// Helper for creating agent with specific subscriptions
@@ -884,7 +779,7 @@ pub async fn create_agent_with_subscriptions(
     pool: &DbPool,
     agent_name: &str,
     subscriptions: &serde_json::Value,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     // Create a test agent manifest and add subscriptions
     let mut manifest = generators::test_agent_manifest(agent_name);
     manifest.subscribes_to_event_types = Some(subscriptions.clone());
@@ -910,28 +805,27 @@ pub mod redis_streams {
     use redis::aio::MultiplexedConnection;
     use redis::AsyncCommands;
     use std::collections::HashMap;
-    
+
     /// Create a test Redis stream with consumer group
     pub async fn create_test_stream(
         redis: &mut MultiplexedConnection,
         stream_key: &str,
         group_name: &str,
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         // Create consumer group, ignore if it already exists
-        let _: Result<String, redis::RedisError> = redis
-            .xgroup_create(stream_key, group_name, "$")
-            .await;
+        let _: Result<String, redis::RedisError> =
+            redis.xgroup_create(stream_key, group_name, "$").await;
         Ok(())
     }
-    
+
     /// Publish multiple test events to a stream
     pub async fn publish_test_events(
         redis: &mut MultiplexedConnection,
         stream_key: &str,
         events: &[RawEvent],
-    ) -> Result<Vec<String>> {
+    ) -> AnyhowResult<Vec<String>> {
         let mut message_ids = Vec::new();
-        
+
         for event in events {
             let event_json = serde_json::to_string(event)?;
             let message_id: String = redis
@@ -948,26 +842,26 @@ pub mod redis_streams {
                 .await?;
             message_ids.push(message_id);
         }
-        
+
         Ok(message_ids)
     }
-    
+
     /// Get stream length
     pub async fn stream_length(
         redis: &mut MultiplexedConnection,
         stream_key: &str,
-    ) -> Result<usize> {
-        Ok(redis.xlen(stream_key).await?)
+    ) -> AnyhowResult<usize> {
+        Ok(redis.xlen::<_, usize>(stream_key).await?)
     }
-    
+
     /// Get consumer group info
     pub async fn consumer_group_info(
         redis: &mut MultiplexedConnection,
         stream_key: &str,
-    ) -> Result<Vec<HashMap<String, String>>> {
+    ) -> AnyhowResult<Vec<HashMap<String, String>>> {
         Ok(redis.xinfo_groups(stream_key).await?)
     }
-    
+
     /// Simulate consumer processing with acknowledgment
     pub async fn simulate_consumer_processing(
         redis: &mut MultiplexedConnection,
@@ -975,14 +869,14 @@ pub mod redis_streams {
         group_name: &str,
         consumer_name: &str,
         max_messages: usize,
-    ) -> Result<Vec<String>> {
+    ) -> AnyhowResult<Vec<String>> {
         let mut processed_ids = Vec::new();
-        
+
         // Use xread for simplified testing since xreadgroup signature is different
         let result: Vec<(String, Vec<(String, String)>)> = redis
-            .xread(&[(stream_key, "0")], Some(max_messages))
+            .xread::<(&str, &str), String, Vec<(String, Vec<(String, String)>)>>(&[(stream_key, "0")], &[])
             .await?;
-        
+
         for (_stream, messages) in result {
             for (id, _fields) in messages {
                 // Acknowledge the message
@@ -990,15 +884,15 @@ pub mod redis_streams {
                 processed_ids.push(id);
             }
         }
-        
+
         Ok(processed_ids)
     }
-    
+
     /// Clean up test stream
     pub async fn cleanup_test_stream(
         redis: &mut MultiplexedConnection,
         stream_key: &str,
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         let _: Result<i64, redis::RedisError> = redis.del(stream_key).await;
         Ok(())
     }
@@ -1008,7 +902,7 @@ pub mod redis_streams {
 pub mod automaton_testing {
     use super::*;
     use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
-    
+
     /// Create a test checkpoint manager
     pub fn create_test_checkpoint_manager(
         pool: DbPool,
@@ -1023,70 +917,44 @@ pub mod automaton_testing {
             consumer_name.to_string(),
         )
     }
-    
+
     /// Insert test checkpoint
     pub async fn insert_test_checkpoint(
         pool: &DbPool,
         automaton_name: &str,
         processed_count: u64,
         last_processed_id: Option<&str>,
-    ) -> Result<()> {
-        sqlx::query!(
-            r#"
-            INSERT INTO core.automaton_checkpoints 
-            (automaton_name, consumer_group, consumer_name, processed_count, last_processed_id, last_activity)
-            VALUES ($1, $2, $3, $4, $5, NOW())
-            ON CONFLICT (automaton_name, consumer_group, consumer_name)
-            DO UPDATE SET
-                processed_count = EXCLUDED.processed_count,
-                last_processed_id = EXCLUDED.last_processed_id,
-                last_activity = EXCLUDED.last_activity
-            "#,
+    ) -> AnyhowResult<()> {
+        CheckpointQueries::upsert_checkpoint(
             automaton_name,
-            format!("{}-group", automaton_name),
-            format!("{}-consumer", automaton_name),
-            processed_count as i64,
-            last_processed_id
+            &format!("{}-group", automaton_name),
+            &format!("{}-consumer", automaton_name),
+            processed_count,
+            last_processed_id,
         )
         .execute(pool)
         .await?;
-        
+
         Ok(())
     }
-    
+
     /// Get checkpoint state from database
     pub async fn get_checkpoint_state(
         pool: &DbPool,
         automaton_name: &str,
-    ) -> Result<Option<CheckpointState>> {
-        let checkpoint = sqlx::query!(
-            r#"
-            SELECT 
-                last_processed_id,
-                processed_count,
-                last_activity,
-                state_data,
-                checkpoint_version,
-                checkpoint_data
-            FROM core.automaton_checkpoints
-            WHERE automaton_name = $1
-            ORDER BY last_activity DESC
-            LIMIT 1
-            "#,
-            automaton_name
-        )
-        .fetch_optional(pool)
-        .await?;
+    ) -> AnyhowResult<Option<CheckpointState>> {
+        let checkpoint = CheckpointQueries::get_by_automaton(automaton_name)
+            .fetch_optional(pool)
+            .await?;
 
         Ok(checkpoint.map(|row| {
             // Use the unified checkpoint format if available (version 2+)
             if row.checkpoint_version >= 2 && row.checkpoint_data.is_some() {
                 let checkpoint_data = row.checkpoint_data.unwrap();
-                let checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint = 
-                    serde_json::from_value(checkpoint_data).unwrap_or(
-                        sinex_satellite_sdk::stream_processor::Checkpoint::None
-                    );
-                
+                let checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint =
+                    serde_json::from_value(checkpoint_data)
+                        .unwrap_or(sinex_satellite_sdk::stream_processor::Checkpoint::None);
+
                 sinex_satellite_sdk::checkpoint::CheckpointState {
                     checkpoint,
                     processed_count: row.processed_count as u64,
@@ -1104,7 +972,7 @@ pub mod automaton_testing {
                 } else {
                     sinex_satellite_sdk::stream_processor::Checkpoint::None
                 };
-                
+
                 sinex_satellite_sdk::checkpoint::CheckpointState {
                     checkpoint,
                     processed_count: row.processed_count as u64,
@@ -1115,24 +983,24 @@ pub mod automaton_testing {
             }
         }))
     }
-    
+
     /// Wait for checkpoint to reach expected state with timeout
     pub async fn wait_for_checkpoint_progress(
         pool: &DbPool,
         automaton_name: &str,
         expected_count: u64,
         timeout_secs: u64,
-    ) -> Result<CheckpointState> {
+    ) -> AnyhowResult<CheckpointState> {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let start = std::time::Instant::now();
-        
+
         loop {
             if let Some(checkpoint) = get_checkpoint_state(pool, automaton_name).await? {
                 if checkpoint.processed_count >= expected_count {
                     return Ok(checkpoint);
                 }
             }
-            
+
             if start.elapsed() > timeout {
                 return Err(anyhow::anyhow!(
                     "Timeout waiting for automaton {} to reach count {}",
@@ -1140,17 +1008,17 @@ pub mod automaton_testing {
                     expected_count
                 ));
             }
-            
+
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
-    
+
     /// Verify automaton processed events in order
     pub async fn verify_processing_order(
         pool: &DbPool,
         automaton_name: &str,
         expected_sequence: &[Ulid],
-    ) -> Result<bool> {
+    ) -> AnyhowResult<bool> {
         // This would check that events were processed in the expected order
         // For now, just verify the count matches
         let checkpoint = get_checkpoint_state(pool, automaton_name).await?;
@@ -1178,7 +1046,7 @@ pub mod db_utils {
     use super::*;
 
     /// Insert multiple test events quickly
-    pub async fn insert_test_events(pool: &DbPool, count: usize) -> Result<Vec<Ulid>> {
+    pub async fn insert_test_events(pool: &DbPool, count: usize) -> AnyhowResult<Vec<Ulid>> {
         let mut ids = Vec::new();
         for i in 0..count {
             let event = generators::indexed_event(i);
@@ -1225,7 +1093,7 @@ pub mod health {
     use super::*;
 
     /// Check if database is healthy
-    pub async fn check_database_health(pool: &DbPool) -> Result<bool> {
+    pub async fn check_database_health(pool: &DbPool) -> AnyhowResult<bool> {
         match sqlx::query("SELECT 1").fetch_one(pool).await {
             Ok(_) => Ok(true),
             Err(_) => Ok(false),
@@ -1266,39 +1134,39 @@ pub mod cleanup {
     use super::*;
 
     /// Truncate all test tables
-    pub async fn truncate_all_tables(pool: &DbPool) -> Result<(), anyhow::Error> {
+    pub async fn truncate_all_tables(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
         // Clean up test data manually
-        sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
+        EventQueries::delete_by_source_pattern("test_%")
             .execute(pool)
             .await?;
-        
+
         // Clean up test checkpoints
-        sqlx::query!("DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_%'")
+        CheckpointQueries::delete_by_automaton_pattern("test_%")
             .execute(pool)
             .await?;
-        
+
         Ok(())
     }
-    
+
     /// Clean up Redis test streams
     pub async fn cleanup_redis_streams(
         redis: &mut redis::aio::MultiplexedConnection,
         stream_patterns: &[&str],
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         use redis::AsyncCommands;
-        
+
         for pattern in stream_patterns {
-            let keys: Vec<String> = redis.keys(pattern).await.unwrap_or_default();
+            let keys: Vec<String> = redis.keys::<_, Vec<String>>(pattern).await.unwrap_or_default();
             if !keys.is_empty() {
                 let _: Result<i64, redis::RedisError> = redis.del(&keys).await;
             }
         }
-        
+
         Ok(())
     }
 
     /// Clean up test files and directories
-    pub async fn cleanup_test_files(paths: &[&str]) -> Result<(), anyhow::Error> {
+    pub async fn cleanup_test_files(paths: &[&str]) -> AnyhowResult<(), anyhow::Error> {
         for path in paths {
             if std::path::Path::new(path).exists() {
                 if std::path::Path::new(path).is_dir() {
@@ -1321,12 +1189,12 @@ pub mod resources {
     use tokio::fs;
 
     /// Create temporary directory with standard test structure
-    pub fn temp_dir() -> Result<TempDir> {
+    pub fn temp_dir() -> AnyhowResult<TempDir> {
         TempDir::new().map_err(|e| anyhow::anyhow!("Failed to create temp dir: {}", e))
     }
 
     /// Create temp directory with specific subdirectories
-    pub fn temp_dir_with_structure(subdirs: &[&str]) -> Result<TempDir> {
+    pub fn temp_dir_with_structure(subdirs: &[&str]) -> AnyhowResult<TempDir> {
         let temp = temp_dir()?;
         for subdir in subdirs {
             std::fs::create_dir_all(temp.path().join(subdir))?;
@@ -1335,14 +1203,14 @@ pub mod resources {
     }
 
     /// Create a temporary configuration file
-    pub async fn temp_config_file(content: &str) -> Result<NamedTempFile> {
+    pub async fn temp_config_file(content: &str) -> AnyhowResult<NamedTempFile> {
         let temp_file = NamedTempFile::new()?;
         fs::write(temp_file.path(), content).await?;
         Ok(temp_file)
     }
 
     /// Create test file with content
-    pub fn create_test_file(dir: &Path, name: &str, content: &str) -> Result<PathBuf> {
+    pub fn create_test_file(dir: &Path, name: &str, content: &str) -> AnyhowResult<PathBuf> {
         let file_path = dir.join(name);
         std::fs::write(&file_path, content)?;
         Ok(file_path)
@@ -1366,8 +1234,8 @@ pub mod validation_test_utils;
 /// Schema test utilities
 pub mod schema_test_utils;
 
-// Worker test utilities (disabled - legacy implementation)
-// pub mod worker_test_utils;
+/// Worker test utilities
+pub mod worker_test_utils;
 
 /// Coverage assurance utilities
 pub mod coverage_assurance;
@@ -1378,12 +1246,17 @@ pub mod satellite_test_utils;
 /// Mock implementations for testing
 pub mod mocks;
 
+/// Configuration compatibility testing utilities
+pub mod config_compatibility_tester;
+
 /// Integration testing patterns for satellite architecture
 pub mod satellite_integration {
     use super::*;
+    use crate::common::satellite_test_utils::{
+        TestAutomatonHandle, TestIngestdHandle, TestSatelliteHandle,
+    };
     use crate::common::test_context::TestContext;
-    use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle};
-    
+
     /// Standard satellite test setup
     pub struct SatelliteTestSetup {
         pub ctx: TestContext,
@@ -1391,18 +1264,18 @@ pub mod satellite_integration {
         pub redis: redis::aio::MultiplexedConnection,
         pub stream_key: String,
     }
-    
+
     impl SatelliteTestSetup {
         /// Create a complete satellite test environment
-        pub async fn new(test_name: &str) -> Result<Self> {
+        pub async fn new(test_name: &str) -> AnyhowResult<Self> {
             let mut config = crate::common::test_context::TestConfig::default();
             config.test_name = test_name.to_string();
-            
+
             let ctx = TestContext::with_config(config).await?;
             let ingestd = ctx.start_test_ingestd().await?;
             let redis = ctx.redis().await?;
             let stream_key = format!("test:{}:events", test_name);
-            
+
             Ok(Self {
                 ctx,
                 ingestd,
@@ -1410,58 +1283,60 @@ pub mod satellite_integration {
                 stream_key,
             })
         }
-        
+
         /// Add a test satellite to the setup
-        pub async fn add_satellite(
-            &self,
-            service_name: &str,
-        ) -> Result<TestSatelliteHandle> {
+        pub async fn add_satellite(&self, service_name: &str) -> AnyhowResult<TestSatelliteHandle> {
             let config = crate::common::satellite_test_utils::create_test_satellite_config(
                 service_name,
                 &self.ingestd.socket_path,
             );
             self.ctx.start_test_satellite(config).await
         }
-        
+
         /// Add a test automaton to the setup
         pub async fn add_automaton(
             &self,
             automaton_type: &str,
-        ) -> Result<TestAutomatonHandle> {
+        ) -> AnyhowResult<TestAutomatonHandle> {
             self.ctx.start_test_automaton(automaton_type).await
         }
-        
+
         /// Wait for complete event processing cycle
         pub async fn wait_for_processing_cycle(
             &self,
             expected_events: usize,
             automaton_name: &str,
-        ) -> Result<()> {
+        ) -> AnyhowResult<()> {
             // Wait for events to appear in stream
-            self.ctx.wait_for_redis_stream_length(&self.stream_key, expected_events).await?;
-            
+            self.ctx
+                .wait_for_redis_stream_length(&self.stream_key, expected_events)
+                .await?;
+
             // Wait for automaton to process them
-            self.ctx.wait_for_checkpoint_progress(automaton_name, expected_events as u64).await?;
-            
+            self.ctx
+                .wait_for_checkpoint_progress(automaton_name, expected_events as u64)
+                .await?;
+
             Ok(())
         }
-        
+
         /// Verify end-to-end event flow
         pub async fn verify_event_flow(
             &self,
             source_events: &[RawEvent],
             automaton_name: &str,
-        ) -> Result<()> {
+        ) -> AnyhowResult<()> {
             // Insert events
             self.ctx.insert_events(source_events).await?;
-            
+
             // Wait for processing
-            self.wait_for_processing_cycle(source_events.len(), automaton_name).await?;
-            
+            self.wait_for_processing_cycle(source_events.len(), automaton_name)
+                .await?;
+
             // Verify final state
             let checkpoint = self.ctx.verify_checkpoint(automaton_name).await?;
             assert_eq!(checkpoint.processed_count, source_events.len() as u64);
-            
+
             Ok(())
         }
     }
@@ -1471,18 +1346,24 @@ pub mod satellite_integration {
 #[allow(dead_code)]
 pub mod event_sources {
     use super::*;
-    use sinex_satellite_sdk::{EventSource, EventSourceContext};
-    use sinex_core::RawEvent;
+    use sinex_events::RawEvent;
+    use sinex_satellite_sdk::{EventSourceConfig, StatefulStreamProcessor};
     use tokio::time::{timeout, Duration};
 
-    /// Create EventSourceContext with test configuration
-    pub fn test_context(config: Value) -> EventSourceContext {
-        EventSourceContext::new(config)
+    /// Trait for event sources in testing
+    #[async_trait]
+    pub trait EventSource: Send + Sync {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> AnyhowResult<()>;
     }
 
-    /// Create EventSourceContext with database pool
-    pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceContext {
-        EventSourceContext::new(config).with_db_pool(pool)
+    /// Create EventSourceConfig with test configuration
+    pub fn test_context(config: Value) -> EventSourceConfig {
+        EventSourceConfig::new(config)
+    }
+
+    /// Create EventSourceConfig with database pool
+    pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceConfig {
+        EventSourceConfig::new(config).with_db_pool(pool)
     }
 
     /// Standard filesystem event source config
@@ -1517,7 +1398,7 @@ pub mod event_sources {
         mut source: T,
         timeout_secs: u64,
         min_events: usize,
-    ) -> Result<Vec<RawEvent>> {
+    ) -> AnyhowResult<Vec<RawEvent>> {
         let (tx, mut rx) = mpsc::channel(100);
         let timeout_duration = Duration::from_secs(timeout_secs);
 

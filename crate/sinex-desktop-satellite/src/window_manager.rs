@@ -7,10 +7,10 @@
 //! - Window state augmentation
 //! - Exponential backoff for connection recovery
 
-use sinex_satellite_sdk::SatelliteResult;
+use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -20,7 +20,6 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
-use chrono::Utc;
 
 /// Enhanced window information with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -153,31 +152,36 @@ impl WindowManagerWatcher {
             watcher.spawn_cache_cleanup_task();
         } else {
             return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Unsupported window manager: {}", wm_type
+                "Unsupported window manager: {}",
+                wm_type
             )));
         }
 
-        info!("Advanced window manager watcher initialized for {}", wm_type);
+        info!(
+            "Advanced window manager watcher initialized for {}",
+            wm_type
+        );
         Ok(watcher)
     }
 
     /// Spawn cache cleanup task for hyprctl results
     fn spawn_cache_cleanup_task(&self) {
         let cache = Arc::clone(&self.hyprctl_cache);
-        
+
         tokio::spawn(async move {
             let mut cleanup_interval = interval(Duration::from_secs(60));
-            
+
             loop {
                 cleanup_interval.tick().await;
-                
+
                 let mut cache_guard = cache.lock().unwrap();
-                cache_guard.retain(|_, entry| {
-                    entry.timestamp.elapsed() < Duration::from_secs(30)
-                });
-                
+                cache_guard.retain(|_, entry| entry.timestamp.elapsed() < Duration::from_secs(30));
+
                 if !cache_guard.is_empty() {
-                    debug!("Cleaned up hyprctl cache, {} entries remaining", cache_guard.len());
+                    debug!(
+                        "Cleaned up hyprctl cache, {} entries remaining",
+                        cache_guard.len()
+                    );
                 }
             }
         });
@@ -186,20 +190,16 @@ impl WindowManagerWatcher {
     /// Discover Hyprland socket paths (both event and command)
     async fn discover_hyprland_sockets(&mut self) -> SatelliteResult<()> {
         // Get Hyprland instance signature
-        let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE")
-            .map_err(|_| {
-                sinex_satellite_sdk::SatelliteError::Processing(
-                    "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string()
-                )
-            })?;
+        let hyprland_instance_sig = std::env::var("HYPRLAND_INSTANCE_SIGNATURE").map_err(|_| {
+            sinex_satellite_sdk::SatelliteError::Processing(
+                "HYPRLAND_INSTANCE_SIGNATURE not set. Is Hyprland running?".to_string(),
+            )
+        })?;
 
         // Get XDG_RUNTIME_DIR
-        let xdg_runtime = std::env::var("XDG_RUNTIME_DIR")
-            .map_err(|_| {
-                sinex_satellite_sdk::SatelliteError::Processing(
-                    "XDG_RUNTIME_DIR not set".to_string()
-                )
-            })?;
+        let xdg_runtime = std::env::var("XDG_RUNTIME_DIR").map_err(|_| {
+            sinex_satellite_sdk::SatelliteError::Processing("XDG_RUNTIME_DIR not set".to_string())
+        })?;
 
         // Build socket paths
         let base_path = format!("{}/hypr/{}", xdg_runtime, hyprland_instance_sig);
@@ -212,7 +212,8 @@ impl WindowManagerWatcher {
             info!("Found Hyprland event socket at: {}", event_socket);
         } else {
             return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Cannot connect to Hyprland event socket: {}", event_socket
+                "Cannot connect to Hyprland event socket: {}",
+                event_socket
             )));
         }
 
@@ -221,14 +222,21 @@ impl WindowManagerWatcher {
             self.command_socket_path = Some(command_socket.clone());
             info!("Found Hyprland command socket at: {}", command_socket);
         } else {
-            warn!("Cannot connect to Hyprland command socket: {}", command_socket);
+            warn!(
+                "Cannot connect to Hyprland command socket: {}",
+                command_socket
+            );
         }
 
         Ok(())
     }
 
     /// Get data from hyprctl with intelligent caching
-    async fn _get_hyprctl_data(&self, command: &str, filter: Option<&str>) -> Result<Value, String> {
+    async fn _get_hyprctl_data(
+        &self,
+        command: &str,
+        filter: Option<&str>,
+    ) -> Result<Value, String> {
         let cache_key = format!("{}:{}", command, filter.unwrap_or(""));
 
         // Check cache first
@@ -286,7 +294,12 @@ impl WindowManagerWatcher {
     }
 
     /// Update focus history
-    fn _update_focus_history(&self, window_address: String, window_class: Option<String>, window_title: Option<String>) {
+    fn _update_focus_history(
+        &self,
+        window_address: String,
+        window_class: Option<String>,
+        window_title: Option<String>,
+    ) {
         if !self._track_focus_history {
             return;
         }
@@ -335,36 +348,52 @@ impl WindowManagerWatcher {
     async fn connect_to_hyprland_events(&self) -> SatelliteResult<UnixStream> {
         // For Hyprland, socket2 is the event socket
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::Processing("No Hyprland socket configured".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing(
+                "No Hyprland socket configured".to_string(),
+            )
         })?;
 
         UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to connect to Hyprland: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to connect to Hyprland: {}",
+                e
+            ))
         })
     }
 
     /// Send command to Hyprland (using socket1 for commands)
     async fn _send_hyprland_command(&self, command: &str) -> SatelliteResult<String> {
-        let socket_path = self.socket_path.as_ref()
-            .ok_or_else(|| sinex_satellite_sdk::SatelliteError::Processing("No socket path".to_string()))?
+        let socket_path = self
+            .socket_path
+            .as_ref()
+            .ok_or_else(|| {
+                sinex_satellite_sdk::SatelliteError::Processing("No socket path".to_string())
+            })?
             .replace(".socket2.sock", ".socket.sock"); // Use command socket
 
         let mut stream = UnixStream::connect(&socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to connect to command socket: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to connect to command socket: {}",
+                e
+            ))
         })?;
 
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        
+
         stream.write_all(command.as_bytes()).await?;
-        
+
         let mut response = String::new();
         stream.read_to_string(&mut response).await?;
-        
+
         Ok(response)
     }
 
     /// Process Hyprland event line
-    async fn process_hyprland_event(&mut self, line: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn process_hyprland_event(
+        &mut self,
+        line: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         if line.is_empty() {
             return Ok(());
         }
@@ -402,7 +431,11 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window focused event
-    async fn handle_window_focused(&mut self, data: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn handle_window_focused(
+        &mut self,
+        data: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         // Format: "class,title"
         if let Some((class, title)) = data.split_once(',') {
             // Get window address - would need to query Hyprland for this
@@ -415,9 +448,11 @@ impl WindowManagerWatcher {
                 "focused_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "window.focused", payload)
-                .with_host("localhost")
-                .build();
+            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let event = factory.create_event(
+                "window.focused",
+                payload,
+            );
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -430,7 +465,11 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window opened event  
-    async fn handle_window_opened(&mut self, data: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn handle_window_opened(
+        &mut self,
+        data: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         // Format: "address,workspace,class,title"
         let parts: Vec<&str> = data.split(',').collect();
         if parts.len() >= 4 {
@@ -447,32 +486,41 @@ impl WindowManagerWatcher {
                 "opened_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "window.opened", payload)
-                .with_host("localhost")
-                .build();
+            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let event = factory.create_event(
+                "window.opened",
+                payload,
+            );
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
             }
 
             // Store window info
-            self.windows.insert(window_address.clone(), WindowInfo {
-                address: window_address,
-                class: window_class,
-                title: window_title,
-                workspace_id,
-                last_seen: SystemTime::now(),
-                geometry: None,
-                floating: false,
-                fullscreen: false,
-            });
+            self.windows.insert(
+                window_address.clone(),
+                WindowInfo {
+                    address: window_address,
+                    class: window_class,
+                    title: window_title,
+                    workspace_id,
+                    last_seen: SystemTime::now(),
+                    geometry: None,
+                    floating: false,
+                    fullscreen: false,
+                },
+            );
         }
 
         Ok(())
     }
 
     /// Handle window closed event
-    async fn handle_window_closed(&mut self, data: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn handle_window_closed(
+        &mut self,
+        data: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let window_address = data.trim().to_string();
 
         let payload = json!({
@@ -480,9 +528,11 @@ impl WindowManagerWatcher {
             "closed_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "window.closed", payload)
-            .with_host("localhost")
-            .build();
+        let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+        let event = factory.create_event(
+            "window.closed",
+            payload,
+        );
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -495,7 +545,11 @@ impl WindowManagerWatcher {
     }
 
     /// Handle window moved event
-    async fn handle_window_moved(&mut self, data: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn handle_window_moved(
+        &mut self,
+        data: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         // Format: "address,workspace"
         if let Some((address, workspace)) = data.split_once(',') {
             let payload = json!({
@@ -504,9 +558,11 @@ impl WindowManagerWatcher {
                 "moved_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "window.moved", payload)
-                .with_host("localhost")
-                .build();
+            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let event = factory.create_event(
+                "window.moved",
+                payload,
+            );
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -522,7 +578,11 @@ impl WindowManagerWatcher {
     }
 
     /// Handle workspace changed event
-    async fn handle_workspace_changed(&mut self, data: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn handle_workspace_changed(
+        &mut self,
+        data: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let workspace_id = data.trim().to_string();
 
         let payload = json!({
@@ -531,9 +591,11 @@ impl WindowManagerWatcher {
             "switched_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "workspace.switched", payload)
-            .with_host("localhost")
-            .build();
+        let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+        let event = factory.create_event(
+            "workspace.switched",
+            payload,
+        );
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -545,7 +607,11 @@ impl WindowManagerWatcher {
     }
 
     /// Handle monitor focused event
-    async fn handle_monitor_focused(&mut self, data: &str, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn handle_monitor_focused(
+        &mut self,
+        data: &str,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         // Format: "monitor,workspace"
         if let Some((monitor, workspace)) = data.split_once(',') {
             let payload = json!({
@@ -555,9 +621,11 @@ impl WindowManagerWatcher {
                 "focused_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "monitor.focused", payload)
-                .with_host("localhost")
-                .build();
+            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let event = factory.create_event(
+                "monitor.focused",
+                payload,
+            );
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -570,10 +638,17 @@ impl WindowManagerWatcher {
     }
 
     /// Capture periodic state snapshot
-    async fn capture_state_snapshot(&mut self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn capture_state_snapshot(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let now = SystemTime::now();
-        
-        if now.duration_since(self.last_state_capture).unwrap_or(Duration::ZERO) < self.state_capture_interval {
+
+        if now
+            .duration_since(self.last_state_capture)
+            .unwrap_or(Duration::ZERO)
+            < self.state_capture_interval
+        {
             return Ok(());
         }
 
@@ -589,9 +664,11 @@ impl WindowManagerWatcher {
             "captured_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let event = RawEventBuilder::new(sinex_core::sources::WM_HYPRLAND, "state.captured", payload)
-            .with_host("localhost")
-            .build();
+        let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+        let event = factory.create_event(
+            "state.captured",
+            payload,
+        );
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -603,25 +680,35 @@ impl WindowManagerWatcher {
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
-        info!("Starting window manager event streaming for {}", self.wm_type);
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
+        info!(
+            "Starting window manager event streaming for {}",
+            self.wm_type
+        );
 
         if self.wm_type == "hyprland" {
             self.stream_hyprland_events(tx).await
         } else {
             Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Unsupported window manager: {}", self.wm_type
+                "Unsupported window manager: {}",
+                self.wm_type
             )))
         }
     }
 
     /// Stream Hyprland events
-    async fn stream_hyprland_events(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn stream_hyprland_events(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         loop {
             match self.connect_to_hyprland_events().await {
                 Ok(stream) => {
                     info!("Connected to Hyprland event stream");
-                    
+
                     let reader = BufReader::new(stream);
                     let mut lines = reader.lines();
 
@@ -645,7 +732,7 @@ impl WindowManagerWatcher {
                                     }
                                 }
                             }
-                            
+
                             // Periodic state capture
                             _ = sleep(Duration::from_secs(60)) => {
                                 if let Err(e) = self.capture_state_snapshot(&tx).await {

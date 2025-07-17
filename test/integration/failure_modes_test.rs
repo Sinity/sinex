@@ -1,8 +1,9 @@
 use crate::common::prelude::*;
-use sinex_satellite_sdk::EventSourceContext;
+use sinex_events::{EventFactory, services, event_types};
+use crate::common::mocks::EventSourceContext;
 use crate::common::resources;
 use crate::common::timing_optimization::{EventCounter, TestSynchronizer};
-use sinex_core::{CoreError, EventSource, EventSourceContext};
+use sinex_core_types::{CoreError, EventSource, EventSourceContext};
 // QueueStatus removed - work queue architecture replaced by hotlog streams
 use sqlx::PgPool;
 use std::fs;
@@ -29,8 +30,8 @@ async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
     let drop_count = events_dropped.clone();
     let producer = tokio::spawn(async move {
         for i in 0..1000 {
-            let event =
-                RawEventBuilder::new("fast_producer", "test.event", json!({"test": true})).build();
+            let event = EventFactory::new("fast_producer")
+                .create_event("test.event", json!({"test": true}));
 
             gen_count.fetch_add(1, Ordering::Relaxed);
 
@@ -116,18 +117,17 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
         type Config = ();
         const SOURCE_NAME: &'static str = "crashing_source";
 
-        async fn initialize(_ctx: EventSourceContext) -> Result<Self, CoreError> {
+        async fn initialize(_ctx: EventSourceContext) -> AnyhowResult<Self, CoreError> {
             Ok(Self {
                 crash_after: 50,
                 events_sent: Arc::new(AtomicU64::new(0)),
             })
         }
 
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> AnyhowResult<(), CoreError> {
             for i in 0..100 {
-                let event =
-                    RawEventBuilder::new("crashing", "test", json!({"test": true, "seq": i}))
-                        .build();
+                let event = EventFactory::new("crashing")
+                    .create_event("test", json!({"test": true, "seq": i}));
                 if tx.send(event).await.is_err() {
                     break;
                 }
@@ -214,7 +214,7 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
         type Config = serde_json::Value;
         const SOURCE_NAME: &'static str = "configurable";
 
-        async fn initialize(source_ctx: EventSourceContext) -> Result<Self, CoreError> {
+        async fn initialize(source_ctx: EventSourceContext) -> AnyhowResult<Self, CoreError> {
             let interval_ms = source_ctx
                 .config
                 .get("interval_ms")
@@ -229,10 +229,10 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
             })
         }
 
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> Result<(), CoreError> {
+        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> AnyhowResult<(), CoreError> {
             loop {
-                let event =
-                    RawEventBuilder::new("test", "config.test", json!({"test": true})).build();
+                let event = EventFactory::new("test")
+                    .create_event("config.test", json!({"test": true}));
                 if tx.send(event).await.is_err() {
                     return Ok(());
                 }
@@ -535,7 +535,7 @@ async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
 
 /// Test transaction rollback scenarios
 #[sinex_test]
-async fn test_transaction_rollback_behavior(ctx: TestContext) -> Result<(), anyhow::Error> {
+async fn test_transaction_rollback_behavior(ctx: TestContext) -> AnyhowResult<(), anyhow::Error> {
     let successful_commits = Arc::new(AtomicU64::new(0));
     let rollbacks = Arc::new(AtomicU64::new(0));
 
@@ -597,10 +597,10 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
         pool: &DbPool,
         counter: &Arc<AtomicU64>,
         errors: &Arc<AtomicU64>,
-    ) -> Result<(), sqlx::Error> {
+    ) -> AnyhowResult<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(pool),
+            sqlx::query("SELECT 1").fetch_one(&pool),
         )
         .await
         {
@@ -685,7 +685,7 @@ async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
         data: &[u8],
         attempts: &Arc<AtomicU64>,
         failures: &Arc<AtomicU64>,
-    ) -> Result<(), std::io::Error> {
+    ) -> AnyhowResult<(), std::io::Error> {
         attempts.fetch_add(1, Ordering::Relaxed);
 
         let file_path = path.join(format!("event_{}.dat", attempts.load(Ordering::Relaxed)));
@@ -757,7 +757,7 @@ async fn test_permission_change_handling(_ctx: TestContext) -> TestResult {
         path: &PathBuf,
         attempts: &Arc<AtomicU64>,
         denials: &Arc<AtomicU64>,
-    ) -> Result<String, std::io::Error> {
+    ) -> AnyhowResult<String, std::io::Error> {
         attempts.fetch_add(1, Ordering::Relaxed);
 
         match fs::read_to_string(path) {
@@ -850,7 +850,7 @@ async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
         delay_ms: u64,
         timeout_ms: u64,
         stats: &TimeoutStats,
-    ) -> Result<(), String> {
+    ) -> AnyhowResult<(), String> {
         stats.record_attempt();
 
         let operation = async {

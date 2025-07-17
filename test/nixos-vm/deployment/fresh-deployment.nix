@@ -81,7 +81,7 @@
         # Query for events
         result = sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         )
         count = int(result.strip())
         assert count > 0, f"Expected events in database, got {count}"
@@ -93,7 +93,7 @@
         
         result = sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events WHERE "
+            "'SELECT COUNT(*) FROM core.events WHERE "
             "source LIKE \"sinex.metrics.%\"'"
         )
         heartbeats = int(result.strip())

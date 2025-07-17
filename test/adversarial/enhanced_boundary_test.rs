@@ -1,6 +1,8 @@
-//! Enhanced boundary condition testing
-//!
-//! Tests system behavior at boundaries, limits, and edge cases
+// Enhanced boundary condition testing
+//
+// Tests system behavior at boundaries, limits, and edge cases
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::mocks::*;

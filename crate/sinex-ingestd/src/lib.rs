@@ -37,6 +37,9 @@ pub enum IngestdError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    #[error("Database helper error: {0}")]
+    DatabaseHelper(#[from] sinex_db::query_helpers::DbError),
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 
@@ -51,22 +54,23 @@ impl From<IngestdError> for tonic::Status {
     fn from(err: IngestdError) -> Self {
         use tonic::Code;
         match err {
-            IngestdError::Config(msg) | IngestdError::Validation(msg) | IngestdError::Service(msg) => {
-                tonic::Status::new(Code::InvalidArgument, msg)
-            },
+            IngestdError::Config(msg)
+            | IngestdError::Validation(msg)
+            | IngestdError::Service(msg) => tonic::Status::new(Code::InvalidArgument, msg),
             IngestdError::Database(e) => {
                 tonic::Status::new(Code::Internal, format!("Database error: {}", e))
-            },
+            }
             IngestdError::Redis(e) => {
                 tonic::Status::new(Code::Internal, format!("Redis error: {}", e))
-            },
+            }
             IngestdError::Grpc(status) => status,
             IngestdError::Serialization(e) => {
                 tonic::Status::new(Code::InvalidArgument, format!("Serialization error: {}", e))
-            },
-            IngestdError::Io(e) => {
-                tonic::Status::new(Code::Internal, format!("IO error: {}", e))
-            },
+            }
+            IngestdError::DatabaseHelper(e) => {
+                tonic::Status::new(Code::Internal, format!("Database helper error: {}", e))
+            }
+            IngestdError::Io(e) => tonic::Status::new(Code::Internal, format!("IO error: {}", e)),
         }
     }
 }

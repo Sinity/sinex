@@ -293,8 +293,8 @@ impl Default for JournalConfig {
         Self {
             follow: true,
             import_on_startup: true,
-            import_hours: 0, // Import all history
-            units: vec![],   // Empty = capture all units
+            import_hours: 0,    // Import all history
+            units: vec![],      // Empty = capture all units
             priorities: vec![], // Empty = capture all priorities
             include_kernel: true,
             include_user: true,

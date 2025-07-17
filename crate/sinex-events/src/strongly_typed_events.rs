@@ -61,6 +61,11 @@ impl<P: Serialize> TypedRawEvent<P> {
             ts_orig: self.ts_orig,
             payload_schema_id: None,
             source_event_ids: None, // TypedRawEvent always represents raw events
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         }
     }
 }
@@ -386,7 +391,7 @@ pub struct SystemStatePayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ScanStartedPayload {
-    pub scan_id: String,           // Shared identifier for tracking
+    pub scan_id: String, // Shared identifier for tracking
     pub scanner: String,
     pub mode: String,
     pub target_paths: Vec<String>,
@@ -399,14 +404,14 @@ pub struct ScanStartedPayload {
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ScanCompletedPayload {
-    pub scan_id: String,           // Shared identifier for tracking
+    pub scan_id: String, // Shared identifier for tracking
     pub scanner: String,
     pub events_generated: u64,
     pub duration_ms: u64,
     pub blob_id: Option<Ulid>,
-    pub content_hash: Option<String>,      // Git-annex hash for deduplication
-    pub git_annex_hash: Option<String>,    // Alias for content_hash
-    pub was_duplicate: bool,               // Whether this was a duplicate import
+    pub content_hash: Option<String>, // Git-annex hash for deduplication
+    pub git_annex_hash: Option<String>, // Alias for content_hash
+    pub was_duplicate: bool,          // Whether this was a duplicate import
     pub time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     pub source_stats: HashMap<String, u64>,
 }

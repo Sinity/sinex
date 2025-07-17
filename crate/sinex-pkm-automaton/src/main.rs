@@ -4,11 +4,11 @@
 
 use anyhow::Result;
 use clap::Parser;
-use sinex_pkm_automaton::PkmServiceAutomaton;
-use sinex_satellite_sdk::{HotlogAutomatonRunner, EventFilter, RedisStreamClient, IngestClient};
 use sinex_db::create_pool;
-use std::path::PathBuf;
+use sinex_pkm_automaton::PkmServiceAutomaton;
+use sinex_satellite_sdk::{EventFilter, HotlogAutomatonRunner, IngestClient, RedisStreamClient};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(name = "sinex-pkm-automaton")]
@@ -43,13 +43,17 @@ struct Cli {
     redis_url: String,
 
     /// gRPC ingest service socket path
-    #[arg(long, env = "INGEST_SOCKET_PATH", default_value = "/tmp/sinex-ingestd.sock")]
+    #[arg(
+        long,
+        env = "INGEST_SOCKET_PATH",
+        default_value = "/tmp/sinex-ingestd.sock"
+    )]
     ingest_socket_path: String,
-    
+
     /// Consumer group name
     #[arg(long, default_value = "pkm-service-group")]
     consumer_group: String,
-    
+
     /// Consumer name
     #[arg(long, default_value = "pkm-consumer")]
     consumer_name: String,
@@ -72,37 +76,43 @@ async fn main() -> Result<()> {
 
     // Configure and run the automaton
     let mut runner = HotlogAutomatonRunner::new(pkm_automaton);
-    
+
     // Initialize database connection pool
     let db_pool = create_pool(
-        cli.database_url.as_deref().unwrap_or("postgresql:///sinex_dev?host=/run/postgresql")
-    ).await?;
-    
+        cli.database_url
+            .as_deref()
+            .unwrap_or("postgresql:///sinex_dev?host=/run/postgresql"),
+    )
+    .await?;
+
     // Initialize Redis client
     let redis_client = RedisStreamClient::new(&cli.redis_url)?;
-    
+
     // Initialize ingest client
     let ingest_client = IngestClient::new(&cli.ingest_socket_path).await?;
-    
+
     // Set up event filters for PKM RPC requests
-    let event_filters = vec![
-        EventFilter::new(Some("rpc.pkm".to_string()), Some("request".to_string())),
-    ];
-    
+    let event_filters = vec![EventFilter::new(
+        Some("rpc.pkm".to_string()),
+        Some("request".to_string()),
+    )];
+
     // Initialize the runner
-    runner.initialize(
-        cli.service_name.clone(),
-        cli.consumer_group,
-        cli.consumer_name, 
-        event_filters,
-        HashMap::new(), // No additional config for now
-        db_pool,
-        redis_client,
-        ingest_client,
-        cli.work_dir,
-        cli.dry_run,
-    ).await?;
-    
+    runner
+        .initialize(
+            cli.service_name.clone(),
+            cli.consumer_group,
+            cli.consumer_name,
+            event_filters,
+            HashMap::new(), // No additional config for now
+            db_pool,
+            redis_client,
+            ingest_client,
+            cli.work_dir,
+            cli.dry_run,
+        )
+        .await?;
+
     // Run the automaton
     runner.run().await?;
 

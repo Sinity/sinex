@@ -1,29 +1,31 @@
-//! # System Stress Testing
-//!
-//! Comprehensive stress tests that verify the system can handle high-load scenarios
-//! with concurrent workers, potential deadlocks, and race conditions. These tests
-//! push the system to its limits to verify reliability under extreme conditions.
-//!
-//! ## Test Categories
-//!
-//! - **Deadlock Detection**: Tests for identifying and recovering from deadlock scenarios
-//! - **Race Condition Detection**: Tests for competitive scenarios and resource conflicts
-//! - **Worker Lifecycle Management**: Tests for worker startup, shutdown, and lifecycle
-//! - **Extreme Concurrency**: Tests for high-load scenarios with many concurrent workers
-//!
-//! ## Performance Expectations
-//!
-//! - **Individual tests**: 300-600 seconds (comprehensive stress testing)
-//! - **Resource usage**: Very high CPU/memory usage, maximum database load
-//! - **Dependencies**: Full system integration with concurrent workers and monitoring
-//!
-//! ## Test Infrastructure
-//!
-//! Tests use specialized stress testing infrastructure including:
-//! - ConcurrencyStressMetrics for detailed performance tracking
-//! - Specialized worker implementations for creating problematic scenarios
-//! - Deadlock detection and recovery mechanisms
-//! - Race condition monitoring and reporting
+// # System Stress Testing
+//
+// Comprehensive stress tests that verify the system can handle high-load scenarios
+// with concurrent workers, potential deadlocks, and race conditions. These tests
+// push the system to its limits to verify reliability under extreme conditions.
+//
+// ## Test Categories
+//
+// - **Deadlock Detection**: Tests for identifying and recovering from deadlock scenarios
+// - **Race Condition Detection**: Tests for competitive scenarios and resource conflicts
+// - **Worker Lifecycle Management**: Tests for worker startup, shutdown, and lifecycle
+// - **Extreme Concurrency**: Tests for high-load scenarios with many concurrent workers
+//
+// ## Performance Expectations
+//
+// - **Individual tests**: 300-600 seconds (comprehensive stress testing)
+// - **Resource usage**: Very high CPU/memory usage, maximum database load
+// - **Dependencies**: Full system integration with concurrent workers and monitoring
+//
+// ## Test Infrastructure
+//
+// Tests use specialized stress testing infrastructure including:
+// - ConcurrencyStressMetrics for detailed performance tracking
+// - Specialized worker implementations for creating problematic scenarios
+// - Deadlock detection and recovery mechanisms
+// - Race condition monitoring and reporting
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use sinex_ulid::Ulid;
@@ -191,7 +193,7 @@ impl StressTestUtils {
         pool: &DbPool,
         agent_name: &str,
         source_prefix: &str,
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         // Clean up in reverse dependency order for satellite architecture
         sqlx::query!(
             "DELETE FROM core.events WHERE source LIKE $1",
@@ -215,7 +217,7 @@ impl StressTestUtils {
         count: usize,
         source: &str,
         event_type: &str,
-    ) -> Result<Vec<String>> {
+    ) -> AnyhowResult<Vec<String>> {
         let mut event_ids = Vec::new();
 
         for i in 0..count {
@@ -227,7 +229,8 @@ impl StressTestUtils {
             });
 
             sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, payload, host)
+                "INSERT INTO core.events (
+            event_id, source, event_type, payload, host)
                  VALUES ($1::uuid, $2, $3, $4, $5)",
                 event_id.to_uuid(),
                 source,
@@ -326,7 +329,7 @@ impl DeadlockStressWorker {
         }
     }
 
-    async fn run_stress_cycle(&self, duration: Duration) -> Result<DeadlockWorkerResult> {
+    async fn run_stress_cycle(&self, duration: Duration) -> AnyhowResult<DeadlockWorkerResult> {
         let start_time = Instant::now();
         self.metrics.worker_started();
 
@@ -358,7 +361,7 @@ impl DeadlockStressWorker {
         Ok(result)
     }
 
-    async fn attempt_deadlock_prone_cycle(&self) -> Result<DeadlockCycleResult> {
+    async fn attempt_deadlock_prone_cycle(&self) -> AnyhowResult<DeadlockCycleResult> {
         let mut cycle_result = DeadlockCycleResult::default();
 
         match tokio::time::timeout(self.deadlock_timeout, self.simulate_event_processing()).await {
@@ -398,7 +401,7 @@ impl DeadlockStressWorker {
         Ok(cycle_result)
     }
 
-    async fn simulate_event_processing(&self) -> Result<Option<EventItem>> {
+    async fn simulate_event_processing(&self) -> AnyhowResult<Option<EventItem>> {
         // In satellite architecture, simulate processing events from Redis Streams
         if rand::random::<f64>() < 0.3 {
             // Simulate finding an event to process
@@ -414,7 +417,7 @@ impl DeadlockStressWorker {
         }
     }
 
-    async fn simulate_event_processing_with_checkpoints(&self, event_id: &str) -> Result<bool> {
+    async fn simulate_event_processing_with_checkpoints(&self, event_id: &str) -> AnyhowResult<bool> {
         let processing_time = Duration::from_millis(50 + rand::random::<u64>() % 100);
         sleep(processing_time).await;
 
@@ -474,7 +477,8 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
     for i in 0..deadlock_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, payload, host)
+            "INSERT INTO core.events (
+            event_id, source, event_type, payload, host)
              VALUES ($1::uuid, $2, $3, $4, $5)",
             event_id.to_uuid(),
             "stress.deadlock_scenario",
@@ -537,7 +541,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
 
             // Check for stuck checkpoint processing (satellite architecture)
             let stuck_checkpoints: Vec<(String, String)> = sqlx::query!(
-                "SELECT id::text, automaton_name FROM core.automaton_checkpoints
+                "SELECT event_id::text, automaton_name FROM core.automaton_checkpoints
                  WHERE automaton_name = $1
                    AND state_data->>'status' = 'processing'
                    AND updated_at < NOW() - INTERVAL '3 seconds'",
@@ -761,7 +765,7 @@ impl RaceConditionWorker {
         }
     }
 
-    async fn run_stress_cycle(&self, duration: Duration) -> Result<RaceWorkerResult> {
+    async fn run_stress_cycle(&self, duration: Duration) -> AnyhowResult<RaceWorkerResult> {
         let start_time = Instant::now();
         self.metrics.worker_started();
 
@@ -793,7 +797,7 @@ impl RaceConditionWorker {
         Ok(result)
     }
 
-    async fn attempt_competitive_cycle(&self) -> Result<RaceCycleResult> {
+    async fn attempt_competitive_cycle(&self) -> AnyhowResult<RaceCycleResult> {
         let mut cycle_result = RaceCycleResult::default();
 
         match tokio::time::timeout(self.timeout, self.claim_work_competitively()).await {
@@ -831,7 +835,7 @@ impl RaceConditionWorker {
         Ok(cycle_result)
     }
 
-    async fn claim_work_competitively(&self) -> Result<Option<WorkItem>> {
+    async fn claim_work_competitively(&self) -> AnyhowResult<Option<WorkItem>> {
         // Satellite architecture: claim checkpoint for processing
         let claimed_checkpoint = sqlx::query!(
             "UPDATE core.automaton_checkpoints
@@ -863,7 +867,7 @@ impl RaceConditionWorker {
                     .id
                     .ok_or_else(|| anyhow::anyhow!("Missing checkpoint id"))?,
                 event_id: checkpoint
-                    .last_processed_id
+                    .last_processed_id()
                     .unwrap_or_else(|| "synthetic_event".to_string()),
                 target_agent: self.automaton_name.clone(),
                 created_at: chrono::Utc::now(),
@@ -873,7 +877,7 @@ impl RaceConditionWorker {
         }
     }
 
-    async fn process_competitively(&self, checkpoint_id: &str) -> Result<bool> {
+    async fn process_competitively(&self, checkpoint_id: &str) -> AnyhowResult<bool> {
         let processing_time = Duration::from_millis(20 + rand::random::<u64>() % 30);
         sleep(processing_time).await;
 
@@ -948,7 +952,8 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     for i in 0..race_work_items {
         let event_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.events (id, source, event_type, payload, host)
+            "INSERT INTO core.events (
+            event_id, source, event_type, payload, host)
              VALUES ($1::uuid, $2, $3, $4, $5)",
             event_id.to_uuid(),
             "stress.race_condition",
@@ -1240,7 +1245,7 @@ impl StressTestWorker {
         self.should_stop.store(true, Ordering::Relaxed);
     }
 
-    async fn run_stress_cycle(&self, duration: Duration) -> Result<WorkerStressResult> {
+    async fn run_stress_cycle(&self, duration: Duration) -> AnyhowResult<WorkerStressResult> {
         let start_time = Instant::now();
         let worker_count = self.metrics.worker_started();
 
@@ -1288,7 +1293,7 @@ impl StressTestWorker {
         Ok(result)
     }
 
-    async fn attempt_work_cycle(&self) -> Result<WorkCycleResult> {
+    async fn attempt_work_cycle(&self) -> AnyhowResult<WorkCycleResult> {
         let mut cycle_result = WorkCycleResult::default();
 
         let claim_start = Instant::now();
@@ -1347,7 +1352,7 @@ impl StressTestWorker {
         Ok(cycle_result)
     }
 
-    async fn claim_work_with_deadlock_detection(&self) -> Result<Option<WorkItem>> {
+    async fn claim_work_with_deadlock_detection(&self) -> AnyhowResult<Option<WorkItem>> {
         // Claim checkpoint with deadlock detection for satellite architecture
         let claimed_checkpoint = sqlx::query!(
             "UPDATE core.automaton_checkpoints
@@ -1388,7 +1393,7 @@ impl StressTestWorker {
                         .id
                         .ok_or_else(|| anyhow::anyhow!("Missing checkpoint id"))?,
                     event_id: checkpoint
-                        .last_processed_id
+                        .last_processed_id()
                         .unwrap_or_else(|| "synthetic_event".to_string()),
                     target_agent: self.automaton_name.clone(),
                     created_at: chrono::Utc::now(),
@@ -1399,7 +1404,7 @@ impl StressTestWorker {
         }
     }
 
-    async fn process_work_item(&self, checkpoint_id: &str) -> Result<bool> {
+    async fn process_work_item(&self, checkpoint_id: &str) -> AnyhowResult<bool> {
         let processing_time = if self.aggressive_claiming {
             Duration::from_millis(50)
         } else {
@@ -1483,7 +1488,8 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
         for i in 0..work_items {
             let event_id = Ulid::new();
             sqlx::query!(
-                "INSERT INTO core.events (id, source, event_type, payload, host)
+                "INSERT INTO core.events (
+            event_id, source, event_type, payload, host)
                  VALUES ($1::uuid, $2, $3, $4, $5)",
                 event_id.to_uuid(),
                 "stress.extreme_concurrency",

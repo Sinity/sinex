@@ -23,27 +23,46 @@ pub mod replay;
 pub mod stream_processor;
 
 pub use automaton::{
-    HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, HotlogAutomatonRunner,
-    EventFilter, PayloadFilter, FilterOperation, ProcessingResult
+    EventFilter, FilterOperation, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
+    HotlogAutomatonRunner, PayloadFilter, ProcessingResult,
 };
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 // Legacy EventSource types removed - use StatefulStreamProcessor instead
+pub use cli::{
+    parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
+    IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner, ProcessorCommand,
+    SourceState,
+};
 pub use grpc_client::IngestClient;
-pub use heartbeat::{HeartbeatEmitter, HeartbeatCounterHandle, HeartbeatMetrics};
+pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use redis_client::{RedisStreamClient, StreamMessage};
 pub use replay::ReplayMode;
 pub use stream_processor::{
-    StatefulStreamProcessor, StreamProcessorRunner, StreamProcessorContext,
-    TimeHorizon, Checkpoint, ProcessorType, ProcessorCapabilities,
-    ScanArgs, ScanReport, ScanEstimate, EventStream, EventSender
+    Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
+    ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
+    StreamProcessorRunner, TimeHorizon,
 };
-pub use cli::{
-    ProcessorCli, ProcessorCommand, ProcessorCliRunner, ExplorationProvider,
-    SourceState, IngestionHistoryEntry, CoverageAnalysis, MissingItem,
-    ExportFormat, parse_checkpoint, parse_time_horizon
-};
+
+/// Version information for satellite components
+#[derive(Debug, Clone)]
+pub struct VersionInfo {
+    pub git_revision: String,
+    pub binary_hash: String,
+    pub component_version: String,
+}
+
+impl VersionInfo {
+    /// Create version info for the current component
+    pub fn current(component_name: &str) -> Self {
+        Self {
+            git_revision: "dev-unknown".to_string(), // Simplified for testing
+            binary_hash: format!("hash-{}", component_name), // Simplified for now
+            component_version: format!("{}-v1.0.0", component_name),
+        }
+    }
+}
 
 /// Common CLI arguments for satellite services.
 ///
@@ -52,14 +71,14 @@ pub use cli::{
 /// communication, batching, and operational modes.
 ///
 /// # Examples
-/// 
+///
 /// ```rust
 /// use clap::Parser;
 /// use sinex_satellite_sdk::SatelliteArgs;
-/// 
+///
 /// // Parse from command line
 /// let args = SatelliteArgs::parse();
-/// 
+///
 /// // Use in service configuration
 /// let config = SatelliteConfig {
 ///     service_name: args.service_name.clone(),
@@ -110,8 +129,9 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_core::{ErrorContext, ValidationChain};
-pub use sinex_events::{RawEvent, RawEventBuilder};
+pub use sinex_core_types::{ErrorContext, ValidationChain};
+pub use sinex_db::DbError; // Import DbError for conversion
+pub use sinex_events::RawEvent;
 pub use sinex_ulid::Ulid;
 
 /// Result type for satellite operations
@@ -201,6 +221,9 @@ pub enum SatelliteError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 
+    #[error("Database operation error: {0}")]
+    DbError(#[from] DbError),
+
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
@@ -221,4 +244,40 @@ pub enum SatelliteError {
 
     #[error("Lifecycle error: {0}")]
     Lifecycle(String),
+}
+
+impl From<SatelliteError> for sinex_core_types::CoreError {
+    fn from(e: SatelliteError) -> Self {
+        match e {
+            SatelliteError::Config(_) => sinex_core_types::CoreError::Configuration(e.to_string()),
+            SatelliteError::Grpc(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::GrpcTransport(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::Redis(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::Database(_) => sinex_core_types::CoreError::Database(e.to_string()),
+            SatelliteError::DbError(_) => sinex_core_types::CoreError::Database(e.to_string()),
+            SatelliteError::Serialization(_) => {
+                sinex_core_types::CoreError::Serialization(e.to_string())
+            }
+            SatelliteError::Io(_) => sinex_core_types::CoreError::Io(e.to_string()),
+            SatelliteError::General(_) => sinex_core_types::CoreError::General(e.to_string()),
+            SatelliteError::Processing(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::Automaton(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::Checkpoint(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::Lifecycle(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+        }
+    }
+}
+
+impl From<sinex_core_types::CoreError> for SatelliteError {
+    fn from(e: sinex_core_types::CoreError) -> Self {
+        match e {
+            sinex_core_types::CoreError::Configuration(msg) => SatelliteError::Processing(msg),
+            sinex_core_types::CoreError::Database(msg) => SatelliteError::Processing(msg),
+            sinex_core_types::CoreError::Serialization(msg) => SatelliteError::Processing(msg),
+            sinex_core_types::CoreError::Io(msg) => SatelliteError::Processing(msg),
+            sinex_core_types::CoreError::Unknown(msg) => SatelliteError::Processing(msg),
+            sinex_core_types::CoreError::General(msg) => SatelliteError::Processing(msg),
+            sinex_core_types::CoreError::Validation(msg) => SatelliteError::Processing(msg),
+        }
+    }
 }

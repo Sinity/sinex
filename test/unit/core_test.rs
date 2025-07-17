@@ -1,25 +1,27 @@
-//! Core Unit Tests
-//!
-//! Consolidated core functionality tests covering:
-//! - Basic event creation with RawEventBuilder
-//! - Error propagation and handling
-//! - Event registry creation and management
-//! - Event source context configuration
-//! - Auto-registration patterns
-//! - Event constants and source identifiers
+// Core Unit Tests
+//
+// Consolidated core functionality tests covering:
+// - Basic event creation with EventFactory
+// - Error propagation and handling
+// - Event registry creation and management
+// - Event source context configuration
+// - Auto-registration patterns
+// - Event constants and source identifiers
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_core::{
-    event_type_constants, sources, CoreError, RawEventBuilder, Result as CoreResult,
-};
+use sinex_core_types::{event_type_constants, CoreError};
+use sinex_core_types::Result as CoreResult;
+use sinex_events::{sources, EventFactory, event_types};
 use std::io;
 
 // =============================================================================
 // BASIC FUNCTIONALITY TESTS
 // =============================================================================
 
-// Basic event builder test removed - superseded by test_raw_event_builder_complete_creation
+// Basic event builder test removed - superseded by test_event_factory_complete_creation
 
 /// Test creating multiple events with different sources
 ///
@@ -31,24 +33,18 @@ use std::io;
 #[sinex_test]
 async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     let events = vec![
-        RawEventBuilder::new(
-            sources::FS,
+        EventFactory::new(sources::FS).create_event(
             event_type_constants::filesystem::FILE_CREATED,
             json!({"path": "/test/file1.txt"}),
-        )
-        .build(),
-        RawEventBuilder::new(
-            sources::SHELL_KITTY,
+        ),
+        EventFactory::new(sources::SHELL_KITTY).create_event(
             event_type_constants::shell::COMMAND_EXECUTED,
             json!({"command": "ls -la"}),
-        )
-        .build(),
-        RawEventBuilder::new(
-            sources::SINEX,
+        ),
+        EventFactory::new(sources::SINEX).create_event(
             event_type_constants::sinex::AUTOMATON_HEARTBEAT,
             json!({"status": "running"}),
-        )
-        .build(),
+        ),
     ];
 
     pretty_assertions::assert_eq!(events.len(), 3);
@@ -64,18 +60,16 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
 }
 
 // =============================================================================
-// RAW EVENT BUILDER TESTS
+// EVENT FACTORY TESTS
 // =============================================================================
 
-/// Test RawEventBuilder with complete event creation
+/// Test EventFactory with complete event creation
 #[sinex_test]
-async fn test_raw_event_builder_complete_creation(_ctx: TestContext) -> TestResult {
-    let event = RawEventBuilder::new(
-        sources::FS,
+async fn test_event_factory_complete_creation(_ctx: TestContext) -> TestResult {
+    let event = EventFactory::new(sources::FS).create_event(
         event_type_constants::filesystem::FILE_CREATED,
         json!({"path": "/test/file.txt", "size": 1024}),
-    )
-    .build();
+    );
 
     pretty_assertions::assert_eq!(event.source, sources::FS);
     pretty_assertions::assert_eq!(
@@ -89,20 +83,18 @@ async fn test_raw_event_builder_complete_creation(_ctx: TestContext) -> TestResu
     Ok(())
 }
 
-/// Test RawEventBuilder with custom host and timestamps
+/// Test EventFactory with custom host and timestamps
 #[sinex_test]
-async fn test_raw_event_builder_with_custom_fields(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_with_custom_fields(_ctx: TestContext) -> TestResult {
     let custom_host = "custom-host";
     let custom_timestamp = Utc::now();
 
-    let event = RawEventBuilder::new(
-        sources::SHELL_KITTY,
+    let mut event = EventFactory::new(sources::SHELL_KITTY).create_event(
         event_type_constants::shell::COMMAND_EXECUTED,
         json!({"command": "echo hello", "exit_code": 0}),
-    )
-    .with_host(custom_host)
-    .with_timestamp(custom_timestamp)
-    .build();
+    );
+    event.host = custom_host.to_string();
+    event.ts_orig = Some(custom_timestamp);
 
     pretty_assertions::assert_eq!(event.source, sources::SHELL_KITTY);
     pretty_assertions::assert_eq!(
@@ -123,9 +115,9 @@ async fn test_raw_event_builder_with_custom_fields(_ctx: TestContext) -> TestRes
     Ok(())
 }
 
-/// Test RawEventBuilder with complex nested payloads
+/// Test EventFactory with complex nested payloads
 #[sinex_test]
-async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_complex_payload(_ctx: TestContext) -> TestResult {
     let complex_payload = json!({
         "file_info": {
             "path": "/test/complex.txt",
@@ -147,12 +139,10 @@ async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult
         }
     });
 
-    let event = RawEventBuilder::new(
-        sources::FS,
+    let event = EventFactory::new(sources::FS).create_event(
         event_type_constants::filesystem::FILE_CREATED,
         complex_payload.clone(),
-    )
-    .build();
+    );
 
     pretty_assertions::assert_eq!(event.payload, complex_payload);
     pretty_assertions::assert_eq!(event.payload["file_info"]["path"], "/test/complex.txt");
@@ -165,18 +155,16 @@ async fn test_raw_event_builder_complex_payload(_ctx: TestContext) -> TestResult
     Ok(())
 }
 
-/// Test RawEventBuilder with ingestor version
+/// Test EventFactory with ingestor version
 #[sinex_test]
-async fn test_raw_event_builder_with_ingestor_version(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_with_ingestor_version(_ctx: TestContext) -> TestResult {
     let ingestor_version = "1.2.3";
 
-    let event = RawEventBuilder::new(
-        sources::WM_HYPRLAND,
+    let mut event = EventFactory::new(sources::WM_HYPRLAND).create_event(
         event_type_constants::window_manager::WINDOW_FOCUSED,
         json!({"window_id": 42, "title": "Test Window"}),
-    )
-    .with_ingestor_version(ingestor_version)
-    .build();
+    );
+    event.ingestor_version = Some(ingestor_version.to_string());
 
     pretty_assertions::assert_eq!(event.source, sources::WM_HYPRLAND);
     pretty_assertions::assert_eq!(
@@ -285,11 +273,11 @@ async fn test_error_chain_propagation(_ctx: TestContext) -> TestResult {
     }
 
     fn middle_operation() -> CoreResult<String> {
-        inner_operation().map_err(|e| CoreError::Other(format!("Middle layer: {}", e)))
+        inner_operation().map_err(|e| CoreError::Unknown(format!("Middle layer: {}", e)))
     }
 
     fn outer_operation() -> CoreResult<String> {
-        middle_operation().map_err(|e| CoreError::Other(format!("Outer layer: {}", e)))
+        middle_operation().map_err(|e| CoreError::Unknown(format!("Outer layer: {}", e)))
     }
 
     let result = outer_operation();
@@ -327,7 +315,7 @@ async fn test_error_display_implementation(_ctx: TestContext) -> TestResult {
             "IO error: File not found",
         ),
         (
-            CoreError::Other("Unknown error".to_string()),
+            CoreError::Unknown("Unknown error".to_string()),
             "Other error: Unknown error",
         ),
     ];
@@ -388,16 +376,14 @@ async fn test_validation_error_propagation(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-
-
 // =============================================================================
-// RAW EVENT BUILDER EDGE CASES
+// EVENT FACTORY EDGE CASES
 // =============================================================================
 
-/// Test RawEventBuilder with empty payload - critical edge case
+/// Test EventFactory with empty payload - critical edge case
 #[sinex_test]
-async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
-    let event = RawEventBuilder::new(sources::SINEX, "system.startup", json!({})).build();
+async fn test_event_factory_empty_payload(_ctx: TestContext) -> TestResult {
+    let event = EventFactory::new(sources::SINEX).create_event("system.startup", json!({}));
 
     pretty_assertions::assert_eq!(event.payload, json!({}));
     pretty_assertions::assert_eq!(event.source, sources::SINEX);
@@ -405,15 +391,14 @@ async fn test_raw_event_builder_empty_payload(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test RawEventBuilder ULID ordering in tight loop - critical for time ordering
+/// Test EventFactory ULID ordering in tight loop - critical for time ordering
 #[sinex_test]
-async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_ulid_ordering(_ctx: TestContext) -> TestResult {
     let mut events = Vec::new();
 
     // Create events in rapid succession
     for i in 0..10 {
-        let event =
-            RawEventBuilder::new(sources::SINEX, "test.sequence", json!({"sequence": i})).build();
+        let event = EventFactory::new(sources::SINEX).create_event("test.sequence", json!({"sequence": i}));
         events.push(event);
 
         // Small delay to ensure timestamp progression
@@ -428,12 +413,12 @@ async fn test_raw_event_builder_ulid_ordering(_ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-/// Test RawEventBuilder multiple builds - verify independence
+/// Test EventFactory multiple builds - verify independence
 #[sinex_test]
-async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_multiple_builds(_ctx: TestContext) -> TestResult {
     // Create two events with same configuration
-    let event1 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
-    let event2 = RawEventBuilder::new("test", "test.event", json!({"key": "value"})).build();
+    let event1 = EventFactory::new("test").create_event("test.event", json!({"key": "value"}));
+    let event2 = EventFactory::new("test").create_event("test.event", json!({"key": "value"}));
 
     // Events should have different IDs and timestamps
     pretty_assertions::assert_ne!(event1.id, event2.id);
@@ -445,7 +430,6 @@ async fn test_raw_event_builder_multiple_builds(_ctx: TestContext) -> TestResult
     pretty_assertions::assert_eq!(event1.payload, event2.payload);
     Ok(())
 }
-
 
 // =============================================================================
 // EVENT SOURCE CONTEXT TESTS

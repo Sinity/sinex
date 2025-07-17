@@ -19,7 +19,7 @@ mod scrollback;
 pub mod unified_processor;
 
 // Re-export the new unified processor as the primary interface
-pub use unified_processor::{TerminalProcessor, TerminalState, HistoryFileStatus, AtuinStatus};
+pub use unified_processor::{AtuinStatus, HistoryFileStatus, TerminalProcessor, TerminalState};
 
 // Re-export individual watchers for compatibility
 pub use atuin::AtuinWatcher;
@@ -29,4 +29,4 @@ pub use recording::RecordingWatcher;
 pub use scrollback::ScrollbackWatcher;
 
 // Re-export for convenience
-pub use sinex_core::RawEvent;
+pub use sinex_events::RawEvent;

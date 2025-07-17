@@ -1,18 +1,20 @@
-//! Mock network implementation for testing
-//!
-//! Provides a controllable network substitute that can simulate:
-//! - Network partitions
-//! - Packet loss
-//! - Bandwidth limitations
-//! - Latency variations
-//! - Connection failures
+// Mock network implementation for testing
+//
+// Provides a controllable network substitute that can simulate:
+// - Network partitions
+// - Packet loss
+// - Bandwidth limitations
+// - Latency variations
+// - Connection failures
+
+use crate::common::prelude::*;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
+use tokio::net::TcpListener;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time::{Duration, Instant};
-use tokio::net::TcpListener;
 
 /// Configuration for MockNetwork behavior
 #[derive(Debug, Clone)]
@@ -103,9 +105,12 @@ impl MockNetwork {
         }
     }
 
-    pub async fn connect(&self, addr: SocketAddr) -> Result<MockNetworkConnection, MockNetworkError> {
+    pub async fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> AnyhowResult<MockNetworkConnection, MockNetworkError> {
         let config = self.config.read().await;
-        
+
         // Check if host is partitioned
         if config.simulate_partitions {
             let host = addr.ip().to_string();
@@ -134,8 +139,9 @@ impl MockNetwork {
 
         // Create connection
         let connection_id = format!("conn_{}", fastrand::u64(..));
-        let local_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), fastrand::u16(1024..65535));
-        
+        let local_addr =
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), fastrand::u16(1024..65535));
+
         let mock_connection = MockConnection {
             id: connection_id.clone(),
             local_addr,
@@ -162,9 +168,12 @@ impl MockNetwork {
         })
     }
 
-    pub async fn bind(&self, addr: SocketAddr) -> Result<MockNetworkListener, MockNetworkError> {
+    pub async fn bind(
+        &self,
+        addr: SocketAddr,
+    ) -> AnyhowResult<MockNetworkListener, MockNetworkError> {
         let config = self.config.read().await;
-        
+
         // Check if address is already bound
         let listeners = self.listeners.read().await;
         if listeners.contains_key(&addr) {
@@ -234,10 +243,10 @@ impl MockNetwork {
     pub async fn reset(&self) {
         let mut connections = self.connections.write().await;
         connections.clear();
-        
+
         let mut listeners = self.listeners.write().await;
         listeners.clear();
-        
+
         let mut stats = self.traffic_stats.write().await;
         *stats = NetworkTrafficStats::default();
     }
@@ -246,15 +255,19 @@ impl MockNetwork {
         let mut connections = self.connections.write().await;
         if let Some(conn) = connections.get_mut(connection_id) {
             conn.active = false;
-            
+
             let mut stats = self.traffic_stats.write().await;
             stats.active_connections = stats.active_connections.saturating_sub(1);
         }
     }
 
-    async fn send_data(&self, connection_id: &str, data: &[u8]) -> Result<(), MockNetworkError> {
+    async fn send_data(
+        &self,
+        connection_id: &str,
+        data: &[u8],
+    ) -> AnyhowResult<(), MockNetworkError> {
         let config = self.config.read().await;
-        
+
         // Check packet loss
         if fastrand::f64() < config.packet_loss_rate {
             let mut stats = self.traffic_stats.write().await;
@@ -284,9 +297,13 @@ impl MockNetwork {
         Ok(())
     }
 
-    async fn receive_data(&self, connection_id: &str, buffer: &mut [u8]) -> Result<usize, MockNetworkError> {
+    async fn receive_data(
+        &self,
+        connection_id: &str,
+        buffer: &mut [u8],
+    ) -> AnyhowResult<usize, MockNetworkError> {
         let config = self.config.read().await;
-        
+
         // Check packet loss
         if fastrand::f64() < config.packet_loss_rate {
             let mut stats = self.traffic_stats.write().await;
@@ -340,7 +357,7 @@ pub struct MockNetworkConnection {
 }
 
 impl MockNetworkConnection {
-    pub async fn send(&mut self, data: &[u8]) -> Result<(), MockNetworkError> {
+    pub async fn send(&mut self, data: &[u8]) -> AnyhowResult<(), MockNetworkError> {
         if !self.connected {
             return Err(MockNetworkError::NotConnected);
         }
@@ -348,7 +365,7 @@ impl MockNetworkConnection {
         self.network.send_data(&self.connection_id, data).await
     }
 
-    pub async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, MockNetworkError> {
+    pub async fn receive(&mut self, buffer: &mut [u8]) -> AnyhowResult<usize, MockNetworkError> {
         if !self.connected {
             return Err(MockNetworkError::NotConnected);
         }
@@ -364,10 +381,12 @@ impl MockNetworkConnection {
         self.remote_addr
     }
 
-    pub async fn close(&mut self) -> Result<(), MockNetworkError> {
+    pub async fn close(&mut self) -> AnyhowResult<(), MockNetworkError> {
         if self.connected {
             self.connected = false;
-            self.network.disconnect_connection(&self.connection_id).await;
+            self.network
+                .disconnect_connection(&self.connection_id)
+                .await;
         }
         Ok(())
     }
@@ -390,7 +409,7 @@ pub struct MockNetworkListener {
 }
 
 impl MockNetworkListener {
-    pub async fn accept(&mut self) -> Result<MockNetworkConnection, MockNetworkError> {
+    pub async fn accept(&mut self) -> AnyhowResult<MockNetworkConnection, MockNetworkError> {
         if !self.active {
             return Err(MockNetworkError::ListenerClosed);
         }
@@ -402,8 +421,11 @@ impl MockNetworkListener {
         }
 
         // Create a mock incoming connection
-        let remote_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), fastrand::u16(1024..65535));
-        
+        let remote_addr = SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            fastrand::u16(1024..65535),
+        );
+
         let connection_id = format!("accept_{}", fastrand::u64(..));
         let mock_connection = MockConnection {
             id: connection_id.clone(),
@@ -435,7 +457,7 @@ impl MockNetworkListener {
         self.addr
     }
 
-    pub async fn close(&mut self) -> Result<(), MockNetworkError> {
+    pub async fn close(&mut self) -> AnyhowResult<(), MockNetworkError> {
         if self.active {
             self.active = false;
             let mut listeners = self.network.listeners.write().await;
@@ -549,7 +571,7 @@ impl MockNetwork {
     /// Simulate a complete network outage
     pub async fn simulate_outage(&self, duration: Duration) {
         self.set_packet_loss(1.0).await;
-        
+
         let network = self.clone();
         tokio::spawn(async move {
             tokio::time::sleep(duration).await;
@@ -566,7 +588,7 @@ impl MockNetwork {
     /// Simulate network instability
     pub async fn simulate_instability(&self, loss_rate: f64, failure_rate: f64) {
         self.set_packet_loss(loss_rate).await;
-        
+
         let mut config = self.config.write().await;
         config.connection_failure_rate = failure_rate;
     }

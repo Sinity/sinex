@@ -21,7 +21,7 @@ let
         if after:
             where_clause += f" AND ts_ingest > NOW() - INTERVAL '{after}'"
         
-        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM raw.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
+        cmd = f"psql -d sinex -t -c \"SELECT id, source, event_type, ts_ingest, payload FROM core.events WHERE 1=1{where_clause} ORDER BY ts_ingest DESC LIMIT {limit};\""
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)
@@ -46,7 +46,7 @@ let
         ]
         
         for window_name, seconds in windows:
-            cmd = f"psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events WHERE ts_ingest > NOW() - INTERVAL '{window_name}';\""
+            cmd = f"psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE ts_ingest > NOW() - INTERVAL '{window_name}';\""
             result = subprocess.run([
                 "su", "-", "postgres", "-c", cmd
             ], capture_output=True, text=True)
@@ -71,7 +71,7 @@ let
             AVG(EXTRACT(EPOCH FROM (ts_ingest - ts_event))) as avg_latency_sec,
             MAX(EXTRACT(EPOCH FROM (ts_ingest - ts_event))) as max_latency_sec,
             MIN(EXTRACT(EPOCH FROM (ts_ingest - ts_event))) as min_latency_sec
-        FROM raw.events 
+        FROM core.events 
         WHERE ts_ingest > NOW() - INTERVAL '5 minutes'
         GROUP BY source 
         ORDER BY avg_latency_sec DESC;
@@ -94,7 +94,7 @@ let
         metrics = [
             ("Active connections", "SELECT count(*) FROM pg_stat_activity WHERE state = 'active';"),
             ("Database size", "SELECT pg_size_pretty(pg_database_size('sinex'));"),
-            ("Events table size", "SELECT pg_size_pretty(pg_total_relation_size('raw.events'));"),
+            ("Events table size", "SELECT pg_size_pretty(pg_total_relation_size('core.events'));"),
             ("Index usage", "SELECT schemaname, tablename, indexname, idx_scan FROM pg_stat_user_indexes WHERE tablename = 'events';"),
             ("Cache hit ratio", "SELECT round(blks_hit::numeric / (blks_hit + blks_read) * 100, 2) as cache_hit_ratio FROM pg_stat_database WHERE datname = 'sinex';")
         ]
@@ -167,7 +167,7 @@ let
             start_time = time.time()
             subprocess.run([
                 "su", "-", "postgres", "-c", 
-                "psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events;\""
+                "psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events;\""
             ], capture_output=True, text=True)
             end_time = time.time()
             query_times.append(end_time - start_time)
@@ -182,7 +182,7 @@ let
             print(f"  Max: {max_time:.3f}s")
 
     def stats():
-        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM raw.events;'"
+        cmd = "psql -d sinex -t -c 'SELECT COUNT(*) FROM core.events;'"
         result = subprocess.run([
             "su", "-", "postgres", "-c", cmd
         ], capture_output=True, text=True)

@@ -3,8 +3,7 @@
 //! Monitors systemd journal entries in real-time
 
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
 use std::time::Duration;
@@ -38,51 +37,29 @@ impl JournalWatcher {
                     .and_then(|ts| ts.parse::<i64>().ok())
                     .unwrap_or(0);
 
-                let cursor = entry["__CURSOR"]
-                    .as_str()
-                    .unwrap_or("unknown")
-                    .to_string();
+                let cursor = entry["__CURSOR"].as_str().unwrap_or("unknown").to_string();
 
-                let message = entry["MESSAGE"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let message = entry["MESSAGE"].as_str().unwrap_or("").to_string();
 
-                let unit = entry["_SYSTEMD_UNIT"]
-                    .as_str()
-                    .map(|s| s.to_string());
+                let unit = entry["_SYSTEMD_UNIT"].as_str().map(|s| s.to_string());
 
-                let syslog_identifier = entry["SYSLOG_IDENTIFIER"]
-                    .as_str()
-                    .map(|s| s.to_string());
+                let syslog_identifier = entry["SYSLOG_IDENTIFIER"].as_str().map(|s| s.to_string());
 
-                let pid = entry["_PID"]
-                    .as_str()
-                    .and_then(|p| p.parse::<u32>().ok());
+                let pid = entry["_PID"].as_str().and_then(|p| p.parse::<u32>().ok());
 
-                let uid = entry["_UID"]
-                    .as_str()
-                    .and_then(|u| u.parse::<u32>().ok());
+                let uid = entry["_UID"].as_str().and_then(|u| u.parse::<u32>().ok());
 
-                let gid = entry["_GID"]
-                    .as_str()
-                    .and_then(|g| g.parse::<u32>().ok());
+                let gid = entry["_GID"].as_str().and_then(|g| g.parse::<u32>().ok());
 
-                let cmdline = entry["_CMDLINE"]
-                    .as_str()
-                    .map(|s| s.to_string());
+                let cmdline = entry["_CMDLINE"].as_str().map(|s| s.to_string());
 
-                let exe = entry["_EXE"]
-                    .as_str()
-                    .map(|s| s.to_string());
+                let exe = entry["_EXE"].as_str().map(|s| s.to_string());
 
                 let priority = entry["PRIORITY"]
                     .as_str()
                     .and_then(|p| p.parse::<u8>().ok());
 
-                let hostname = entry["_HOSTNAME"]
-                    .as_str()
-                    .map(|s| s.to_string());
+                let hostname = entry["_HOSTNAME"].as_str().map(|s| s.to_string());
 
                 // Convert timestamp from microseconds to RFC3339
                 let timestamp = if timestamp_us > 0 {
@@ -110,9 +87,13 @@ impl JournalWatcher {
                     "raw_entry": entry,
                 });
 
-                Some(RawEventBuilder::new(sinex_core::sources::JOURNALD, "entry.written", payload)
-                    .with_host("localhost")
-                    .build())
+                Some({
+                    let factory = EventFactory::new(sinex_core_types::sources::JOURNALD);
+                    factory.create_event(
+                        "entry.written",
+                        payload,
+                    )
+                })
             }
             Err(e) => {
                 debug!("Failed to parse journal entry: {}", e);
@@ -129,20 +110,25 @@ impl JournalWatcher {
             // Start journalctl process to follow journal entries
             let mut child = Command::new("journalctl")
                 .args([
-                    "--follow", 
+                    "--follow",
                     "--output=json",
                     "--lines=0", // Start from now, don't dump existing entries
-                    "--no-hostname"
+                    "--no-hostname",
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start journalctl: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!(
+                        "Failed to start journalctl: {}",
+                        e
+                    ))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::Processing("Failed to get journalctl stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing(
+                    "Failed to get journalctl stdout".to_string(),
+                )
             })?;
 
             let reader = BufReader::new(stdout);
@@ -189,7 +175,10 @@ impl JournalWatcher {
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting journal event streaming");
 
         self.follow_journal(tx).await

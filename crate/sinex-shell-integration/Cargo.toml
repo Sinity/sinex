@@ -8,7 +8,8 @@ repository.workspace = true
 
 [dependencies]
 # Core dependencies
-sinex-core = { path = "../sinex-core" }
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-events-shell = { path = "../sinex-events-shell" }
 sinex-ulid = { path = "../sinex-ulid" }
 

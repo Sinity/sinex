@@ -9,7 +9,7 @@
 This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege) tailored to the Exocortex context. The Exocortex is primarily a local-first, single-user system, which shapes the threat landscape (e.g., fewer external attack surfaces) but introduces significant risks related to the concentration of highly sensitive personal data.
 
 **Key Assets to Protect:**
-*   Raw event data (`raw.events`) containing user activity logs.
+*   Raw event data (`core.events`) containing user activity logs.
 *   Personal Knowledge Management content (`core.artifacts`, `core.artifact_contents`, Yjs deltas).
 *   Large file blobs (`git-annex` store).
 *   Knowledge graph data (`core.entities`, `core.entity_relations`).
@@ -65,7 +65,7 @@ This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiatio
         3.  **Prefer Higher-Level Capture:** Use compositor/AT-SPI2 input events as primary.
     *   **Reference:** `TIM-EvdevInterceptionTools.md`, `TIM-ProcessSandboxing.md`.
 
-*   **Threat 1.6: Sensitive data in `raw.events.payload` or `core_artifact_contents` directly accessible via SQL to an authorized (but potentially over-privileged or compromised) user/agent.**
+*   **Threat 1.6: Sensitive data in `core.events.payload` or `core_artifact_contents` directly accessible via SQL to an authorized (but potentially over-privileged or compromised) user/agent.**
     *   **Asset:** PII, confidential notes, private communications.
     *   **Impact:** Privacy breach even with legitimate DB access if permissions are too broad.
     *   **Mitigation:**
@@ -101,8 +101,8 @@ This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiatio
     *   **Asset:** All structured data.
     *   **Impact:** Corrupted knowledge base, loss of history, false records.
     *   **Mitigation:**
-        1.  **`raw.events` Append-Only Principle:** Application logic enforces this (no `UPDATE`/`DELETE` on `raw.events`).
-        2.  **Restricted DB Roles:** Ingestors only `INSERT` to `raw.events`. Agents have limited DML on their target tables.
+        1.  **`core.events` Append-Only Principle:** Application logic enforces this (no `UPDATE`/`DELETE` on `core.events`).
+        2.  **Restricted DB Roles:** Ingestors only `INSERT` to `core.events`. Agents have limited DML on their target tables.
         3.  **PostgreSQL Checksums:** Enable data block checksums (`data_checksums = on` at `initdb` time).
         4.  **Regular Backups with PITR (`pgBackRest`):** Allows recovery from logical corruption.
         5.  **Content Hashing for Artifacts/Blobs:** `core_artifact_contents.content_hash_blake3` and `core_blobs.content_blake3_hash` allow verification of content integrity against external tampering if files were re-imported.
@@ -132,7 +132,7 @@ This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiatio
     *   **Asset:** Auditability, accountability.
     *   **Impact:** Difficulty in tracing origin of data or system changes.
     *   **Mitigation:**
-        1.  **`raw.events` Logging:** `source`, `host`, `ingestor_version`, `ts_ingest`, `ts_orig` provide strong attribution for ingested data.
+        1.  **`core.events` Logging:** `source`, `host`, `ingestor_version`, `ts_ingest`, `ts_orig` provide strong attribution for ingested data.
         2.  **`created_by_actor` Fields:** Used in `core.entity_relations`, `artifact_tags`, `event_annotations` to record who/what created the link/tag/annotation.
         3.  **Audit Trails for System Config:** Git history of NixOS configuration.
         4.  **Database Logs:** PostgreSQL logs (if enabled at sufficient level) can show user/application performing DML.
@@ -146,7 +146,7 @@ This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiatio
     *   **Mitigation:**
         1.  **Monitoring:** Prometheus `node_exporter` and application metrics for resource usage. Alerts on high utilization.
         2.  **Systemd Resource Quotas:** `MemoryMax`, `CPUQuota` for agent services.
-        3.  **Data Retention/Archival Policies:** For `raw.events` (TimescaleDB compression/tiering), `pgBackRest` backup expiration, `git-annex` drop policies for blobs.
+        3.  **Data Retention/Archival Policies:** For `core.events` (TimescaleDB compression/tiering), `pgBackRest` backup expiration, `git-annex` drop policies for blobs.
         4.  **Efficient Agent Design:** Batch processing, careful resource use in agents.
     *   **Reference:** `TIM-ObservabilityStackSetup.md`, `TIM-TimescaleDBConfiguration.md`, `TIM-ExocortexDevelopmentPractices.md` (NixOS module patterns).
 
@@ -161,7 +161,7 @@ This threat model adopts a STRIDE-like approach (Spoofing, Tampering, Repudiatio
         5.  **(Future) High Availability Setup for PostgreSQL:** Streaming replication to a hot standby (adds complexity).
     *   **Reference:** `SystemOperations_And_Integrity_Architecture.md` (Sec 5.1), `TIM-PostgreSQLBackupDR_pgBackRest.md`.
 
-*   **Threat 4.3: Ingestor flood overwhelming `raw.events` or `work_queue`.**
+*   **Threat 4.3: Ingestor flood overwhelming `core.events` or `work_queue`.**
     *   **Asset:** Ingestion pipeline, processing capacity.
     *   **Impact:** Event loss (if queue overflows before persistence or DLQ), processing backlog.
     *   **Mitigation:**

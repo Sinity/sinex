@@ -1,20 +1,22 @@
-//! PKM Service Integration Tests
-//!
-//! Comprehensive integration tests for the Personal Knowledge Management (PKM) service,
-//! covering all core functionality including:
-//! - Note annotations on events
-//! - Knowledge graph entity operations (CRUD lifecycle)
-//! - Entity relationship creation and retrieval
-//! - Artifact management operations
-//! - Search functionality for entities and artifacts
-//! - Database constraint validation
-//! - Error handling and transaction rollback scenarios
-//!
-//! All tests use #[sinex_test] for automatic transaction isolation and TestContext
-//! for unified database access patterns.
+// PKM Service Integration Tests
+//
+// Comprehensive integration tests for the Personal Knowledge Management (PKM) service,
+// covering all core functionality including:
+// - Note annotations on events
+// - Knowledge graph entity operations (CRUD lifecycle)
+// - Entity relationship creation and retrieval
+// - Artifact management operations
+// - Search functionality for entities and artifacts
+// - Database constraint validation
+// - Error handling and transaction rollback scenarios
+//
+// All tests use #[sinex_test] for automatic transaction isolation and TestContext
+// for unified database access patterns.
 
 use crate::common::prelude::*;
+
 use crate::common::generators;
+use crate::common::prelude::*;
 use serde_json::json;
 use sinex_db::{
     annotations, artifacts, knowledge_graph,
@@ -35,8 +37,7 @@ async fn test_create_note_annotation(ctx: TestContext) -> TestResult {
 
     // Create a test event first
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Create a note annotation
     let content = "This is a test note annotation";
@@ -73,8 +74,7 @@ async fn test_multiple_note_annotations(ctx: TestContext) -> TestResult {
 
     // Create a test event
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Create multiple annotations
     let note1_id = service
@@ -117,8 +117,7 @@ async fn test_create_entities_from_list(ctx: TestContext) -> TestResult {
 
     // Create a test event
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Define test entities using valid entity types
     let entities = vec![
@@ -161,8 +160,7 @@ async fn test_entity_type_constraints_valid(ctx: TestContext) -> TestResult {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Test all valid entity types from the database constraint
     let valid_types = vec![
@@ -197,8 +195,7 @@ async fn test_entity_type_constraints_invalid(ctx: TestContext) -> TestResult {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Test invalid entity type
     let entities = vec![("Test Entity".to_string(), "invalid_type".to_string())];
@@ -582,8 +579,7 @@ async fn test_get_relationship_by_id(ctx: TestContext) -> TestResult {
 async fn test_create_and_get_artifact(ctx: TestContext) -> TestResult {
     // Create test event for artifact linkage
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Create artifact with valid artifact type
     let artifact_input = CreateArtifactInput {
@@ -733,8 +729,7 @@ async fn test_complete_pkm_workflow(ctx: TestContext) -> TestResult {
 
     // Step 1: Create an event
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Step 2: Create a note annotation on the event
     let note_id = service
@@ -858,8 +853,7 @@ async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> TestRe
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Create entities list with one invalid type to force failure
     let entities = vec![
@@ -962,8 +956,7 @@ async fn test_empty_entity_list(ctx: TestContext) -> TestResult {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Create entities from empty list
     let entity_ids = service
@@ -980,8 +973,7 @@ async fn test_annotation_with_empty_content(ctx: TestContext) -> TestResult {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
-    let inserted_event =
-        sinex_db::events::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     // Create annotation with empty content
     let annotation_id = service

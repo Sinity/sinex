@@ -2,7 +2,7 @@
 
 *   **Purpose:** Details the backend architecture, data models, event sourcing, processing logic, and persistence strategies for the Exocortex Living Document (LD).
 *   **Source:** Derived from conceptual descriptions in original Vision Document Part II.1 (especially II.1.2, II.1.4) and related discussions.
-*   **Dependencies:** `pgx_ulid`, `raw.events`, `core.artifacts`, `core.artifact_contents`. Potentially Yjs (see `TIM-PKMContentCRDT_Yjs.md` for Yjs patterns if applied here). `TIM-CanonicalEventSchemas.md` for `livingdoc.*` event schemas.
+*   **Dependencies:** `pgx_ulid`, `core.events`, `core.artifacts`, `core.artifact_contents`. Potentially Yjs (see `TIM-PKMContentCRDT_Yjs.md` for Yjs patterns if applied here). `TIM-CanonicalEventSchemas.md` for `livingdoc.*` event schemas.
 
 ## 1. Core Concept & Architectural Role
 
@@ -26,10 +26,10 @@ All modifications to the Living Document's Yjs document are driven by and result
     *   **`payload` (see `TIM-CanonicalEventSchemas.md` for full schema):**
         *   `living_document_artifact_id_ulid`: ULID of the root LD artifact in `core.artifacts`.
         *   `yjs_delta_ids_ulid`: Array of ULIDs of the new delta(s) stored in `core.living_document_yjs_deltas` for this operation.
-        *   `originator_actor`: More specific actor if different from `raw.events.source`.
+        *   `originator_actor`: More specific actor if different from `core.events.source`.
         *   `operation_summary_text`: Optional human-readable summary of the change (e.g., "Appended text to node X", "Restructured section Y").
         *   `affected_node_ids_internal`: Optional array of internal Yjs element IDs/paths affected.
-*   These events are logged to `raw.events` after the Yjs update has been successfully applied and persisted to `core.living_document_yjs_deltas`.
+*   These events are logged to `core.events` after the Yjs update has been successfully applied and persisted to `core.living_document_yjs_deltas`.
 
 ## 3. Yjs Content Representation & Persistence for the Living Document
 
@@ -65,7 +65,7 @@ The primary textual and structural content of the Living Document is stored and 
 
 ## 4. Conceptual Processing Pipeline (LLM Node Graph as Agent Interactions)
 
-The "LLM Node Graph" concept from the original Vision document is realized as a sequence or collaboration of specialized Exocortex agents interacting with the Living Document's Yjs state and `raw.events`.
+The "LLM Node Graph" concept from the original Vision document is realized as a sequence or collaboration of specialized Exocortex agents interacting with the Living Document's Yjs state and `core.events`.
 
 1.  **Input Ingestion & Segmentation Agent (or part of UI backend):**
     *   Handles raw text input, voice (via ASR using `TIM-ASR_WhisperCpp.md`), pasted content.

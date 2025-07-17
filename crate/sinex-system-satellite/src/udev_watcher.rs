@@ -3,8 +3,7 @@
 //! Monitors hardware device events via udev
 
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -18,7 +17,9 @@ pub struct UdevWatcher {
 impl UdevWatcher {
     /// Create new udev watcher
     pub async fn new(monitor_hotplug: bool) -> SatelliteResult<Self> {
-        let watcher = Self { _monitor_hotplug: monitor_hotplug };
+        let watcher = Self {
+            _monitor_hotplug: monitor_hotplug,
+        };
 
         info!("udev watcher initialized (hotplug: {})", monitor_hotplug);
         Ok(watcher)
@@ -34,7 +35,7 @@ impl UdevWatcher {
     ) -> RawEvent {
         let event_type = match action {
             "add" => "device.connected",
-            "remove" => "device.disconnected", 
+            "remove" => "device.disconnected",
             "change" => "device.changed",
             "bind" | "unbind" => "device.driver_changed",
             _ => "device.other",
@@ -43,13 +44,16 @@ impl UdevWatcher {
         // Extract common properties
         let subsystem = properties.get("SUBSYSTEM").cloned();
         let devtype = properties.get("DEVTYPE").cloned();
-        let vendor = properties.get("ID_VENDOR_FROM_DATABASE")
+        let vendor = properties
+            .get("ID_VENDOR_FROM_DATABASE")
             .or_else(|| properties.get("ID_VENDOR"))
             .cloned();
-        let model = properties.get("ID_MODEL_FROM_DATABASE")
+        let model = properties
+            .get("ID_MODEL_FROM_DATABASE")
             .or_else(|| properties.get("ID_MODEL"))
             .cloned();
-        let serial = properties.get("ID_SERIAL_SHORT")
+        let serial = properties
+            .get("ID_SERIAL_SHORT")
             .or_else(|| properties.get("ID_SERIAL"))
             .cloned();
 
@@ -66,18 +70,20 @@ impl UdevWatcher {
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
 
-        RawEventBuilder::new(sinex_core::sources::UDEV, event_type, payload)
-            .with_host("localhost")
-            .build()
+        let factory = EventFactory::new(sinex_core_types::sources::UDEV);
+        factory.create_event(event_type, payload)
     }
 
     /// Monitor udev events using netlink socket (fallback implementation)
-    async fn monitor_udev_events(&self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn monitor_udev_events(
+        &self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting udev event monitoring via filesystem polling");
 
         // Since libudev is disabled, we'll do periodic scanning of /sys/class
         // This is less efficient but works without external dependencies
-        
+
         let mut last_seen_devices = std::collections::HashSet::new();
         let mut poll_interval = tokio::time::interval(Duration::from_secs(5));
 
@@ -85,14 +91,14 @@ impl UdevWatcher {
 
         loop {
             poll_interval.tick().await;
-            
+
             let mut current_devices = std::collections::HashSet::new();
-            
+
             // Scan /sys/class for device changes
             if let Ok(entries) = std::fs::read_dir("/sys/class") {
                 for entry in entries.flatten() {
                     let class_name = entry.file_name().to_string_lossy().to_string();
-                    
+
                     // Focus on interesting device classes
                     if !["net", "block", "input", "usb", "sound"].contains(&class_name.as_str()) {
                         continue;
@@ -100,16 +106,17 @@ impl UdevWatcher {
 
                     if let Ok(class_entries) = std::fs::read_dir(entry.path()) {
                         for device_entry in class_entries.flatten() {
-                            let device_name = device_entry.file_name().to_string_lossy().to_string();
+                            let device_name =
+                                device_entry.file_name().to_string_lossy().to_string();
                             let device_path = device_entry.path().to_string_lossy().to_string();
                             let device_key = format!("{}:{}", class_name, device_name);
-                            
+
                             current_devices.insert(device_key.clone());
-                            
+
                             // Check if this is a new device
                             if !last_seen_devices.contains(&device_key) {
                                 let properties = std::collections::HashMap::new(); // Simplified
-                                
+
                                 let device_type = match class_name.as_str() {
                                     "usb" => "usb",
                                     "block" => "storage",
@@ -137,32 +144,28 @@ impl UdevWatcher {
                     }
                 }
             }
-            
+
             // Check for removed devices
             for removed_device in last_seen_devices.difference(&current_devices) {
                 let parts: Vec<&str> = removed_device.split(':').collect();
                 if parts.len() == 2 {
                     let class_name = parts[0];
                     let device_name = parts[1];
-                    
+
                     let device_type = match class_name {
                         "usb" => "usb",
-                        "block" => "storage", 
+                        "block" => "storage",
                         "input" => "input",
                         "net" => "network",
                         "sound" => "audio",
                         _ => "other",
                     };
-                    
+
                     let properties = std::collections::HashMap::new();
                     let device_path = format!("/sys/class/{}/{}", class_name, device_name);
 
-                    let raw_event = self.create_device_event(
-                        "remove",
-                        &device_path,
-                        device_type,
-                        properties,
-                    );
+                    let raw_event =
+                        self.create_device_event("remove", &device_path, device_type, properties);
 
                     if tx.send(raw_event).is_err() {
                         warn!("Event channel closed");
@@ -172,13 +175,16 @@ impl UdevWatcher {
                     debug!("udev event: remove {} {}", device_type, device_path);
                 }
             }
-            
+
             last_seen_devices = current_devices;
         }
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting udev event streaming");
 
         self.monitor_udev_events(tx).await

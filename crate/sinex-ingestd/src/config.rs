@@ -43,15 +43,6 @@ pub struct IngestdConfig {
 }
 
 impl IngestdConfig {
-    /// Load configuration from file
-    pub async fn load_from_file(path: &PathBuf) -> IngestdResult<Self> {
-        let content = tokio::fs::read_to_string(path).await?;
-        let config: Self = toml::from_str(&content)
-            .map_err(|e| IngestdError::Config(format!("Failed to parse config file: {}", e)))?;
-        
-        config.validate().await?;
-        Ok(config)
-    }
 
     /// Create configuration from command line arguments
     pub fn from_args(
@@ -91,7 +82,9 @@ impl IngestdConfig {
     /// Validate the configuration
     pub async fn validate(&self) -> IngestdResult<()> {
         // Validate database URL format
-        if !self.database_url.starts_with("postgresql://") && !self.database_url.starts_with("postgres://") {
+        if !self.database_url.starts_with("postgresql://")
+            && !self.database_url.starts_with("postgres://")
+        {
             return Err(IngestdError::Config(
                 "Database URL must be a PostgreSQL connection string".to_string(),
             ));
@@ -138,13 +131,15 @@ impl IngestdConfig {
 
         // Validate work directory exists or can be created
         if !self.work_dir.exists() {
-            tokio::fs::create_dir_all(&self.work_dir).await.map_err(|e| {
-                IngestdError::Config(format!(
-                    "Cannot create work directory {}: {}",
-                    self.work_dir.display(),
-                    e
-                ))
-            })?;
+            tokio::fs::create_dir_all(&self.work_dir)
+                .await
+                .map_err(|e| {
+                    IngestdError::Config(format!(
+                        "Cannot create work directory {}: {}",
+                        self.work_dir.display(),
+                        e
+                    ))
+                })?;
         }
 
         // Test database connection
@@ -159,6 +154,7 @@ impl IngestdConfig {
 
     /// Test database connection
     async fn test_database_connection(&self) -> IngestdResult<()> {
+        use sinex_db::queries::OperationQueries;
         use sqlx::postgres::PgPoolOptions;
 
         let pool = PgPoolOptions::new()
@@ -166,9 +162,9 @@ impl IngestdConfig {
             .connect(&self.database_url)
             .await?;
 
-        // Test basic query
-        sqlx::query("SELECT 1")
-            .fetch_one(&pool)
+        // Test basic query using the query system
+        OperationQueries::health_check()
+            .fetch_one::<()>(&pool)
             .await
             .map_err(|e| IngestdError::Config(format!("Database connection test failed: {}", e)))?;
 
@@ -179,8 +175,6 @@ impl IngestdConfig {
 
     /// Test Redis connection
     async fn test_redis_connection(&self) -> IngestdResult<()> {
-        
-
         let client = redis::Client::open(self.redis_url.as_str())?;
         let mut conn = client.get_async_connection().await?;
 

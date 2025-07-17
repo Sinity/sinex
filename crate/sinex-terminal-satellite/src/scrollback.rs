@@ -2,10 +2,9 @@
 //!
 //! Captures terminal scrollback content with chunking and git-annex integration
 
-use sinex_satellite_sdk::SatelliteResult;
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -66,14 +65,20 @@ impl ScrollbackWatcher {
             annex_threshold_bytes: 64_000, // 64KB
         };
 
-        info!("Scrollback watcher initialized with socket: {}", watcher.kitty_socket_path.display());
+        info!(
+            "Scrollback watcher initialized with socket: {}",
+            watcher.kitty_socket_path.display()
+        );
         Ok(watcher)
     }
 
     /// Get all Kitty windows
     async fn get_kitty_windows(&self) -> SatelliteResult<Vec<WindowState>> {
         if !self.kitty_socket_path.exists() {
-            debug!("Kitty socket not found at {}", self.kitty_socket_path.display());
+            debug!(
+                "Kitty socket not found at {}",
+                self.kitty_socket_path.display()
+            );
             return Ok(Vec::new());
         }
 
@@ -86,7 +91,10 @@ impl ScrollbackWatcher {
             .output()
             .await
             .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to execute kitty command: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to execute kitty command: {}",
+                    e
+                ))
             })?;
 
         if !output.status.success() {
@@ -97,7 +105,10 @@ impl ScrollbackWatcher {
         }
 
         let data: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to parse kitty response: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to parse kitty response: {}",
+                e
+            ))
         })?;
 
         let mut windows = Vec::new();
@@ -132,7 +143,11 @@ impl ScrollbackWatcher {
     }
 
     /// Get scrollback content for a window
-    async fn get_window_scrollback(&self, window_id: u32, include_screen: bool) -> SatelliteResult<ScrollbackContent> {
+    async fn get_window_scrollback(
+        &self,
+        window_id: u32,
+        include_screen: bool,
+    ) -> SatelliteResult<ScrollbackContent> {
         let extent = if include_screen { "all" } else { "scrollback" };
         let mut cmd = tokio::process::Command::new("kitty");
         cmd.arg("@")
@@ -149,7 +164,10 @@ impl ScrollbackWatcher {
         }
 
         let output = cmd.output().await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get scrollback: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to get scrollback: {}",
+                e
+            ))
         })?;
 
         if !output.status.success() {
@@ -194,14 +212,22 @@ impl ScrollbackWatcher {
     }
 
     /// Store large content in git-annex
-    async fn store_in_git_annex(&self, window: &WindowState, content: &ScrollbackContent) -> SatelliteResult<(String, String)> {
+    async fn store_in_git_annex(
+        &self,
+        window: &WindowState,
+        content: &ScrollbackContent,
+    ) -> SatelliteResult<(String, String)> {
         let annex_repo = self.git_annex_repo.as_ref().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::Processing("Git-annex repository not configured".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing(
+                "Git-annex repository not configured".to_string(),
+            )
         })?;
 
         // Create filename with timestamp and window info
         let timestamp = chrono::Utc::now().format("%Y%m%d_%H%M%S");
-        let safe_title = window.title.chars()
+        let safe_title = window
+            .title
+            .chars()
             .filter(|c| c.is_alphanumeric() || *c == '_' || *c == '-')
             .collect::<String>();
         let filename = format!("scrollback_{}_{}_w{}.txt", timestamp, safe_title, window.id);
@@ -210,19 +236,32 @@ impl ScrollbackWatcher {
         // Ensure annex directory exists
         if let Some(parent) = file_path.parent() {
             fs::create_dir_all(parent).await.map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to create annex directory: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to create annex directory: {}",
+                    e
+                ))
             })?;
         }
 
         // Write content to file
         fs::write(&file_path, &content.text).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to write scrollback file: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to write scrollback file: {}",
+                e
+            ))
         })?;
 
         // Add to git-annex (simplified - in real implementation would use git-annex commands)
-        let annex_key = format!("SHA256E-s{}--{}", content.size_bytes, self.simple_hash(&content.text));
+        let annex_key = format!(
+            "SHA256E-s{}--{}",
+            content.size_bytes,
+            self.simple_hash(&content.text)
+        );
 
-        debug!("Stored scrollback in git-annex: {} -> {}", filename, annex_key);
+        debug!(
+            "Stored scrollback in git-annex: {} -> {}",
+            filename, annex_key
+        );
         Ok((filename, annex_key))
     }
 
@@ -255,8 +294,9 @@ impl ScrollbackWatcher {
 
         for line in lines {
             let line_size = line.len() + 1; // +1 for newline
-            
-            if current_size + line_size > self.chunking_threshold_bytes && !current_chunk.is_empty() {
+
+            if current_size + line_size > self.chunking_threshold_bytes && !current_chunk.is_empty()
+            {
                 // Finalize current chunk
                 chunks.push(json!({
                     "chunk_index": chunk_index,
@@ -295,7 +335,11 @@ impl ScrollbackWatcher {
     }
 
     /// Process a single window for scrollback capture
-    async fn process_window(&mut self, window: WindowState, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn process_window(
+        &mut self,
+        window: WindowState,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         // Get scrollback content
         let scrollback = match self.get_window_scrollback(window.id, true).await {
             Ok(content) => content,
@@ -317,36 +361,47 @@ impl ScrollbackWatcher {
         }
 
         // Determine storage strategy
-        let should_chunk = self.enable_chunking && scrollback.size_bytes > self.chunking_threshold_bytes as u64;
-        let should_annex = self.auto_annex && scrollback.size_bytes > self.annex_threshold_bytes as u64;
+        let should_chunk =
+            self.enable_chunking && scrollback.size_bytes > self.chunking_threshold_bytes as u64;
+        let should_annex =
+            self.auto_annex && scrollback.size_bytes > self.annex_threshold_bytes as u64;
 
-        let (scrollback_text, scrollback_chunks, is_chunked, chunk_count, git_annex_path, git_annex_key) = 
-            if should_annex {
-                // Store in git-annex for large content
-                match self.store_in_git_annex(&window, &scrollback).await {
-                    Ok((annex_path, annex_key)) => {
-                        (None, None, false, None, Some(annex_path), Some(annex_key))
-                    }
-                    Err(e) => {
-                        error!("Failed to store scrollback in git-annex: {}, falling back to chunking", e);
-                        if should_chunk {
-                            let chunks = self.chunk_content(&scrollback.text);
-                            let chunk_count = chunks.len() as u32;
-                            (None, Some(chunks), true, Some(chunk_count), None, None)
-                        } else {
-                            (Some(scrollback.text.clone()), None, false, None, None, None)
-                        }
+        let (
+            scrollback_text,
+            scrollback_chunks,
+            is_chunked,
+            chunk_count,
+            git_annex_path,
+            git_annex_key,
+        ) = if should_annex {
+            // Store in git-annex for large content
+            match self.store_in_git_annex(&window, &scrollback).await {
+                Ok((annex_path, annex_key)) => {
+                    (None, None, false, None, Some(annex_path), Some(annex_key))
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to store scrollback in git-annex: {}, falling back to chunking",
+                        e
+                    );
+                    if should_chunk {
+                        let chunks = self.chunk_content(&scrollback.text);
+                        let chunk_count = chunks.len() as u32;
+                        (None, Some(chunks), true, Some(chunk_count), None, None)
+                    } else {
+                        (Some(scrollback.text.clone()), None, false, None, None, None)
                     }
                 }
-            } else if should_chunk {
-                // Chunk content for database storage
-                let chunks = self.chunk_content(&scrollback.text);
-                let chunk_count = chunks.len() as u32;
-                (None, Some(chunks), true, Some(chunk_count), None, None)
-            } else {
-                // Store as text in database
-                (Some(scrollback.text.clone()), None, false, None, None, None)
-            };
+            }
+        } else if should_chunk {
+            // Chunk content for database storage
+            let chunks = self.chunk_content(&scrollback.text);
+            let chunk_count = chunks.len() as u32;
+            (None, Some(chunks), true, Some(chunk_count), None, None)
+        } else {
+            // Store as text in database
+            (Some(scrollback.text.clone()), None, false, None, None, None)
+        };
 
         // Create event
         let payload = json!({
@@ -367,9 +422,11 @@ impl ScrollbackWatcher {
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
 
-        let event = RawEventBuilder::new(sinex_core::sources::SHELL_SCROLLBACK, "output.captured", payload)
-            .with_host("localhost")
-            .build();
+        let factory = EventFactory::new(sinex_core_types::sources::SHELL_SCROLLBACK);
+        let event = factory.create_event(
+            "output.captured",
+            payload,
+        );
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -392,7 +449,10 @@ impl ScrollbackWatcher {
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting scrollback event streaming");
 
         let mut capture_interval = interval(self.capture_interval);
@@ -419,12 +479,14 @@ impl ScrollbackWatcher {
             // Clean up old window states
             let active_ids: Vec<u32> = self.window_states.keys().copied().collect();
             let cutoff = SystemTime::now() - Duration::from_secs(3600); // 1 hour
-            
-            self.window_states.retain(|_id, state| {
-                state.last_capture_time > cutoff
-            });
 
-            debug!("Scrollback capture cycle completed for {} windows", active_ids.len());
+            self.window_states
+                .retain(|_id, state| state.last_capture_time > cutoff);
+
+            debug!(
+                "Scrollback capture cycle completed for {} windows",
+                active_ids.len()
+            );
         }
     }
 }

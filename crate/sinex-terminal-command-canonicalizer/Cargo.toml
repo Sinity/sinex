@@ -30,7 +30,13 @@ sqlx.workspace = true
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
-sinex-core = { path = "../sinex-core" }
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
+sinex-macros = { path = "../sinex-macros" }
+
+[features]
+default = []
+metrics = []

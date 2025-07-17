@@ -1,6 +1,9 @@
 //! gRPC client for communicating with sinex-ingestd
 
-use crate::proto::{ingest_service_client::IngestServiceClient, EventBatch, HealthRequest, RawEvent as ProtoRawEvent};
+use crate::proto::{
+    ingest_service_client::IngestServiceClient, EventBatch, HealthRequest,
+    RawEvent as ProtoRawEvent,
+};
 use crate::{SatelliteError, SatelliteResult};
 use sinex_events::RawEvent;
 use tonic::transport::{Channel, Endpoint, Uri};
@@ -113,7 +116,13 @@ impl IngestClient {
             event_type: event.event_type.clone(),
             host: event.host.clone(),
             payload: payload_json,
-            schema_name: Some(event.payload_schema_id.as_ref().map(|id| id.to_string()).unwrap_or_default()),
+            schema_name: Some(
+                event
+                    .payload_schema_id
+                    .as_ref()
+                    .map(|id| id.to_string())
+                    .unwrap_or_default(),
+            ),
             schema_version: Some("1.0.0".to_string()), // Default version since we only have schema_id
             blob_id: None, // No blob_id field in current RawEvent structure
         })
@@ -149,11 +158,7 @@ pub struct EventBatcher {
 
 impl EventBatcher {
     /// Create a new event batcher
-    pub fn new(
-        client: IngestClient,
-        batch_size: usize,
-        timeout_secs: u64,
-    ) -> Self {
+    pub fn new(client: IngestClient, batch_size: usize, timeout_secs: u64) -> Self {
         Self {
             client,
             batch: Vec::with_capacity(batch_size),
@@ -188,11 +193,12 @@ impl EventBatcher {
         }
 
         let result = self.client.ingest_batch(&self.batch).await?;
-        
+
         if !result.success {
             warn!(
                 "Batch ingestion partially failed: {} of {} events failed",
-                result.failed_count, self.batch.len()
+                result.failed_count,
+                self.batch.len()
             );
         }
 
@@ -204,8 +210,7 @@ impl EventBatcher {
 
     /// Check if the batch should be flushed
     fn should_flush(&self) -> bool {
-        self.batch.len() >= self.batch_size 
-            || self.last_flush.elapsed() >= self.timeout
+        self.batch.len() >= self.batch_size || self.last_flush.elapsed() >= self.timeout
     }
 
     /// Get current batch size

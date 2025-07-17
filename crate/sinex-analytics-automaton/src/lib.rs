@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sinex_satellite_sdk::{SatelliteResult, SatelliteError};
 use sinex_satellite_sdk::{
     EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult,
 };
+use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 use sinex_services::AnalyticsService;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -37,9 +37,7 @@ impl AnalyticsServiceAutomaton {
             "analytics.event_count_by_source" => {
                 self.handle_event_count_by_source(service, params).await
             }
-            "analytics.activity_heatmap" => {
-                self.handle_activity_heatmap(service, params).await
-            }
+            "analytics.activity_heatmap" => self.handle_activity_heatmap(service, params).await,
             _ => Err(SatelliteError::Automaton(format!(
                 "Unknown analytics method: {}",
                 method
@@ -102,16 +100,16 @@ impl HotlogAutomaton for AnalyticsServiceAutomaton {
     fn automaton_name(&self) -> &str {
         "analytics-service"
     }
-    
+
     async fn initialize(&mut self, ctx: HotlogAutomatonContext) -> SatelliteResult<()> {
         info!("Initializing analytics service automaton");
-        
+
         // Initialize the analytics service
         let service = Arc::new(AnalyticsService::new(ctx.db_pool.clone()));
-        
+
         self.service = Some(service);
         self.context = Some(ctx);
-        
+
         info!("Analytics service automaton initialized successfully");
         Ok(())
     }
@@ -119,20 +117,26 @@ impl HotlogAutomaton for AnalyticsServiceAutomaton {
     fn event_filters(&self) -> Vec<EventFilter> {
         vec![
             // Listen for analytics RPC requests
-            EventFilter::new(Some("rpc.analytics".to_string()), Some("request".to_string())),
+            EventFilter::new(
+                Some("rpc.analytics".to_string()),
+                Some("request".to_string()),
+            ),
         ]
     }
 
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         let payload = event.event.payload.clone();
-        
+
         // Handle analytics RPC requests
         if event.event.source == "rpc.analytics" && event.event.event_type == "request" {
             match self.handle_analytics_request(payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
                     let _ctx = self.context.as_ref().unwrap();
-                    
+
                     let response_event = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "response": response,
@@ -142,11 +146,13 @@ impl HotlogAutomaton for AnalyticsServiceAutomaton {
                     // For now, just log the response - synthesis events need to be implemented in gRPC
                     info!("Analytics response: {:?}", response_event);
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
                 Err(e) => {
                     warn!("Analytics request failed: {}", e);
-                    
+
                     // Submit error response
                     let _ctx = self.context.as_ref().unwrap();
                     let error_response = serde_json::json!({
@@ -161,11 +167,15 @@ impl HotlogAutomaton for AnalyticsServiceAutomaton {
                     // For now, just log the error response
                     warn!("Analytics error response: {:?}", error_response);
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
             }
         } else {
-            Ok(ProcessingResult::Skip { reason: "Not an analytics request".to_string() })
+            Ok(ProcessingResult::Skip {
+                reason: "Not an analytics request".to_string(),
+            })
         }
     }
 }

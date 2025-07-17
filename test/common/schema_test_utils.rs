@@ -1,7 +1,10 @@
-//! Schema test utilities for JSON schema validation
+// Schema test utilities for JSON schema validation
 
 use crate::common::prelude::*;
 use serde_json::{json, Value};
+use sinex_events::{event_types, sources};
+use sinex_db::queries::{EventQueries, SchemaQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 
 /// Register test schema with event source and type
 pub async fn register_test_schema(
@@ -9,7 +12,7 @@ pub async fn register_test_schema(
     event_source: &str,
     event_type: &str,
     schema: Value,
-) -> Result<Ulid> {
+) -> AnyhowResult<Ulid> {
     database::insert_test_schema(pool, event_source, event_type, "1.0", schema).await
 }
 
@@ -18,7 +21,7 @@ pub async fn assert_schema_valid_event(
     pool: &DbPool,
     event: &sinex_db::RawEvent,
     schema_id: Ulid,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(pool, schema_id)
         .await?
@@ -38,7 +41,7 @@ pub async fn assert_schema_invalid_event(
     pool: &DbPool,
     event: &sinex_db::RawEvent,
     schema_id: Ulid,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     // Load the schema from database
     let schema = database::get_schema(pool, schema_id)
         .await?
@@ -274,122 +277,61 @@ pub mod database {
         event_type: &str,
         schema_version: &str,
         schema: Value,
-    ) -> Result<Ulid> {
-        let row = sqlx::query!(
-            r#"
-            INSERT INTO sinex_schemas.event_payload_schemas
-            (event_source, event_type, schema_version, json_schema_definition, description)
-            VALUES ($1, $2, $3, $4, $5)
-            RETURNING id::uuid
-            "#,
+    ) -> AnyhowResult<Ulid> {
+        let schema_id = SchemaQueries::insert_schema(
+            pool,
             event_source,
             event_type,
             schema_version,
-            schema,
-            format!("Test schema for {}.{}", event_source, event_type)
+            &schema,
+            &format!("Test schema for {}.{}", event_source, event_type)
         )
-        .fetch_one(pool)
         .await?;
 
-        Ok(Ulid::from_uuid(
-            row.id.expect("Schema ID should not be null"),
-        ))
+        return Ok(schema_id);
+
+        // Return value moved above
     }
 
     /// Get a schema from the database
-    pub async fn get_schema(pool: &DbPool, schema_id: Ulid) -> Result<Option<Value>> {
-        let row = sqlx::query!(
-            r#"
-            SELECT json_schema_definition
-            FROM sinex_schemas.event_payload_schemas
-            WHERE id::uuid = $1
-            "#,
-            schema_id.to_uuid()
-        )
-        .fetch_optional(pool)
-        .await?;
-
-        Ok(row.map(|r| r.json_schema_definition))
+    pub async fn get_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<Option<Value>> {
+        SchemaQueries::get_schema_by_id(pool, schema_id).await
     }
 
     /// List all schemas in the database
-    pub async fn list_schemas(pool: &DbPool) -> Result<Vec<(Ulid, String, String, Value)>> {
-        let rows = sqlx::query!(
-            r#"
-            SELECT id::uuid, event_source, event_type, json_schema_definition
-            FROM sinex_schemas.event_payload_schemas
-            ORDER BY created_at DESC
-            "#
-        )
-        .fetch_all(pool)
-        .await?;
-
-        let mut schemas = Vec::new();
-        for row in rows {
-            let schema_id = Ulid::from_uuid(row.id.expect("Schema ID should not be null"));
-            let name = format!("{}.{}", row.event_source, row.event_type);
-            schemas.push((
-                schema_id,
-                name,
-                row.event_source,
-                row.json_schema_definition,
-            ));
-        }
-
-        Ok(schemas)
+    pub async fn list_schemas(pool: &DbPool) -> AnyhowResult<Vec<(Ulid, String, String, Value)>> {
+        SchemaQueries::list_all_schemas(pool).await
     }
 
     /// Delete a schema from the database
-    pub async fn delete_schema(pool: &DbPool, schema_id: Ulid) -> Result<bool> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM sinex_schemas.event_payload_schemas
-            WHERE id::uuid = $1
-            "#,
-            schema_id.to_uuid()
-        )
-        .execute(pool)
-        .await?;
-
-        Ok(result.rows_affected() > 0)
+    pub async fn delete_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<bool> {
+        SchemaQueries::delete_schema(pool, schema_id).await
     }
 
     /// Setup test schemas in database
-    pub async fn setup_test_schemas(pool: &DbPool) -> Result<Vec<(String, Ulid)>> {
+    pub async fn setup_test_schemas(pool: &DbPool) -> AnyhowResult<Vec<(String, Ulid)>> {
         let mut schema_ids = Vec::new();
 
-        // Insert filesystem schema
-        let fs_id = insert_test_schema(
-            pool,
-            "fs",
-            "file.created",
-            "1.0",
-            schemas::filesystem_event_schema(),
-        )
-        .await?;
-        schema_ids.push(("filesystem.file.created".to_string(), fs_id));
+        // Insert test schemas using centralized query system
+        let test_schemas = vec![
+            (sources::FS, event_types::filesystem::FILE_CREATED, schemas::filesystem_event_schema()),
+            (sources::SHELL_KITTY, event_types::shell::COMMAND_EXECUTED, schemas::terminal_event_schema()),
+            (sources::WM_HYPRLAND, event_types::window_manager::WINDOW_FOCUSED, schemas::window_event_schema()),
+        ];
 
-        // Insert terminal schema
-        let term_id = insert_test_schema(
-            pool,
-            "shell.kitty",
-            "command.executed",
-            "1.0",
-            schemas::terminal_event_schema(),
-        )
-        .await?;
-        schema_ids.push(("terminal.command.executed".to_string(), term_id));
-
-        // Insert window manager schema
-        let wm_id = insert_test_schema(
-            pool,
-            "wm.hyprland",
-            "window.focused",
-            "1.0",
-            schemas::window_event_schema(),
-        )
-        .await?;
-        schema_ids.push(("window_manager.window.focused".to_string(), wm_id));
+        for (source, event_type, schema) in test_schemas {
+            let schema_id = SchemaQueries::insert_schema(
+                pool,
+                source,
+                event_type,
+                "1.0",
+                &schema,
+                &format!("Test schema for {}.{}", source, event_type)
+            ).await?;
+            
+            let full_event_type = format!("{}.{}", source, event_type);
+            schema_ids.push((full_event_type, schema_id));
+        }
 
         Ok(schema_ids)
     }
@@ -398,9 +340,9 @@ pub mod database {
     pub async fn cleanup_test_schemas(
         pool: &DbPool,
         schema_ids: &[Ulid],
-    ) -> Result<(), anyhow::Error> {
+    ) -> AnyhowResult<(), anyhow::Error> {
         for &schema_id in schema_ids {
-            delete_schema(pool, schema_id).await?;
+            SchemaQueries::delete_schema(pool, schema_id).await?;
         }
         Ok(())
     }
@@ -412,7 +354,7 @@ pub mod validation {
     use jsonschema::JSONSchema;
 
     /// Test a payload against a schema
-    pub fn validate_payload_against_schema(payload: &Value, schema: &Value) -> Result<bool> {
+    pub fn validate_payload_against_schema(payload: &Value, schema: &Value) -> AnyhowResult<bool> {
         let compiled_schema = JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;
 
@@ -421,7 +363,7 @@ pub mod validation {
     }
 
     /// Get validation errors for a payload against a schema
-    pub fn get_validation_errors(payload: &Value, schema: &Value) -> Result<Vec<String>> {
+    pub fn get_validation_errors(payload: &Value, schema: &Value) -> AnyhowResult<Vec<String>> {
         let compiled_schema = JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;
 
@@ -437,14 +379,14 @@ pub mod validation {
     }
 
     /// Test schema compilation
-    pub fn test_schema_compilation(schema: &Value) -> Result<(), anyhow::Error> {
+    pub fn test_schema_compilation(schema: &Value) -> AnyhowResult<(), anyhow::Error> {
         JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Schema compilation failed: {}", e))?;
         Ok(())
     }
 
     /// Run comprehensive validation tests
-    pub fn run_schema_validation_tests() -> Result<(), anyhow::Error> {
+    pub fn run_schema_validation_tests() -> AnyhowResult<(), anyhow::Error> {
         // Test filesystem schema
         let fs_schema = schemas::filesystem_event_schema();
         test_schema_compilation(&fs_schema)?;
@@ -515,7 +457,7 @@ pub mod performance {
         schema: &Value,
         payloads: &[Value],
         iterations: usize,
-    ) -> Result<Vec<Duration>> {
+    ) -> AnyhowResult<Vec<Duration>> {
         let compiled_schema = jsonschema::JSONSchema::compile(schema)
             .map_err(|e| anyhow::anyhow!("Failed to compile schema: {}", e))?;
 
@@ -539,7 +481,7 @@ pub mod performance {
         payload: &Value,
         concurrent_tasks: usize,
         operations_per_task: usize,
-    ) -> Result<Duration> {
+    ) -> AnyhowResult<Duration> {
         use tokio::task;
 
         let compiled_schema = jsonschema::JSONSchema::compile(schema)

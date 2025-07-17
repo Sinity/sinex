@@ -1,11 +1,10 @@
 //! Replay mode for historical event processing
 
-use crate::{SatelliteError, SatelliteResult};
+use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_db::{queries::EventQueries, SqlxPgPool as PgPool};
 use sinex_events::RawEvent;
-use sinex_db::SqlxPgPool as PgPool;
-use sqlx::Row;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -32,9 +31,7 @@ pub enum ReplayMode {
         end_time: Option<DateTime<Utc>>,
     },
     /// Custom replay with flexible filters
-    Custom {
-        filters: ReplayFilters,
-    },
+    Custom { filters: ReplayFilters },
 }
 
 /// Flexible filters for custom replay
@@ -42,20 +39,20 @@ pub enum ReplayMode {
 pub struct ReplayFilters {
     /// Source patterns (supports wildcards)
     pub sources: Option<Vec<String>>,
-    
+
     /// Event type patterns (supports wildcards)
     pub event_types: Option<Vec<String>>,
-    
+
     /// Host patterns (supports wildcards)
     pub hosts: Option<Vec<String>>,
-    
+
     /// Time range
     pub start_time: Option<DateTime<Utc>>,
     pub end_time: Option<DateTime<Utc>>,
-    
+
     /// Limit number of events
     pub limit: Option<u64>,
-    
+
     /// Additional JSON filters for payload
     pub payload_filters: Option<HashMap<String, serde_json::Value>>,
 }
@@ -90,15 +87,67 @@ impl ReplayManager {
 
     /// Get replay statistics
     pub async fn get_replay_stats(&self) -> SatelliteResult<ReplayStats> {
-        let (_query, _params) = self.build_count_query()?;
-        
-        // TODO: Fix bind_all usage - temporarily hardcoded for compilation
-        let row = sqlx::query("SELECT COUNT(*) FROM core.events")
-            .fetch_one(&self.pool)
-            .await?;
+        let total_events = match &self.mode {
+            ReplayMode::Live => 0,
+            ReplayMode::TimeRange {
+                start_time,
+                end_time,
+            } => {
+                let end_time = end_time.unwrap_or_else(Utc::now);
+                let (count,): (i64,) = EventQueries::count_by_time_range(*start_time, end_time)
+                    .fetch_one(&self.pool)
+                    .await?;
+                count as u64
+            }
+            ReplayMode::Source {
+                source,
+                start_time,
+                end_time,
+            } => {
+                if start_time.is_none() && end_time.is_none() {
+                    let (count,): (i64,) = EventQueries::count_by_source(source.clone())
+                        .fetch_one(&self.pool)
+                        .await?;
+                    count as u64
+                } else {
+                    // Use a complex query for source with time range
+                    let start_time =
+                        start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                    let end_time = end_time.unwrap_or_else(Utc::now);
+                    let (count,): (i64,) = EventQueries::count_by_source_and_time_range(
+                        source.clone(),
+                        start_time,
+                        end_time,
+                    )
+                    .fetch_one(&self.pool)
+                    .await?;
+                    count as u64
+                }
+            }
+            ReplayMode::EventTypes {
+                event_types,
+                start_time,
+                end_time,
+            } => {
+                if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
+                    let (count,): (i64,) =
+                        EventQueries::count_by_event_type(event_types[0].clone())
+                            .fetch_one(&self.pool)
+                            .await?;
+                    count as u64
+                } else {
+                    // For complex event type queries, fall back to count all (simplified)
+                    let (count,): (i64,) = EventQueries::count_all().fetch_one(&self.pool).await?;
+                    count as u64
+                }
+            }
+            ReplayMode::Custom { .. } => {
+                // For custom filters, use count all as approximation
+                let (count,): (i64,) = EventQueries::count_all().fetch_one(&self.pool).await?;
+                count as u64
+            }
+        };
 
-        let total_events: i64 = row.get(0);
-        
         Ok(ReplayStats {
             total_events: total_events as u64,
             batch_size: self.batch_size,
@@ -130,39 +179,109 @@ impl ReplayManager {
             "Replay statistics"
         );
 
-        let (query, _params) = self.build_replay_query()?;
-        
         let mut total_processed = 0;
         let mut total_batches = 0;
         let mut errors = Vec::new();
         let mut offset = 0;
 
         loop {
-            // Build query with LIMIT and OFFSET
-            let _paginated_query = format!("{} LIMIT {} OFFSET {}", query, self.batch_size, offset);
-            
-            // TODO: Fix bind_all usage - temporarily hardcoded for compilation
-            let rows = sqlx::query("SELECT event_id::text, source, event_type, host, payload, payload_schema_id::text, ts_ingest, ts_orig, ingestor_version FROM core.events ORDER BY ts_ingest LIMIT 100")
-                .fetch_all(&self.pool)
-                .await?;
+            // Fetch events using the query system based on mode
+            let events: Vec<RawEvent> = match &self.mode {
+                ReplayMode::TimeRange {
+                    start_time,
+                    end_time,
+                } => {
+                    let end_time = end_time.unwrap_or_else(Utc::now);
+                    EventQueries::get_by_time_range(
+                        *start_time,
+                        end_time,
+                        Some(self.batch_size as i64),
+                        Some(offset as i64),
+                    )
+                    .fetch_all(&self.pool)
+                    .await?
+                }
+                ReplayMode::Source {
+                    source,
+                    start_time,
+                    end_time,
+                } => {
+                    if start_time.is_none() && end_time.is_none() {
+                        EventQueries::get_by_source(
+                            source.clone(),
+                            Some(self.batch_size as i64),
+                            Some(offset as i64),
+                        )
+                        .fetch_all(&self.pool)
+                        .await?
+                    } else {
+                        // For source with time range, use time range query and filter
+                        let start_time =
+                            start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                        let end_time = end_time.unwrap_or_else(Utc::now);
+                        EventQueries::get_by_time_range(
+                            start_time,
+                            end_time,
+                            Some(self.batch_size as i64),
+                            Some(offset as i64),
+                        )
+                        .fetch_all(&self.pool)
+                        .await?
+                        .into_iter()
+                        .filter(|event: &RawEvent| &event.source == source)
+                        .collect()
+                    }
+                }
+                ReplayMode::EventTypes {
+                    event_types,
+                    start_time,
+                    end_time,
+                } => {
+                    if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
+                        EventQueries::get_by_event_type(
+                            event_types[0].clone(),
+                            Some(self.batch_size as i64),
+                            Some(offset as i64),
+                        )
+                        .fetch_all(&self.pool)
+                        .await?
+                    } else {
+                        // For complex queries, use get_recent and filter
+                        EventQueries::get_recent(Some(self.batch_size as i64), Some(offset as i64))
+                            .fetch_all(&self.pool)
+                            .await?
+                            .into_iter()
+                            .filter(|event: &RawEvent| {
+                                let type_matches = event_types.contains(&event.event_type);
+                                let start_matches =
+                                    start_time.map_or(true, |start| event.ts_ingest >= start);
+                                let end_matches =
+                                    end_time.map_or(true, |end| event.ts_ingest <= end);
+                                type_matches && start_matches && end_matches
+                            })
+                            .collect()
+                    }
+                }
+                ReplayMode::Custom { filters } => {
+                    // Use get_recent as base query and apply filters
+                    EventQueries::get_recent(Some(self.batch_size as i64), Some(offset as i64))
+                        .fetch_all(&self.pool)
+                        .await?
+                        .into_iter()
+                        .filter(|event| self.apply_custom_filters(event, filters))
+                        .collect()
+                }
+                ReplayMode::Live => {
+                    // Live mode means no historical replay - return empty to exit loop
+                    Vec::new()
+                }
+            };
 
-            if rows.is_empty() {
+            if events.is_empty() {
                 break;
             }
 
-            // Convert rows to RawEvent objects
-            let mut events = Vec::new();
-            for row in rows {
-                match self.row_to_raw_event(row) {
-                    Ok(event) => events.push(event),
-                    Err(e) => {
-                        warn!(error = %e, "Failed to parse event during replay");
-                        errors.push(format!("Parse error: {}", e));
-                    }
-                }
-            }
-
-            if !events.is_empty() {
+            {
                 // Process the batch
                 match processor(events).await {
                     Ok(processed) => {
@@ -213,262 +332,105 @@ impl ReplayManager {
         })
     }
 
-    /// Build SQL query for counting events
-    fn build_count_query(&self) -> SatelliteResult<(String, Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>>)> {
-        let mut query = "SELECT COUNT(*) FROM core.events".to_string();
-        let mut params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>> = Vec::new();
-        let mut conditions = Vec::new();
-        let mut param_count = 0;
-
-        self.build_where_conditions(&mut conditions, &mut params, &mut param_count)?;
-
-        if !conditions.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&conditions.join(" AND "));
-        }
-
-        Ok((query, params))
-    }
-
-    /// Build SQL query for replay
-    fn build_replay_query(&self) -> SatelliteResult<(String, Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>>)> {
-        let mut query = r#"
-            SELECT 
-                event_id::text,
-                source,
-                event_type,
-                host,
-                payload,
-                payload_schema_id::text,
-                ts_ingest,
-                ts_orig,
-                ingestor_version
-            FROM core.events
-        "#.to_string();
-
-        let mut params: Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>> = Vec::new();
-        let mut conditions = Vec::new();
-        let mut param_count = 0;
-
-        self.build_where_conditions(&mut conditions, &mut params, &mut param_count)?;
-
-        if !conditions.is_empty() {
-            query.push_str(" WHERE ");
-            query.push_str(&conditions.join(" AND "));
-        }
-
-        query.push_str(" ORDER BY ts_ingest ASC");
-
-        Ok((query, params))
-    }
-
-    /// Build WHERE conditions for queries
-    fn build_where_conditions(
-        &self,
-        conditions: &mut Vec<String>,
-        params: &mut Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>>,
-        param_count: &mut usize,
-    ) -> SatelliteResult<()> {
-        match &self.mode {
-            ReplayMode::Live => {}
-            ReplayMode::TimeRange { start_time, end_time } => {
-                *param_count += 1;
-                conditions.push(format!("ts_ingest >= ${}", param_count));
-                params.push(Box::new(*start_time));
-
-                if let Some(end_time) = end_time {
-                    *param_count += 1;
-                    conditions.push(format!("ts_ingest <= ${}", param_count));
-                    params.push(Box::new(*end_time));
-                }
-            }
-            ReplayMode::Source { source, start_time, end_time } => {
-                *param_count += 1;
-                conditions.push(format!("source = ${}", param_count));
-                params.push(Box::new(source.clone()));
-
-                if let Some(start_time) = start_time {
-                    *param_count += 1;
-                    conditions.push(format!("ts_ingest >= ${}", param_count));
-                    params.push(Box::new(*start_time));
-                }
-
-                if let Some(end_time) = end_time {
-                    *param_count += 1;
-                    conditions.push(format!("ts_ingest <= ${}", param_count));
-                    params.push(Box::new(*end_time));
-                }
-            }
-            ReplayMode::EventTypes { event_types, start_time, end_time } => {
-                if !event_types.is_empty() {
-                    let placeholders: Vec<String> = event_types
-                        .iter()
-                        .map(|_| {
-                            *param_count += 1;
-                            format!("${}", param_count)
-                        })
-                        .collect();
-                    
-                    conditions.push(format!("event_type IN ({})", placeholders.join(", ")));
-                    
-                    for event_type in event_types {
-                        params.push(Box::new(event_type.clone()));
-                    }
-                }
-
-                if let Some(start_time) = start_time {
-                    *param_count += 1;
-                    conditions.push(format!("ts_ingest >= ${}", param_count));
-                    params.push(Box::new(*start_time));
-                }
-
-                if let Some(end_time) = end_time {
-                    *param_count += 1;
-                    conditions.push(format!("ts_ingest <= ${}", param_count));
-                    params.push(Box::new(*end_time));
-                }
-            }
-            ReplayMode::Custom { filters } => {
-                self.build_custom_conditions(filters, conditions, params, param_count)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Build custom filter conditions
-    fn build_custom_conditions(
-        &self,
-        filters: &ReplayFilters,
-        conditions: &mut Vec<String>,
-        params: &mut Vec<Box<dyn sqlx::Encode<'_, sqlx::Postgres> + Send>>,
-        param_count: &mut usize,
-    ) -> SatelliteResult<()> {
+    /// Apply custom filters to an event
+    fn apply_custom_filters(&self, event: &RawEvent, filters: &ReplayFilters) -> bool {
+        // Check source patterns (simple wildcard matching)
         if let Some(sources) = &filters.sources {
-            if !sources.is_empty() {
-                let source_conditions: Vec<String> = sources
-                    .iter()
-                    .map(|source| {
-                        *param_count += 1;
-                        if source.contains('*') {
-                            format!("source LIKE ${}", param_count)
-                        } else {
-                            format!("source = ${}", param_count)
-                        }
-                    })
-                    .collect();
-
-                conditions.push(format!("({})", source_conditions.join(" OR ")));
-
-                for source in sources {
-                    let pattern = if source.contains('*') {
-                        source.replace('*', "%")
+            let source_matches = sources.iter().any(|pattern| {
+                if pattern.contains('*') {
+                    // Simple wildcard matching - just check prefix/suffix
+                    if pattern.starts_with('*') && pattern.ends_with('*') {
+                        let middle = &pattern[1..pattern.len() - 1];
+                        event.source.contains(middle)
+                    } else if pattern.starts_with('*') {
+                        let suffix = &pattern[1..];
+                        event.source.ends_with(suffix)
+                    } else if pattern.ends_with('*') {
+                        let prefix = &pattern[..pattern.len() - 1];
+                        event.source.starts_with(prefix)
                     } else {
-                        source.clone()
-                    };
-                    params.push(Box::new(pattern));
+                        &event.source == pattern
+                    }
+                } else {
+                    &event.source == pattern
                 }
+            });
+            if !source_matches {
+                return false;
             }
         }
 
+        // Check event type patterns (simple wildcard matching)
         if let Some(event_types) = &filters.event_types {
-            if !event_types.is_empty() {
-                let type_conditions: Vec<String> = event_types
-                    .iter()
-                    .map(|event_type| {
-                        *param_count += 1;
-                        if event_type.contains('*') {
-                            format!("event_type LIKE ${}", param_count)
-                        } else {
-                            format!("event_type = ${}", param_count)
-                        }
-                    })
-                    .collect();
-
-                conditions.push(format!("({})", type_conditions.join(" OR ")));
-
-                for event_type in event_types {
-                    let pattern = if event_type.contains('*') {
-                        event_type.replace('*', "%")
+            let type_matches = event_types.iter().any(|pattern| {
+                if pattern.contains('*') {
+                    // Simple wildcard matching - just check prefix/suffix
+                    if pattern.starts_with('*') && pattern.ends_with('*') {
+                        let middle = &pattern[1..pattern.len() - 1];
+                        event.event_type.contains(middle)
+                    } else if pattern.starts_with('*') {
+                        let suffix = &pattern[1..];
+                        event.event_type.ends_with(suffix)
+                    } else if pattern.ends_with('*') {
+                        let prefix = &pattern[..pattern.len() - 1];
+                        event.event_type.starts_with(prefix)
                     } else {
-                        event_type.clone()
-                    };
-                    params.push(Box::new(pattern));
+                        &event.event_type == pattern
+                    }
+                } else {
+                    &event.event_type == pattern
                 }
+            });
+            if !type_matches {
+                return false;
             }
         }
 
+        // Check host patterns (simple wildcard matching)
         if let Some(hosts) = &filters.hosts {
-            if !hosts.is_empty() {
-                let host_conditions: Vec<String> = hosts
-                    .iter()
-                    .map(|host| {
-                        *param_count += 1;
-                        if host.contains('*') {
-                            format!("host LIKE ${}", param_count)
-                        } else {
-                            format!("host = ${}", param_count)
-                        }
-                    })
-                    .collect();
-
-                conditions.push(format!("({})", host_conditions.join(" OR ")));
-
-                for host in hosts {
-                    let pattern = if host.contains('*') {
-                        host.replace('*', "%")
+            let host_matches = hosts.iter().any(|pattern| {
+                if pattern.contains('*') {
+                    // Simple wildcard matching - just check prefix/suffix
+                    if pattern.starts_with('*') && pattern.ends_with('*') {
+                        let middle = &pattern[1..pattern.len() - 1];
+                        event.host.contains(middle)
+                    } else if pattern.starts_with('*') {
+                        let suffix = &pattern[1..];
+                        event.host.ends_with(suffix)
+                    } else if pattern.ends_with('*') {
+                        let prefix = &pattern[..pattern.len() - 1];
+                        event.host.starts_with(prefix)
                     } else {
-                        host.clone()
-                    };
-                    params.push(Box::new(pattern));
+                        &event.host == pattern
+                    }
+                } else {
+                    &event.host == pattern
                 }
+            });
+            if !host_matches {
+                return false;
             }
         }
 
-        if let Some(start_time) = &filters.start_time {
-            *param_count += 1;
-            conditions.push(format!("ts_ingest >= ${}", param_count));
-            params.push(Box::new(*start_time));
-        }
-
-        if let Some(end_time) = &filters.end_time {
-            *param_count += 1;
-            conditions.push(format!("ts_ingest <= ${}", param_count));
-            params.push(Box::new(*end_time));
-        }
-
-        if let Some(limit) = filters.limit {
-            // LIMIT will be applied in the main query, not as a WHERE condition
-            // This is just for validation
-            if limit == 0 {
-                return Err(SatelliteError::Lifecycle("Limit must be greater than 0".to_string()));
+        // Check time range
+        if let Some(start_time) = filters.start_time {
+            if event.ts_ingest < start_time {
+                return false;
             }
         }
 
-        Ok(())
-    }
+        if let Some(end_time) = filters.end_time {
+            if event.ts_ingest > end_time {
+                return false;
+            }
+        }
 
-    /// Convert database row to RawEvent
-    fn row_to_raw_event(&self, row: sqlx::postgres::PgRow) -> SatelliteResult<RawEvent> {
-        use sqlx::Row;
+        // TODO: Implement payload filters when needed
+        // if let Some(payload_filters) = &filters.payload_filters {
+        //     // Complex JSON filtering logic would go here
+        // }
 
-        let id_str: String = row.get("event_id");
-        let id = id_str.parse::<sinex_ulid::Ulid>()
-            .map_err(|e| SatelliteError::Database(sqlx::Error::Decode(Box::new(e))))?;
-
-        Ok(RawEvent {
-            id,
-            source: row.get("source"),
-            event_type: row.get("event_type"),
-            host: row.get("host"),
-            payload: row.get("payload"),
-            payload_schema_id: row.get::<Option<String>, _>("payload_schema_id")
-                .and_then(|s| s.parse::<sinex_ulid::Ulid>().ok()),
-            ts_ingest: row.get("ts_ingest"),
-            ts_orig: row.get("ts_orig"),
-            ingestor_version: row.get("ingestor_version"),
-            source_event_ids: None, // Replay is from core.events, so always None
-        })
+        true
     }
 }
 

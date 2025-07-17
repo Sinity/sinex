@@ -120,7 +120,7 @@ The Hyprland ingestor must parse these events and their comma-separated data pay
 * `windowtitle>>WINDOWADDRESS` (Signals title changed. Ingestor should then query `hyprctl -j clients` for full details of this `WINDOWADDRESS` to get the new title.)
 
 **Ingestor Strategy for Rich Payloads:**
-When an event from `socket2` provides only a `WINDOWADDRESS` (e.g., `activewindowv2`, `windowtitle`), the ingestor should make a subsequent asynchronous call to `hyprctl -j clients` (via `socket1`), find the entry for that `WINDOWADDRESS`, and extract full details (class, title, PID, geometry, workspace, monitor, floating/fullscreen state, etc.) to populate the `raw.events.payload`.
+When an event from `socket2` provides only a `WINDOWADDRESS` (e.g., `activewindowv2`, `windowtitle`), the ingestor should make a subsequent asynchronous call to `hyprctl -j clients` (via `socket1`), find the entry for that `WINDOWADDRESS`, and extract full details (class, title, PID, geometry, workspace, monitor, floating/fullscreen state, etc.) to populate the `core.events.payload`.
 A local cache of window states (keyed by `WINDOWADDRESS`) can be maintained by the ingestor, updated by `openwindow`, `closewindow`, `movewindowv2`, etc., and from `hyprctl clients` responses. This can reduce redundant `hyprctl` calls, but the cache must be carefully managed for consistency.
 
 ## 6. Minimum Hyprland Version Requirements [UG Sec 4.1.5, CR2]

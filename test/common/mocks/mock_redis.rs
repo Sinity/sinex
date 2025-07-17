@@ -1,10 +1,10 @@
-//! Mock Redis implementation for testing
-//!
-//! Provides a controllable Redis substitute that can simulate:
-//! - Connection failures
-//! - Data loss scenarios
-//! - Performance degradation
-//! - Network partitions
+// Mock Redis implementation for testing
+//
+// Provides a controllable Redis substitute that can simulate:
+// - Connection failures
+// - Data loss scenarios
+// - Performance degradation
+// - Network partitions
 
 use crate::common::prelude::*;
 use redis::aio::MultiplexedConnection;
@@ -89,12 +89,11 @@ struct MockConsumer {
 
 impl MockRedis {
     pub fn new(config: MockRedisConfig) -> Self {
-        let failure_injector = super::failure_injector::FailureInjector::new(
-            super::failure_injector::FailureConfig {
+        let failure_injector =
+            super::failure_injector::FailureInjector::new(super::failure_injector::FailureConfig {
                 patterns: config.failure_patterns.clone(),
                 enabled: true,
-            }
-        );
+            });
 
         Self {
             config,
@@ -147,8 +146,7 @@ impl MockRedis {
 
     async fn should_fail_command(&self, command: &str) -> bool {
         let mut injector = self.failure_injector.lock().await;
-        injector.should_fail(command).await
-            || fastrand::f64() < self.config.command_failure_rate
+        injector.should_fail(command).await || fastrand::f64() < self.config.command_failure_rate
     }
 
     pub async fn get_stats(&self) -> MockRedisStats {
@@ -253,13 +251,15 @@ impl MockRedisConnection {
 
         let key_str = key.as_ref();
         let id_str = id.as_ref();
-        
+
         let mut streams = self.redis.streams.write().await;
-        let stream = streams.entry(key_str.to_string()).or_insert_with(|| MockRedisStream {
-            entries: Vec::new(),
-            consumer_groups: HashMap::new(),
-            last_id: "0-0".to_string(),
-        });
+        let stream = streams
+            .entry(key_str.to_string())
+            .or_insert_with(|| MockRedisStream {
+                entries: Vec::new(),
+                consumer_groups: HashMap::new(),
+                last_id: "0-0".to_string(),
+            });
 
         let actual_id = if id_str == "*" {
             // Generate time-based ID
@@ -273,7 +273,10 @@ impl MockRedisConnection {
 
         let entry = MockStreamEntry {
             id: actual_id.clone(),
-            fields: fields.iter().map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string())).collect(),
+            fields: fields
+                .iter()
+                .map(|(k, v)| (k.as_ref().to_string(), v.as_ref().to_string()))
+                .collect(),
             timestamp: Instant::now(),
         };
 
@@ -305,7 +308,10 @@ impl MockRedisConnection {
         }
 
         let streams = self.redis.streams.read().await;
-        let len = streams.get(key.as_ref()).map(|s| s.entries.len()).unwrap_or(0);
+        let len = streams
+            .get(key.as_ref())
+            .map(|s| s.entries.len())
+            .unwrap_or(0);
         Ok(len)
     }
 
@@ -333,13 +339,15 @@ impl MockRedisConnection {
 
         let key_str = key.as_ref();
         let group_str = group.as_ref();
-        
+
         let mut streams = self.redis.streams.write().await;
-        let stream = streams.entry(key_str.to_string()).or_insert_with(|| MockRedisStream {
-            entries: Vec::new(),
-            consumer_groups: HashMap::new(),
-            last_id: "0-0".to_string(),
-        });
+        let stream = streams
+            .entry(key_str.to_string())
+            .or_insert_with(|| MockRedisStream {
+                entries: Vec::new(),
+                consumer_groups: HashMap::new(),
+                last_id: "0-0".to_string(),
+            });
 
         if stream.consumer_groups.contains_key(group_str) {
             return Err(RedisError::from((
@@ -356,7 +364,9 @@ impl MockRedisConnection {
             pending_entries: Vec::new(),
         };
 
-        stream.consumer_groups.insert(group_str.to_string(), consumer_group);
+        stream
+            .consumer_groups
+            .insert(group_str.to_string(), consumer_group);
 
         Ok("OK".to_string())
     }
@@ -388,22 +398,25 @@ impl MockRedisConnection {
         let group_str = group.as_ref();
         let consumer_str = consumer.as_ref();
         let max_count = count.unwrap_or(10);
-        
+
         let mut redis_streams = self.redis.streams.write().await;
         let mut result = Vec::new();
 
         for (stream_key, start_id) in streams {
             let stream_key_str = stream_key.as_ref();
             let start_id_str = start_id.as_ref();
-            
+
             if let Some(stream) = redis_streams.get_mut(stream_key_str) {
                 if let Some(consumer_group) = stream.consumer_groups.get_mut(group_str) {
                     // Ensure consumer exists
-                    consumer_group.consumers.entry(consumer_str.to_string()).or_insert_with(|| MockConsumer {
-                        name: consumer_str.to_string(),
-                        pending_count: 0,
-                        last_seen: Instant::now(),
-                    });
+                    consumer_group
+                        .consumers
+                        .entry(consumer_str.to_string())
+                        .or_insert_with(|| MockConsumer {
+                            name: consumer_str.to_string(),
+                            pending_count: 0,
+                            last_seen: Instant::now(),
+                        });
 
                     let mut stream_entries = Vec::new();
                     let mut delivered_count = 0;
@@ -415,10 +428,12 @@ impl MockRedisConnection {
 
                         // Simple ID comparison (in real Redis this would be more sophisticated)
                         if start_id_str == ">" || entry.id > consumer_group.last_delivered_id {
-                            let fields: Vec<(String, String)> = entry.fields.iter()
+                            let fields: Vec<(String, String)> = entry
+                                .fields
+                                .iter()
                                 .map(|(k, v)| (k.clone(), v.clone()))
                                 .collect();
-                            
+
                             stream_entries.push((entry.id.clone(), fields));
                             consumer_group.last_delivered_id = entry.id.clone();
                             delivered_count += 1;
@@ -495,7 +510,11 @@ impl MockRedisConnection {
         Ok(deleted)
     }
 
-    pub async fn set<K: AsRef<str>, V: AsRef<str>>(&mut self, key: K, value: V) -> RedisResult<String> {
+    pub async fn set<K: AsRef<str>, V: AsRef<str>>(
+        &mut self,
+        key: K,
+        value: V,
+    ) -> RedisResult<String> {
         if !self.connected {
             return Err(RedisError::from((
                 redis::ErrorKind::IoError,
@@ -513,7 +532,10 @@ impl MockRedisConnection {
         }
 
         let mut data = self.redis.data.write().await;
-        data.insert(key.as_ref().to_string(), redis::Value::Data(value.as_ref().as_bytes().to_vec()));
+        data.insert(
+            key.as_ref().to_string(),
+            redis::Value::Data(value.as_ref().as_bytes().to_vec()),
+        );
 
         Ok("OK".to_string())
     }
@@ -537,9 +559,7 @@ impl MockRedisConnection {
 
         let data = self.redis.data.read().await;
         match data.get(key.as_ref()) {
-            Some(redis::Value::Data(bytes)) => {
-                Ok(Some(String::from_utf8_lossy(bytes).to_string()))
-            }
+            Some(redis::Value::Data(bytes)) => Ok(Some(String::from_utf8_lossy(bytes).to_string())),
             _ => Ok(None),
         }
     }
@@ -598,7 +618,9 @@ impl MockRedis {
 
     pub async fn verify_streams(&self, expected_streams: &[&str]) -> bool {
         let streams = self.streams.read().await;
-        expected_streams.iter().all(|key| streams.contains_key(*key))
+        expected_streams
+            .iter()
+            .all(|key| streams.contains_key(*key))
     }
 
     pub async fn get_stream_length(&self, key: &str) -> usize {
@@ -608,7 +630,8 @@ impl MockRedis {
 
     pub async fn get_consumer_groups(&self, stream_key: &str) -> Vec<String> {
         let streams = self.streams.read().await;
-        streams.get(stream_key)
+        streams
+            .get(stream_key)
             .map(|s| s.consumer_groups.keys().cloned().collect())
             .unwrap_or_default()
     }

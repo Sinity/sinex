@@ -1,30 +1,35 @@
 use clap::Parser;
-use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
-use sinex_satellite_sdk::{
-    automaton::{HotlogAutomatonRunner, HotlogAutomaton},
-    config::AutomatonConfig,
-    redis_client::RedisStreamClient,
-    grpc_client::IngestClient,
-    satellite_main,
-    SatelliteResult,
-};
 use sinex_db::create_pool;
+use sinex_events::services;
+use sinex_satellite_sdk::{
+    automaton::{HotlogAutomaton, HotlogAutomatonRunner},
+    config::AutomatonConfig,
+    grpc_client::IngestClient,
+    redis_client::RedisStreamClient,
+    satellite_main, SatelliteResult,
+};
+use sinex_terminal_command_canonicalizer::TerminalCommandCanonicalizer;
 use std::path::PathBuf;
 use tracing::info;
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Sinex terminal command canonicalizer automaton")]
+#[command(
+    author,
+    version,
+    about = "Sinex terminal command canonicalizer automaton"
+)]
 struct Args {
-    /// Configuration file path
-    #[arg(short, long)]
-    config: Option<PathBuf>,
 
     /// Database URL
     #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,
 
     /// Redis URL for message bus
-    #[arg(long, env = "SINEX_REDIS_URL", default_value = "redis://localhost:6379")]
+    #[arg(
+        long,
+        env = "SINEX_REDIS_URL",
+        default_value = "redis://localhost:6379"
+    )]
     redis_url: String,
 
     /// Consumer group name
@@ -66,18 +71,17 @@ async fn run_automaton() -> SatelliteResult<()> {
 
     info!("Starting Sinex Terminal Command Canonicalizer Automaton");
 
-    // Load configuration
-    let config = if let Some(config_path) = args.config {
-        AutomatonConfig::load_from_file(&config_path)?
-    } else {
-        create_config_from_args(&args)?
-    };
+    // Load configuration from environment and command line arguments
+    let config = create_config_from_args(&args)?;
 
     // Create database pool
-    let database_url = config.base.database_url.as_ref()
-        .ok_or_else(|| sinex_satellite_sdk::SatelliteError::Config(
-            sinex_satellite_sdk::config::ConfigError::MissingField("Database URL is required".to_string())
-        ))?;
+    let database_url = config.base.database_url.as_ref().ok_or_else(|| {
+        sinex_satellite_sdk::SatelliteError::Config(
+            sinex_satellite_sdk::config::ConfigError::MissingField(
+                "Database URL is required".to_string(),
+            ),
+        )
+    })?;
     let db_pool = create_pool(database_url).await?;
 
     // Create Redis client
@@ -91,23 +95,25 @@ async fn run_automaton() -> SatelliteResult<()> {
 
     // Create and initialize runner
     let mut runner = HotlogAutomatonRunner::new(automaton);
-    
+
     // Get event filters from automaton (need to temporarily create it)
     let temp_automaton = TerminalCommandCanonicalizer::new();
     let event_filters = temp_automaton.event_filters();
-    
-    runner.initialize(
-        config.base.service_name.clone(),
-        config.consumer_group.clone(),
-        config.consumer_name.clone(),
-        event_filters,
-        config.automaton_config.clone(),
-        db_pool,
-        redis_client,
-        ingest_client,
-        config.base.work_dir.clone(),
-        config.base.dry_run,
-    ).await?;
+
+    runner
+        .initialize(
+            config.base.service_name.clone(),
+            config.consumer_group.clone(),
+            config.consumer_name.clone(),
+            event_filters,
+            config.automaton_config.clone(),
+            db_pool,
+            redis_client,
+            ingest_client,
+            config.base.work_dir.clone(),
+            config.base.dry_run,
+        )
+        .await?;
 
     // Run the automaton
     runner.run().await?;
@@ -117,18 +123,22 @@ async fn run_automaton() -> SatelliteResult<()> {
 }
 
 fn create_config_from_args(args: &Args) -> SatelliteResult<AutomatonConfig> {
-    use std::collections::HashMap;
     use sinex_satellite_sdk::config::SatelliteConfig;
+    use std::collections::HashMap;
 
-    let database_url = args.database_url.clone()
+    let database_url = args
+        .database_url
+        .clone()
         .or_else(|| std::env::var("DATABASE_URL").ok())
         .unwrap_or_else(|| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 
-    let consumer_name = args.consumer_name.clone()
+    let consumer_name = args
+        .consumer_name
+        .clone()
         .unwrap_or_else(|| AutomatonConfig::default_consumer_name());
 
     let base_config = SatelliteConfig {
-        service_name: "sinex-terminal-command-canonicalizer".to_string(),
+        service_name: services::TERMINAL_COMMAND_CANONICALIZER.to_string(),
         log_level: args.log_level.clone(),
         ingest_socket_path: args.ingest_socket_path.clone(),
         redis_url: args.redis_url.clone(),
@@ -151,4 +161,4 @@ fn create_config_from_args(args: &Args) -> SatelliteResult<AutomatonConfig> {
 }
 
 // Use the satellite_main macro for proper lifecycle management
-satellite_main!("sinex-terminal-command-canonicalizer", run_automaton());
+satellite_main!(services::TERMINAL_COMMAND_CANONICALIZER, run_automaton());

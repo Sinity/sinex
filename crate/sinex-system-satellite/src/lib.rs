@@ -10,28 +10,30 @@
 
 mod dbus_watcher;
 mod enhanced_dbus_watcher;
-mod journal_watcher;
 mod enhanced_journal_watcher;
-mod udev_watcher;
-mod systemd_watcher;
+mod journal_watcher;
 mod payloads;
+mod systemd_watcher;
+mod udev_watcher;
 
 // New unified processor module
 pub mod unified_processor;
 
 pub use dbus_watcher::DbusWatcher;
 pub use enhanced_dbus_watcher::EnhancedDbusWatcher;
-pub use journal_watcher::JournalWatcher;
 pub use enhanced_journal_watcher::EnhancedJournalWatcher;
-pub use udev_watcher::UdevWatcher;
-pub use systemd_watcher::{SystemdWatcher, SystemdConfig};
+pub use journal_watcher::JournalWatcher;
 pub use payloads::*;
+pub use systemd_watcher::{SystemdConfig, SystemdWatcher};
+pub use udev_watcher::UdevWatcher;
 
 // Re-export for convenience
-pub use sinex_core::RawEvent;
+pub use sinex_events::RawEvent;
 
 // Re-export the new unified processor as the primary interface
-pub use unified_processor::{SystemProcessor, SystemState, DbusStatus, JournalStatus, UdevStatus, SystemdStatus};
+pub use unified_processor::{
+    DbusStatus, JournalStatus, SystemProcessor, SystemState, SystemdStatus, UdevStatus,
+};
 
 /// Configuration for system satellite
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -77,13 +79,13 @@ impl Default for SystemConfig {
 pub enum SystemSatelliteError {
     #[error("Processing error: {0}")]
     Processing(String),
-    
+
     #[error("Configuration error: {0}")]
     Configuration(String),
-    
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    
+
     #[error("JSON error: {0}")]
     Json(#[from] serde_json::Error),
 }

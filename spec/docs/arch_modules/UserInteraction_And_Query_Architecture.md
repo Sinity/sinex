@@ -49,7 +49,7 @@ User interactions follow a standardized command/response pattern that provides a
     3. **Service Processing** - Appropriate service automaton processes command from Redis Streams
     4. **Response Event** - Service emits `api.response.*` event with request ID
     5. **Response Delivery** - Gateway matches response and returns to client
-*   **Auditability:** ✅ **OPERATIONAL** - All commands and responses logged as first-class events in `raw.events`
+*   **Auditability:** ✅ **OPERATIONAL** - All commands and responses logged as first-class events in `core.events`
 *   **Timeout Handling:** ✅ **OPERATIONAL** - Gateway implements request timeouts with graceful error handling
 
 ### 2.3. `exo` Command-Line Interface

@@ -1,10 +1,12 @@
-//! Simplified Critical Failure Modes Testing
-//!
-//! This module tests critical failure scenarios that could break the system
-//! in production, focusing on basic functionality without complex dependencies.
+// Simplified Critical Failure Modes Testing
+//
+// This module tests critical failure scenarios that could break the system
+// in production, focusing on basic functionality without complex dependencies.
 
 use crate::common::prelude::*;
-use sinex_satellite_sdk::EventSourceContext;
+
+use crate::common::mocks::EventSourceContext;
+use crate::common::prelude::*;
 use sinex_satellite_sdk::VersionInfo;
 use std::fs;
 use tempfile::TempDir;
@@ -19,25 +21,25 @@ async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> TestResult {
     // Create a temporary directory with fake git directory
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
-    
+
     // Create a fake .git directory with corrupted content
     let git_dir = temp_path.join(".git");
     fs::create_dir_all(&git_dir)?;
     fs::write(git_dir.join("HEAD"), "corrupted content")?;
-    
+
     // Change to the directory with corrupted git
     let original_dir = std::env::current_dir()?;
     std::env::set_current_dir(&temp_path)?;
-    
+
     // Version tracking should handle corrupted git gracefully
     let version_info = VersionInfo::current("git-test");
-    
+
     // Should not panic and should have some form of identification
     assert!(!version_info.component_version.is_empty());
-    
+
     // Restore original directory
     std::env::set_current_dir(original_dir)?;
-    
+
     Ok(())
 }
 
@@ -45,19 +47,22 @@ async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_version_tracking_stress(_ctx: TestContext) -> TestResult {
     let start_time = std::time::Instant::now();
-    
+
     // Generate many version infos quickly
     for i in 0..50 {
         let version_info = VersionInfo::current(&format!("stress-{}", i));
         assert!(!version_info.component_version.is_empty());
     }
-    
+
     let elapsed = start_time.elapsed();
-    
+
     // Should complete in reasonable time (10 seconds for 50 generations)
-    assert!(elapsed.as_secs() < 10, 
-        "Version tracking stress test too slow: {:?}", elapsed);
-    
+    assert!(
+        elapsed.as_secs() < 10,
+        "Version tracking stress test too slow: {:?}",
+        elapsed
+    );
+
     Ok(())
 }
 
@@ -70,54 +75,61 @@ async fn test_version_tracking_stress(_ctx: TestContext) -> TestResult {
 async fn test_filesystem_monitor_large_scale(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
-    
+
     // Create many files and directories
     for i in 0..200 {
         let subdir = temp_path.join(format!("dir_{}", i));
         fs::create_dir_all(&subdir)?;
-        
+
         for j in 0..5 {
-            fs::write(subdir.join(format!("file_{}.txt", j)), format!("content {} {}", i, j))?;
+            fs::write(
+                subdir.join(format!("file_{}.txt", j)),
+                format!("content {} {}", i, j),
+            )?;
         }
     }
-    
+
     let config = serde_json::json!({
         "watch_patterns": [temp_path.to_str().unwrap()],
         "ignore_patterns": [],
         "recursive": true
     });
-    
+
     // Monitor memory usage during monitor creation
     let start_memory = get_current_memory_usage();
-    
+
     // Should handle large directory structures gracefully
     let ctx = EventSourceContext::new(config);
     let result = FilesystemMonitor::initialize(ctx).await;
-    
+
     let end_memory = get_current_memory_usage();
-    
+
     match result {
         Ok(_) => {
             // If successful, should not use excessive memory
             let memory_growth = end_memory.saturating_sub(start_memory);
-            
+
             // Should not load entire directory structure into memory (allow 100MB growth)
-            assert!(memory_growth < 100 * 1024 * 1024,
-                "Excessive memory usage: {} bytes", memory_growth);
+            assert!(
+                memory_growth < 100 * 1024 * 1024,
+                "Excessive memory usage: {} bytes",
+                memory_growth
+            );
         }
         Err(err) => {
             // If it fails, should be a resource-related error
             let error_msg = err.to_string().to_lowercase();
             assert!(
-                error_msg.contains("memory") ||
-                error_msg.contains("resource") ||
-                error_msg.contains("too many") ||
-                error_msg.contains("limit"),
-                "Expected resource error, got: {}", err
+                error_msg.contains("memory")
+                    || error_msg.contains("resource")
+                    || error_msg.contains("too many")
+                    || error_msg.contains("limit"),
+                "Expected resource error, got: {}",
+                err
             );
         }
     }
-    
+
     Ok(())
 }
 
@@ -126,28 +138,31 @@ async fn test_filesystem_monitor_large_scale(_ctx: TestContext) -> TestResult {
 async fn test_filesystem_monitor_deep_directories(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let mut current_path = temp_dir.path().to_path_buf();
-    
+
     // Create very deep directory structure (100 levels)
     for i in 0..100 {
         current_path = current_path.join(format!("level_{}", i));
         fs::create_dir_all(&current_path)?;
-        
+
         // Add a file at every 10th level
         if i % 10 == 0 {
-            fs::write(current_path.join("test.txt"), format!("content at level {}", i))?;
+            fs::write(
+                current_path.join("test.txt"),
+                format!("content at level {}", i),
+            )?;
         }
     }
-    
+
     let config = serde_json::json!({
         "watch_patterns": [temp_dir.path().to_str().unwrap()],
         "ignore_patterns": [],
         "recursive": true
     });
-    
+
     // Should handle deep directory structures without stack overflow
     let ctx = EventSourceContext::new(config);
     let result = FilesystemMonitor::initialize(ctx).await;
-    
+
     match result {
         Ok(_) => {
             // Success is good
@@ -157,11 +172,12 @@ async fn test_filesystem_monitor_deep_directories(_ctx: TestContext) -> TestResu
             let error_msg = err.to_string().to_lowercase();
             assert!(
                 !error_msg.contains("stack") && !error_msg.contains("overflow"),
-                "Should not have stack overflow error: {}", err
+                "Should not have stack overflow error: {}",
+                err
             );
         }
     }
-    
+
     Ok(())
 }
 
@@ -174,9 +190,9 @@ async fn test_filesystem_monitor_deep_directories(_ctx: TestContext) -> TestResu
 async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
-    
+
     fs::write(temp_path.join("test.txt"), "content")?;
-    
+
     let extreme_configs = vec![
         // Very long pattern
         serde_json::json!({
@@ -184,14 +200,12 @@ async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult
             "ignore_patterns": [],
             "recursive": true
         }),
-        
         // Many patterns
         serde_json::json!({
             "watch_patterns": (0..1000).map(|i| format!("{}/pattern_{}", temp_path.to_str().unwrap(), i)).collect::<Vec<_>>(),
             "ignore_patterns": [],
             "recursive": true
         }),
-        
         // Many ignore patterns
         serde_json::json!({
             "watch_patterns": [temp_path.to_str().unwrap()],
@@ -199,11 +213,11 @@ async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult
             "recursive": true
         }),
     ];
-    
+
     for (i, config) in extreme_configs.into_iter().enumerate() {
         let ctx = EventSourceContext::new(config);
         let result = FilesystemMonitor::initialize(ctx).await;
-        
+
         match result {
             Ok(_) => {
                 // Success is acceptable
@@ -212,16 +226,18 @@ async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult
                 // Should be a meaningful error about limits or configuration
                 let error_msg = err.to_string().to_lowercase();
                 assert!(
-                    error_msg.contains("config") ||
-                    error_msg.contains("limit") ||
-                    error_msg.contains("too many") ||
-                    error_msg.contains("pattern"),
-                    "Expected config/limit error for extreme config {}, got: {}", i, err
+                    error_msg.contains("config")
+                        || error_msg.contains("limit")
+                        || error_msg.contains("too many")
+                        || error_msg.contains("pattern"),
+                    "Expected config/limit error for extreme config {}, got: {}",
+                    i,
+                    err
                 );
             }
         }
     }
-    
+
     Ok(())
 }
 
@@ -234,12 +250,12 @@ async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult
 async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> TestResult {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
-    
+
     // Create files with various special characters (safe ones)
     let special_files = vec![
         "normal_file.txt",
         "file with spaces.txt",
-        "file-with-dashes.txt", 
+        "file-with-dashes.txt",
         "file_with_underscores.txt",
         "UPPERCASE.TXT",
         "lowercase.txt",
@@ -247,7 +263,7 @@ async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> TestRes
         "file123numbers.txt",
         "unicode_测试.txt",
     ];
-    
+
     for filename in &special_files {
         let file_path = temp_path.join(filename);
         if let Err(_) = fs::write(&file_path, format!("content of {}", filename)) {
@@ -255,17 +271,17 @@ async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> TestRes
             continue;
         }
     }
-    
+
     let config = serde_json::json!({
         "watch_patterns": [temp_path.to_str().unwrap()],
         "ignore_patterns": [],
         "recursive": true
     });
-    
+
     // Should handle special filenames gracefully
     let ctx = EventSourceContext::new(config);
     let result = FilesystemMonitor::initialize(ctx).await;
-    
+
     match result {
         Ok(_) => {
             // Success is good
@@ -274,14 +290,15 @@ async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> TestRes
             // Should not fail due to filename issues
             let error_msg = err.to_string().to_lowercase();
             assert!(
-                !error_msg.contains("filename") && 
-                !error_msg.contains("character") &&
-                !error_msg.contains("encoding"),
-                "Should not fail due to filename issues: {}", err
+                !error_msg.contains("filename")
+                    && !error_msg.contains("character")
+                    && !error_msg.contains("encoding"),
+                "Should not fail due to filename issues: {}",
+                err
             );
         }
     }
-    
+
     Ok(())
 }
 
@@ -298,30 +315,30 @@ async fn test_filesystem_monitor_error_recovery(_ctx: TestContext) -> TestResult
         "ignore_patterns": [],
         "recursive": true
     });
-    
+
     let ctx = EventSourceContext::new(invalid_config);
     let first_result = FilesystemMonitor::initialize(ctx).await;
-    
+
     // Should fail gracefully
     assert!(first_result.is_err());
-    
+
     // Then try with valid configuration
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
     fs::write(temp_path.join("test.txt"), "content")?;
-    
+
     let valid_config = serde_json::json!({
         "watch_patterns": [temp_path.to_str().unwrap()],
         "ignore_patterns": [],
         "recursive": true
     });
-    
+
     let ctx = EventSourceContext::new(valid_config);
     let second_result = FilesystemMonitor::initialize(ctx).await;
-    
+
     // Should succeed after previous failure
     assert!(second_result.is_ok());
-    
+
     Ok(())
 }
 
@@ -332,46 +349,46 @@ async fn test_filesystem_monitor_error_recovery(_ctx: TestContext) -> TestResult
 /// Test concurrent filesystem monitor creation
 #[sinex_test]
 async fn test_concurrent_filesystem_monitor_creation(_ctx: TestContext) -> TestResult {
-    use std::sync::Arc;
     use std::sync::atomic::{AtomicU32, Ordering};
-    
+    use std::sync::Arc;
+
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
-    
+
     // Create test file
     fs::write(temp_path.join("test.txt"), "content")?;
-    
+
     let success_count = Arc::new(AtomicU32::new(0));
     let mut tasks = Vec::new();
-    
+
     // Create monitors concurrently
     for i in 0..10 {
         let success_count = success_count.clone();
         let temp_path = temp_path.to_path_buf();
-        
+
         let task = tokio::spawn(async move {
             let config = serde_json::json!({
                 "watch_patterns": [temp_path.to_str().unwrap()],
                 "ignore_patterns": [format!("*.ignore_{}", i)], // Make each config slightly different
                 "recursive": true
             });
-            
+
             let ctx = EventSourceContext::new(config);
             match FilesystemMonitor::initialize(ctx).await {
                 Ok(_) => {
                     success_count.fetch_add(1, Ordering::SeqCst);
                     Ok(())
                 }
-                Err(e) => Err(e)
+                Err(e) => Err(e),
             }
         });
-        
+
         tasks.push(task);
     }
-    
+
     // Wait for all tasks
     let results = futures::future::join_all(tasks).await;
-    
+
     // Most should succeed
     let mut successes = 0;
     for result in results {
@@ -386,10 +403,14 @@ async fn test_concurrent_filesystem_monitor_creation(_ctx: TestContext) -> TestR
             }
         }
     }
-    
+
     // At least half should succeed
-    assert!(successes >= 5, "Too many failures in concurrent creation: {}/10", successes);
-    
+    assert!(
+        successes >= 5,
+        "Too many failures in concurrent creation: {}/10",
+        successes
+    );
+
     Ok(())
 }
 
@@ -411,7 +432,7 @@ fn get_current_memory_usage() -> usize {
             }
         }
     }
-    
+
     // Fallback: return 0 (can't measure on this platform)
     0
 }

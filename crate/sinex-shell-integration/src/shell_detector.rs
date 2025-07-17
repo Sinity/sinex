@@ -102,7 +102,7 @@ pub struct ShellDetector;
 
 impl ShellDetector {
     /// Detect the current shell environment
-    pub fn detect_current_shell() -> sinex_core::Result<ShellInfo> {
+    pub fn detect_current_shell() -> sinex_core_types::Result<ShellInfo> {
         let shell_type = Self::detect_shell_type();
         let executable_path = Self::detect_executable_path(&shell_type);
         let version = Self::detect_version(&executable_path);

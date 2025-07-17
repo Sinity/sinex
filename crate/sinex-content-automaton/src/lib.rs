@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sinex_satellite_sdk::{SatelliteResult, SatelliteError};
 use sinex_satellite_sdk::{
     EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult,
 };
+use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 use sinex_services::ContentService;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -91,8 +91,8 @@ impl ContentServiceAutomaton {
             .await
             .map_err(|e| SatelliteError::Automaton(format!("Content retrieval error: {}", e)))?;
 
-        let content_str = String::from_utf8(content)
-            .unwrap_or_else(|_| "<binary content>".to_string());
+        let content_str =
+            String::from_utf8(content).unwrap_or_else(|_| "<binary content>".to_string());
 
         Ok(json!({ "content": content_str }))
     }
@@ -109,18 +109,19 @@ impl HotlogAutomaton for ContentServiceAutomaton {
     fn automaton_name(&self) -> &str {
         "content-service"
     }
-    
+
     async fn initialize(&mut self, ctx: HotlogAutomatonContext) -> SatelliteResult<()> {
         info!("Initializing content service automaton");
-        
+
         // Initialize the content service with blob manager
         let annex_path = std::path::PathBuf::from(
             std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| "/tmp/sinex-annex".to_string()),
         );
 
         // Ensure the annex directory exists
-        std::fs::create_dir_all(&annex_path)
-            .map_err(|e| SatelliteError::Automaton(format!("Failed to create annex directory: {}", e)))?;
+        std::fs::create_dir_all(&annex_path).map_err(|e| {
+            SatelliteError::Automaton(format!("Failed to create annex directory: {}", e))
+        })?;
 
         let annex_config = sinex_annex::AnnexConfig {
             repo_path: annex_path,
@@ -129,15 +130,16 @@ impl HotlogAutomaton for ContentServiceAutomaton {
         };
 
         let blob_manager = Arc::new(
-            sinex_annex::BlobManager::new(annex_config, ctx.db_pool.clone())
-                .map_err(|e| SatelliteError::Automaton(format!("Failed to create blob manager: {}", e)))?
+            sinex_annex::BlobManager::new(annex_config, ctx.db_pool.clone()).map_err(|e| {
+                SatelliteError::Automaton(format!("Failed to create blob manager: {}", e))
+            })?,
         );
 
         let service = Arc::new(ContentService::new(ctx.db_pool.clone(), blob_manager));
-        
+
         self.service = Some(service);
         self.context = Some(ctx);
-        
+
         info!("Content service automaton initialized successfully");
         Ok(())
     }
@@ -149,16 +151,19 @@ impl HotlogAutomaton for ContentServiceAutomaton {
         ]
     }
 
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         let payload = event.event.payload.clone();
-        
+
         // Handle content RPC requests
         if event.event.source == "rpc.content" && event.event.event_type == "request" {
             match self.handle_content_request(payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
                     let _ctx = self.context.as_ref().unwrap();
-                    
+
                     let _response_event = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "response": response,
@@ -168,11 +173,13 @@ impl HotlogAutomaton for ContentServiceAutomaton {
                     // For now, just log - synthesis events need to be implemented in gRPC
                     info!("Service response logged");
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
                 Err(e) => {
                     warn!("Content request failed: {}", e);
-                    
+
                     // Submit error response
                     let _ctx = self.context.as_ref().unwrap();
                     let _error_response = serde_json::json!({
@@ -187,11 +194,15 @@ impl HotlogAutomaton for ContentServiceAutomaton {
                     // For now, just log - synthesis events need to be implemented in gRPC
                     info!("Service response logged");
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
             }
         } else {
-            Ok(ProcessingResult::Skip { reason: "Not a content request".to_string() })
+            Ok(ProcessingResult::Skip {
+                reason: "Not a content request".to_string(),
+            })
         }
     }
 }

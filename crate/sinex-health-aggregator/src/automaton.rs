@@ -2,9 +2,12 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::{RawEvent, RawEventBuilder};
+use sinex_events::{RawEvent, EventFactory, event_types, sources, services};
 use sinex_satellite_sdk::{
-    automaton::{HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult, EventFilter},
+    automaton::{
+        EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
+        ProcessingResult,
+    },
     SatelliteResult,
 };
 use std::collections::HashMap;
@@ -61,51 +64,50 @@ impl HealthAggregatorAutomaton {
         Self {
             context: None,
             expected_components: vec![
-                "sinex-ingestd".to_string(),
-                "sinex-gateway".to_string(),
-                "sinex-fs-watcher".to_string(),
-                "sinex-terminal-satellite".to_string(),
-                "sinex-health-aggregator".to_string(),
+                services::INGESTD.to_string(),
+                services::GATEWAY.to_string(),
+                services::FS_WATCHER.to_string(),
+                services::TERMINAL_SATELLITE.to_string(),
+                services::HEALTH_AGGREGATOR.to_string(),
             ],
             aggregation_window: Duration::minutes(5),
         }
     }
-    
+
     /// Process a satellite heartbeat event and extract health information
-    fn process_heartbeat_event(&self, event: &HotlogAutomatonEvent) -> SatelliteResult<Option<ComponentHealth>> {
+    fn process_heartbeat_event(
+        &self,
+        event: &HotlogAutomatonEvent,
+    ) -> SatelliteResult<Option<ComponentHealth>> {
         // Extract service information from journald satellite heartbeat events
         let payload = &event.event.payload;
-        
+
         // Handle satellite.heartbeat events from journald
         if event.event.source == "journald" && event.event.event_type == "satellite.heartbeat" {
             let service_name = payload
                 .get("service_name")
                 .and_then(|v| v.as_str())
                 .unwrap_or("unknown");
-            
-            let uptime_seconds = payload
-                .get("uptime_seconds")
-                .and_then(|v| v.as_i64());
-            
+
+            let uptime_seconds = payload.get("uptime_seconds").and_then(|v| v.as_i64());
+
             let memory_usage_mb = payload
                 .get("memory_usage_mb")
                 .and_then(|v| v.as_i64())
                 .map(|v| v as i32);
-            
-            let events_processed = payload
-                .get("events_processed")
-                .and_then(|v| v.as_i64());
-            
+
+            let events_processed = payload.get("events_processed").and_then(|v| v.as_i64());
+
             let version = payload
                 .get("version")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            
+
             let git_hash = payload
                 .get("git_hash")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
-            
+
             let component_health = ComponentHealth {
                 service_name: service_name.to_string(),
                 status: HealthStatus::Healthy, // Heartbeat means it's alive
@@ -116,35 +118,38 @@ impl HealthAggregatorAutomaton {
                 version,
                 git_hash,
             };
-            
+
             debug!(
                 service = %service_name,
                 uptime = ?uptime_seconds,
                 "Processed heartbeat for component"
             );
-            
+
             return Ok(Some(component_health));
         }
-        
+
         Ok(None)
     }
-    
+
     /// Generate a system health summary synthesis event
-    async fn generate_health_summary(&self, components: HashMap<String, ComponentHealth>) -> SatelliteResult<RawEvent> {
+    async fn generate_health_summary(
+        &self,
+        components: HashMap<String, ComponentHealth>,
+    ) -> SatelliteResult<RawEvent> {
         let now = Utc::now();
         let _cutoff = now - self.aggregation_window;
-        
+
         // Analyze component health
         let mut healthy_count = 0;
         let mut degraded_count = 0;
         let mut failed_count = 0;
         let mut missing_count = 0;
-        
+
         // Update component statuses based on heartbeat recency
         let mut updated_components = components.clone();
         for (_name, component) in updated_components.iter_mut() {
             let time_since_heartbeat = now - component.last_heartbeat;
-            
+
             if time_since_heartbeat > Duration::minutes(10) {
                 component.status = HealthStatus::Failed;
             } else if time_since_heartbeat > Duration::minutes(5) {
@@ -152,7 +157,7 @@ impl HealthAggregatorAutomaton {
             } else {
                 component.status = HealthStatus::Healthy;
             }
-            
+
             match component.status {
                 HealthStatus::Healthy => healthy_count += 1,
                 HealthStatus::Degraded => degraded_count += 1,
@@ -160,26 +165,29 @@ impl HealthAggregatorAutomaton {
                 HealthStatus::Missing => missing_count += 1,
             }
         }
-        
+
         // Check for missing expected components
         for expected in &self.expected_components {
             if !updated_components.contains_key(expected) {
                 missing_count += 1;
-                updated_components.insert(expected.clone(), ComponentHealth {
-                    service_name: expected.clone(),
-                    status: HealthStatus::Missing,
-                    last_heartbeat: DateTime::<Utc>::MIN_UTC,
-                    uptime_seconds: None,
-                    memory_usage_mb: None,
-                    events_processed: None,
-                    version: None,
-                    git_hash: None,
-                });
+                updated_components.insert(
+                    expected.clone(),
+                    ComponentHealth {
+                        service_name: expected.clone(),
+                        status: HealthStatus::Missing,
+                        last_heartbeat: DateTime::<Utc>::MIN_UTC,
+                        uptime_seconds: None,
+                        memory_usage_mb: None,
+                        events_processed: None,
+                        version: None,
+                        git_hash: None,
+                    },
+                );
             }
         }
-        
+
         let total_components = updated_components.len() as u32;
-        
+
         // Determine overall system status
         let overall_status = if failed_count > 0 || missing_count > 0 {
             HealthStatus::Failed
@@ -188,7 +196,7 @@ impl HealthAggregatorAutomaton {
         } else {
             HealthStatus::Healthy
         };
-        
+
         let summary = SystemHealthSummary {
             overall_status,
             healthy_components: healthy_count,
@@ -199,17 +207,12 @@ impl HealthAggregatorAutomaton {
             last_updated: now,
             components: updated_components,
         };
-        
+
         // Create synthesis event
-        let synthesis_event = RawEventBuilder::new(
-            "health-aggregator",
-            "system.health.summary",
-            json!(summary)
-        )
-        .with_host(gethostname::gethostname().to_string_lossy().to_string())
-        .with_orig_timestamp(now)
-        .build(); // This will be a raw event since we don't specify source_event_ids
-        
+        let factory = EventFactory::new(services::HEALTH_AGGREGATOR);
+        let mut synthesis_event = factory.create_event(event_types::sinex::SYSTEM_HEALTH_SUMMARY, json!(summary));
+        synthesis_event.ts_orig = Some(now);
+
         info!(
             overall_status = ?overall_status,
             healthy = healthy_count,
@@ -218,7 +221,7 @@ impl HealthAggregatorAutomaton {
             missing = missing_count,
             "Generated system health summary"
         );
-        
+
         Ok(synthesis_event)
     }
 }
@@ -230,10 +233,13 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
         self.context = Some(ctx);
         Ok(())
     }
-    
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         let _ctx = self.context.as_ref().unwrap();
-        
+
         // Process heartbeat events and maintain component health state
         if let Some(component_health) = self.process_heartbeat_event(&event)? {
             debug!(
@@ -241,7 +247,7 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
                 status = ?component_health.status,
                 "Updated component health"
             );
-            
+
             // Store component health in checkpoint data for persistence
             let checkpoint_data = json!({
                 "last_processed_heartbeat": {
@@ -250,34 +256,37 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
                     "status": component_health.status
                 }
             });
-            
+
             return Ok(ProcessingResult::Success {
                 checkpoint_data: Some(checkpoint_data),
             });
         }
-        
+
         // For other event types, just skip
         Ok(ProcessingResult::Skip {
             reason: "Not a satellite heartbeat event".to_string(),
         })
     }
-    
-    async fn process_batch(&mut self, events: Vec<HotlogAutomatonEvent>) -> SatelliteResult<Vec<ProcessingResult>> {
+
+    async fn process_batch(
+        &mut self,
+        events: Vec<HotlogAutomatonEvent>,
+    ) -> SatelliteResult<Vec<ProcessingResult>> {
         let ctx = self.context.as_ref().unwrap();
         let mut results = Vec::new();
         let mut components_in_batch = HashMap::new();
-        
+
         // Process all heartbeat events in the batch
         for event in &events {
             if let Some(component_health) = self.process_heartbeat_event(event)? {
                 components_in_batch.insert(component_health.service_name.clone(), component_health);
             }
         }
-        
+
         // If we found heartbeat events, generate a health summary
         if !components_in_batch.is_empty() {
             let health_summary = self.generate_health_summary(components_in_batch).await?;
-            
+
             // Emit the health summary synthesis event
             match ctx.emit_synthesis_event(health_summary).await {
                 Ok(_) => {
@@ -288,27 +297,30 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
                 }
             }
         }
-        
+
         // Generate processing results for each input event
         for event in events {
             let result = self.process_event(event).await?;
             results.push(result);
         }
-        
+
         Ok(results)
     }
-    
+
     fn event_filters(&self) -> Vec<EventFilter> {
         vec![
             // Listen for satellite heartbeat events from journald
-            EventFilter::new(Some("journald".to_string()), Some("satellite.heartbeat".to_string())),
+            EventFilter::new(
+                Some(sources::JOURNALD.to_string()),
+                Some("satellite.heartbeat".to_string()),
+            ),
             // Also listen for any sinex system events that might be relevant
-            EventFilter::new(Some("sinex".to_string()), None),
+            EventFilter::new(Some(sources::SINEX.to_string()), None),
         ]
     }
-    
+
     fn automaton_name(&self) -> &str {
-        "health-aggregator"
+        services::HEALTH_AGGREGATOR
     }
 }
 

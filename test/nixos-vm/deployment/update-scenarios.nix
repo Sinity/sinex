@@ -88,7 +88,7 @@
         # Record initial event count
         initial_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         # Check initial configuration
@@ -114,7 +114,7 @@
         
         new_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         assert new_count > initial_count, "Events should continue during update"

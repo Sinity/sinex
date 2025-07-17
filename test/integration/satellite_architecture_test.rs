@@ -1,16 +1,15 @@
-//! Integration tests for the new satellite architecture
-//!
-//! These tests verify that the satellite services can communicate
-//! properly and that the overall system works as expected.
+// Integration tests for the new satellite architecture
+//
+// These tests verify that the satellite services can communicate
+// properly and that the overall system works as expected.
 
-use anyhow::Result;
-use sinex_satellite_sdk::{
-    config::EventSourceConfig,
-    grpc_client::IngestClient,
-    SatelliteResult,
-};
-use sinex_test_macros::sinex_test;
 use crate::common::prelude::*;
+use anyhow::Result;
+use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient, SatelliteResult};
+use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_events::{EventFactory, services, event_types};
+use sinex_test_macros::sinex_test;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 use uuid;
@@ -20,15 +19,15 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());
-    
+
     info!("Testing basic satellite architecture flow");
 
     // Note: This is a unit test that verifies the SDK components work
     // Full integration would require running actual satellite processes
-    
+
     // Test 1: Verify IngestClient can be created (would fail without actual ingestd)
     let ingest_result = IngestClient::new("/run/sinex/ingest.sock").await;
-    
+
     // We expect this to fail in test environment since ingestd isn't running
     match ingest_result {
         Err(_) => {
@@ -47,20 +46,16 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
     info!("✓ Event source configuration loads correctly");
 
     // Test 3: Verify database schema includes new tables
-    let row = sqlx::query!(
-        "SELECT table_name FROM information_schema.tables 
-         WHERE table_schema = 'core' 
-         AND table_name = 'automaton_checkpoints'"
-    )
-    .fetch_optional(ctx.pool())
-    .await?;
-
-    assert!(row.is_some(), "automaton_checkpoints table should exist");
+    let table_exists = OperationQueries::check_table_exists(ctx.pool(), "core", "automaton_checkpoints").await?;
+    assert!(table_exists, "automaton_checkpoints table should exist");
     info!("✓ New database schema is in place");
 
     // Test 4: Test checkpoint functionality
     let checkpoint_test_result = test_checkpoint_functionality(ctx.pool()).await;
-    assert!(checkpoint_test_result.is_ok(), "Checkpoint functionality should work");
+    assert!(
+        checkpoint_test_result.is_ok(),
+        "Checkpoint functionality should work"
+    );
     info!("✓ Checkpoint functionality works correctly");
 
     Ok(())
@@ -72,6 +67,7 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
 
     // Test checkpoint manager
     use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
+    use sinex_satellite_sdk::stream_processor::Checkpoint;
 
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool().clone(),
@@ -83,12 +79,12 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
     // Load initial checkpoint (should be default)
     let mut checkpoint = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(checkpoint.processed_count, 0);
-    assert!(checkpoint.last_processed_id.is_none());
+    assert!(checkpoint.last_processed_id().is_none());
     info!("✓ Default checkpoint loads correctly");
 
     // Update checkpoint
     checkpoint.processed_count = 42;
-    checkpoint.last_processed_id = Some("test-message-id".to_string());
+    checkpoint.set_last_processed_id(Some("test-message-id".to_string()));
     checkpoint.data = Some(serde_json::json!({"test": "data"}));
 
     // Save checkpoint
@@ -98,8 +94,14 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
     // Load checkpoint again and verify
     let loaded_checkpoint = checkpoint_manager.load_checkpoint().await?;
     assert_eq!(loaded_checkpoint.processed_count, 42);
-    assert_eq!(loaded_checkpoint.last_processed_id, Some("test-message-id".to_string()));
-    assert_eq!(loaded_checkpoint.data, Some(serde_json::json!({"test": "data"})));
+    assert_eq!(
+        loaded_checkpoint.last_processed_id(),
+        Some("test-message-id".to_string())
+    );
+    assert_eq!(
+        loaded_checkpoint.data,
+        Some(serde_json::json!({"test": "data"}))
+    );
     info!("✓ Checkpoint loads saved data correctly");
 
     Ok(())
@@ -118,28 +120,8 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     let raw_event = create_test_command_event("ls -la", "/home/user");
 
     // Step 2: Write to core.events (simulating what ingestd would do)
-    let event_id = sinex_ulid::Ulid::new();
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (
-            id, source, event_type, host, payload,
-            payload_schema_id, ts_orig, ingestor_version
-        ) VALUES (
-            $1::uuid, $2, $3, $4, $5, $6::uuid, $7, $8
-        )
-        "#,
-        event_id.to_uuid(),
-        raw_event.source,
-        raw_event.event_type,
-        raw_event.host,
-        raw_event.payload,
-        raw_event.payload_schema_id.map(|id| id.to_uuid()),
-        raw_event.ts_orig,
-        raw_event.ingestor_version
-    )
-    .execute(ctx.pool())
-    .await?;
-    
+    let event_id = EventQueries::insert_raw_event(ctx.pool(), &raw_event).await?;
+
     info!("✓ Raw event written to database");
 
     // Step 3: Simulate automaton processing by creating canonical event in core.events
@@ -152,48 +134,21 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
         "enrichment_history": []
     });
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (
-            id, source, event_type, host, payload,
-            payload_schema_id, ts_orig, ingestor_version
-        ) VALUES (
-            $1::uuid, $2, $3, $4, $5, $6::uuid, $7, $8
-        )
-        "#,
-        canonical_event_id.to_uuid(),
-        "canonical.terminal",
-        "command.canonical",
-        "test-host",
-        canonical_payload,
-        None::<uuid::Uuid>, // No schema ID for now
-        Some(chrono::Utc::now()),
-        Some("0.4.2")
-    )
-    .execute(ctx.pool())
-    .await?;
+    let factory = EventFactory::new("canonical.terminal");
+    let mut canonical_event = factory.create_event("command.canonical", canonical_payload);
+    canonical_event.id = canonical_event_id;
+    canonical_event.ts_orig = chrono::Utc::now();
+    
+    EventQueries::insert_raw_event(ctx.pool(), &canonical_event).await?;
 
     info!("✓ Canonical event created from raw event");
 
     // Step 4: Verify the complete flow
-    let canonical_event = sqlx::query!(
-        r#"
-        SELECT 
-            id::text,
-            source,
-            event_type,
-            payload
-        FROM core.events 
-        WHERE event_id::uuid = $1::uuid
-        "#,
-        canonical_event_id.to_uuid()
-    )
-    .fetch_one(ctx.pool())
-    .await?;
+    let retrieved_canonical = EventQueries::get_event_by_id(ctx.pool(), canonical_event_id).await?;
 
-    assert_eq!(canonical_event.source, "canonical.terminal");
-    assert_eq!(canonical_event.event_type, "command.canonical");
-    assert!(canonical_event.payload.get("command").is_some());
+    assert_eq!(retrieved_canonical.source, "canonical.terminal");
+    assert_eq!(retrieved_canonical.event_type, "command.canonical");
+    assert!(retrieved_canonical.payload.get("command").is_some());
     info!("✓ Complete satellite event flow simulation successful");
 
     Ok(())
@@ -226,8 +181,7 @@ fn create_test_event_source_config() -> EventSourceConfig {
 }
 
 /// Helper function to create test command event
-fn create_test_command_event(command: &str, cwd: &str) -> sinex_core::RawEvent {
-    use sinex_events::RawEventBuilder;
+fn create_test_command_event(command: &str, cwd: &str) -> sinex_core_types::RawEvent {
     use serde_json::json;
 
     let payload = json!({
@@ -237,14 +191,14 @@ fn create_test_command_event(command: &str, cwd: &str) -> sinex_core::RawEvent {
         "duration_ms": 150
     });
 
-    RawEventBuilder::new("shell.kitty", "command.executed", payload)
-        .with_host("test-host")
-        .build()
+    let factory = EventFactory::new(sources::SHELL_KITTY);
+    factory.create_event(event_types::shell::COMMAND_EXECUTED, payload)
 }
 
 /// Helper function to test checkpoint functionality
-async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> Result<()> {
+async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> AnyhowResult<()> {
     use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
+    use sinex_satellite_sdk::stream_processor::Checkpoint;
 
     let manager = CheckpointManager::new(
         pool.clone(),
@@ -255,22 +209,25 @@ async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> Result<()> {
 
     // Test checkpoint creation and retrieval
     let checkpoint = CheckpointState {
-        last_processed_id: Some("test-id-123".to_string()),
+        checkpoint: Checkpoint::Stream {
+            message_id: "test-id-123".to_string(),
+            event_id: None,
+        },
         processed_count: 100,
         last_activity: chrono::Utc::now(),
         data: Some(serde_json::json!({"test": "checkpoint"})),
-        version: 1,
+        version: 2,
     };
 
     manager.save_checkpoint(&checkpoint).await?;
     let loaded = manager.load_checkpoint().await?;
 
-    assert_eq!(loaded.last_processed_id, checkpoint.last_processed_id);
+    assert_eq!(loaded.last_processed_id(), checkpoint.last_processed_id());
     assert_eq!(loaded.processed_count, checkpoint.processed_count);
 
-    // Test checkpoint stats
-    let stats = manager.get_checkpoint_stats().await?;
-    assert!(stats.total_checkpoints > 0);
+    // Test checkpoint stats via centralized queries
+    let checkpoint_count = CheckpointQueries::count_checkpoints_for_automaton(pool, "test-checkpoint-automaton").await?;
+    assert!(checkpoint_count > 0, "Should have checkpoint records");
 
     info!("Checkpoint functionality test passed");
     Ok(())

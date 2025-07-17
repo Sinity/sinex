@@ -1,19 +1,21 @@
-//! Adversarial testing module
-//!
-//! This module contains comprehensive security and edge case tests designed
-//! to stress-test the Sinex system under adverse conditions. Tests include
-//! security attacks, resource exhaustion, race conditions, and boundary cases.
+// Adversarial testing module
+//
+// This module contains comprehensive security and edge case tests designed
+// to stress-test the Sinex system under adverse conditions. Tests include
+// security attacks, resource exhaustion, race conditions, and boundary cases.
+//
+// # Test Categories
+// - **Security Tests**: SQL injection, privilege escalation, input validation
+// - **Resource Exhaustion**: Memory, CPU, disk, network limits
+// - **Race Conditions**: Concurrent access, timing attacks
+// - **Boundary Cases**: Large payloads, edge values, invalid data
+// - **Network Issues**: Distributed system edge cases
+// - **State Violations**: Invalid state transitions
 
-#![allow(dead_code)]
-//!
-//! # Test Categories
-//! - **Security Tests**: SQL injection, privilege escalation, input validation
-//! - **Resource Exhaustion**: Memory, CPU, disk, network limits
-//! - **Race Conditions**: Concurrent access, timing attacks
-//! - **Boundary Cases**: Large payloads, edge values, invalid data
-//! - **Network Issues**: Distributed system edge cases
-//! - **State Violations**: Invalid state transitions
+use serde_json::json;
+use sinex_events::RawEvent;
 
+#[allow(dead_code)]
 // Boundary tests for system limits
 pub mod boundary_test;
 
@@ -24,7 +26,8 @@ pub mod concurrency_test;
 
 /// Common utilities for adversarial testing
 pub mod utils {
-    use crate::common::prelude::*;
+    use serde_json::json;
+    use sinex_events::RawEvent;
 
     /// Create malicious payload for testing
     pub fn create_malicious_payload(attack_type: &str) -> serde_json::Value {

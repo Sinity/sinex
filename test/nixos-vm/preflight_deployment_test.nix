@@ -232,7 +232,7 @@ in {
     # Verify event was captured
     sinex_machine.succeed("""
         export DATABASE_URL="postgresql://sinex@localhost:5432/sinex"
-        psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM raw.events WHERE source LIKE '%filesystem%'" | grep -q '[1-9]'
+        psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM core.events WHERE source LIKE '%filesystem%'" | grep -q '[1-9]'
     """)
     
     print("✓ Standard deployment test passed")

@@ -3,7 +3,7 @@
 ## Status Dashboard
 **Maturity Level**: L3 - Ready for Implementation
 **Implementation**: 60% (Database schema fully implemented, Rust models and APIs missing)
-**Dependencies**: PostgreSQL, ULID generation, raw.events table
+**Dependencies**: PostgreSQL, ULID generation, core.events table
 **Blocks**: Context-aware suggestions, workflow reconstruction, cross-source correlation
 
 ## MVP Specification
@@ -163,7 +163,7 @@ async fn get_cluster_members(pool: &PgPool, cluster_id: Ulid) -> Result<Vec<Ulid
 SELECT ec.*, array_agg(e.event_type ORDER BY e.ts_ingest) as activity_flow
 FROM core.event_clusters ec
 JOIN core.event_cluster_members ecm ON ecm.cluster_id = ec.id
-JOIN raw.events e ON e.id = ecm.event_id
+JOIN core.events e ON e.id = ecm.event_id
 WHERE ec.cluster_type = 'debugging_session'
   AND ec.metadata->>'bug_id' = 'BUG-123'
 GROUP BY ec.id;
@@ -174,11 +174,11 @@ GROUP BY ec.id;
 ```sql
 -- Trace research flow from initial query to final notes
 WITH research_chain AS (
-  SELECT e.*, 0 as step FROM raw.events e 
+  SELECT e.*, 0 as step FROM core.events e 
   WHERE e.event_type = 'search.executed' 
     AND e.payload->>'query' ILIKE '%authentication%'
   UNION ALL
-  SELECT e2.*, rc.step + 1 FROM raw.events e2
+  SELECT e2.*, rc.step + 1 FROM core.events e2
   JOIN core.event_relations r ON r.to_event_id = e2.id
   JOIN research_chain rc ON rc.id = r.from_event_id
   WHERE r.relation_type IN ('led_to', 'informed_by')
@@ -193,8 +193,8 @@ SELECT * FROM research_chain ORDER BY step, ts_ingest;
 -- Find similar past activities for current context
 SELECT COUNT(*) as frequency, er.relation_type, e2.event_type
 FROM core.event_relations er
-JOIN raw.events e1 ON e1.id = er.from_event_id
-JOIN raw.events e2 ON e2.id = er.to_event_id
+JOIN core.events e1 ON e1.id = er.from_event_id
+JOIN core.events e2 ON e2.id = er.to_event_id
 WHERE e1.event_type = $current_event_type
   AND e1.source = $current_source
 GROUP BY er.relation_type, e2.event_type

@@ -11,9 +11,10 @@ use crate::{
     IngestdError, IngestdResult,
 };
 use redis::{AsyncCommands, Client as RedisClient};
-use sinex_core::RawEvent;
-use sqlx::PgPool;
+use sinex_db::{events::EventRecord, queries::EventQueries};
+use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
+use sqlx::PgPool;
 use std::{
     str::FromStr,
     sync::{
@@ -51,7 +52,10 @@ impl IngestService {
         let db_pool = if config.dry_run {
             None
         } else {
-            let pool = config.get_db_options().connect(&config.database_url).await?;
+            let pool = config
+                .get_db_options()
+                .connect(&config.database_url)
+                .await?;
             Some(pool)
         };
 
@@ -119,11 +123,11 @@ impl IngestService {
         // Start background tasks
         let stats = self.stats.clone();
         let shutdown_flag = self.shutdown_flag.clone();
-        
+
         // Stats logging task
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
-            
+
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
@@ -187,8 +191,8 @@ impl IngestService {
                         let should_flush = {
                             let buffer = event_buffer.lock().await;
                             let last_flush_time = *last_flush.lock().await;
-                            
-                            buffer.len() >= config.batch_size 
+
+                            buffer.len() >= config.batch_size
                                 || (!buffer.is_empty() && last_flush_time.elapsed().unwrap_or_default().as_secs() >= config.batch_timeout_secs)
                         };
 
@@ -281,7 +285,9 @@ impl IngestService {
 
         if config.dry_run {
             info!("DRY RUN: Would flush {} events", event_count);
-            stats.events_processed.fetch_add(event_count as u64, Ordering::Relaxed);
+            stats
+                .events_processed
+                .fetch_add(event_count as u64, Ordering::Relaxed);
             *last_flush.lock().await = SystemTime::now();
             return;
         }
@@ -304,15 +310,17 @@ impl IngestService {
             }
         }
 
-        stats.events_processed.fetch_add(event_count as u64, Ordering::Relaxed);
+        stats
+            .events_processed
+            .fetch_add(event_count as u64, Ordering::Relaxed);
         stats.batches_processed.fetch_add(1, Ordering::Relaxed);
         *last_flush.lock().await = SystemTime::now();
 
         debug!("Successfully flushed {} events", event_count);
     }
 
-    /// Batch write events to database with dual-log routing
-    /// 
+    /// Batch write events to database with unified architecture
+    ///
     /// This implements the unified events table architecture:
     /// - All events go to core.events
     /// - Raw events have source_event_ids = NULL, synthesis events have source_event_ids populated
@@ -321,78 +329,29 @@ impl IngestService {
             return Ok(());
         }
 
-        let mut tx = pool.begin().await?;
-
-        // Separate events by type for routing
-        let (raw_events, synthesis_events): (Vec<_>, Vec<_>) = events
-            .iter()
-            .partition(|event| event.is_raw_event());
-
-        // Insert raw events into core.events table
-        for event in &raw_events {
-            sqlx::query!(
-                r#"
-                INSERT INTO core.events (
-                    event_id, source, event_type, host, payload,
-                    payload_schema_id, ts_orig, ingestor_version
-                ) VALUES (
-                    $1::uuid, $2, $3, $4, $5, $6::uuid, $7, $8
-                )
-                "#,
-                event.id.to_uuid(),
-                event.source,
-                event.event_type,
-                event.host,
-                event.payload,
-                event.payload_schema_id.map(|id| id.to_uuid()),
+        // Insert all events into core.events table
+        // TODO: Use transaction once query builder supports executor trait
+        for event in events {
+            let _: EventRecord = EventQueries::insert_event_with_source_ids(
+                event.source.clone(),
+                event.event_type.clone(),
+                event.host.clone(),
+                event.payload.clone(),
                 event.ts_orig,
-                event.ingestor_version
+                event.ingestor_version.clone(),
+                event.payload_schema_id,
+                event.source_event_ids.clone(),
             )
-            .execute(&mut *tx)
+            .fetch_one(pool)
             .await?;
         }
 
-        // Insert synthesis events into synthesis.events table
-        for event in &synthesis_events {
-            let source_raw_event_ids: Vec<sqlx::types::Uuid> = event
-                .source_event_ids
-                .as_ref()
-                .map(|ids| ids.iter().map(|id| id.to_uuid()).collect())
-                .unwrap_or_default();
-
-            sqlx::query!(
-                r#"
-                INSERT INTO synthesis.events (
-                    id, source, event_type, host, payload,
-                    payload_schema_id, ts_orig, ingestor_version,
-                    source_raw_event_ids, source_synthesis_event_ids
-                ) VALUES (
-                    $1::uuid, $2, $3, $4, $5, $6::uuid, $7, $8, $9::uuid[], $10::uuid[]
-                )
-                "#,
-                event.id.to_uuid(),
-                event.source,
-                event.event_type,
-                event.host,
-                event.payload,
-                event.payload_schema_id.map(|id| id.to_uuid()),
-                event.ts_orig,
-                event.ingestor_version,
-                &source_raw_event_ids[..],
-                &[] as &[sqlx::types::Uuid] // source_synthesis_event_ids - empty for now
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-
-        tx.commit().await?;
-        debug!("Successfully wrote {} raw events and {} synthesis events", 
-               raw_events.len(), synthesis_events.len());
+        debug!("Successfully wrote {} events to core.events", events.len());
         Ok(())
     }
 
     /// Batch publish events to unified Redis hotlog stream
-    /// 
+    ///
     /// This implements the unified hotlog pattern from the refactoring plan:
     /// All events go to a single "sinex:streams:hotlog" stream for maximum efficiency.
     /// Automata will filter events they care about based on source/event_type.
@@ -437,7 +396,7 @@ impl IngestService {
         // Check if we should flush immediately
         if buffer.len() >= self.config.batch_size {
             drop(buffer); // Release lock before flushing
-            
+
             Self::flush_events_static(
                 &self.event_buffer,
                 &self.last_flush,
@@ -445,7 +404,8 @@ impl IngestService {
                 self.db_pool.as_ref(),
                 self.redis_client.as_ref(),
                 &self.stats,
-            ).await;
+            )
+            .await;
         }
 
         Ok(())
@@ -465,7 +425,8 @@ impl IngestService {
             self.db_pool.as_ref(),
             self.redis_client.as_ref(),
             &self.stats,
-        ).await;
+        )
+        .await;
 
         // Clean up socket file
         if std::path::Path::new(&self.config.socket_path).exists() {
@@ -518,7 +479,10 @@ impl IngestServiceTrait for IngestServiceImpl {
         let raw_event = match self.proto_to_raw_event(proto_event).await {
             Ok(event) => event,
             Err(e) => {
-                self.service.stats.validation_errors.fetch_add(1, Ordering::Relaxed);
+                self.service
+                    .stats
+                    .validation_errors
+                    .fetch_add(1, Ordering::Relaxed);
                 return Ok(Response::new(IngestResponse {
                     success: false,
                     error: Some(format!("Event conversion failed: {}", e)),
@@ -534,7 +498,10 @@ impl IngestServiceTrait for IngestServiceImpl {
         };
 
         if !validation_result.should_accept() {
-            self.service.stats.validation_errors.fetch_add(1, Ordering::Relaxed);
+            self.service
+                .stats
+                .validation_errors
+                .fetch_add(1, Ordering::Relaxed);
             return Ok(Response::new(IngestResponse {
                 success: false,
                 error: validation_result.error_message(),
@@ -554,7 +521,10 @@ impl IngestServiceTrait for IngestServiceImpl {
             }));
         }
 
-        self.service.stats.events_received.fetch_add(1, Ordering::Relaxed);
+        self.service
+            .stats
+            .events_received
+            .fetch_add(1, Ordering::Relaxed);
 
         Ok(Response::new(IngestResponse {
             success: true,
@@ -606,18 +576,27 @@ impl IngestServiceTrait for IngestServiceImpl {
                         }
                     } else {
                         failed_count += 1;
-                        self.service.stats.validation_errors.fetch_add(1, Ordering::Relaxed);
+                        self.service
+                            .stats
+                            .validation_errors
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                 }
                 Err(e) => {
                     warn!("Failed to convert proto event: {}", e);
                     failed_count += 1;
-                    self.service.stats.validation_errors.fetch_add(1, Ordering::Relaxed);
+                    self.service
+                        .stats
+                        .validation_errors
+                        .fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
 
-        self.service.stats.events_received.fetch_add(processed_count, Ordering::Relaxed);
+        self.service
+            .stats
+            .events_received
+            .fetch_add(processed_count, Ordering::Relaxed);
 
         Ok(Response::new(BatchResponse {
             success: failed_count == 0,
@@ -640,7 +619,11 @@ impl IngestServiceTrait for IngestServiceImpl {
 
         Ok(Response::new(HealthResponse {
             healthy,
-            status: if healthy { "healthy".to_string() } else { "shutting down".to_string() },
+            status: if healthy {
+                "healthy".to_string()
+            } else {
+                "shutting down".to_string()
+            },
             message: None,
         }))
     }
@@ -650,10 +633,12 @@ impl IngestServiceImpl {
     /// Convert protobuf event to RawEvent
     async fn proto_to_raw_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
         let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
-        
+
         let _blob_id = if let Some(blob_id_str) = proto.blob_id {
-            Some(Ulid::from_str(&blob_id_str)
-                .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))?)
+            Some(
+                Ulid::from_str(&blob_id_str)
+                    .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))?,
+            )
         } else {
             None
         };
@@ -664,13 +649,20 @@ impl IngestServiceImpl {
             event_type: proto.event_type,
             host: proto.host,
             payload,
-            payload_schema_id: proto.schema_name.as_ref()
+            payload_schema_id: proto
+                .schema_name
+                .as_ref()
                 .filter(|s| !s.is_empty())
                 .and_then(|s| Ulid::from_str(s).ok()),
             ts_orig: None,
             ingestor_version: Some("0.4.2".to_string()),
             ts_ingest: chrono::Utc::now(),
             source_event_ids: None, // gRPC events are always raw events
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         })
     }
 }

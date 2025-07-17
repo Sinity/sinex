@@ -1,10 +1,21 @@
 //! Event validation for the ingestion daemon
 
 use crate::IngestdResult;
-use sinex_core::RawEvent;
-use sqlx::PgPool;
+use sinex_db::{queries::SchemaQueries, SqlxPgPool as PgPool};
+use sinex_events::RawEvent;
+use sqlx::FromRow;
 use std::collections::HashMap;
 use tracing::{debug, warn};
+
+/// Schema record from database
+#[derive(Debug, FromRow)]
+struct ActiveSchemaRow {
+    schema_id: Option<String>,
+    event_source: String,
+    event_type: String,
+    schema_version: Option<i32>,
+    schema_content: serde_json::Value,
+}
 
 /// Event validator that checks events against JSON schemas
 #[derive(Debug)]
@@ -25,7 +36,10 @@ impl EventValidator {
     }
 
     /// Load schemas from database
-    pub async fn load_schemas_from_db(pool: &PgPool, validation_enabled: bool) -> IngestdResult<Self> {
+    pub async fn load_schemas_from_db(
+        pool: &PgPool,
+        validation_enabled: bool,
+    ) -> IngestdResult<Self> {
         let mut validator = Self::new(validation_enabled);
 
         if !validation_enabled {
@@ -33,29 +47,19 @@ impl EventValidator {
             return Ok(validator);
         }
 
-        // Load all active schemas from the database
-        let rows = sqlx::query!(
-            r#"
-            SELECT 
-                id::text as schema_id,
-                event_source,
-                event_type,
-                schema_version,
-                json_schema_definition as schema_content
-            FROM sinex_schemas.event_payload_schemas 
-            WHERE is_active = true
-            ORDER BY event_source, event_type, schema_version DESC
-            "#
-        )
-        .fetch_all(pool)
-        .await?;
+        // Load all active schemas from the database using the query system
+        let rows: Vec<ActiveSchemaRow> = SchemaQueries::get_all_active_schemas()
+            .fetch_all(pool)
+            .await?;
 
         for row in rows {
             let schema_key = row.schema_id.unwrap_or_default();
-            
+
             match jsonschema::JSONSchema::compile(&row.schema_content) {
                 Ok(compiled_schema) => {
-                    validator.schemas.insert(schema_key.clone(), compiled_schema);
+                    validator
+                        .schemas
+                        .insert(schema_key.clone(), compiled_schema);
                     debug!(
                         schema_id = %schema_key,
                         event_source = %row.event_source,
@@ -124,10 +128,9 @@ impl EventValidator {
                 Ok(ValidationResult::Valid)
             }
             Err(validation_errors) => {
-                let errors: Vec<String> = validation_errors
-                    .map(|error| error.to_string())
-                    .collect();
-                
+                let errors: Vec<String> =
+                    validation_errors.map(|error| error.to_string()).collect();
+
                 warn!(
                     source = %event.source,
                     event_type = %event.event_type,
@@ -176,7 +179,7 @@ impl EventValidator {
     pub async fn reload_schemas(&mut self, pool: &PgPool) -> IngestdResult<usize> {
         let new_validator = Self::load_schemas_from_db(pool, self.validation_enabled).await?;
         let old_count = self.schemas.len();
-        
+
         self.schemas = new_validator.schemas;
         self.schema_versions = new_validator.schema_versions;
 
@@ -201,22 +204,18 @@ pub enum ValidationResult {
     /// No schema specified for the event
     NoSchema,
     /// Schema not found
-    SchemaNotFound {
-        schema_id: sinex_ulid::Ulid,
-    },
+    SchemaNotFound { schema_id: sinex_ulid::Ulid },
     /// Event is invalid
-    Invalid {
-        errors: Vec<String>,
-    },
+    Invalid { errors: Vec<String> },
 }
 
 impl ValidationResult {
     /// Check if the event should be accepted
     pub fn should_accept(&self) -> bool {
         match self {
-            ValidationResult::Valid 
-            | ValidationResult::Skipped 
-            | ValidationResult::NoSchema => true,
+            ValidationResult::Valid | ValidationResult::Skipped | ValidationResult::NoSchema => {
+                true
+            }
             ValidationResult::SchemaNotFound { .. } => true, // Accept but warn
             ValidationResult::Invalid { .. } => false,
         }
@@ -264,7 +263,7 @@ impl ValidationStats {
     /// Add a validation result to the stats
     pub fn add_result(&mut self, result: &ValidationResult) {
         self.total_validated += 1;
-        
+
         match result {
             ValidationResult::Valid => self.valid_count += 1,
             ValidationResult::Invalid { .. } => self.invalid_count += 1,
@@ -279,7 +278,8 @@ impl ValidationStats {
         if self.total_validated == 0 {
             0.0
         } else {
-            (self.valid_count + self.no_schema_count + self.skipped_count) as f64 / self.total_validated as f64
+            (self.valid_count + self.no_schema_count + self.skipped_count) as f64
+                / self.total_validated as f64
         }
     }
 

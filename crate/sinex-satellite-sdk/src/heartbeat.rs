@@ -86,7 +86,7 @@ impl HeartbeatEmitter {
     /// Get current status based on error rate and activity
     fn get_current_status(&self) -> String {
         let errors = self.errors_count.load(Ordering::Relaxed);
-        
+
         // Simple heuristic: if we have more than 10 errors, we're degraded
         // If more than 50, we're failed
         if errors > 50 {
@@ -117,17 +117,14 @@ impl HeartbeatEmitter {
 
     /// Get approximate CPU usage (placeholder implementation)
     fn get_cpu_usage_percent(&self) -> f32 {
-        // This is a placeholder - proper CPU usage would require 
+        // This is a placeholder - proper CPU usage would require
         // tracking over time. For now, return 0.0
         0.0
     }
 
     /// Create heartbeat metrics
     fn create_heartbeat_metrics(&self, metadata: Option<serde_json::Value>) -> HeartbeatMetrics {
-        let uptime = self.start_time
-            .elapsed()
-            .unwrap_or_default()
-            .as_secs();
+        let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
 
         let events_processed = self.events_processed.swap(0, Ordering::Relaxed);
         let errors_count = self.errors_count.swap(0, Ordering::Relaxed) as u32;
@@ -152,7 +149,7 @@ impl HeartbeatEmitter {
     /// Emit a single heartbeat to stdout
     pub fn emit_heartbeat(&self, metadata: Option<serde_json::Value>) {
         let metrics = self.create_heartbeat_metrics(metadata);
-        
+
         // Create structured log message that journald will capture
         let log_entry = serde_json::json!({
             "level": "INFO",
@@ -179,7 +176,7 @@ impl HeartbeatEmitter {
 
         // Print directly to stdout - systemd will capture this
         println!("{}", log_entry);
-        
+
         // Also log via tracing for local debugging
         info!(
             service = %metrics.service_name,
@@ -198,7 +195,7 @@ impl HeartbeatEmitter {
         mut metadata_provider: Option<Box<dyn Fn() -> Option<serde_json::Value> + Send>>,
     ) {
         let mut interval = interval(Duration::from_secs(self.interval_seconds));
-        
+
         info!(
             service = %self.service_name,
             interval_seconds = self.interval_seconds,
@@ -207,11 +204,9 @@ impl HeartbeatEmitter {
 
         loop {
             interval.tick().await;
-            
-            let metadata = metadata_provider
-                .as_mut()
-                .and_then(|provider| provider());
-            
+
+            let metadata = metadata_provider.as_mut().and_then(|provider| provider());
+
             self.emit_heartbeat(metadata);
         }
     }
@@ -273,17 +268,17 @@ macro_rules! emit_heartbeat {
         });
         println!("{}", log_entry);
     };
-    
+
     ($service_name:expr, $($field:ident = $value:expr),+) => {
         let mut fields = serde_json::json!({
             "service_name": $service_name,
             "timestamp": chrono::Utc::now().to_rfc3339()
         });
-        
+
         $(
             fields[stringify!($field)] = serde_json::json!($value);
         )+
-        
+
         let log_entry = serde_json::json!({
             "level": "INFO",
             "message": "heartbeat",
@@ -309,10 +304,10 @@ mod tests {
     async fn test_counter_handle() {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         let handle = emitter.get_counter_handle();
-        
+
         handle.increment_events_processed(5);
         handle.record_error("test error");
-        
+
         assert_eq!(handle.get_events_processed(), 5);
         assert_eq!(handle.get_errors_count(), 1);
     }
@@ -322,7 +317,7 @@ mod tests {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         emitter.increment_events_processed(10);
         emitter.record_error("test error");
-        
+
         let metrics = emitter.create_heartbeat_metrics(None);
         assert_eq!(metrics.service_name, "test-service");
         assert_eq!(metrics.errors_count, 1);

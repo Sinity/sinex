@@ -2,10 +2,9 @@
 //!
 //! Monitors for asciinema recording files and tracks session lifecycle
 
-use sinex_satellite_sdk::SatelliteResult;
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime};
@@ -72,7 +71,10 @@ impl RecordingWatcher {
             processed_files: Vec::new(),
         };
 
-        info!("Recording watcher initialized for directory: {}", watcher.recordings_dir.display());
+        info!(
+            "Recording watcher initialized for directory: {}",
+            watcher.recordings_dir.display()
+        );
         Ok(watcher)
     }
 
@@ -85,18 +87,23 @@ impl RecordingWatcher {
         info!("Setting up automatic asciinema recording for shell sessions");
 
         let home = std::env::var("HOME").map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("HOME environment variable not set: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "HOME environment variable not set: {}",
+                e
+            ))
         })?;
 
         let home_path = PathBuf::from(&home);
 
         // Create asciinema recordings directory if it doesn't exist
-        fs::create_dir_all(&self.recordings_dir).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Failed to create recordings directory: {}",
-                e
-            ))
-        })?;
+        fs::create_dir_all(&self.recordings_dir)
+            .await
+            .map_err(|e| {
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to create recordings directory: {}",
+                    e
+                ))
+            })?;
 
         // Setup shell integration for each supported shell
         self.setup_bash_integration(&home_path).await?;
@@ -130,7 +137,11 @@ impl RecordingWatcher {
         self.add_shell_integration(&fish_config_path, "fish").await
     }
 
-    async fn add_shell_integration(&self, shell_config_path: &PathBuf, shell_name: &str) -> SatelliteResult<()> {
+    async fn add_shell_integration(
+        &self,
+        shell_config_path: &PathBuf,
+        shell_name: &str,
+    ) -> SatelliteResult<()> {
         // Check if shell config exists
         if !shell_config_path.exists() {
             // Create minimal shell config if it doesn't exist
@@ -166,15 +177,20 @@ impl RecordingWatcher {
         config_content.push_str(&integration_code);
 
         // Write updated config
-        fs::write(shell_config_path, config_content).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Failed to write shell config {}: {}",
-                shell_config_path.display(),
-                e
-            ))
-        })?;
+        fs::write(shell_config_path, config_content)
+            .await
+            .map_err(|e| {
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to write shell config {}: {}",
+                    shell_config_path.display(),
+                    e
+                ))
+            })?;
 
-        info!("Added sinex auto-recording integration to {}", shell_config_path.display());
+        info!(
+            "Added sinex auto-recording integration to {}",
+            shell_config_path.display()
+        );
         Ok(())
     }
 
@@ -260,13 +276,19 @@ end
         Ok(integration_code)
     }
 
-    async fn scan_recordings(&mut self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn scan_recordings(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let pattern = self.recordings_dir.join(&self.file_pattern);
         let pattern_str = pattern.to_string_lossy();
 
         // Find all recording files
         let paths = glob::glob(&pattern_str).map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Invalid glob pattern {}: {}", pattern_str, e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Invalid glob pattern {}: {}",
+                pattern_str, e
+            ))
         })?;
 
         for entry in paths {
@@ -286,9 +308,17 @@ end
         Ok(())
     }
 
-    async fn process_recording_file(&mut self, path: &PathBuf, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn process_recording_file(
+        &mut self,
+        path: &PathBuf,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let metadata = fs::metadata(path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get metadata for {}: {}", path.display(), e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to get metadata for {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
         let file_size = metadata.len();
@@ -344,9 +374,11 @@ end
                     "recording_file": path.clone(),
                 });
 
-                let event = RawEventBuilder::new(sinex_core::sources::SHELL_ASCIINEMA, "session.started", payload)
-                    .with_host("localhost")
-                    .build();
+                let factory = EventFactory::new(sinex_core_types::sources::SHELL_ASCIINEMA);
+                let event = factory.create_event(
+                    "session.started",
+                    payload,
+                );
 
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
@@ -387,9 +419,11 @@ end
                             "git_annex_key": null,
                         });
 
-                        let event = RawEventBuilder::new(sinex_core::sources::SHELL_ASCIINEMA, "session.ended", payload)
-                            .with_host("localhost")
-                            .build();
+                        let factory = EventFactory::new(sinex_core_types::sources::SHELL_ASCIINEMA);
+                        let event = factory.create_event(
+                            "session.ended",
+                            payload,
+                        );
 
                         if tx.send(event).is_err() {
                             warn!("Event channel closed");
@@ -415,7 +449,11 @@ end
         use tokio::io::{AsyncBufReadExt, BufReader};
 
         let file = fs::File::open(path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to open file {}: {}", path.display(), e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to open file {}: {}",
+                path.display(),
+                e
+            ))
         })?;
 
         let reader = BufReader::new(file);
@@ -424,10 +462,15 @@ end
         // First line should be the header
         if let Ok(Some(line)) = lines.next_line().await {
             serde_json::from_str(&line).map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to parse header: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to parse header: {}",
+                    e
+                ))
             })
         } else {
-            Err(sinex_satellite_sdk::SatelliteError::Processing("No header found".to_string()))
+            Err(sinex_satellite_sdk::SatelliteError::Processing(
+                "No header found".to_string(),
+            ))
         }
     }
 
@@ -435,7 +478,10 @@ end
         // Simple heuristic: check if file hasn't been modified for a while
         // A more sophisticated approach would parse the file to check for proper ending
         let metadata = fs::metadata(path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to get metadata: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to get metadata: {}",
+                e
+            ))
         })?;
 
         if let Ok(modified) = metadata.modified() {
@@ -461,7 +507,10 @@ end
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting recording event streaming");
 
         if self.auto_start_recording {

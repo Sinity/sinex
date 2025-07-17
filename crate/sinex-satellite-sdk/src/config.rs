@@ -1,27 +1,23 @@
 //! Configuration management for satellite services.
 //!
-//! This module provides a hierarchical configuration system with the following precedence:
+//! This module provides environment-based configuration with the following precedence:
 //! 1. Command-line arguments (highest priority)
 //! 2. Environment variables
-//! 3. Configuration files (TOML format)
-//! 4. Default values (lowest priority)
+//! 3. Default values (lowest priority)
 //!
 //! # Configuration Loading
-//! 
-//! All satellite services support both file-based and environment-based configuration:
-//! 
+//!
+//! All satellite services use environment-based configuration only:
+//!
 //! ```rust
 //! use sinex_satellite_sdk::config::SatelliteConfig;
-//! 
+//!
 //! // Load from environment variables and defaults
 //! let config = SatelliteConfig::load_from_env("my-service");
-//! 
-//! // Load from TOML file
-//! let config = SatelliteConfig::load_from_file(&"config.toml".into())?;
 //! ```
 //!
 //! # Environment Variables
-//! 
+//!
 //! - `SINEX_LOG_LEVEL`: Log level (trace, debug, info, warn, error)
 //! - `SINEX_INGEST_SOCKET`: Unix socket path for ingestd communication
 //! - `SINEX_REDIS_URL`: Redis connection URL
@@ -31,7 +27,7 @@
 //! - `SINEX_DRY_RUN`: Enable dry-run mode (true/false)
 //!
 //! # Validation
-//! 
+//!
 //! All configuration is validated on load. Common validation rules:
 //! - Service names must be non-empty
 //! - Log levels must be valid (trace, debug, info, warn, error)
@@ -193,35 +189,6 @@ pub struct ReplayConfig {
 }
 
 impl SatelliteConfig {
-    /// Load configuration from file.
-    ///
-    /// Loads and validates configuration from a TOML file. The file is parsed
-    /// and validated according to the configuration schema.
-    ///
-    /// # Examples
-    /// 
-    /// ```rust
-    /// use std::path::PathBuf;
-    /// use sinex_satellite_sdk::config::SatelliteConfig;
-    /// 
-    /// let config = SatelliteConfig::load_from_file(&PathBuf::from("config.toml"))?;
-    /// println!("Loaded config for service: {}", config.service_name);
-    /// ```
-    ///
-    /// Example TOML configuration:
-    /// ```toml
-    /// service_name = "my-ingestor"
-    /// log_level = "info"
-    /// ingest_socket_path = "/run/sinex/ingest.sock"
-    /// redis_url = "redis://localhost:6379"
-    /// dry_run = false
-    /// ```
-    pub fn load_from_file(path: &PathBuf) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
-        config.validate()?;
-        Ok(config)
-    }
 
     /// Load configuration from environment and defaults.
     ///
@@ -238,13 +205,13 @@ impl SatelliteConfig {
     /// - `SINEX_DRY_RUN`: Dry run mode (default: false)
     ///
     /// # Examples
-    /// 
+    ///
     /// ```rust
     /// use sinex_satellite_sdk::config::SatelliteConfig;
-    /// 
+    ///
     /// // Load with defaults
     /// let config = SatelliteConfig::load_from_env("my-service");
-    /// 
+    ///
     /// // With environment variables set:
     /// // SINEX_LOG_LEVEL=debug
     /// // SINEX_DRY_RUN=true
@@ -308,13 +275,6 @@ impl SatelliteConfig {
 }
 
 impl EventSourceConfig {
-    /// Load event source configuration from file
-    pub fn load_from_file(path: &PathBuf) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
-        config.validate()?;
-        Ok(config)
-    }
 
     /// Validate event source configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -337,13 +297,6 @@ impl EventSourceConfig {
 }
 
 impl AutomatonConfig {
-    /// Load automaton configuration from file
-    pub fn load_from_file(path: &PathBuf) -> Result<Self, ConfigError> {
-        let content = std::fs::read_to_string(path)?;
-        let config: Self = toml::from_str(&content)?;
-        config.validate()?;
-        Ok(config)
-    }
 
     /// Validate automaton configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
@@ -374,9 +327,7 @@ impl AutomatonConfig {
 
     /// Generate default consumer name from hostname and process ID
     pub fn default_consumer_name() -> String {
-        let hostname = gethostname::gethostname()
-            .to_string_lossy()
-            .to_string();
+        let hostname = gethostname::gethostname().to_string_lossy().to_string();
         let pid = std::process::id();
         format!("{}-{}", hostname, pid)
     }

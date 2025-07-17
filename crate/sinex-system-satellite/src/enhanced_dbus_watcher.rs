@@ -9,8 +9,7 @@ use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -25,12 +24,18 @@ pub struct EnhancedDbusWatcher {
 impl EnhancedDbusWatcher {
     /// Create new enhanced D-Bus watcher
     pub async fn new(config: DbusConfig) -> SatelliteResult<Self> {
-        info!("Enhanced D-Bus watcher initialized with config: {:?}", config);
+        info!(
+            "Enhanced D-Bus watcher initialized with config: {:?}",
+            config
+        );
         Ok(Self { config })
     }
 
     /// Start monitoring both session and system buses concurrently
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting enhanced D-Bus monitoring");
 
         let mut tasks = Vec::new();
@@ -49,9 +54,10 @@ impl EnhancedDbusWatcher {
         if self.config.monitor_system {
             let tx_system = tx.clone();
             let config_system = self.config.clone();
-            let task = tokio::spawn(async move {
-                Self::monitor_bus("system", tx_system, config_system).await
-            });
+            let task =
+                tokio::spawn(
+                    async move { Self::monitor_bus("system", tx_system, config_system).await },
+                );
             tasks.push(task);
         }
 
@@ -343,7 +349,8 @@ impl EnhancedDbusWatcher {
                 timestamp: timestamp.clone(),
             };
 
-            let event = Self::create_event("bluetooth.device_changed", serde_json::to_value(payload)?);
+            let event =
+                Self::create_event("bluetooth.device_changed", serde_json::to_value(payload)?);
             Self::send_event(tx, event, "dbus_bluetooth_event").await?;
         }
 
@@ -623,7 +630,9 @@ impl EnhancedDbusWatcher {
     }
 
     /// Parse notification hints from D-Bus arguments
-    fn parse_notification_hints(hints_value: &serde_json::Value) -> Option<HashMap<String, serde_json::Value>> {
+    fn parse_notification_hints(
+        hints_value: &serde_json::Value,
+    ) -> Option<HashMap<String, serde_json::Value>> {
         if let serde_json::Value::Array(dict_entries) = hints_value {
             let mut hints = HashMap::new();
 
@@ -658,7 +667,8 @@ impl EnhancedDbusWatcher {
                             for (key, value) in obj {
                                 match key.as_str() {
                                     "PlaybackStatus" => {
-                                        payload.status = value.as_str().unwrap_or("Unknown").to_string();
+                                        payload.status =
+                                            value.as_str().unwrap_or("Unknown").to_string();
                                     }
                                     "Volume" => {
                                         payload.volume = value.as_f64();
@@ -698,7 +708,11 @@ impl EnhancedDbusWatcher {
     }
 
     /// Create default media payload
-    fn default_media_payload(player: &str, sender: &Option<String>, timestamp: String) -> MediaPlaybackPayload {
+    fn default_media_payload(
+        player: &str,
+        sender: &Option<String>,
+        timestamp: String,
+    ) -> MediaPlaybackPayload {
         MediaPlaybackPayload {
             player: player.to_string(),
             player_instance: sender.clone().unwrap_or_default(),
@@ -726,9 +740,8 @@ impl EnhancedDbusWatcher {
 
     /// Create event using standard pattern
     fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
-        RawEventBuilder::new(sinex_core::sources::DBUS, event_type, payload)
-            .with_host("localhost")
-            .build()
+        let factory = EventFactory::new(sinex_core_types::sources::DBUS);
+        factory.create_event(event_type, payload)
     }
 
     /// Send event with error logging

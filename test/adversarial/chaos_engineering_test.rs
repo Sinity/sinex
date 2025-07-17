@@ -1,13 +1,16 @@
-//! # Chaos Engineering Test Suite
-//!
-//! Comprehensive chaos engineering tests that simulate system failures and edge cases.
-//! This module tests system resilience under various failure scenarios.
-//!
-//! ## Test Categories
-//! - **Automaton Lifecycle Chaos**: Concurrent registration, heartbeat failures
-//! - **Filesystem Edge Cases**: Permission changes, mount failures, file system chaos
-//! - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
-//! - **System Resource Chaos**: Memory exhaustion, disk full, network failures
+// # Chaos Engineering Test Suite
+//
+// Comprehensive chaos engineering tests that simulate system failures and edge cases.
+// This module tests system resilience under various failure scenarios.
+//
+// ## Test Categories
+// - **Automaton Lifecycle Chaos**: Concurrent registration, heartbeat failures
+// - **Filesystem Edge Cases**: Permission changes, mount failures, file system chaos
+// - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
+// - **System Resource Chaos**: Memory exhaustion, disk full, network failures
+
+use redis::cmd;
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::{events, resources};
@@ -135,11 +138,11 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
     .fetch_all(ctx.pool())
     .await?;
 
-    println!("Agents in database: {}", agents.len());
+    println!("Agents in database: {}", agents.keys.len());
 
     // The system should handle concurrent registration gracefully
     assert!(successes > 0, "At least one registration should succeed");
-    assert!(agents.len() > 0, "Agent should be registered in database");
+    assert!(agents.keys.len() > 0, "Agent should be registered in database");
 
     Ok(())
 }
@@ -671,7 +674,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
             }
 
             // Simulate database operations during init
-            match sinex_db::crate::common::insert_event_with_validator(
+            match sinex_db::crate::common::sinex_db::insert_event_with_validator(
                 &pool_clone,
                 "init",
                 &format!("init.step_{}", step),
@@ -929,7 +932,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
                     ))))
                 } else {
                     // Normal database operation
-                    match sinex_db::common::insert_event_with_validator(
+                    match sinex_db::common::sinex_db::insert_event_with_validator(
                         &pool_clone,
                         &format!("chaos-worker-{}", worker_id),
                         &format!("database.operation.{}", operation_id),
@@ -957,7 +960,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
                     for retry in 0..3 {
                         tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
                         
-                        match sinex_db::common::insert_event_with_validator(
+                        match sinex_db::common::sinex_db::insert_event_with_validator(
                             &pool_clone,
                             &format!("chaos-worker-{}", worker_id),
                             &format!("database.retry.{}.{}", operation_id, retry),
@@ -1094,9 +1097,19 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
                 
                 // Simulate stream reading
                 if stream_id % 5 == 0 {
-                    match redis_clone.xreadgroup("chaos-consumer-group", &format!("consumer-{}", worker_id), &stream_key, ">", 1).await {
+                    match cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg("chaos-consumer-group")
+                        .arg(&format!("consumer-{}", worker_id))
+                        .arg("COUNT")
+                        .arg(1)
+                        .arg("STREAMS")
+                        .arg(&stream_key)
+                        .arg(">")
+                        .query_async::<_, redis::streams::StreamReadReply>(&mut redis_clone)
+                        .await {
                         Ok(messages) => {
-                            println!("Worker {} - XREADGROUP returned {} messages", worker_id, messages.len());
+                            println!("Worker {} - XREADGROUP returned {} messages", worker_id, messages.keys.len());
                         }
                         Err(e) => {
                             println!("Worker {} - XREADGROUP failed: {}", worker_id, e);
@@ -1324,7 +1337,7 @@ async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
                     match injector.should_fail("event_ingestion").await {
                         Ok(()) => {
                             // Simulate successful event ingestion
-                            match sinex_db::common::insert_event_with_validator(
+                            match sinex_db::common::sinex_db::insert_event_with_validator(
                                 &pool_clone,
                                 &format!("cascade-component-{}", component_id),
                                 &format!("component.operation.{}", operation_id),
@@ -1533,7 +1546,7 @@ async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
                 }
                 
                 // Recovery database operations
-                match sinex_db::common::insert_event_with_validator(
+                match sinex_db::common::sinex_db::insert_event_with_validator(
                     &pool_clone,
                     &format!("recovery-component-{}", recovery_id),
                     &format!("recovery.operation.{}", op),

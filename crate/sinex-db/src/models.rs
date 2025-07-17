@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
 use sqlx::FromRow;
 
-// RawEvent and RawEventBuilder are now re-exported from sinex-core
+// RawEvent is now re-exported from sinex-events
 // This eliminates type conflicts and provides a single source of truth
 
 /// Event payload schema
@@ -39,7 +39,6 @@ pub struct AutomatonManifest {
     pub registered_at: Timestamp,
     pub updated_at: Timestamp,
 }
-
 
 /// Dead Letter Queue (DLQ) event entry
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

@@ -1,25 +1,28 @@
-//! Consolidated Database Integration Tests
-//!
-//! This module contains comprehensive integration tests for all database functionality,
-//! consolidated from multiple separate test files. Tests cover:
-//! - Basic database operations and transactions
-//! - TimescaleDB hypertable functionality
-//! - ULID primary key integration
-//! - JSON schema validation with pg_jsonschema
-//! - Checkpoint operations and progress tracking
-//! - Connection pool edge cases and limits
-//! - Query performance and optimization
-//! - Data integrity and consistency
-//!
-//! Uses #[sinex_test] for automatic transaction isolation and TestContext
-//! for unified database access.
+// Consolidated Database Integration Tests
+//
+// This module contains comprehensive integration tests for all database functionality,
+// consolidated from multiple separate test files. Tests cover:
+// - Basic database operations and transactions
+// - TimescaleDB hypertable functionality
+// - ULID primary key integration
+// - JSON schema validation with pg_jsonschema
+// - Checkpoint operations and progress tracking
+// - Connection pool edge cases and limits
+// - Query performance and optimization
+// - Data integrity and consistency
+//
+// Uses #[sinex_test] for automatic transaction isolation and TestContext
+// for unified database access.
 
 use crate::common::prelude::*;
 use crate::common::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
-use sinex_core::RawEventBuilder;
+use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_events::{EventFactory, services, event_types};
 use sinex_ulid::Ulid;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
@@ -45,7 +48,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
             let pool = ctx.pool().clone();
             let event = event.clone();
             tokio::spawn(async move {
-                sinex_db::events::insert_event_with_validator(&pool, &event, None)
+                sinex_db::insert_event_with_validator(&pool, &event, None)
                     .await
                     .map(|e| e.id)
             })
@@ -67,8 +70,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
             tokio::spawn(async move {
                 get_event_by_id(&pool, id)
                     .await
-                    .map(|_| true)
-                    .unwrap_or(false)
+                    .is_ok()
             })
         })
         .collect();
@@ -77,10 +79,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
         assert!(task.await?);
     }
 
-    // Check total count - use basic query
-    let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
-        .fetch_one(ctx.pool())
-        .await?;
+    // Check total count - use centralized query
+    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool).fetch_one(ctx.pool()).await?;
     assert!(count.unwrap_or(0) >= 10);
 
     Ok(())
@@ -107,7 +107,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
 
     // Wait for all insertions
     for task in insert_tasks {
-        task.await??;
+        task.await?;
     }
 
     // Query using our helper function
@@ -253,9 +253,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Clean up any previous test data
-    let _ = sqlx::query("DELETE FROM core.events WHERE source = 'chunk_test'")
-        .execute(pool)
-        .await;
+    let _ = EventQueries::delete_by_source("chunk_test").execute(pool).await;
 
     // Get initial chunk count
     let initial_chunks: i64 = sqlx::query_scalar(
@@ -274,24 +272,21 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     ];
 
     for (i, ts) in time_periods.iter().enumerate() {
-        let event = RawEventBuilder::new(
-            "chunk_test",
-            format!("event_type_{}", i),
+        let factory = EventFactory::new("chunk_test");
+        let event = factory.create_event(
+            &format!("event_type_{}", i),
             json!({"chunk_test": i}),
-        )
-        .build();
+        );
 
         // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
-        sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, payload)
-             VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
+        EventQueries::insert_event(
+            event_id,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            &event.payload,
         )
-        .bind(event_id.to_uuid())
-        .bind(event.source)
-        .bind(event.event_type)
-        .bind(event.host)
-        .bind(event.payload)
         .execute(pool)
         .await?;
     }
@@ -365,15 +360,13 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
     let _old_timestamp = Utc::now() - Duration::days(30);
     for i in 0..10 {
         let event_id = Ulid::new();
-        sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, payload)
-             VALUES ($1::uuid, $2, $3, $4, $5::jsonb)",
+        EventQueries::insert_event(
+            event_id,
+            "compression_test",
+            "old_event",
+            "test_host",
+            &json!({"seq": i}),
         )
-        .bind(event_id.to_uuid())
-        .bind("compression_test")
-        .bind("old_event")
-        .bind("test_host")
-        .bind(json!({"seq": i}))
         .execute(pool)
         .await?;
     }
@@ -433,12 +426,9 @@ async fn test_json_schema_registration(ctx: TestContext) -> TestResult {
             .await?;
 
     // Verify schema was stored correctly
-    let retrieved_schema: serde_json::Value = sqlx::query_scalar(
-        "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE event_id = $1::ulid"
-    )
-    .bind(schema_id.to_uuid())
-    .fetch_one(ctx.pool())
-    .await?;
+    let retrieved_schema: serde_json::Value = EventQueries::get_schema_by_id(schema_id)
+        .fetch_one(ctx.pool())
+        .await?;
 
     pretty_assertions::assert_eq!(
         retrieved_schema,
@@ -482,20 +472,14 @@ async fn test_json_schema_validation_constraint(ctx: TestContext) -> TestResult 
     let event_source = format!("ui_test-{}", test_run_id);
     let event_type = format!("user_interaction-{}", test_run_id);
 
-    let schema_id = Ulid::from_uuid(
-        sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO sinex_schemas.event_payload_schemas
-         (event_source, event_type, schema_version, json_schema_definition)
-         VALUES ($1, $2, $3, $4::jsonb)
-         RETURNING event_id::uuid",
-        )
-        .bind(&event_source)
-        .bind(&event_type)
-        .bind("v1.0")
-        .bind(&strict_schema)
-        .fetch_one(ctx.pool())
-        .await?,
-    );
+    let schema_id = EventQueries::insert_schema(
+        &event_source,
+        &event_type,
+        "v1.0",
+        &strict_schema,
+    )
+    .fetch_one(ctx.pool())
+    .await?;
 
     // Test valid payload - using event builder for cleaner syntax
     let valid_event = ctx
@@ -628,29 +612,27 @@ async fn test_complex_nested_schema_validation(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResult {
     // Test 1: Valid event should work
-    let valid_event = RawEventBuilder::new(
-        "fs",
-        event_type_constants::filesystem::FILE_CREATED,
+    let factory = EventFactory::new(sources::FS);
+    let valid_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "path": "/test/valid.txt",
             "size": 1024,
             "permissions": "644"
         }),
-    )
-    .build();
+    );
 
     // This should succeed
     let _result = insert_event(ctx.pool(), &valid_event).await?;
 
     // Test 2: Invalid event should fail
-    let invalid_event = RawEventBuilder::new(
-        "", // Empty source should fail
-        event_type_constants::filesystem::FILE_CREATED,
+    let factory = EventFactory::new(""); // Empty source should fail
+    let invalid_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "path": "/test/invalid.txt"
         }),
-    )
-    .build();
+    );
 
     let result = insert_event(ctx.pool(), &invalid_event).await;
     assert!(result.is_err(), "Invalid event should fail validation");
@@ -687,28 +669,26 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
     .await?;
 
     // Valid event
-    let valid_event = RawEventBuilder::new(
-        "fs",
-        event_type_constants::filesystem::FILE_CREATED,
+    let factory = EventFactory::new(sources::FS);
+    let valid_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "path": "/test/valid.txt",
             "size": 1024
         }),
-    )
-    .build();
+    );
 
     let _result = insert_event(ctx.pool(), &valid_event).await?;
 
     // Invalid event - missing required field
-    let invalid_event = RawEventBuilder::new(
-        "fs",
-        event_type_constants::filesystem::FILE_CREATED,
+    let factory = EventFactory::new(sources::FS);
+    let invalid_event = factory.create_event(
+        event_types::filesystem::FILE_CREATED,
         json!({
             "size": 1024
             // missing path
         }),
-    )
-    .build();
+    );
 
     let result = insert_event(ctx.pool(), &invalid_event).await;
     assert!(
@@ -727,150 +707,143 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 #[sinex_test]
 async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Create a test automaton checkpoint
     let automaton_name = "test_checkpoint_automaton";
     let consumer_group = "test_group";
     let checkpoint_id = Ulid::new();
-    
+
     // Insert checkpoint
-    sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, consumer_group, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4, $5)",
-        checkpoint_id.to_uuid(),
+    CheckpointQueries::insert_checkpoint(
+        checkpoint_id,
         automaton_name,
         consumer_group,
-        "test_event_id",
-        json!({"processed_count": 42, "test_data": true})
+        Some("test_event_id"),
+        &json!({"processed_count": 42, "test_data": true}),
     )
     .execute(pool)
     .await?;
-    
+
     // Verify checkpoint exists
-    let checkpoint = sqlx::query!(
-        "SELECT automaton_name, consumer_group, last_processed_id, state_data
-         FROM core.automaton_checkpoints WHERE id = $1::uuid",
-        checkpoint_id.to_uuid()
-    )
-    .fetch_one(pool)
-    .await?;
-    
+    let checkpoint = CheckpointQueries::get_by_id(checkpoint_id)
+        .fetch_one(pool)
+        .await?;
+
     assert_eq!(checkpoint.automaton_name, automaton_name);
-    assert_eq!(checkpoint.consumer_group.as_deref(), Some(consumer_group));
-    assert_eq!(checkpoint.last_processed_id.as_deref(), Some("test_event_id"));
-    
+    assert_eq!(checkpoint.consumer_group, consumer_group);
+    assert_eq!(
+        checkpoint.last_processed_id.as_ref(),
+        Some(&"test_event_id".to_string())
+    );
+
     let state_data = checkpoint.state_data.unwrap();
-    assert_eq!(state_data.get("processed_count").unwrap().as_u64().unwrap(), 42);
-    assert_eq!(state_data.get("test_data").unwrap().as_bool().unwrap(), true);
-    
+    assert_eq!(
+        state_data.get("processed_count").unwrap().as_u64().unwrap(),
+        42
+    );
+    assert_eq!(
+        state_data.get("test_data").unwrap().as_bool().unwrap(),
+        true
+    );
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     let automaton_name = "test_update_automaton";
     let checkpoint_id = Ulid::new();
-    
+
     // Insert initial checkpoint
-    sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
-        checkpoint_id.to_uuid(),
+    CheckpointQueries::insert_checkpoint(
+        checkpoint_id,
         automaton_name,
-        "initial_event",
-        json!({"processed_count": 10})
+        "default_group",
+        Some("initial_event"),
+        &json!({"processed_count": 10}),
     )
     .execute(pool)
     .await?;
-    
+
     // Update checkpoint
-    sqlx::query!(
-        "UPDATE core.automaton_checkpoints 
-         SET last_processed_id = $2, state_data = $3, updated_at = NOW()
-         WHERE id = $1::uuid",
-        checkpoint_id.to_uuid(),
-        "updated_event",
-        json!({"processed_count": 25, "status": "active"})
+    CheckpointQueries::update_checkpoint(
+        checkpoint_id,
+        Some("updated_event"),
+        &json!({"processed_count": 25, "status": "active"}),
     )
     .execute(pool)
     .await?;
-    
+
     // Verify update
-    let checkpoint = sqlx::query!(
-        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE id = $1::uuid",
-        checkpoint_id.to_uuid()
-    )
-    .fetch_one(pool)
-    .await?;
-    
-    assert_eq!(checkpoint.last_processed_id.as_deref(), Some("updated_event"));
-    
+    let checkpoint = CheckpointQueries::get_by_id(checkpoint_id)
+        .fetch_one(pool)
+        .await?;
+
+    assert_eq!(
+        checkpoint.last_processed_id.as_deref(),
+        Some("updated_event")
+    );
+
     let state_data = checkpoint.state_data.unwrap();
-    assert_eq!(state_data.get("processed_count").unwrap().as_u64().unwrap(), 25);
-    assert_eq!(state_data.get("status").unwrap().as_str().unwrap(), "active");
-    
+    assert_eq!(
+        state_data.get("processed_count").unwrap().as_u64().unwrap(),
+        25
+    );
+    assert_eq!(
+        state_data.get("status").unwrap().as_str().unwrap(),
+        "active"
+    );
+
     Ok(())
 }
 
 // =============================================================================
-// CHECKPOINT LIFECYCLE TESTS  
+// CHECKPOINT LIFECYCLE TESTS
 // =============================================================================
 
 #[sinex_test]
 async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test checkpoint creation and cleanup patterns
     let automaton_name = "test_lifecycle_automaton";
-    
+
     // Create multiple checkpoints for the same automaton
-    let checkpoint_ids = [
-        Ulid::new(),
-        Ulid::new(), 
-        Ulid::new()
-    ];
-    
+    let checkpoint_ids = [Ulid::new(), Ulid::new(), Ulid::new()];
+
     for (i, checkpoint_id) in checkpoint_ids.iter().enumerate() {
-        sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data, created_at)
-             VALUES ($1::uuid, $2, $3, $4, $5)",
-            checkpoint_id.to_uuid(),
+        CheckpointQueries::insert_checkpoint_with_timestamp(
+            *checkpoint_id,
             automaton_name,
-            format!("event_{}", i),
-            json!({"processed_count": i * 10}),
-            Utc::now() - Duration::hours((i + 1) as i64)
+            "default_group",
+            Some(&format!("event_{}", i)),
+            &json!({"processed_count": i * 10}),
+            Utc::now() - Duration::hours((i + 1) as i64),
         )
         .execute(pool)
         .await?;
     }
-    
+
     // Verify all checkpoints exist
-    let checkpoint_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
-        automaton_name
-    )
-    .fetch_one(pool)
-    .await?
-    .unwrap_or(0);
-    
+    let checkpoint_count: i64 = CheckpointQueries::count_by_automaton(automaton_name)
+        .fetch_one(pool)
+        .await?
+        .unwrap_or(0);
+
     assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
-    
+
     // Get the most recent checkpoint
-    let latest_checkpoint = sqlx::query!(
-        "SELECT id::text, last_processed_id, state_data 
-         FROM core.automaton_checkpoints 
-         WHERE automaton_name = $1 
-         ORDER BY created_at DESC 
-         LIMIT 1",
-        automaton_name
-    )
-    .fetch_one(pool)
-    .await?;
-    
-    assert_eq!(latest_checkpoint.last_processed_id.as_deref(), Some("event_0"));
-    
+    let latest_checkpoint = CheckpointQueries::get_by_automaton(automaton_name)
+        .fetch_one(pool)
+        .await?;
+
+    assert_eq!(
+        latest_checkpoint.last_processed_id.as_deref(),
+        Some("event_0")
+    );
+
     // Cleanup old checkpoints (keeping only the latest)
     let deleted_count = sqlx::query!(
         "DELETE FROM core.automaton_checkpoints 
@@ -878,13 +851,18 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
          AND id != $2::uuid 
          RETURNING id::text",
         automaton_name,
-        latest_checkpoint.id.unwrap().parse::<Ulid>().unwrap().to_uuid()
+        latest_checkpoint
+            .id
+            .unwrap()
+            .parse::<Ulid>()
+            .unwrap()
+            .to_uuid()
     )
     .fetch_all(pool)
     .await?;
-    
+
     assert_eq!(deleted_count.len(), 2, "Should cleanup old checkpoints");
-    
+
     // Verify only latest remains
     let remaining_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
@@ -893,9 +871,9 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     .fetch_one(pool)
     .await?
     .unwrap_or(0);
-    
+
     assert_eq!(remaining_count, 1, "Only latest checkpoint should remain");
-    
+
     Ok(())
 }
 
@@ -906,15 +884,15 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Create test checkpoints for different automata
     let automaton1 = "metrics-automaton-1";
     let automaton2 = "metrics-automaton-2";
-    
+
     let checkpoint1_id = Ulid::new();
     let checkpoint2_id = Ulid::new();
     let checkpoint3_id = Ulid::new();
-    
+
     // Insert checkpoints with different progress levels
     sqlx::query!(
         "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
@@ -926,7 +904,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query!(
         "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4)",
@@ -937,7 +915,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     )
     .execute(pool)
     .await?;
-    
+
     sqlx::query!(
         "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4)",
@@ -948,7 +926,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     )
     .execute(pool)
     .await?;
-    
+
     // Calculate checkpoint metrics by automaton
     let metrics = sqlx::query!(
         "SELECT automaton_name, COUNT(*) as checkpoint_count,
@@ -962,18 +940,24 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     )
     .fetch_all(pool)
     .await?;
-    
+
     assert_eq!(metrics.len(), 2, "Should have metrics for both automata");
-    
-    let automaton1_metrics = metrics.iter().find(|m| m.automaton_name == automaton1).unwrap();
-    let automaton2_metrics = metrics.iter().find(|m| m.automaton_name == automaton2).unwrap();
-    
+
+    let automaton1_metrics = metrics
+        .iter()
+        .find(|m| m.automaton_name == automaton1)
+        .unwrap();
+    let automaton2_metrics = metrics
+        .iter()
+        .find(|m| m.automaton_name == automaton2)
+        .unwrap();
+
     assert_eq!(automaton1_metrics.checkpoint_count.unwrap(), 2);
     assert_eq!(automaton1_metrics.max_processed.unwrap(), 200);
-    
+
     assert_eq!(automaton2_metrics.checkpoint_count.unwrap(), 1);
     assert_eq!(automaton2_metrics.max_processed.unwrap(), 50);
-    
+
     Ok(())
 }
 
@@ -984,13 +968,13 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test that checkpoint data coordinates with Redis Streams
     // This simulates the satellite architecture pattern
-    
+
     let automaton_name = "redis-test-automaton";
     let consumer_group = "test_consumer_group";
-    
+
     // Create checkpoint that would correspond to Redis consumer group state
     let checkpoint_id = Ulid::new();
     sqlx::query!(
@@ -1009,7 +993,7 @@ async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestRes
     )
     .execute(pool)
     .await?;
-    
+
     // Verify checkpoint exists and has expected Redis-compatible structure
     let checkpoint = sqlx::query!(
         "SELECT automaton_name, consumer_group, last_processed_id, state_data
@@ -1018,25 +1002,28 @@ async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestRes
     )
     .fetch_one(pool)
     .await?;
-    
+
     assert_eq!(checkpoint.automaton_name, automaton_name);
-    assert_eq!(checkpoint.consumer_group.as_deref(), Some(consumer_group));
-    assert_eq!(checkpoint.last_processed_id.as_deref(), Some("1640995200000-0"));
-    
+    assert_eq!(checkpoint.consumer_group, consumer_group);
+    assert_eq!(
+        checkpoint.last_processed_id.as_ref(),
+        Some(&"1640995200000-0".to_string())
+    );
+
     let state = checkpoint.state_data.unwrap();
     assert_eq!(state.get("processed_count").unwrap().as_u64().unwrap(), 15);
     assert_eq!(state.get("pending_count").unwrap().as_u64().unwrap(), 3);
-    
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test checkpoint progress tracking for satellite architecture
     let automaton_name = "progress-tracking-automaton";
-    
+
     // Simulate processing progress over time
     let progress_points = [
         ("1640995200000-0", 0),
@@ -1044,9 +1031,9 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
         ("1640995220000-0", 12),
         ("1640995230000-0", 18),
     ];
-    
+
     let checkpoint_id = Ulid::new();
-    
+
     // Insert initial checkpoint
     sqlx::query!(
         "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
@@ -1058,7 +1045,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
     )
     .execute(pool)
     .await?;
-    
+
     // Simulate progress updates
     for (stream_id, count) in &progress_points[1..] {
         sqlx::query!(
@@ -1072,7 +1059,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
         .execute(pool)
         .await?;
     }
-    
+
     // Verify final state
     let final_checkpoint = sqlx::query!(
         "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE id = $1::uuid",
@@ -1080,12 +1067,15 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
     )
     .fetch_one(pool)
     .await?;
-    
-    assert_eq!(final_checkpoint.last_processed_id.as_deref(), Some("1640995230000-0"));
-    
+
+    assert_eq!(
+        final_checkpoint.last_processed_id.as_deref(),
+        Some("1640995230000-0")
+    );
+
     let state = final_checkpoint.state_data.unwrap();
     assert_eq!(state.get("processed_count").unwrap().as_u64().unwrap(), 18);
-    
+
     Ok(())
 }
 
@@ -1156,7 +1146,7 @@ async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResul
             // Each task does a quick query
             let result: i32 = sqlx::query_scalar("SELECT $1::int")
                 .bind(i)
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?;
 
             Ok::<_, sqlx::Error>(result)
@@ -1241,60 +1231,66 @@ async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_operations_log_basic_functionality(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test start_operation function
-    let operation_id: Ulid = sqlx::query_scalar!(
-        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+    let operation_id_str: String = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
         "stage",
-        "test_user", 
+        "test_user",
         json!({"command": "exo blob stage test.log", "flags": ["--verbose"]})
     )
     .fetch_one(pool)
     .await?;
-    
+
+    use std::str::FromStr;
+    let operation_id = Ulid::from_str(&operation_id_str)?;
+
     // Verify operation was created correctly
     let operation = sqlx::query!(
         "SELECT operation_type, status, invoked_by_user, parameters
-         FROM core.operations_log WHERE operation_id = $1::uuid",
-        operation_id.to_uuid()
+         FROM core.operations_log WHERE operation_id = $1::text::ulid",
+        operation_id_str
     )
     .fetch_one(pool)
     .await?;
-    
+
     assert_eq!(operation.operation_type, "stage");
     assert_eq!(operation.status, "started");
     assert_eq!(operation.invoked_by_user.as_deref(), Some("test_user"));
-    
+
     let params = operation.parameters;
-    assert_eq!(params.get("command").unwrap().as_str().unwrap(), "exo blob stage test.log");
-    
+    assert_eq!(
+        params.get("command").unwrap().as_str().unwrap(),
+        "exo blob stage test.log"
+    );
+
     // Test complete_operation function
     sqlx::query!(
-        "SELECT core.complete_operation($1::ulid, $2::jsonb)",
-        operation_id,
+        "SELECT core.complete_operation($1::text::ulid, $2::jsonb)",
+        operation_id_str,
         json!({"events_created": 42, "blobs_processed": 1})
     )
     .execute(pool)
     .await?;
-    
+
     // Verify completion and duration calculation
     let completed_operation = sqlx::query!(
         "SELECT status, completed_at, duration_ms, summary
-         FROM core.operations_log WHERE operation_id = $1::uuid",
-        operation_id.to_uuid()
+         FROM core.operations_log WHERE operation_id = $1::text::ulid",
+        operation_id_str
     )
     .fetch_one(pool)
     .await?;
-    
+
     assert_eq!(completed_operation.status, "completed");
     assert!(completed_operation.completed_at.is_some());
     assert!(completed_operation.duration_ms.is_some());
     assert!(completed_operation.duration_ms.unwrap() >= 0);
-    
+
     let summary = completed_operation.summary.unwrap();
     assert_eq!(summary.get("events_created").unwrap().as_u64().unwrap(), 42);
     assert_eq!(summary.get("blobs_processed").unwrap().as_u64().unwrap(), 1);
-    
+
     Ok(())
 }
 
@@ -1302,54 +1298,55 @@ async fn test_operations_log_basic_functionality(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_operations_log_error_handling(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Test invalid operation type
-    let result = sqlx::query_scalar::<_, Ulid>(
-        "SELECT core.start_operation($1, $2, $3::jsonb)"
-    )
-    .bind("invalid_type")
-    .bind("test_user")
-    .bind(json!({}))
-    .fetch_one(pool)
-    .await;
-    
+    let result = sqlx::query_scalar::<_, Ulid>("SELECT core.start_operation($1, $2, $3::jsonb)")
+        .bind("invalid_type")
+        .bind("test_user")
+        .bind(json!({}))
+        .fetch_one(pool)
+        .await;
+
     assert!(result.is_err(), "Should reject invalid operation type");
-    
+
     // Test fail_operation function
-    let operation_id: Ulid = sqlx::query_scalar!(
-        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+    let operation_id_str: String = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
         "replay",
         "test_user",
         json!({"command": "exo replay --ingestor fs-watcher --blob abc123"})
     )
     .fetch_one(pool)
     .await?;
-    
+
     sqlx::query!(
-        "SELECT core.fail_operation($1::ulid, $2::jsonb)",
-        operation_id,
+        "SELECT core.fail_operation($1::text::ulid, $2::jsonb)",
+        operation_id_str,
         json!({"error": "blob not found", "error_code": "E404"})
     )
     .execute(pool)
     .await?;
-    
+
     // Verify failure was recorded
     let failed_operation = sqlx::query!(
         "SELECT status, completed_at, duration_ms, summary
-         FROM core.operations_log WHERE operation_id = $1::uuid",
-        operation_id.to_uuid()
+         FROM core.operations_log WHERE operation_id = $1::text::ulid",
+        operation_id_str
     )
     .fetch_one(pool)
     .await?;
-    
+
     assert_eq!(failed_operation.status, "failed");
     assert!(failed_operation.completed_at.is_some());
     assert!(failed_operation.duration_ms.is_some());
-    
+
     let summary = failed_operation.summary.unwrap();
-    assert_eq!(summary.get("error").unwrap().as_str().unwrap(), "blob not found");
+    assert_eq!(
+        summary.get("error").unwrap().as_str().unwrap(),
+        "blob not found"
+    );
     assert_eq!(summary.get("error_code").unwrap().as_str().unwrap(), "E404");
-    
+
     Ok(())
 }
 
@@ -1357,35 +1354,35 @@ async fn test_operations_log_error_handling(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Create multiple operations for index testing
     let operation_types = ["stage", "replay", "archive", "restore", "curate"];
     let users = ["user1", "user2", "user3"];
-    
+
     for op_type in &operation_types {
         for user in &users {
-            let operation_id: Ulid = sqlx::query_scalar!(
-                "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+            let operation_id_str: String = sqlx::query_scalar!(
+                "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
                 op_type,
                 user,
                 json!({"test": true})
             )
             .fetch_one(pool)
             .await?;
-            
+
             // Complete half of them, fail the other half
-            if operation_id.to_string().chars().last().unwrap() as u8 % 2 == 0 {
+            if operation_id_str.chars().last().unwrap() as u8 % 2 == 0 {
                 sqlx::query!(
-                    "SELECT core.complete_operation($1::ulid, $2::jsonb)",
-                    operation_id,
+                    "SELECT core.complete_operation($1::text::ulid, $2::jsonb)",
+                    operation_id_str,
                     json!({"test": "completed"})
                 )
                 .execute(pool)
                 .await?;
             } else {
                 sqlx::query!(
-                    "SELECT core.fail_operation($1::ulid, $2::jsonb)",
-                    operation_id,
+                    "SELECT core.fail_operation($1::text::ulid, $2::jsonb)",
+                    operation_id_str,
                     json!({"test": "failed"})
                 )
                 .execute(pool)
@@ -1393,10 +1390,10 @@ async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
             }
         }
     }
-    
+
     // Test that index is used for common queries
     // Query by operation type and status (should use idx_operations_log_monitoring)
-    let explain_result = sqlx::query!(
+    let explain_result = sqlx::query_scalar!(
         "EXPLAIN SELECT * FROM core.operations_log 
          WHERE operation_type = $1 AND status = $2 
          ORDER BY started_at DESC LIMIT 10",
@@ -1405,17 +1402,20 @@ async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
     )
     .fetch_all(pool)
     .await?;
-    
+
     let plan = explain_result
-        .iter()
-        .map(|row| row.query_plan.as_deref().unwrap_or(""))
-        .collect::<Vec<_>>()
+        .into_iter()
+        .filter_map(|x| x)
+        .collect::<Vec<String>>()
         .join(" ");
-    
+
     // Should use the monitoring index
-    assert!(plan.contains("idx_operations_log_monitoring") || plan.contains("Index Scan"),
-            "Query should use index efficiently: {}", plan);
-    
+    assert!(
+        plan.contains("idx_operations_log_monitoring") || plan.contains("Index Scan"),
+        "Query should use index efficiently: {}",
+        plan
+    );
+
     // Test user-based query
     let user_operations = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.operations_log WHERE invoked_by_user = $1",
@@ -1423,9 +1423,9 @@ async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
     )
     .fetch_one(pool)
     .await?;
-    
+
     assert_eq!(user_operations.count.unwrap(), 5); // 5 operation types for user1
-    
+
     Ok(())
 }
 
@@ -1433,13 +1433,13 @@ async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    
+
     // Simulate a complete workflow with proper audit trail
     let user = "audit_test_user";
-    
+
     // 1. Stage operation
-    let stage_op_id: Ulid = sqlx::query_scalar!(
-        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+    let stage_op_id_str: String = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
         "stage",
         user,
         json!({
@@ -1451,10 +1451,10 @@ async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
     )
     .fetch_one(pool)
     .await?;
-    
+
     sqlx::query!(
-        "SELECT core.complete_operation($1::ulid, $2::jsonb)",
-        stage_op_id,
+        "SELECT core.complete_operation($1::text::ulid, $2::jsonb)",
+        stage_op_id_str,
         json!({
             "blob_id": "01K0B2PBEWTZTS5AG5A128C92Z",
             "events_created": 1,
@@ -1464,10 +1464,10 @@ async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
     )
     .execute(pool)
     .await?;
-    
+
     // 2. Replay operation
-    let replay_op_id: Ulid = sqlx::query_scalar!(
-        "SELECT core.start_operation($1, $2, $3::jsonb) as \"operation_id!\"",
+    let replay_op_id_str: String = sqlx::query_scalar!(
+        "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
         "replay",
         user,
         json!({
@@ -1479,10 +1479,10 @@ async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
     )
     .fetch_one(pool)
     .await?;
-    
+
     sqlx::query!(
-        "SELECT core.complete_operation($1::ulid, $2::jsonb)",
-        replay_op_id,
+        "SELECT core.complete_operation($1::text::ulid, $2::jsonb)",
+        replay_op_id_str,
         json!({
             "events_created": 127,
             "events_archived": 3,
@@ -1495,7 +1495,7 @@ async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
     )
     .execute(pool)
     .await?;
-    
+
     // Verify complete audit trail
     let audit_trail = sqlx::query!(
         "SELECT operation_id::text, operation_type, status, 
@@ -1507,38 +1507,67 @@ async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
     )
     .fetch_all(pool)
     .await?;
-    
+
     assert_eq!(audit_trail.len(), 2, "Should have complete audit trail");
-    
+
     // Verify stage operation
     let stage_record = &audit_trail[0];
     assert_eq!(stage_record.operation_type, "stage");
     assert_eq!(stage_record.status, "completed");
     assert!(stage_record.duration_ms.is_some());
-    
+
     let stage_params = &stage_record.parameters;
-    assert_eq!(stage_params.get("command").unwrap().as_str().unwrap(), 
-               "exo blob stage /path/to/important.log");
-    
+    assert_eq!(
+        stage_params.get("command").unwrap().as_str().unwrap(),
+        "exo blob stage /path/to/important.log"
+    );
+
     let stage_summary = stage_record.summary.as_ref().unwrap();
-    assert_eq!(stage_summary.get("events_created").unwrap().as_u64().unwrap(), 1);
-    assert_eq!(stage_summary.get("bytes_staged").unwrap().as_u64().unwrap(), 1048576);
-    
+    assert_eq!(
+        stage_summary
+            .get("events_created")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        stage_summary.get("bytes_staged").unwrap().as_u64().unwrap(),
+        1048576
+    );
+
     // Verify replay operation
     let replay_record = &audit_trail[1];
     assert_eq!(replay_record.operation_type, "replay");
     assert_eq!(replay_record.status, "completed");
-    
+
     let replay_params = &replay_record.parameters;
-    assert_eq!(replay_params.get("ingestor").unwrap().as_str().unwrap(), "system-logs");
-    
+    assert_eq!(
+        replay_params.get("ingestor").unwrap().as_str().unwrap(),
+        "system-logs"
+    );
+
     let replay_summary = replay_record.summary.as_ref().unwrap();
-    assert_eq!(replay_summary.get("events_created").unwrap().as_u64().unwrap(), 127);
-    assert_eq!(replay_summary.get("events_archived").unwrap().as_u64().unwrap(), 3);
-    
+    assert_eq!(
+        replay_summary
+            .get("events_created")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        127
+    );
+    assert_eq!(
+        replay_summary
+            .get("events_archived")
+            .unwrap()
+            .as_u64()
+            .unwrap(),
+        3
+    );
+
     // Verify operations are in chronological order
     assert!(audit_trail[0].started_at < audit_trail[1].started_at);
-    
+
     Ok(())
 }
 

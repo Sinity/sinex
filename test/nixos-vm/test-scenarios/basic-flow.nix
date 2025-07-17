@@ -137,7 +137,7 @@ EOF
     
     def get_event_count():
         result = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events;\"'"
+            "su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events;\"'"
         )
         return int(result.strip())
     
@@ -168,7 +168,7 @@ EOF
             timeout=30
         )
         print(f"Raw schema tables:\n{tables}")
-        assert "events" in tables, "raw.events table not created"
+        assert "events" in tables, "core.events table not created"
         
         # Check extensions with retry
         extensions = machine.wait_until_succeeds(
@@ -347,7 +347,7 @@ EOF
     with subtest("Database integration"):
         # Verify events in database with retry
         result = machine.wait_until_succeeds(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events;\"'",
+            "su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events;\"'",
             timeout=10
         )
         db_count = int(result.strip())

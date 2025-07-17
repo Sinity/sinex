@@ -204,7 +204,7 @@ As a lifelong archive, ensuring data durability and integrity is paramount.
 The Exocortex is designed to be an adaptable, living system that can grow with the user and evolving technologies.
 
 * **Performance & Scalability:** The architecture incorporates strategies for database performance tuning (indexing, query optimization, TimescaleDB features), agent and ingestion scalability (asynchronous processing, batching, potential for parallelization), and resource management.
-* **Schema Evolution:** While `raw.events.payload` (JSONB) offers flexibility, changes to core database schemas are managed via versioned SQL migration scripts. The event payload schema registry supports versioning.
+* **Schema Evolution:** While `core.events.payload` (JSONB) offers flexibility, changes to core database schemas are managed via versioned SQL migration scripts. The event payload schema registry supports versioning.
 * **Open Architecture (Personal Context):** While a personal system, its reliance on open standards, open-source components, and declarative configuration (NixOS) allows for user understanding, customization ("hackability"), and extension.
 * *Architectural realization described in: `SystemOperations_And_Integrity_Architecture.md`.*
 
@@ -269,7 +269,7 @@ Over a period of weeks or months, the Exocortex accumulates a rich, longitudinal
 Dashboards in Grafana can visualize these trends over time, making patterns more apparent. An "Analytical Agent" could even be tasked with periodically running pre-defined statistical tests on these correlations and reporting significant findings as `sinex.analytics.experiment_result` events.
 
 **Iterating and Refining Personal Systems:**
-The true power lies in the iterative loop. The results of one experiment inform the next. If increased sleep doesn't significantly impact coding focus, but reduced morning social media does, the user has actionable data. If short walks *do* reduce fatigue-related friction, that habit can be reinforced. The Exocortex becomes a tool for **A/B testing life strategies** on oneself. The "Living Document" can serve as the lab notebook, where hypotheses, experimental designs, raw observations (linked from `raw.events`), analyses, and conclusions are recorded and evolved.
+The true power lies in the iterative loop. The results of one experiment inform the next. If increased sleep doesn't significantly impact coding focus, but reduced morning social media does, the user has actionable data. If short walks *do* reduce fatigue-related friction, that habit can be reinforced. The Exocortex becomes a tool for **A/B testing life strategies** on oneself. The "Living Document" can serve as the lab notebook, where hypotheses, experimental designs, raw observations (linked from `core.events`), analyses, and conclusions are recorded and evolved.
 
 This approach extends beyond simple productivity. One could experiment with:
 

@@ -40,11 +40,39 @@
 //! - Frequent checkpoint updates are batched for better performance
 //! - Historical checkpoint queries are limited to prevent memory issues
 
-use crate::{stream_processor::Checkpoint, SatelliteResult, SatelliteError};
+use crate::{stream_processor::Checkpoint, SatelliteError, SatelliteResult};
 use serde::{Deserialize, Serialize};
-use sinex_db::SqlxPgPool as PgPool;
+use sinex_db::{queries::CheckpointQueries, SqlxPgPool as PgPool};
 use sinex_ulid::Ulid;
 use tracing::{debug, info, warn};
+
+// Database record structures for query results
+#[derive(sqlx::FromRow)]
+struct CheckpointRecord {
+    pub id: Ulid,
+    #[allow(dead_code)] // Used by database query but not in code
+    pub automaton_name: String,
+    #[allow(dead_code)] // Used by database query but not in code
+    pub consumer_group: String,
+    #[allow(dead_code)] // Used by database query but not in code
+    pub consumer_name: String,
+    pub last_processed_id: Option<String>,
+    pub processed_count: i64,
+    pub last_activity: chrono::DateTime<chrono::Utc>,
+    pub state_data: Option<serde_json::Value>,
+    pub checkpoint_version: i32,
+    pub checkpoint_data: Option<serde_json::Value>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CheckpointStatsRecord {
+    pub total_checkpoints: i64,
+    pub max_processed: Option<i64>,
+    pub last_update: Option<chrono::DateTime<chrono::Utc>>,
+    pub first_checkpoint: Option<chrono::DateTime<chrono::Utc>>,
+}
 
 /// Unified checkpoint state for both ingestors and automata.
 ///
@@ -99,6 +127,40 @@ pub struct LegacyCheckpointState {
     pub version: u32,
 }
 
+impl CheckpointState {
+    /// Extract the last processed ID in string format for backward compatibility
+    pub fn last_processed_id(&self) -> Option<String> {
+        match &self.checkpoint {
+            Checkpoint::None => None,
+            Checkpoint::Internal { event_id, .. } => Some(event_id.to_string()),
+            Checkpoint::External { .. } => None, // External checkpoints don't have event IDs
+            Checkpoint::Stream { message_id, .. } => Some(message_id.clone()),
+            Checkpoint::Timestamp { .. } => None, // Timestamp checkpoints don't have event IDs
+        }
+    }
+
+    /// Set the last processed ID (for backward compatibility)
+    pub fn set_last_processed_id(&mut self, id: Option<String>) {
+        self.checkpoint = match id {
+            Some(id_str) => {
+                // Try to parse as ULID first, then fall back to stream ID
+                if let Ok(ulid) = id_str.parse::<Ulid>() {
+                    Checkpoint::Internal {
+                        event_id: ulid,
+                        message_count: self.processed_count,
+                    }
+                } else {
+                    Checkpoint::Stream {
+                        message_id: id_str,
+                        event_id: None,
+                    }
+                }
+            }
+            None => Checkpoint::None,
+        };
+    }
+}
+
 impl Default for CheckpointState {
     fn default() -> Self {
         Self {
@@ -150,19 +212,19 @@ impl From<LegacyCheckpointState> for CheckpointState {
 /// # Usage Pattern
 /// ```rust
 /// use sinex_satellite_sdk::checkpoint::CheckpointManager;
-/// 
+///
 /// let manager = CheckpointManager::new(
 ///     pool,
 ///     "my-processor".to_string(),
 ///     "default".to_string(),
 ///     "hostname-1234".to_string(),
 /// );
-/// 
+///
 /// // Load existing checkpoint (or get default)
 /// let checkpoint = manager.load_checkpoint().await?;
-/// 
+///
 /// // Process events...
-/// 
+///
 /// // Save updated checkpoint
 /// manager.save_checkpoint(&updated_checkpoint).await?;
 /// ```
@@ -211,23 +273,10 @@ impl CheckpointManager {
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
-        let row = sqlx::query!(
-            r#"
-            SELECT 
-                last_processed_id,
-                processed_count,
-                last_activity,
-                state_data,
-                checkpoint_version,
-                checkpoint_data
-            FROM core.automaton_checkpoints 
-            WHERE automaton_name = $1 
-                AND consumer_group = $2 
-                AND consumer_name = $3
-            "#,
-            self.processor_name,
-            self.consumer_group,
-            self.consumer_name
+        let row: Option<CheckpointRecord> = CheckpointQueries::get_checkpoint(
+            self.processor_name.clone(),
+            self.consumer_group.clone(),
+            self.consumer_name.clone(),
         )
         .fetch_optional(&self.pool)
         .await?;
@@ -242,7 +291,7 @@ impl CheckpointManager {
             );
 
             let version = row.checkpoint_version as u32;
-            
+
             if version >= 2 && row.checkpoint_data.is_some() {
                 // New unified format (version 2+)
                 let checkpoint_data = row.checkpoint_data.unwrap();
@@ -314,10 +363,10 @@ impl CheckpointManager {
     /// - Maintains backward compatibility with legacy `last_processed_id` field
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> SatelliteResult<()> {
         let checkpoint_id = Ulid::new();
-        
+
         // Serialize the unified checkpoint
-        let checkpoint_data = serde_json::to_value(&state.checkpoint)
-            .map_err(SatelliteError::Serialization)?;
+        let checkpoint_data =
+            serde_json::to_value(&state.checkpoint).map_err(SatelliteError::Serialization)?;
 
         // Extract legacy fields for backward compatibility
         let last_processed_id = match &state.checkpoint {
@@ -325,47 +374,21 @@ impl CheckpointManager {
             _ => None,
         };
 
-        sqlx::query!(
-            r#"
-            INSERT INTO core.automaton_checkpoints (
-                id,
-                automaton_name,
-                consumer_group,
-                consumer_name,
-                last_processed_id,
-                processed_count,
-                last_activity,
-                state_data,
-                checkpoint_version,
-                checkpoint_data,
-                created_at,
-                updated_at
-            ) VALUES (
-                $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11
-            )
-            ON CONFLICT (automaton_name, consumer_group, consumer_name) 
-            DO UPDATE SET
-                last_processed_id = EXCLUDED.last_processed_id,
-                processed_count = EXCLUDED.processed_count,
-                last_activity = EXCLUDED.last_activity,
-                state_data = EXCLUDED.state_data,
-                checkpoint_version = EXCLUDED.checkpoint_version,
-                checkpoint_data = EXCLUDED.checkpoint_data,
-                updated_at = EXCLUDED.updated_at
-            "#,
-            checkpoint_id.to_uuid(),
-            self.processor_name,
-            self.consumer_group,
-            self.consumer_name,
+        CheckpointQueries::upsert_checkpoint_with_conflict(
+            &self.pool,
+            checkpoint_id,
+            self.processor_name.clone(),
+            self.consumer_group.clone(),
+            self.consumer_name.clone(),
             last_processed_id,
             state.processed_count as i64,
             state.last_activity,
-            state.data,
+            state.data.clone(),
             state.version as i32,
-            checkpoint_data,
-            chrono::Utc::now()
+            Some(checkpoint_data),
+            chrono::Utc::now(),
+            chrono::Utc::now(),
         )
-        .execute(&self.pool)
         .await?;
 
         debug!(
@@ -381,28 +404,15 @@ impl CheckpointManager {
     }
 
     /// Get checkpoint history for debugging
-    pub async fn get_checkpoint_history(&self, limit: i64) -> SatelliteResult<Vec<CheckpointHistoryEntry>> {
-        let rows = sqlx::query!(
-            r#"
-            SELECT 
-                id::text,
-                last_processed_id,
-                processed_count,
-                last_activity,
-                checkpoint_version,
-                created_at,
-                updated_at
-            FROM core.automaton_checkpoints 
-            WHERE automaton_name = $1 
-                AND consumer_group = $2 
-                AND consumer_name = $3
-            ORDER BY updated_at DESC
-            LIMIT $4
-            "#,
-            self.processor_name,
-            self.consumer_group,
-            self.consumer_name,
-            limit
+    pub async fn get_checkpoint_history(
+        &self,
+        limit: i64,
+    ) -> SatelliteResult<Vec<CheckpointHistoryEntry>> {
+        let rows: Vec<CheckpointRecord> = CheckpointQueries::get_checkpoint_history(
+            self.processor_name.clone(),
+            self.consumer_group.clone(),
+            self.consumer_name.clone(),
+            limit,
         )
         .fetch_all(&self.pool)
         .await?;
@@ -410,7 +420,7 @@ impl CheckpointManager {
         let entries: Vec<CheckpointHistoryEntry> = rows
             .into_iter()
             .map(|row| CheckpointHistoryEntry {
-                id: row.id.unwrap_or_default(),
+                id: row.id.to_string(),
                 last_processed_id: row.last_processed_id,
                 processed_count: row.processed_count as u64,
                 last_activity: row.last_activity,
@@ -431,16 +441,10 @@ impl CheckpointManager {
 
     /// Reset checkpoint (for testing or manual intervention)
     pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
-        sqlx::query!(
-            r#"
-            DELETE FROM core.automaton_checkpoints 
-            WHERE automaton_name = $1 
-                AND consumer_group = $2 
-                AND consumer_name = $3
-            "#,
-            self.processor_name,
-            self.consumer_group,
-            self.consumer_name
+        CheckpointQueries::delete_checkpoint(
+            self.processor_name.clone(),
+            self.consumer_group.clone(),
+            self.consumer_name.clone(),
         )
         .execute(&self.pool)
         .await?;
@@ -457,27 +461,16 @@ impl CheckpointManager {
 
     /// Get checkpoint statistics
     pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
-        let row = sqlx::query!(
-            r#"
-            SELECT 
-                COUNT(*) as total_checkpoints,
-                MAX(processed_count) as max_processed,
-                MAX(updated_at) as last_update,
-                MIN(created_at) as first_checkpoint
-            FROM core.automaton_checkpoints 
-            WHERE automaton_name = $1 
-                AND consumer_group = $2 
-                AND consumer_name = $3
-            "#,
-            self.processor_name,
-            self.consumer_group,
-            self.consumer_name
+        let row: CheckpointStatsRecord = CheckpointQueries::get_checkpoint_stats(
+            self.processor_name.clone(),
+            self.consumer_group.clone(),
+            self.consumer_name.clone(),
         )
         .fetch_one(&self.pool)
         .await?;
 
         Ok(CheckpointStats {
-            total_checkpoints: row.total_checkpoints.unwrap_or(0) as u64,
+            total_checkpoints: row.total_checkpoints as u64,
             max_processed: row.max_processed.unwrap_or(0) as u64,
             last_update: row.last_update,
             first_checkpoint: row.first_checkpoint,

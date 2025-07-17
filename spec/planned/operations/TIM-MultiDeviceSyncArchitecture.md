@@ -97,7 +97,7 @@ Conflict-Free Replicated Data Types guarantee eventual consistency for concurren
 
 *   **Local-First Principle:** Exocortex on each device functional offline.
 *   **Outgoing Operation Queues:**
-    *   Changes made offline (new `raw.events` on mobile, Yjs updates for notes, new `git-annex` blobs) are queued persistently on device (e.g., SQLite queue on mobile, Yjs doc stores local ops).
+    *   Changes made offline (new `core.events` on mobile, Yjs updates for notes, new `git-annex` blobs) are queued persistently on device (e.g., SQLite queue on mobile, Yjs doc stores local ops).
 *   **Synchronization on Reconnect:** Device sends queued changes, fetches incoming changes.
 *   **Eventual Consistency:** All replicas eventually converge. CRDTs guarantee strong eventual consistency. Non-CRDT data conflicts resolved by LWW (HLCs) or manual merge.
 

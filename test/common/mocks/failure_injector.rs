@@ -1,6 +1,8 @@
-//! Failure injection system for testing
-//!
-//! Provides sophisticated failure simulation capabilities for testing system resilience
+// Failure injection system for testing
+//
+// Provides sophisticated failure simulation capabilities for testing system resilience
+
+use crate::common::prelude::*;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -17,9 +19,7 @@ pub struct FailureConfig {
 #[derive(Debug, Clone)]
 pub enum FailurePattern {
     /// Always fail specific operation
-    Permanent {
-        operation: String,
-    },
+    Permanent { operation: String },
     /// Fail operation with given probability
     Probabilistic {
         operation: String,
@@ -83,12 +83,16 @@ struct ActiveFailurePattern {
 
 impl FailureInjector {
     pub fn new(config: FailureConfig) -> Self {
-        let patterns = config.patterns.iter().map(|p| ActiveFailurePattern {
-            pattern: p.clone(),
-            started_at: Instant::now(),
-            triggered_count: 0,
-            last_trigger: None,
-        }).collect();
+        let patterns = config
+            .patterns
+            .iter()
+            .map(|p| ActiveFailurePattern {
+                pattern: p.clone(),
+                started_at: Instant::now(),
+                triggered_count: 0,
+                last_trigger: None,
+            })
+            .collect();
 
         Self {
             config,
@@ -115,7 +119,10 @@ impl FailureInjector {
 
         for active_pattern in patterns.iter_mut() {
             if self.pattern_matches(operation, &active_pattern.pattern) {
-                if self.should_trigger_pattern(&active_pattern.pattern, operation, now, uptime).await {
+                if self
+                    .should_trigger_pattern(&active_pattern.pattern, operation, now, uptime)
+                    .await
+                {
                     active_pattern.triggered_count += 1;
                     active_pattern.last_trigger = Some(now);
                     return true;
@@ -165,8 +172,13 @@ impl FailureInjector {
             FailurePattern::Temporary { operation: op, .. } => op == operation || op == "*",
             FailurePattern::Intermittent { operation: op, .. } => op == operation || op == "*",
             FailurePattern::Conditional { operation: op, .. } => op == operation || op == "*",
-            FailurePattern::Cascade { trigger_operation, cascade_operations, .. } => {
-                trigger_operation == operation || cascade_operations.contains(&operation.to_string())
+            FailurePattern::Cascade {
+                trigger_operation,
+                cascade_operations,
+                ..
+            } => {
+                trigger_operation == operation
+                    || cascade_operations.contains(&operation.to_string())
             }
         }
     }
@@ -180,39 +192,55 @@ impl FailureInjector {
     ) -> bool {
         match pattern {
             FailurePattern::Permanent { .. } => true,
-            
-            FailurePattern::Probabilistic { failure_rate, .. } => {
-                fastrand::f64() < *failure_rate
-            }
-            
-            FailurePattern::Temporary { failure_rate, duration, .. } => {
+
+            FailurePattern::Probabilistic { failure_rate, .. } => fastrand::f64() < *failure_rate,
+
+            FailurePattern::Temporary {
+                failure_rate,
+                duration,
+                ..
+            } => {
                 if uptime < *duration {
                     fastrand::f64() < *failure_rate
                 } else {
                     false
                 }
             }
-            
-            FailurePattern::Intermittent { failure_rate, interval, .. } => {
+
+            FailurePattern::Intermittent {
+                failure_rate,
+                interval,
+                ..
+            } => {
                 let cycle_position = uptime.as_secs_f64() % interval.as_secs_f64();
                 let failure_window = interval.as_secs_f64() * failure_rate;
                 cycle_position < failure_window
             }
-            
+
             FailurePattern::Conditional { condition, .. } => {
                 self.evaluate_condition(condition, operation, uptime).await
             }
-            
-            FailurePattern::Cascade { trigger_operation, cascade_operations, cascade_delay, .. } => {
+
+            FailurePattern::Cascade {
+                trigger_operation,
+                cascade_operations,
+                cascade_delay,
+                ..
+            } => {
                 if trigger_operation == operation {
                     true // Trigger always fails
                 } else if cascade_operations.contains(&operation.to_string()) {
                     // Check if trigger was recently activated
                     let patterns = self.patterns.read().await;
                     patterns.iter().any(|p| {
-                        if let FailurePattern::Cascade { trigger_operation: trigger, .. } = &p.pattern {
-                            trigger == trigger_operation && 
-                            p.last_trigger.map_or(false, |t| now.duration_since(t) < *cascade_delay)
+                        if let FailurePattern::Cascade {
+                            trigger_operation: trigger,
+                            ..
+                        } = &p.pattern
+                        {
+                            trigger == trigger_operation
+                                && p.last_trigger
+                                    .map_or(false, |t| now.duration_since(t) < *cascade_delay)
                         } else {
                             false
                         }
@@ -235,11 +263,9 @@ impl FailureInjector {
                 let counts = self.operation_counts.read().await;
                 counts.get(operation).copied().unwrap_or(0) >= *threshold
             }
-            
-            FailureCondition::TimeWindow { start, end } => {
-                uptime >= *start && uptime <= *end
-            }
-            
+
+            FailureCondition::TimeWindow { start, end } => uptime >= *start && uptime <= *end,
+
             FailureCondition::LoadThreshold(threshold) => {
                 // In a real implementation, this would check actual system load
                 // For testing, we'll simulate based on operation count
@@ -247,13 +273,13 @@ impl FailureInjector {
                 let total_ops = counts.values().sum::<usize>();
                 (total_ops as f64 / 100.0) > *threshold
             }
-            
+
             FailureCondition::MemoryThreshold(threshold) => {
                 // In a real implementation, this would check actual memory usage
                 // For testing, we'll simulate based on time
                 uptime.as_secs() as usize * 1024 > *threshold
             }
-            
+
             FailureCondition::Custom(condition_name) => {
                 // Custom conditions can be implemented as needed
                 match condition_name.as_str() {
@@ -287,7 +313,12 @@ impl FailureInjector {
     }
 
     /// Simulate intermittent failures
-    pub async fn simulate_intermittent(&mut self, operation: &str, failure_rate: f64, interval: Duration) {
+    pub async fn simulate_intermittent(
+        &mut self,
+        operation: &str,
+        failure_rate: f64,
+        interval: Duration,
+    ) {
         let pattern = FailurePattern::Intermittent {
             operation: operation.to_string(),
             failure_rate,
@@ -407,7 +438,7 @@ mod tests {
         };
 
         let mut injector = FailureInjector::new(config);
-        
+
         // Test multiple times to verify probabilistic behavior
         let mut failures = 0;
         let iterations = 1000;
@@ -434,13 +465,13 @@ mod tests {
         };
 
         let mut injector = FailureInjector::new(config);
-        
+
         // Should fail initially
         assert!(injector.should_fail("test").await);
-        
+
         // Wait for pattern to expire
         sleep(Duration::from_millis(150)).await;
-        
+
         // Should not fail after expiration
         assert!(!injector.should_fail("test").await);
     }
@@ -456,12 +487,12 @@ mod tests {
         };
 
         let mut injector = FailureInjector::new(config);
-        
+
         // Should not fail initially
         assert!(!injector.should_fail("test").await);
         assert!(!injector.should_fail("test").await);
         assert!(!injector.should_fail("test").await);
-        
+
         // Should fail after threshold
         assert!(injector.should_fail("test").await);
         assert!(injector.should_fail("test").await);
@@ -479,17 +510,17 @@ mod tests {
         };
 
         let mut injector = FailureInjector::new(config);
-        
+
         // Trigger should always fail
         assert!(injector.should_fail("trigger").await);
-        
+
         // Cascade operations should fail within delay window
         assert!(injector.should_fail("cascade1").await);
         assert!(injector.should_fail("cascade2").await);
-        
+
         // Wait for cascade to expire
         sleep(Duration::from_millis(150)).await;
-        
+
         // Cascade operations should not fail after delay
         assert!(!injector.should_fail("cascade1").await);
         assert!(!injector.should_fail("cascade2").await);

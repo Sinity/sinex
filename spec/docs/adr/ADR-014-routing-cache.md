@@ -15,7 +15,7 @@ The new architecture eliminates the need for complex routing caches and work que
 
 ## Context
 
-The original event processing architecture used per-row triggers to automatically insert work queue items whenever new events were added to `raw.events`. While functional, this approach had several performance and scalability limitations:
+The original event processing architecture used per-row triggers to automatically insert work queue items whenever new events were added to `core.events`. While functional, this approach had several performance and scalability limitations:
 
 1. **Per-Row Overhead**: Each event insertion triggered individual trigger execution
 2. **Lock Contention**: High-frequency event insertion created database lock contention
@@ -61,7 +61,7 @@ WHERE status = 'active';
 -- Batch routing query (executed every ~5 seconds)
 INSERT INTO sinex_schemas.work_queue (raw_event_id, agent_id, status)
 SELECT DISTINCT e.id, rc.agent_id, 'pending'::queue_status
-FROM raw.events e
+FROM core.events e
 JOIN routing_cache rc ON e.event_type = rc.event_type
 WHERE e.ts_ingest > $last_processed_timestamp
   AND NOT EXISTS (

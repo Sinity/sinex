@@ -1,8 +1,10 @@
-//! Property-based tests using proptest
-//!
-//! These tests use proptest to verify properties that should hold across
-//! a wide range of inputs, providing more comprehensive testing than
-//! example-based tests.
+// Property-based tests using proptest
+//
+// These tests use proptest to verify properties that should hold across
+// a wide range of inputs, providing more comprehensive testing than
+// example-based tests.
+
+use crate::common::prelude::*;
 
 // Consolidated property tests
 // Disabled - references obsolete sinex_collector module
@@ -11,11 +13,11 @@
 // pub mod event_property_test;
 // Disabled - references missing ConnectionManager
 // pub mod redis_streams_property_test;
-pub mod schema_property_test;
-pub mod ulid_property_test;
+pub mod automation_property_test;
 pub mod checkpoint_property_test;
 pub mod satellite_property_test;
-pub mod automation_property_test;
+pub mod schema_property_test;
+pub mod ulid_property_test;
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;
@@ -24,8 +26,8 @@ pub use proptest::prelude::*;
 #[allow(dead_code)]
 pub mod strategies {
     use super::*;
-    use chrono::{DateTime, Utc};
     use crate::common::prelude::*;
+    use chrono::{DateTime, Utc};
 
     /// Strategy for generating valid ULID timestamps
     pub fn valid_timestamps() -> impl Strategy<Value = DateTime<Utc>> {
@@ -133,7 +135,9 @@ pub mod strategies {
 
     /// Strategy for generating valid ULIDs
     pub fn ulids() -> impl Strategy<Value = sinex_ulid::Ulid> {
-        any::<[u8; 16]>().prop_map(|bytes| sinex_ulid::Ulid::from_bytes(bytes))
+        any::<[u8; 16]>().prop_map(|bytes| {
+            sinex_ulid::Ulid::from_bytes(bytes).unwrap_or_else(|_| sinex_ulid::Ulid::new())
+        })
     }
 
     /// Strategy for generating Redis stream keys
@@ -196,24 +200,18 @@ pub mod strategies {
     /// Strategy for generating payload sizes for boundary testing
     pub fn payload_sizes() -> impl Strategy<Value = usize> {
         prop_oneof![
-            Just(0),       // Empty
-            Just(1),       // Minimal
-            Just(1024),    // 1KB
-            Just(64 * 1024), // 64KB
-            Just(1024 * 1024), // 1MB
+            Just(0),                // Empty
+            Just(1),                // Minimal
+            Just(1024),             // 1KB
+            Just(64 * 1024),        // 64KB
+            Just(1024 * 1024),      // 1MB
             Just(10 * 1024 * 1024), // 10MB (large)
         ]
     }
 
     /// Strategy for generating batch sizes
     pub fn batch_sizes() -> impl Strategy<Value = usize> {
-        prop_oneof![
-            Just(1),
-            Just(10),
-            Just(100),
-            Just(1000),
-            Just(10000),
-        ]
+        prop_oneof![Just(1), Just(10), Just(100), Just(1000), Just(10000),]
     }
 
     /// Strategy for generating time intervals
@@ -229,19 +227,22 @@ pub mod strategies {
     }
 
     /// Create nested payload strategy
-    fn create_nested_payload_strategy(depth: usize) -> impl Strategy<Value = serde_json::Value> {
+    fn create_nested_payload_strategy(depth: usize) -> BoxedStrategy<serde_json::Value> {
         if depth == 0 {
-            any::<String>().prop_map(|s| serde_json::json!(s))
+            any::<String>().prop_map(|s| serde_json::json!(s)).boxed()
         } else {
             any::<String>().prop_map(move |s| {
                 let mut obj = serde_json::Map::new();
                 obj.insert("level".to_string(), serde_json::json!(depth));
                 obj.insert("data".to_string(), serde_json::json!(s));
                 if depth > 1 {
-                    obj.insert("nested".to_string(), serde_json::json!({"level": depth - 1}));
+                    obj.insert(
+                        "nested".to_string(),
+                        serde_json::json!({"level": depth - 1}),
+                    );
                 }
                 serde_json::Value::Object(obj)
-            })
+            }).boxed()
         }
     }
 
@@ -267,9 +268,9 @@ pub mod strategies {
     }
 
     /// Create deeply nested JSON for testing
-    fn create_deeply_nested_json(depth: usize) -> impl Strategy<Value = serde_json::Value> {
+    fn create_deeply_nested_json(depth: usize) -> BoxedStrategy<serde_json::Value> {
         if depth == 0 {
-            any::<String>().prop_map(|s| serde_json::json!(s))
+            any::<String>().prop_map(|s| serde_json::json!(s)).boxed()
         } else {
             any::<String>().prop_map(move |s| {
                 let mut current = serde_json::json!(s);
@@ -280,7 +281,7 @@ pub mod strategies {
                     });
                 }
                 current
-            })
+            }).boxed()
         }
     }
 
@@ -288,10 +289,17 @@ pub mod strategies {
     pub fn event_sequences() -> impl Strategy<Value = Vec<RawEvent>> {
         (1usize..=100).prop_flat_map(|size| {
             proptest::collection::vec(
-                (event_sources(), event_types(), event_payloads()).prop_map(|(source, event_type, payload)| {
-                    crate::common::events::create_raw_event(source, &event_type, payload, chrono::Utc::now())
-                }),
-                size
+                (event_sources(), event_types(), event_payloads()).prop_map(
+                    |(source, event_type, payload)| {
+                        crate::common::events::create_raw_event(
+                            source,
+                            &event_type,
+                            payload,
+                            chrono::Utc::now(),
+                        )
+                    },
+                ),
+                size,
             )
         })
     }
@@ -306,7 +314,7 @@ pub mod strategies {
                 Just("publish_stream".to_string()),
                 Just("consume_stream".to_string()),
             ],
-            1..=20
+            1..=20,
         )
     }
 }

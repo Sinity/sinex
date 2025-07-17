@@ -3,8 +3,7 @@
 //! Monitors systemd services, timers, and unit state changes
 
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
 use std::time::Duration;
@@ -19,7 +18,7 @@ use tracing::{debug, error, info, warn};
 pub struct SystemdConfig {
     /// Monitor service state changes
     pub monitor_services: bool,
-    /// Monitor timer state changes 
+    /// Monitor timer state changes
     pub monitor_timers: bool,
     /// Monitor all unit types
     pub monitor_all_units: bool,
@@ -93,13 +92,13 @@ impl SystemdWatcher {
                     "timestamp": chrono::Utc::now().to_rfc3339(),
                 });
 
-                return Some(RawEventBuilder::new(
-                    sinex_core::sources::SYSTEMD,
-                    "unit.status",
-                    payload,
-                )
-                .with_host("localhost")
-                .build());
+                return Some({
+                    let factory = EventFactory::new(sinex_core_types::sources::SYSTEMD);
+                    factory.create_event(
+                        "unit.status",
+                        payload,
+                    )
+                });
             }
         }
 
@@ -110,7 +109,7 @@ impl SystemdWatcher {
 
             let event_type = match status {
                 "active" => "unit.started",
-                "inactive" => "unit.stopped", 
+                "inactive" => "unit.stopped",
                 "failed" => "unit.failed",
                 "activating" => "unit.starting",
                 "deactivating" => "unit.stopping",
@@ -123,13 +122,12 @@ impl SystemdWatcher {
                 "timestamp": chrono::Utc::now().to_rfc3339(),
             });
 
-            return Some(RawEventBuilder::new(
-                sinex_core::sources::SYSTEMD,
-                event_type,
-                payload,
-            )
-            .with_host("localhost")
-            .build());
+            return Some(
+                {
+                    let factory = EventFactory::new(sinex_core_types::sources::SYSTEMD);
+                    factory.create_event(event_type, payload)
+                }
+            );
         }
 
         None
@@ -140,7 +138,7 @@ impl SystemdWatcher {
         info!("Checking systemd unit status");
 
         let mut args = vec!["status"];
-        
+
         // Add filters based on configuration
         if self.config.monitor_services && !self.config.monitor_all_units {
             args.push("--type=service");
@@ -156,18 +154,28 @@ impl SystemdWatcher {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start systemctl: {}", e))
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to start systemctl: {}",
+                    e
+                ))
             })?;
 
         let stdout = child.stdout.take().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::Processing("Failed to get systemctl stdout".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing(
+                "Failed to get systemctl stdout".to_string(),
+            )
         })?;
 
         let reader = BufReader::new(stdout);
         let mut lines = reader.lines();
 
         // Read lines with timeout
-        while let Ok(Ok(Some(line))) = timeout(Duration::from_secs(self.config.monitor_timeout_secs), lines.next_line()).await {
+        while let Ok(Ok(Some(line))) = timeout(
+            Duration::from_secs(self.config.monitor_timeout_secs),
+            lines.next_line(),
+        )
+        .await
+        {
             if let Some(event) = self.parse_unit_status(&line) {
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
@@ -185,7 +193,10 @@ impl SystemdWatcher {
     }
 
     /// Monitor systemd journal for unit state changes
-    async fn monitor_systemd_journal(&self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn monitor_systemd_journal(
+        &self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting systemd journal monitoring for unit changes");
 
         loop {
@@ -196,17 +207,22 @@ impl SystemdWatcher {
                     "--output=json",
                     "--lines=0",
                     "_SYSTEMD_UNIT=*", // Filter for systemd unit messages
-                    "--no-hostname"
+                    "--no-hostname",
                 ])
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start journalctl: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!(
+                        "Failed to start journalctl: {}",
+                        e
+                    ))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::Processing("Failed to get journalctl stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing(
+                    "Failed to get journalctl stdout".to_string(),
+                )
             })?;
 
             let reader = BufReader::new(stdout);
@@ -216,7 +232,12 @@ impl SystemdWatcher {
 
             // Read lines with timeout
             loop {
-                match timeout(Duration::from_secs(self.config.monitor_timeout_secs), lines.next_line()).await {
+                match timeout(
+                    Duration::from_secs(self.config.monitor_timeout_secs),
+                    lines.next_line(),
+                )
+                .await
+                {
                     Ok(Ok(Some(line))) => {
                         if let Some(event) = self.parse_systemd_journal_entry(&line) {
                             if tx.send(event).is_err() {
@@ -285,13 +306,12 @@ impl SystemdWatcher {
                     "journal_timestamp": entry["__REALTIME_TIMESTAMP"].as_str(),
                 });
 
-                Some(RawEventBuilder::new(
-                    sinex_core::sources::SYSTEMD,
-                    event_type,
-                    payload,
+                Some(
+                    {
+                        let factory = EventFactory::new(sinex_core_types::sources::SYSTEMD);
+                        factory.create_event(event_type, payload)
+                    }
                 )
-                .with_host("localhost")
-                .build())
             }
             Err(e) => {
                 debug!("Failed to parse systemd journal entry: {}", e);
@@ -301,7 +321,10 @@ impl SystemdWatcher {
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting systemd event streaming");
 
         // Start with a status check to capture current state

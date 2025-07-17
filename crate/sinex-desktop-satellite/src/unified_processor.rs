@@ -7,10 +7,13 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, sources, services};
 use sinex_satellite_sdk::{
-    cli::{ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, MissingItem, SourceState},
     checkpoint::CheckpointManager,
+    cli::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
+    },
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -53,16 +56,16 @@ impl Default for DesktopConfig {
 pub struct DesktopState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,
-    
+
     /// Enabled source types
     pub enabled_sources: Vec<String>,
-    
+
     /// Clipboard status
     pub clipboard_status: Option<ClipboardStatus>,
-    
+
     /// Window manager status
     pub window_manager_status: Option<WindowManagerStatus>,
-    
+
     /// Recent activity summary
     pub recent_activity: Vec<String>,
 }
@@ -89,17 +92,17 @@ pub struct WindowManagerStatus {
 pub struct DesktopProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
-    
+
     /// Desktop monitoring configuration
     config: DesktopConfig,
-    
+
     /// Individual watchers (initialized during operation)
     clipboard_watcher: Option<ClipboardWatcher>,
     window_manager_watcher: Option<WindowManagerWatcher>,
-    
+
     /// Last captured desktop state for snapshots
     last_state: Option<DesktopState>,
-    
+
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
 }
@@ -116,7 +119,7 @@ impl DesktopProcessor {
             checkpoint_manager: None,
         }
     }
-    
+
     /// Create processor with custom configuration
     pub fn with_config(config: DesktopConfig) -> Self {
         Self {
@@ -134,46 +137,44 @@ impl DesktopProcessor {
         let mut enabled_sources = Vec::new();
         let mut clipboard_status = None;
         let mut window_manager_status = None;
-        
+
         // Check enabled sources
         if self.config.clipboard_enabled {
             enabled_sources.push("clipboard".to_string());
-            
+
             // Try to get clipboard status
             clipboard_status = Some(ClipboardStatus {
                 monitoring_active: self.clipboard_watcher.is_some(),
-                last_clipboard_change: None, // Would need to track this
+                last_clipboard_change: None,  // Would need to track this
                 clipboard_content_hash: None, // Would need to hash current clipboard
             });
         }
-        
+
         if self.config.window_manager_enabled {
             enabled_sources.push("window_manager".to_string());
-            
+
             // Try to get window manager status
             window_manager_status = Some(WindowManagerStatus {
                 wm_type: self.config.window_manager_type.clone(),
                 connection_active: self.window_manager_watcher.is_some(),
                 current_workspace: None, // Would need to query WM
-                active_window: None, // Would need to query WM
-                total_windows: 0, // Would need to query WM
+                active_window: None,     // Would need to query WM
+                total_windows: 0,        // Would need to query WM
             });
         }
-        
+
         let state = DesktopState {
             captured_at: Utc::now(),
             enabled_sources,
             clipboard_status,
             window_manager_status,
-            recent_activity: vec![
-                "Desktop processor snapshot taken".to_string(),
-            ],
+            recent_activity: vec!["Desktop processor snapshot taken".to_string()],
         };
-        
+
         self.last_state = Some(state.clone());
         Ok(state)
     }
-    
+
     /// Initialize watchers based on enabled sources
     async fn initialize_watchers(&mut self) -> SatelliteResult<()> {
         // Initialize clipboard watcher
@@ -185,7 +186,10 @@ impl DesktopProcessor {
 
         // Initialize window manager watcher
         if self.config.window_manager_enabled {
-            info!("Initializing window manager watcher ({})", self.config.window_manager_type);
+            info!(
+                "Initializing window manager watcher ({})",
+                self.config.window_manager_type
+            );
             // For now, stub implementation - will be implemented properly later
             info!("✅ Window manager watcher initialized (stub)");
         }
@@ -194,29 +198,32 @@ impl DesktopProcessor {
     }
 
     /// Start continuous desktop monitoring
-    async fn start_continuous_monitoring(&mut self, _from_checkpoint: Checkpoint) -> SatelliteResult<()> {
+    async fn start_continuous_monitoring(
+        &mut self,
+        _from_checkpoint: Checkpoint,
+    ) -> SatelliteResult<()> {
         info!("Starting continuous desktop monitoring");
-        
+
         // For now, stub implementation - will be implemented properly later
         // This would start the actual watchers and forward events
-        
+
         if let Some(ref context) = self.context {
             info!("Desktop monitoring context available");
-            
+
             // Create a sample event to show the interface works
-            let sample_event = RawEventBuilder::new(
-                "desktop", 
-                "desktop.monitoring_started", 
+            let factory = EventFactory::new(services::DESKTOP_SATELLITE);
+            let sample_event = factory.create_event(
+                "desktop.monitoring_started",
                 json!({
                     "clipboard_enabled": self.config.clipboard_enabled,
                     "window_manager_enabled": self.config.window_manager_enabled,
                     "start_time": Utc::now()
-                })
-            ).build();
-            
+                }),
+            );
+
             context.emit_event(sample_event).await?;
         }
-        
+
         Ok(())
     }
 
@@ -229,44 +236,44 @@ impl DesktopProcessor {
         emit_events: bool,
     ) -> SatelliteResult<u64> {
         let mut event_count = 0;
-        
+
         // Desktop sources typically don't have extensive historical data
         // This would implement any available historical scanning
-        
+
         if let Some(ref context) = self.context {
             // Example: emit historical desktop state events
             if self.config.clipboard_enabled && emit_events {
-                let event = RawEventBuilder::new(
-                    "desktop", 
-                    "clipboard.historical", 
+                let factory = EventFactory::new(services::DESKTOP_SATELLITE);
+                let event = factory.create_event(
+                    "clipboard.historical",
                     json!({
                         "source": "clipboard",
                         "scan_type": "historical",
                         "note": "Limited historical data available for desktop events"
-                    })
-                ).build();
-                
+                    }),
+                );
+
                 context.emit_event(event).await?;
                 event_count += 1;
             }
-            
+
             if self.config.window_manager_enabled && emit_events {
-                let event = RawEventBuilder::new(
-                    "desktop", 
-                    "wm.historical", 
+                let factory = EventFactory::new(services::DESKTOP_SATELLITE);
+                let event = factory.create_event(
+                    "wm.historical",
                     json!({
                         "source": "window_manager",
                         "wm_type": self.config.window_manager_type,
                         "scan_type": "historical",
                         "note": "Limited historical data available for window manager events"
-                    })
-                ).build();
-                
+                    }),
+                );
+
                 context.emit_event(event).await?;
                 event_count += 1;
             }
         }
-        
+
         Ok(event_count)
     }
 }
@@ -277,6 +284,7 @@ impl Default for DesktopProcessor {
     }
 }
 
+#[sinex_macros::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=desktop"])]
 #[async_trait]
 impl StatefulStreamProcessor for DesktopProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
@@ -285,10 +293,10 @@ impl StatefulStreamProcessor for DesktopProcessor {
             service = %ctx.service_name,
             "Initializing desktop processor"
         );
-        
+
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
-        
+
         // Parse configuration from processor context
         if let Some(config_json) = ctx.config.get("desktop") {
             match serde_json::from_value::<DesktopConfig>(config_json.clone()) {
@@ -349,7 +357,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
         let mut warnings = Vec::new();
-        
+
         info!(
             processor = self.processor_name(),
             from = %from.description(),
@@ -358,50 +366,57 @@ impl StatefulStreamProcessor for DesktopProcessor {
             dry_run = args.dry_run,
             "Starting desktop scan"
         );
-        
+
         match until {
             TimeHorizon::Snapshot => {
                 // Take current state snapshot
                 let _state = self.take_snapshot().await?;
-                
+
                 // Initialize watchers for snapshot capabilities
                 if let Err(e) = self.initialize_watchers().await {
                     warnings.push(format!("Failed to initialize some watchers: {}", e));
                 }
-                
+
                 // Count available desktop sources
                 let active_watchers = [
                     self.clipboard_watcher.is_some(),
                     self.window_manager_watcher.is_some(),
-                ].iter().filter(|&&x| x).count();
-                
+                ]
+                .iter()
+                .filter(|&&x| x)
+                .count();
+
                 events_processed = active_watchers as u64;
                 successful_targets.push("desktop_state_snapshot".to_string());
-                
+
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = RawEventBuilder::new(
-                            "desktop", 
-                            "desktop.snapshot", 
+                        let factory = EventFactory::new(services::DESKTOP_SATELLITE);
+                        let snapshot_event = factory.create_event(
+                            "desktop.snapshot",
                             json!({
                                 "active_watchers": active_watchers,
                                 "clipboard_enabled": self.config.clipboard_enabled,
                                 "window_manager_enabled": self.config.window_manager_enabled,
                                 "snapshot_time": Utc::now()
-                            })
-                        ).build();
-                        
+                            }),
+                        );
+
                         context.emit_event(snapshot_event).await?;
                     }
                 }
             }
-            
+
             TimeHorizon::Historical { .. } => {
                 // Historical scan of desktop data
-                warnings.push("Historical desktop scanning has very limited capabilities".to_string());
-                
-                match self.scan_historical_desktop_data(&from, &until, &args, !args.dry_run).await {
+                warnings
+                    .push("Historical desktop scanning has very limited capabilities".to_string());
+
+                match self
+                    .scan_historical_desktop_data(&from, &until, &args, !args.dry_run)
+                    .await
+                {
                     Ok(count) => {
                         events_processed = count;
                         successful_targets.push("desktop_historical_scan".to_string());
@@ -411,11 +426,11 @@ impl StatefulStreamProcessor for DesktopProcessor {
                     }
                 }
             }
-            
+
             TimeHorizon::Continuous => {
                 // Initialize watchers for continuous monitoring
                 self.initialize_watchers().await?;
-                
+
                 // Start continuous monitoring
                 info!("Starting continuous desktop monitoring");
                 self.start_continuous_monitoring(from.clone()).await?;
@@ -423,9 +438,9 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 events_processed = 0; // Can't count events in continuous mode
             }
         }
-        
+
         let final_checkpoint = Checkpoint::timestamp(Utc::now(), None);
-        
+
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
@@ -438,9 +453,22 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 Utc::now(),
             )),
             processor_stats: HashMap::from([
-                ("clipboard_enabled".to_string(), if self.config.clipboard_enabled { 1 } else { 0 }),
-                ("window_manager_enabled".to_string(), if self.config.window_manager_enabled { 1 } else { 0 }),
-                ("successful_targets".to_string(), successful_targets.len() as u64),
+                (
+                    "clipboard_enabled".to_string(),
+                    if self.config.clipboard_enabled { 1 } else { 0 },
+                ),
+                (
+                    "window_manager_enabled".to_string(),
+                    if self.config.window_manager_enabled {
+                        1
+                    } else {
+                        0
+                    },
+                ),
+                (
+                    "successful_targets".to_string(),
+                    successful_targets.len() as u64,
+                ),
                 ("failed_targets".to_string(), failed_targets.len() as u64),
             ]),
             successful_targets,
@@ -448,15 +476,15 @@ impl StatefulStreamProcessor for DesktopProcessor {
             warnings,
         })
     }
-    
+
     fn processor_name(&self) -> &str {
         "desktop-processor"
     }
-    
+
     fn processor_type(&self) -> ProcessorType {
         ProcessorType::Ingestor
     }
-    
+
     fn capabilities(&self) -> ProcessorCapabilities {
         ProcessorCapabilities {
             supports_continuous: true,
@@ -467,12 +495,12 @@ impl StatefulStreamProcessor for DesktopProcessor {
             supports_concurrent: false,
         }
     }
-    
+
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For desktop monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
-    
+
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
@@ -481,16 +509,16 @@ impl StatefulStreamProcessor for DesktopProcessor {
     ) -> SatelliteResult<ScanEstimate> {
         let mut estimated_events = 0;
         let mut warnings = Vec::new();
-        
+
         // Estimate based on enabled sources
         if self.config.clipboard_enabled {
             estimated_events += 10; // Low estimate for clipboard events
         }
-        
+
         if self.config.window_manager_enabled {
             estimated_events += 50; // Higher estimate for window manager events
         }
-        
+
         // Adjust estimate based on time horizon
         let (duration_factor, confidence) = match until {
             TimeHorizon::Snapshot => (0.1, 0.9), // Only current state
@@ -500,13 +528,13 @@ impl StatefulStreamProcessor for DesktopProcessor {
             }
             TimeHorizon::Continuous => (f64::INFINITY, 0.1), // Unknown duration
         };
-        
+
         let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
-        
+
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
             estimated_duration: Duration::from_millis(adjusted_events * 10), // ~10ms per event
-            estimated_data_size: adjusted_events * 256, // ~256 bytes per event
+            estimated_data_size: adjusted_events * 256,                      // ~256 bytes per event
             estimated_targets: 2, // clipboard + window manager
             warnings,
             confidence,
@@ -518,39 +546,63 @@ impl StatefulStreamProcessor for DesktopProcessor {
 impl ExplorationProvider for DesktopProcessor {
     fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
         let recent_activity = if let Some(ref state) = self.last_state {
-            state.recent_activity.iter().enumerate().map(|(i, desc)| ActivityEntry {
-                timestamp: state.captured_at - chrono::Duration::minutes(i as i64),
-                description: desc.clone(),
-                data: None,
-            }).collect()
+            state
+                .recent_activity
+                .iter()
+                .enumerate()
+                .map(|(i, desc)| ActivityEntry {
+                    timestamp: state.captured_at - chrono::Duration::minutes(i as i64),
+                    description: desc.clone(),
+                    data: None,
+                })
+                .collect()
         } else {
             vec![]
         };
-        
+
         let active_sources = [
             self.config.clipboard_enabled,
             self.config.window_manager_enabled,
-        ].iter().filter(|&&enabled| enabled).count() as u64;
-        
+        ]
+        .iter()
+        .filter(|&&enabled| enabled)
+        .count() as u64;
+
         Ok(SourceState {
-            description: format!(
-                "Desktop processor monitoring {} sources",
-                active_sources
-            ),
-            last_updated: self.last_state.as_ref().map(|s| s.captured_at).unwrap_or_else(Utc::now),
+            description: format!("Desktop processor monitoring {} sources", active_sources),
+            last_updated: self
+                .last_state
+                .as_ref()
+                .map(|s| s.captured_at)
+                .unwrap_or_else(Utc::now),
             total_items: Some(active_sources),
             metadata: HashMap::from([
-                ("clipboard_enabled".to_string(), serde_json::to_value(self.config.clipboard_enabled)?),
-                ("window_manager_enabled".to_string(), serde_json::to_value(self.config.window_manager_enabled)?),
-                ("window_manager_type".to_string(), serde_json::to_value(&self.config.window_manager_type)?),
-                ("clipboard_poll_interval_secs".to_string(), serde_json::to_value(self.config.clipboard_poll_interval_secs)?),
-                ("processor_type".to_string(), serde_json::Value::String("ingestor".to_string())),
+                (
+                    "clipboard_enabled".to_string(),
+                    serde_json::to_value(self.config.clipboard_enabled)?,
+                ),
+                (
+                    "window_manager_enabled".to_string(),
+                    serde_json::to_value(self.config.window_manager_enabled)?,
+                ),
+                (
+                    "window_manager_type".to_string(),
+                    serde_json::to_value(&self.config.window_manager_type)?,
+                ),
+                (
+                    "clipboard_poll_interval_secs".to_string(),
+                    serde_json::to_value(self.config.clipboard_poll_interval_secs)?,
+                ),
+                (
+                    "processor_type".to_string(),
+                    serde_json::Value::String("ingestor".to_string()),
+                ),
             ]),
             healthy: true,
             recent_activity,
         })
     }
-    
+
     fn get_ingestion_history(
         &self,
         _limit: u64,
@@ -559,7 +611,7 @@ impl ExplorationProvider for DesktopProcessor {
         // For now, return empty as this requires database access
         Ok(vec![])
     }
-    
+
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
@@ -570,12 +622,15 @@ impl ExplorationProvider for DesktopProcessor {
             let hour_ago = now - chrono::Duration::hours(1);
             (hour_ago, now)
         });
-        
+
         let source_total = [
             self.config.clipboard_enabled,
             self.config.window_manager_enabled,
-        ].iter().filter(|&&enabled| enabled).count() as u64;
-        
+        ]
+        .iter()
+        .filter(|&&enabled| enabled)
+        .count() as u64;
+
         Ok(CoverageAnalysis {
             time_range: (start_time, end_time),
             source_total,
@@ -596,7 +651,7 @@ impl ExplorationProvider for DesktopProcessor {
             ],
         })
     }
-    
+
     fn export_data(
         &self,
         path: &PathBuf,
@@ -608,13 +663,19 @@ impl ExplorationProvider for DesktopProcessor {
                 ExportFormat::Csv => {
                     // Simple CSV export
                     let mut csv = "source,enabled,status\n".to_string();
-                    csv.push_str(&format!("clipboard,{},configured\n", self.config.clipboard_enabled));
-                    csv.push_str(&format!("window_manager,{},configured\n", self.config.window_manager_enabled));
+                    csv.push_str(&format!(
+                        "clipboard,{},configured\n",
+                        self.config.clipboard_enabled
+                    ));
+                    csv.push_str(&format!(
+                        "window_manager,{},configured\n",
+                        self.config.window_manager_enabled
+                    ));
                     csv
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
-            
+
             std::fs::write(path, content)?;
         } else {
             // Export configuration if no state available
@@ -624,16 +685,16 @@ impl ExplorationProvider for DesktopProcessor {
                 "window_manager_type": self.config.window_manager_type,
                 "clipboard_poll_interval_secs": self.config.clipboard_poll_interval_secs
             });
-            
+
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(&config_data)?,
                 ExportFormat::Raw => format!("{:#?}", config_data),
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
-            
+
             std::fs::write(path, content)?;
         }
-        
+
         Ok(())
     }
 }

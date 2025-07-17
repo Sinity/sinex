@@ -1,7 +1,11 @@
-//! Event builders for test code
-//!
-//! This module re-exports the event builders from sinex-core for test compatibility
-//! and provides additional test-specific builders not suitable for production code.
+// Event builders for test code
+//
+// This module re-exports the event builders from sinex-events for test compatibility
+// and provides additional test-specific builders not suitable for production code.
+
+// Re-export everything from sinex-events event builders
+
+use crate::common::prelude::*;
 
 // Re-export everything from sinex-events event builders
 pub use sinex_events::event_builders::*;
@@ -37,7 +41,7 @@ impl GenericEventBuilder {
         self
     }
 
-    pub fn build(self) -> sinex_core::RawEvent {
+    pub fn build(self) -> sinex_core_types::RawEvent {
         let payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
         self.factory.create_event(&self.event_type, payload)
     }

@@ -1,22 +1,23 @@
-//! Property tests for Redis Streams-based automaton processing
-//!
-//! This module provides property tests for Redis Streams-based automaton processing,
-//! verifying correctness properties including exactly-once processing, ordering
-//! guarantees, and crash recovery via consumer groups.
-//!
-//! Key Properties Tested:
-//! - Exactly-once processing via consumer groups and acknowledgments
-//! - Ordering guarantees through Stream IDs (monotonic ordering)
-//! - Crash recovery via Pending Entry List (PEL) reclaiming
-//! - Scalability with multiple consumers in same group
-//! - No duplicate processing under high contention
-//! - Checkpoint-based recovery and progress tracking
+// Property tests for Redis Streams-based automaton processing
+//
+// This module provides property tests for Redis Streams-based automaton processing,
+// verifying correctness properties including exactly-once processing, ordering
+// guarantees, and crash recovery via consumer groups.
+//
+// Key Properties Tested:
+// - Exactly-once processing via consumer groups and acknowledgments
+// - Ordering guarantees through Stream IDs (monotonic ordering)
+// - Crash recovery via Pending Entry List (PEL) reclaiming
+// - Scalability with multiple consumers in same group
+// - No duplicate processing under high contention
+// - Checkpoint-based recovery and progress tracking
 
 use crate::common::prelude::*;
 use crate::common::satellite_test_utils::{StreamMessage, simulate_redis_consumer};
 use proptest::prelude::*;
 use redis::aio::ConnectionManager;
-use redis::{AsyncCommands, RedisResult};
+use redis::{AsyncCommands, RedisResult, cmd};
+use sinex_events::{EventFactory, services, event_types};
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -84,7 +85,7 @@ async fn automaton_consumer_with_crashes(
     crash_probability: f64,
     runtime_seconds: u64,
     seed: u64,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -183,9 +184,8 @@ async fn automaton_consumer_with_crashes(
 }
 
 /// Test that Redis Streams with consumer groups prevent duplicate processing even with crashes
-#[tokio::test]
-async fn test_no_duplicate_processing_with_crashes() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> TestResult {
     
     // Setup Redis connection
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
@@ -216,15 +216,15 @@ async fn test_no_duplicate_processing_with_crashes() -> Result<(), anyhow::Error
             let mut event_ids = Vec::new();
             for i in 0..num_events {
                 // Create a proper RawEvent
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.property",
+                let factory = EventFactory::new("test.property");
+                let event = factory.create_event(
                     "property_test_event",
                     json!({
                         "event_number": i,
                         "test_run": test_id.to_string(),
                         "timestamp": chrono::Utc::now().to_rfc3339(),
                     })
-                ).with_host("localhost").build();
+                );
 
                 let event_json = serde_json::to_string(&event)?;
                 let result: RedisResult<String> = redis
@@ -333,9 +333,8 @@ async fn test_no_duplicate_processing_with_crashes() -> Result<(), anyhow::Error
 }
 
 /// Test consumer group scaling and high contention scenarios
-#[tokio::test]
-async fn test_consumer_group_contention_properties() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_consumer_group_contention_properties(ctx: TestContext) -> TestResult {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -358,11 +357,11 @@ async fn test_consumer_group_contention_properties() -> Result<(), anyhow::Error
                 .await;
 
             // Create exactly one event to maximize contention
-            let event = sinex_events::RawEventBuilder::new(
-                "test.contention",
+            let factory = EventFactory::new("test.contention");
+            let event = factory.create_event(
                 "contention_event",
                 json!({"contention_test": true, "test_id": test_id.to_string()})
-            ).with_host("localhost").build();
+            );
 
             let event_json = serde_json::to_string(&event)?;
             let _: RedisResult<String> = redis
@@ -393,13 +392,16 @@ async fn test_consumer_group_contention_properties() -> Result<(), anyhow::Error
                     
                     // Single aggressive read attempt
                     let result: RedisResult<Vec<(String, Vec<(String, String)>)>> = redis_conn
-                        .xreadgroup(
-                            &group_name_clone,
-                            &consumer_name,
-                            Some(items_per_batch),
-                            false,
-                            &[(&stream_key_clone, ">")],
-                        )
+                        .cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg(&group_name_clone)
+                        .arg(&consumer_name)
+                        .arg("COUNT")
+                        .arg(items_per_batch)
+                        .arg("STREAMS")
+                        .arg(&stream_key_clone)
+                        .arg(">")
+                        .query_async(&mut redis)
                         .await;
 
                     if let Ok(streams) = result {
@@ -449,9 +451,8 @@ async fn test_consumer_group_contention_properties() -> Result<(), anyhow::Error
 }
 
 /// Test scaling properties with many events and consumers
-#[tokio::test]
-async fn test_redis_streams_scalability_properties() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_redis_streams_scalability_properties(ctx: TestContext) -> TestResult {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -476,15 +477,15 @@ async fn test_redis_streams_scalability_properties() -> Result<(), anyhow::Error
             // Create many events
             let creation_start = Instant::now();
             for i in 0..event_count {
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.scalability",
+                let factory = EventFactory::new("test.scalability");
+                let event = factory.create_event(
                     "scalability_event",
                     json!({
                         "event_number": i,
                         "data": format!("test_data_{}", i),
                         "test_id": test_id.to_string(),
                     })
-                ).with_host("localhost").build();
+                );
 
                 let event_json = serde_json::to_string(&event)?;
                 let _: RedisResult<String> = redis
@@ -528,13 +529,16 @@ async fn test_redis_streams_scalability_properties() -> Result<(), anyhow::Error
                     // Process events until none are left
                     loop {
                         let result: RedisResult<Vec<(String, Vec<(String, String)>)>> = redis_conn
-                            .xreadgroup(
-                                &group_name_clone,
-                                &consumer_name,
-                                Some(batch_size),
-                                false,
-                                &[(&stream_key_clone, ">")],
-                            )
+                            .cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg(&group_name_clone)
+                        .arg(&consumer_name)
+                        .arg("COUNT")
+                        .arg(batch_size)
+                        .arg("STREAMS")
+                        .arg(&stream_key_clone)
+                        .arg(">")
+                        .query_async(&mut redis)
                             .await;
 
                         match result {
@@ -614,7 +618,7 @@ async fn test_redis_streams_scalability_properties() -> Result<(), anyhow::Error
 
 /// Test that Redis Stream IDs maintain ordering guarantees
 #[tokio::test]
-async fn test_redis_stream_ordering_properties() -> Result<(), anyhow::Error> {
+async fn test_redis_stream_ordering_properties() -> AnyhowResult<(), anyhow::Error> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let mut redis = ConnectionManager::new(redis_client).await?;
 
@@ -636,15 +640,15 @@ async fn test_redis_stream_ordering_properties() -> Result<(), anyhow::Error> {
             // Create events with controlled timing and sequence numbers
             let mut created_sequences = Vec::new();
             for i in 0..event_count {
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.ordering",
+                let factory = EventFactory::new("test.ordering");
+                let event = factory.create_event(
                     "ordering_event",
                     json!({
                         "sequence": i,
                         "timestamp": chrono::Utc::now().to_rfc3339(),
                         "test_id": test_id.to_string(),
                     })
-                ).with_host("localhost").build();
+                );
 
                 let event_json = serde_json::to_string(&event)?;
                 let stream_id: String = redis
@@ -738,9 +742,8 @@ async fn test_redis_stream_ordering_properties() -> Result<(), anyhow::Error> {
 }
 
 /// Test checkpoint-based recovery after consumer crashes
-#[tokio::test]
-async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -764,14 +767,14 @@ async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
 
             // Publish events to stream
             for i in 0..events_before_crash {
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.checkpoint",
+                let factory = EventFactory::new("test.checkpoint");
+                let event = factory.create_event(
                     "checkpoint_event",
                     json!({
                         "event_number": i,
                         "test_id": test_id.to_string(),
                     })
-                ).with_host("localhost").build();
+                );
 
                 let event_json = serde_json::to_string(&event)?;
                 let _: RedisResult<String> = redis
@@ -899,9 +902,8 @@ async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
 }
 
 /// Test that consumer group state remains consistent under various failure scenarios
-#[tokio::test]
-async fn test_consumer_group_state_consistency() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -925,11 +927,11 @@ async fn test_consumer_group_state_consistency() -> Result<(), anyhow::Error> {
 
             // Create initial events
             for i in 0..initial_events {
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.consistency",
+                let factory = EventFactory::new("test.consistency");
+                let event = factory.create_event(
                     "consistency_event",
                     json!({"event_number": i, "test_id": test_id.to_string()})
-                ).with_host("localhost").build();
+                );
 
                 let event_json = serde_json::to_string(&event)?;
                 let _: RedisResult<String> = redis
@@ -956,13 +958,16 @@ async fn test_consumer_group_state_consistency() -> Result<(), anyhow::Error> {
 
                     while operations_done < operations_per_consumer {
                         let result: RedisResult<Vec<(String, Vec<(String, String)>)>> = redis_conn
-                            .xreadgroup(
-                                &group_name_clone,
-                                &consumer_name,
-                                Some(1),
-                                false,
-                                &[(&stream_key_clone, ">")],
-                            )
+                            .cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg(&group_name_clone)
+                        .arg(&consumer_name)
+                        .arg("COUNT")
+                        .arg(1)
+                        .arg("STREAMS")
+                        .arg(&stream_key_clone)
+                        .arg(">")
+                        .query_async(&mut redis)
                             .await;
 
                         if let Ok(streams) = result {

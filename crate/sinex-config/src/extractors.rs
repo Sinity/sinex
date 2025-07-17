@@ -1,5 +1,3 @@
-// Configuration extraction utilities
-// Note: Moved from sinex-core to separate concerns
-
-pub struct ConfigExtractor;
-pub struct ConfigValidator;
+// Configuration extraction utilities - DEPRECATED
+// These are no longer used as we moved to environment-only configuration.
+// This file is kept temporarily for compatibility but will be removed.

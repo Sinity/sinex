@@ -20,7 +20,7 @@ Extending Exocortex capture beyond the desktop to mobile (location, activity, no
     *   UDP-based, REST-like, for very resource-constrained microcontrollers. Observe for push.
 *   **gRPC:**
     *   HTTP/2 + Protobuf. More suitable for higher bandwidth/power devices (e.g., mobile app on Wi-Fi to server). Less ideal for battery-powered IoT.
-*   **Exocortex Ingest:** An Exocortex agent (`agent/mqtt_ingestor` or `agent/coap_ingestor`) subscribes to relevant topics/resources on the broker/CoAP server and writes received messages as `raw.events`.
+*   **Exocortex Ingest:** An Exocortex agent (`agent/mqtt_ingestor` or `agent/coap_ingestor`) subscribes to relevant topics/resources on the broker/CoAP server and writes received messages as `core.events`.
 
 ## 3. ESP32 Implementation Details (Reference IoT Platform) [UG Sec 27.2, CR4, CR5]
 

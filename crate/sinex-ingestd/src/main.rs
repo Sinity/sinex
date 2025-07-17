@@ -5,18 +5,23 @@ use std::path::PathBuf;
 use tracing::{error, info};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Sinex ingestion daemon - central hub for event ingestion")]
+#[command(
+    author,
+    version,
+    about = "Sinex ingestion daemon - central hub for event ingestion"
+)]
 struct Args {
-    /// Configuration file path
-    #[arg(short, long)]
-    config: Option<PathBuf>,
 
     /// Database URL
     #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,
 
     /// Redis URL for message bus
-    #[arg(long, env = "SINEX_REDIS_URL", default_value = "redis://localhost:6379")]
+    #[arg(
+        long,
+        env = "SINEX_REDIS_URL",
+        default_value = "redis://localhost:6379"
+    )]
     redis_url: String,
 
     /// Unix Domain Socket path for gRPC server
@@ -61,20 +66,16 @@ async fn main() -> Result<()> {
 
     info!("Starting Sinex Ingestion Daemon");
 
-    // Load configuration
-    let config = if let Some(config_path) = args.config {
-        IngestdConfig::load_from_file(&config_path).await?
-    } else {
-        IngestdConfig::from_args(
-            args.database_url,
-            args.redis_url,
-            args.socket_path,
-            args.pool_size,
-            args.batch_size,
-            args.batch_timeout_secs,
-            args.dry_run,
-        )?
-    };
+    // Load configuration from environment and command line arguments
+    let config = IngestdConfig::from_args(
+        args.database_url,
+        args.redis_url,
+        args.socket_path,
+        args.pool_size,
+        args.batch_size,
+        args.batch_timeout_secs,
+        args.dry_run,
+    )?;
 
     if args.validate_config {
         info!("Validating configuration...");

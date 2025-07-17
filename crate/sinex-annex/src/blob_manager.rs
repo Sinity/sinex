@@ -2,8 +2,11 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sinex_db::queries::{ArtifactQueries, EventQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_db::{DbPool, Timestamp};
 use sinex_ulid::Ulid;
+use sinex_events::{event_types, sources};
 use sqlx::Row;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -285,29 +288,22 @@ impl BlobManager {
 
     /// Find blob by BLAKE3 hash for deduplication
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> Result<Option<BlobMetadata>> {
-        let row = sqlx::query(
-            "SELECT id, annex_key, original_filename, size_bytes, mime_type, 
-                    checksum_sha256, checksum_blake3, storage_backend, verification_status,
-                    created_at, last_verified_at
-             FROM core.blobs 
-             WHERE checksum_blake3 = $1 LIMIT 1",
-        )
-        .bind(blake3_hash)
-        .fetch_optional(&self.db_pool)
-        .await
-        .context("Failed to query blob by BLAKE3 hash")?;
+        let row = ArtifactQueries::find_blob_by_blake3(blake3_hash)
+            .fetch_optional(&self.db_pool)
+            .await
+            .context("Failed to query blob by BLAKE3 hash")?;
 
         if let Some(row) = row {
             Ok(Some(BlobMetadata {
-                blob_id: Ulid::from_str(&row.get::<String, _>("id"))?,
-                annex_key: row.get("annex_key"),
-                original_filename: row.get("original_filename"),
-                size_bytes: row.get("size_bytes"),
-                mime_type: row.get("mime_type"),
-                checksum_sha256: row.get("checksum_sha256"),
+                blob_id: row.blob_id,
+                annex_key: row.annex_key,
+                original_filename: row.original_filename,
+                size_bytes: row.size_bytes,
+                mime_type: row.mime_type,
+                checksum_sha256: row.checksum_sha256,
                 checksum_blake3: Some(blake3_hash.to_string()),
-                storage_backend: row.get("storage_backend"),
-                verification_status: row.get("verification_status"),
+                storage_backend: row.storage_backend,
+                verification_status: row.verification_status,
             }))
         } else {
             Ok(None)
@@ -316,64 +312,40 @@ impl BlobManager {
 
     /// Insert new blob metadata into database
     pub async fn insert_blob(&self, blob: &BlobMetadata) -> Result<()> {
-        sqlx::query(
-            r#"INSERT INTO core.blobs 
-               (id, annex_key, original_filename, size_bytes, mime_type, 
-                checksum_sha256, checksum_blake3, storage_backend, verification_status)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)"#,
-        )
-        .bind(blob.blob_id.to_string())
-        .bind(&blob.annex_key)
-        .bind(&blob.original_filename)
-        .bind(blob.size_bytes)
-        .bind(&blob.mime_type)
-        .bind(&blob.checksum_sha256)
-        .bind(&blob.checksum_blake3)
-        .bind(&blob.storage_backend)
-        .bind(&blob.verification_status)
-        .execute(&self.db_pool)
-        .await
-        .context("Failed to insert blob metadata")?;
+        ArtifactQueries::insert_blob(blob)
+            .execute(&self.db_pool)
+            .await
+            .context("Failed to insert blob metadata")?;
 
         Ok(())
     }
 
     /// Get blob metadata by ID
     pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
-        let row = sqlx::query(
-            "SELECT id, annex_key, original_filename, size_bytes, mime_type, 
-                    checksum_sha256, checksum_blake3, storage_backend, verification_status
-             FROM core.blobs 
-             WHERE id = $1",
-        )
-        .bind(blob_id.to_string())
-        .fetch_one(&self.db_pool)
-        .await
-        .context("Failed to get blob metadata")?;
+        let row = ArtifactQueries::get_blob_by_id(blob_id)
+            .fetch_one(&self.db_pool)
+            .await
+            .context("Failed to get blob metadata")?;
 
         Ok(BlobMetadata {
-            blob_id: *blob_id,
-            annex_key: row.get("annex_key"),
-            original_filename: row.get("original_filename"),
-            size_bytes: row.get("size_bytes"),
-            mime_type: row.get("mime_type"),
-            checksum_sha256: row.get("checksum_sha256"),
-            checksum_blake3: row.get("checksum_blake3"),
-            storage_backend: row.get("storage_backend"),
-            verification_status: row.get("verification_status"),
+            blob_id: row.blob_id,
+            annex_key: row.annex_key,
+            original_filename: row.original_filename,
+            size_bytes: row.size_bytes,
+            mime_type: row.mime_type,
+            checksum_sha256: row.checksum_sha256,
+            checksum_blake3: row.checksum_blake3,
+            storage_backend: row.storage_backend,
+            verification_status: row.verification_status,
         })
     }
 
     /// Update verification status
     async fn update_verification_status(&self, blob_id: &Ulid, status: &str) -> Result<()> {
-        sqlx::query(
-            "UPDATE core.blobs SET verification_status = $1, last_verified_at = NOW() WHERE id = $2"
-        )
-        .bind(status)
-        .bind(blob_id.to_string())
-        .execute(&self.db_pool)
-        .await
-        .context("Failed to update verification status")?;
+        ArtifactQueries::update_verification_status(blob_id, status)
+            .execute(&self.db_pool)
+            .await
+            .context("Failed to update verification status")?;
 
         Ok(())
     }
@@ -382,14 +354,10 @@ impl BlobManager {
     async fn add_original_filename(&self, blob_id: &Ulid, filename: &str) -> Result<()> {
         // For now, just update the original_filename field
         // In the future, this should handle an array of filenames
-        sqlx::query(
-            "UPDATE core.blobs SET original_filename = $1 WHERE id = $2 AND original_filename != $1"
-        )
-        .bind(filename)
-        .bind(blob_id.to_string())
-        .execute(&self.db_pool)
-        .await
-        .context("Failed to add original filename")?;
+        ArtifactQueries::update_original_filename(blob_id, filename)
+            .execute(&self.db_pool)
+            .await
+            .context("Failed to add original filename")?;
 
         Ok(())
     }
@@ -455,8 +423,8 @@ impl BlobManager {
     ) -> Result<()> {
         let event = json!({
             "id": Ulid::new().to_string(),
-            "source": "blob_storage",
-            "event_type": "metrics.blob_storage.operation",
+            "source": sources::BLOB_STORAGE,
+            "event_type": event_types::metrics::BLOB_STORAGE_OPERATION,
             "ts_ingest": Utc::now(),
             "ts_orig": Utc::now(),
             "host": gethostname::gethostname().to_string_lossy().to_string(),
@@ -468,32 +436,24 @@ impl BlobManager {
             }
         });
 
-        // Insert metric event into core.events
-        sqlx::query(
-            r#"
-            INSERT INTO core.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(event["id"].as_str().unwrap())
-        .bind(event["source"].as_str().unwrap())
-        .bind(event["event_type"].as_str().unwrap())
-        .bind(
+        // Insert metric event into core.events using EventQueries
+        EventQueries::insert_event(
+            event["id"].as_str().unwrap(),
+            event["source"].as_str().unwrap(),
+            event["event_type"].as_str().unwrap(),
             event["ts_ingest"]
                 .as_str()
                 .unwrap()
                 .parse::<Timestamp>()
                 .unwrap(),
-        )
-        .bind(
             event["ts_orig"]
                 .as_str()
                 .unwrap()
                 .parse::<Timestamp>()
                 .unwrap(),
+            event["host"].as_str().unwrap(),
+            &event["payload"],
         )
-        .bind(event["host"].as_str().unwrap())
-        .bind(&event["payload"])
         .execute(&self.db_pool)
         .await
         .context("Failed to emit blob operation metric")?;
@@ -503,27 +463,19 @@ impl BlobManager {
 
     /// Emit storage statistics (called periodically by background task)
     pub async fn emit_storage_stats(&self) -> Result<()> {
-        // Query aggregate statistics
-        let stats = sqlx::query(
-            r#"
-            SELECT 
-                COUNT(*) as blob_count,
-                SUM(size_bytes) as total_size,
-                COUNT(CASE WHEN verification_status = 'failed' THEN 1 END) as failed_count
-            FROM core.blobs
-            "#,
-        )
-        .fetch_one(&self.db_pool)
-        .await?;
+        // Query aggregate statistics using ArtifactQueries
+        let stats = ArtifactQueries::get_storage_stats()
+            .fetch_one(&self.db_pool)
+            .await?;
 
-        let blob_count: i64 = stats.get("blob_count");
-        let total_size: Option<i64> = stats.get("total_size");
-        let failed_count: i64 = stats.get("failed_count");
+        let blob_count = stats.blob_count;
+        let total_size = Some(stats.total_size);
+        let failed_count = stats.failed_count;
 
         let event = json!({
             "id": Ulid::new().to_string(),
-            "source": "blob_storage",
-            "event_type": "metrics.blob_storage.statistics",
+            "source": sources::BLOB_STORAGE,
+            "event_type": event_types::metrics::BLOB_STORAGE_STATISTICS,
             "ts_ingest": Utc::now(),
             "ts_orig": Utc::now(),
             "host": gethostname::gethostname().to_string_lossy().to_string(),
@@ -535,32 +487,24 @@ impl BlobManager {
             }
         });
 
-        // Insert metric event
-        sqlx::query(
-            r#"
-            INSERT INTO core.events (id, source, event_type, ts_ingest, ts_orig, host, payload)
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
-            "#,
-        )
-        .bind(event["id"].as_str().unwrap())
-        .bind(event["source"].as_str().unwrap())
-        .bind(event["event_type"].as_str().unwrap())
-        .bind(
+        // Insert metric event using EventQueries
+        EventQueries::insert_event(
+            event["id"].as_str().unwrap(),
+            event["source"].as_str().unwrap(),
+            event["event_type"].as_str().unwrap(),
             event["ts_ingest"]
                 .as_str()
                 .unwrap()
                 .parse::<Timestamp>()
                 .unwrap(),
-        )
-        .bind(
             event["ts_orig"]
                 .as_str()
                 .unwrap()
                 .parse::<Timestamp>()
                 .unwrap(),
+            event["host"].as_str().unwrap(),
+            &event["payload"],
         )
-        .bind(event["host"].as_str().unwrap())
-        .bind(&event["payload"])
         .execute(&self.db_pool)
         .await
         .context("Failed to emit blob storage statistics")?;

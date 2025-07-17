@@ -5,8 +5,7 @@
 //! Ported from the legacy sinex-events-system implementation with satellite support.
 
 use crate::payloads::*;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -24,7 +23,10 @@ pub struct EnhancedJournalWatcher {
 impl EnhancedJournalWatcher {
     /// Create new enhanced journal watcher
     pub async fn new(config: JournalConfig) -> SatelliteResult<Self> {
-        info!("Enhanced journal watcher initialized with config: {:?}", config);
+        info!(
+            "Enhanced journal watcher initialized with config: {:?}",
+            config
+        );
 
         // Check journalctl availability
         let check = Command::new("journalctl")
@@ -66,7 +68,10 @@ impl EnhancedJournalWatcher {
     }
 
     /// Start streaming events with optional historical import
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting enhanced journal monitoring");
 
         // Import historical entries if configured
@@ -85,7 +90,10 @@ impl EnhancedJournalWatcher {
     }
 
     /// Import historical journal entries with cursor tracking
-    async fn import_historical(&mut self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn import_historical(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting historical journal import");
         let start_time = std::time::Instant::now();
 
@@ -210,7 +218,8 @@ impl EnhancedJournalWatcher {
                 duration_ms: start_time.elapsed().as_millis() as u64,
             };
 
-            let sync_event = Self::create_event("sync.completed", serde_json::to_value(sync_payload)?);
+            let sync_event =
+                Self::create_event("sync.completed", serde_json::to_value(sync_payload)?);
             Self::send_event(tx, sync_event, "journal_sync_event").await?;
         }
 
@@ -242,7 +251,10 @@ impl EnhancedJournalWatcher {
     }
 
     /// Inner journal following loop with proper error handling
-    async fn follow_journal_inner(&mut self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn follow_journal_inner(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let mut args = vec!["--output=json", "--no-pager", "--follow"];
 
         // Add cursor position if we have one
@@ -319,7 +331,9 @@ impl EnhancedJournalWatcher {
                         Ok(entry) => {
                             if let Some(event) = self.parse_journal_entry(&entry)? {
                                 // Update cursor
-                                if let Some(cursor) = event.payload.get("cursor").and_then(|v| v.as_str()) {
+                                if let Some(cursor) =
+                                    event.payload.get("cursor").and_then(|v| v.as_str())
+                                {
                                     self.last_cursor = Some(cursor.to_string());
                                     self.save_cursor(cursor).await?;
                                 }
@@ -516,9 +530,8 @@ impl EnhancedJournalWatcher {
 
     /// Create event using standard pattern
     fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
-        RawEventBuilder::new(sinex_core::sources::JOURNALD, event_type, payload)
-            .with_host("localhost")
-            .build()
+        let factory = EventFactory::new(sinex_core_types::sources::JOURNALD);
+        factory.create_event(event_type, payload)
     }
 
     /// Send event with error logging

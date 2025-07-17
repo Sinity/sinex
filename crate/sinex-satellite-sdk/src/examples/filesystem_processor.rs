@@ -5,8 +5,8 @@
 
 use crate::{
     cli::{
-        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        SourceState, ActivityEntry
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        SourceState,
     },
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
@@ -17,7 +17,7 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_events::RawEventBuilder;
+use sinex_events::EventFactory;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -28,10 +28,10 @@ use tracing::{debug, info, warn};
 pub struct FilesystemProcessor {
     /// Base directories to monitor
     watch_paths: Vec<PathBuf>,
-    
+
     /// Current context (set during initialization)
     context: Option<StreamProcessorContext>,
-    
+
     /// Last known filesystem state
     last_state: Option<FilesystemState>,
 }
@@ -41,13 +41,13 @@ pub struct FilesystemProcessor {
 pub struct FilesystemState {
     /// Timestamp when state was captured
     pub captured_at: DateTime<Utc>,
-    
+
     /// File count by directory
     pub file_counts: HashMap<PathBuf, u64>,
-    
+
     /// Total files monitored
     pub total_files: u64,
-    
+
     /// Directories monitored
     pub directories: Vec<PathBuf>,
 }
@@ -70,7 +70,7 @@ impl FilesystemProcessor {
         emit_events: bool,
     ) -> SatelliteResult<u64> {
         let mut event_count = 0;
-        
+
         // Determine scan cutoff based on checkpoint
         let cutoff_time = match checkpoint {
             Checkpoint::Timestamp { timestamp, .. } => Some(*timestamp),
@@ -82,13 +82,13 @@ impl FilesystemProcessor {
         };
 
         info!(path = %path.display(), "Scanning directory");
-        
+
         let mut entries = fs::read_dir(path).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let entry_path = entry.path();
             let metadata = entry.metadata().await?;
-            
+
             // Skip files older than checkpoint
             if let Some(cutoff) = cutoff_time {
                 if let Ok(modified) = metadata.modified() {
@@ -98,27 +98,32 @@ impl FilesystemProcessor {
                     }
                 }
             }
-            
+
             if emit_events {
+                let factory = EventFactory::new("fs");
                 let event = if metadata.is_file() {
-                    RawEventBuilder::new("fs", "file.discovered", serde_json::json!({
-                        "path": entry_path.to_string_lossy(),
-                        "size": metadata.len(),
-                        "modified": metadata.modified().ok().map(|t| {
-                            let dt: DateTime<Utc> = t.into();
-                            dt
-                        })
-                    }))
-                    .build()
+                    factory.create_event(
+                        "file.discovered",
+                        serde_json::json!({
+                            "path": entry_path.to_string_lossy(),
+                            "size": metadata.len(),
+                            "modified": metadata.modified().ok().map(|t| {
+                                let dt: DateTime<Utc> = t.into();
+                                dt
+                            })
+                        }),
+                    )
                 } else if metadata.is_dir() {
-                    RawEventBuilder::new("fs", "dir.discovered", serde_json::json!({
-                        "path": entry_path.to_string_lossy(),
-                        "modified": metadata.modified().ok().map(|t| {
-                            let dt: DateTime<Utc> = t.into();
-                            dt
-                        })
-                    }))
-                    .build()
+                    factory.create_event(
+                        "dir.discovered",
+                        serde_json::json!({
+                            "path": entry_path.to_string_lossy(),
+                            "modified": metadata.modified().ok().map(|t| {
+                                let dt: DateTime<Utc> = t.into();
+                                dt
+                            })
+                        }),
+                    )
                 } else {
                     continue;
                 };
@@ -127,12 +132,12 @@ impl FilesystemProcessor {
                     context.emit_event(event).await?;
                 }
             }
-            
+
             event_count += 1;
-            
+
             // Note: Not recursing into subdirectories for simplicity in this example
         }
-        
+
         debug!(path = %path.display(), events = event_count, "Directory scan completed");
         Ok(event_count)
     }
@@ -141,7 +146,7 @@ impl FilesystemProcessor {
     async fn take_snapshot(&mut self) -> SatelliteResult<FilesystemState> {
         let mut file_counts = HashMap::new();
         let mut total_files = 0;
-        
+
         for watch_path in &self.watch_paths {
             if watch_path.exists() {
                 let count = self.count_files_simple(watch_path).await?;
@@ -149,14 +154,14 @@ impl FilesystemProcessor {
                 total_files += count;
             }
         }
-        
+
         let state = FilesystemState {
             captured_at: Utc::now(),
             file_counts,
             total_files,
             directories: self.watch_paths.clone(),
         };
-        
+
         self.last_state = Some(state.clone());
         Ok(state)
     }
@@ -165,7 +170,7 @@ impl FilesystemProcessor {
     async fn count_files_simple(&self, path: &Path) -> SatelliteResult<u64> {
         let mut count = 0;
         let mut entries = fs::read_dir(path).await?;
-        
+
         while let Some(entry) = entries.next_entry().await? {
             let metadata = entry.metadata().await?;
             if metadata.is_file() {
@@ -173,7 +178,7 @@ impl FilesystemProcessor {
             }
             // Note: Not recursing into subdirectories for simplicity
         }
-        
+
         Ok(count)
     }
 }
@@ -186,14 +191,14 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             watch_paths = ?self.watch_paths,
             "Initializing filesystem processor"
         );
-        
+
         // Validate watch paths exist
         for path in &self.watch_paths {
             if !path.exists() {
                 warn!(path = %path.display(), "Watch path does not exist");
             }
         }
-        
+
         self.context = Some(ctx);
         Ok(())
     }
@@ -209,7 +214,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
         let mut warnings = Vec::new();
-        
+
         info!(
             from = %from.description(),
             until = ?until,
@@ -221,11 +226,14 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             TimeHorizon::Snapshot => {
                 // Take current state snapshot
                 let _state = self.take_snapshot().await?;
-                
+
                 // Scan all watch paths
                 for watch_path in &self.watch_paths {
                     if watch_path.exists() {
-                        match self.scan_directory_simple(watch_path, &from, !args.dry_run).await {
+                        match self
+                            .scan_directory_simple(watch_path, &from, !args.dry_run)
+                            .await
+                        {
                             Ok(count) => {
                                 events_processed += count;
                                 successful_targets.push(watch_path.to_string_lossy().to_string());
@@ -242,14 +250,19 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                     }
                 }
             }
-            
+
             TimeHorizon::Historical { end_time } => {
                 // Historical scan from checkpoint to end_time
-                warnings.push("Historical filesystem scanning is limited to modification times".to_string());
-                
+                warnings.push(
+                    "Historical filesystem scanning is limited to modification times".to_string(),
+                );
+
                 for watch_path in &self.watch_paths {
                     if watch_path.exists() {
-                        match self.scan_directory_simple(watch_path, &from, !args.dry_run).await {
+                        match self
+                            .scan_directory_simple(watch_path, &from, !args.dry_run)
+                            .await
+                        {
                             Ok(count) => {
                                 events_processed += count;
                                 successful_targets.push(watch_path.to_string_lossy().to_string());
@@ -263,21 +276,23 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                         }
                     }
                 }
-                
+
                 debug!(end_time = %end_time, "Historical scan completed");
             }
-            
+
             TimeHorizon::Continuous => {
                 // Continuous monitoring (would use file system watcher in real implementation)
-                warnings.push("Continuous filesystem monitoring not implemented in this example".to_string());
+                warnings.push(
+                    "Continuous filesystem monitoring not implemented in this example".to_string(),
+                );
                 return Err(crate::SatelliteError::Processing(
-                    "Continuous mode not implemented for filesystem processor example".to_string()
+                    "Continuous mode not implemented for filesystem processor example".to_string(),
                 ));
             }
         }
 
         let final_checkpoint = Checkpoint::timestamp(Utc::now(), None);
-        
+
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
@@ -290,8 +305,14 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 Utc::now(),
             )),
             processor_stats: HashMap::from([
-                ("directories_scanned".to_string(), self.watch_paths.len() as u64),
-                ("successful_targets".to_string(), successful_targets.len() as u64),
+                (
+                    "directories_scanned".to_string(),
+                    self.watch_paths.len() as u64,
+                ),
+                (
+                    "successful_targets".to_string(),
+                    successful_targets.len() as u64,
+                ),
                 ("failed_targets".to_string(), failed_targets.len() as u64),
             ]),
             successful_targets,
@@ -310,9 +331,9 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
     fn capabilities(&self) -> ProcessorCapabilities {
         ProcessorCapabilities {
-            supports_continuous: true,  // Would support with proper file watcher
-            supports_historical: true,  // Limited by file modification times
-            supports_snapshot: true,    // Full directory scanning
+            supports_continuous: true, // Would support with proper file watcher
+            supports_historical: true, // Limited by file modification times
+            supports_snapshot: true,   // Full directory scanning
             supports_interactive: false,
             max_scan_size: Some(10000), // Limit for large directories
             supports_concurrent: false,
@@ -332,26 +353,28 @@ impl StatefulStreamProcessor for FilesystemProcessor {
     ) -> SatelliteResult<ScanEstimate> {
         let mut estimated_events = 0;
         let mut warnings = Vec::new();
-        
+
         // Estimate based on current file counts
         for watch_path in &self.watch_paths {
             if watch_path.exists() {
                 match self.count_files_simple(watch_path).await {
                     Ok(count) => estimated_events += count,
-                    Err(_) => warnings.push(format!("Cannot access path: {}", watch_path.display())),
+                    Err(_) => {
+                        warnings.push(format!("Cannot access path: {}", watch_path.display()))
+                    }
                 }
             }
         }
-        
+
         // Adjust estimate based on time horizon
         let (duration_factor, confidence) = match until {
             TimeHorizon::Snapshot => (1.0, 0.9),
             TimeHorizon::Historical { .. } => (0.3, 0.6), // Fewer files modified recently
             TimeHorizon::Continuous => (f64::INFINITY, 0.1), // Unknown duration
         };
-        
+
         let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
-        
+
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
             estimated_duration: std::time::Duration::from_millis(adjusted_events * 10), // ~10ms per file
@@ -368,8 +391,11 @@ impl ExplorationProvider for FilesystemProcessor {
         let recent_activity = if let Some(ref state) = self.last_state {
             vec![ActivityEntry {
                 timestamp: state.captured_at,
-                description: format!("Snapshot taken: {} files in {} directories", 
-                                   state.total_files, state.directories.len()),
+                description: format!(
+                    "Snapshot taken: {} files in {} directories",
+                    state.total_files,
+                    state.directories.len()
+                ),
                 data: Some(serde_json::to_value(state)?),
             }]
         } else {
@@ -377,12 +403,25 @@ impl ExplorationProvider for FilesystemProcessor {
         };
 
         Ok(SourceState {
-            description: format!("Filesystem processor monitoring {} paths", self.watch_paths.len()),
-            last_updated: self.last_state.as_ref().map(|s| s.captured_at).unwrap_or_else(Utc::now),
+            description: format!(
+                "Filesystem processor monitoring {} paths",
+                self.watch_paths.len()
+            ),
+            last_updated: self
+                .last_state
+                .as_ref()
+                .map(|s| s.captured_at)
+                .unwrap_or_else(Utc::now),
             total_items: self.last_state.as_ref().map(|s| s.total_files),
             metadata: HashMap::from([
-                ("watch_paths".to_string(), serde_json::to_value(&self.watch_paths)?),
-                ("processor_type".to_string(), serde_json::Value::String("ingestor".to_string())),
+                (
+                    "watch_paths".to_string(),
+                    serde_json::to_value(&self.watch_paths)?,
+                ),
+                (
+                    "processor_type".to_string(),
+                    serde_json::Value::String("ingestor".to_string()),
+                ),
             ]),
             healthy: true,
             recent_activity,
@@ -404,7 +443,7 @@ impl ExplorationProvider for FilesystemProcessor {
         // In a real implementation, this would compare filesystem state with Sinex events
         let now = Utc::now();
         let hour_ago = now - chrono::Duration::hours(1);
-        
+
         Ok(CoverageAnalysis {
             time_range: (hour_ago, now),
             source_total: self.last_state.as_ref().map(|s| s.total_files).unwrap_or(0),
@@ -438,10 +477,10 @@ impl ExplorationProvider for FilesystemProcessor {
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
-            
+
             std::fs::write(path, content)?;
         }
-        
+
         Ok(())
     }
 }

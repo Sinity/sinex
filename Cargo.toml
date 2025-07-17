@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "crate/sinex-core",
     "crate/sinex-ulid",
     "crate/sinex-db", 
     "crate/sinex-events",
@@ -28,6 +27,12 @@ members = [
     "crate/sinex-search-automaton",
     "crate/sinex-content-automaton",
     "crate/sinex-rpc-dispatcher",
+    # New consolidated crates (replacing sinex-core split)
+    "crate/sinex-core-types",
+    "crate/sinex-core-utils",
+    "crate/sinex-core-runtime",
+    "crate/sinex-core-fs",
+    "crate/sinex-metrics-lib",
 ]
 resolver = "2"
 
@@ -70,7 +75,10 @@ async-trait.workspace = true
 gethostname.workspace = true
 
 # Local crate dependencies
-sinex-core = { path = "crate/sinex-core" }
+sinex-core-types = { path = "crate/sinex-core-types" }
+sinex-core-utils = { path = "crate/sinex-core-utils" }
+sinex-core-runtime = { path = "crate/sinex-core-runtime" }
+sinex-core-fs = { path = "crate/sinex-core-fs" }
 sinex-db = { path = "crate/sinex-db" }
 sinex-ulid = { path = "crate/sinex-ulid", features = ["arbitrary"] }
 sinex-events = { path = "crate/sinex-events" }
@@ -78,6 +86,10 @@ sinex-annex = { path = "crate/sinex-annex" }
 sinex-preflight = { path = "crate/sinex-preflight" }
 sinex-gateway = { path = "crate/sinex-gateway" }
 sinex-satellite-sdk = { path = "crate/sinex-satellite-sdk" }
+sinex-error = { path = "crate/sinex-error" }
+sinex-validation = { path = "crate/sinex-validation" }
+sinex-channel = { path = "crate/sinex-channel" }
+sinex-config = { path = "crate/sinex-config" }
 
 # Testing dependencies needed for integration tests
 lazy_static = "1.4"
@@ -88,6 +100,7 @@ tracing-subscriber = { workspace = true }
 [features]
 default = []
 arbitrary = ["sinex-ulid/arbitrary"]
+metrics = []
 
 [dev-dependencies]
 proptest.workspace = true

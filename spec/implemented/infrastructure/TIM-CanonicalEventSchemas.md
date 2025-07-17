@@ -25,7 +25,7 @@
 - [ ] Tests for schema validation against sample payloads
 - [ ] Documentation for adding new event schema types
 
-*   **Purpose:** Provides JSON Schema definitions for the `payload` of key canonical `raw.events` types used throughout the Exocortex. These schemas are registered in `sinex_schemas.event_payload_schemas`. This TIM expands on original Vision Document Appendix B.
+*   **Purpose:** Provides JSON Schema definitions for the `payload` of key canonical `core.events` types used throughout the Exocortex. These schemas are registered in `sinex_schemas.event_payload_schemas`. This TIM expands on original Vision Document Appendix B.
 *   **Source:** Derived from original Vision Document Appendix B and payload descriptions across various Vision/UG sections.
 *   **Reference:** For schema registry DDL and management, see `TIM-EventSchemaRegistry.md`. For `_provenance` sub-schema, see Section 1 of this TIM.
 
@@ -47,7 +47,7 @@ Many event payloads will share a common `_provenance` block for lineage. This ca
     },
     "input_event_ids_ulid": { 
       "type": "array", "items": {"type": "string", "format": "ulid"}, 
-      "description": "ULIDs of raw.events that were primary inputs to generating this derived event." 
+      "description": "ULIDs of core.events that were primary inputs to generating this derived event." 
     },
     "input_artifact_ids_ulid": { 
       "type": "array", "items": {"type": "string", "format": "ulid"}, 
@@ -201,7 +201,7 @@ Many event payloads will share a common `_provenance` block for lineage. This ca
     "affected_task_artifact_id": { "type": ["string", "null"], "format": "ulid", "description": "Optional: ULID of a core.artifacts task item this friction relates to." },
     "related_raw_event_ids_ulid": { 
       "type": "array", "items": {"type": "string", "format": "ulid"}, "nullable": true,
-      "description": "Optional: ULIDs of other raw.events that provide context to this friction." 
+      "description": "Optional: ULIDs of other core.events that provide context to this friction." 
     },
     "resolution_status": { 
       "type": "string", 

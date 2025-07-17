@@ -36,7 +36,7 @@ pub struct ShellIntegration {
 
 impl ShellIntegration {
     /// Create a new shell integration instance for the current environment
-    pub async fn new() -> sinex_core::Result<Self> {
+    pub async fn new() -> sinex_core_types::Result<Self> {
         let shell_info = ShellDetector::detect_current_shell()?;
         let hook_manager = HookManager::new(&shell_info)?;
         let session_tracker = SessionTracker::new();
@@ -51,14 +51,14 @@ impl ShellIntegration {
     }
 
     /// Install shell hooks for event capture
-    pub async fn install_hooks(&mut self, config: &IntegrationConfig) -> sinex_core::Result<()> {
+    pub async fn install_hooks(&mut self, config: &IntegrationConfig) -> sinex_core_types::Result<()> {
         self.hook_manager.install_all_hooks(config).await?;
         self.environment_setup.configure_environment(config).await?;
         Ok(())
     }
 
     /// Uninstall shell hooks
-    pub async fn uninstall_hooks(&mut self) -> sinex_core::Result<()> {
+    pub async fn uninstall_hooks(&mut self) -> sinex_core_types::Result<()> {
         self.hook_manager.uninstall_all_hooks().await?;
         self.environment_setup.cleanup_environment().await?;
         Ok(())
@@ -68,14 +68,14 @@ impl ShellIntegration {
     pub async fn start_session(
         &mut self,
         session_id: Option<String>,
-    ) -> sinex_core::Result<String> {
+    ) -> sinex_core_types::Result<String> {
         self.session_tracker
             .start_session(session_id, &self.shell_info)
             .await
     }
 
     /// End the current shell session
-    pub async fn end_session(&mut self, session_id: &str) -> sinex_core::Result<()> {
+    pub async fn end_session(&mut self, session_id: &str) -> sinex_core_types::Result<()> {
         self.session_tracker.end_session(session_id).await
     }
 
@@ -85,7 +85,7 @@ impl ShellIntegration {
     }
 
     /// Check if hooks are properly installed
-    pub async fn verify_installation(&self) -> sinex_core::Result<bool> {
+    pub async fn verify_installation(&self) -> sinex_core_types::Result<bool> {
         self.hook_manager.verify_hooks().await
     }
 }

@@ -1,0 +1,21 @@
+[package]
+name = "sinex-channel"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+sinex-error = { path = "../sinex-error" }
+sinex-events = { path = "../sinex-events" }
+async-trait.workspace = true
+tokio = { workspace = true, features = ["sync", "time", "macros"] }
+tracing.workspace = true
+serde = { workspace = true, features = ["derive"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+sinex-ulid = { path = "../sinex-ulid" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

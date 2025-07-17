@@ -139,9 +139,9 @@ EOF
     
     def get_event_count(event_type=None):
         if event_type:
-            query = f"SELECT COUNT(*) FROM raw.events WHERE event_type = '{event_type}';"
+            query = f"SELECT COUNT(*) FROM core.events WHERE event_type = '{event_type}';"
         else:
-            query = "SELECT COUNT(*) FROM raw.events;"
+            query = "SELECT COUNT(*) FROM core.events;"
         result = machine.succeed(
             f"su - postgres -c 'psql -d sinex -t -c \"{query}\"'"
         )
@@ -153,13 +153,13 @@ EOF
         else:
             where_clause = "WHERE source = 'terminal.kitty'"
         result = machine.succeed(
-            f"su - postgres -c 'psql -d sinex -t -c \"SELECT event_type, payload FROM raw.events {where_clause} ORDER BY ts_ingest DESC LIMIT 10;\"'"
+            f"su - postgres -c 'psql -d sinex -t -c \"SELECT event_type, payload FROM core.events {where_clause} ORDER BY ts_ingest DESC LIMIT 10;\"'"
         )
         return result.strip()
     
     def get_kitty_event_count(event_type):
         result = machine.succeed(
-            f"su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM raw.events WHERE source = '\"'\"'terminal.kitty'\"'\"' AND event_type = '\"'\"'{event_type}'\"'\"';\"'"
+            f"su - postgres -c 'psql -d sinex -t -c \"SELECT COUNT(*) FROM core.events WHERE source = '\"'\"'terminal.kitty'\"'\"' AND event_type = '\"'\"'{event_type}'\"'\"';\"'"
         )
         return int(result.strip())
     
@@ -410,7 +410,7 @@ EOF
         # Check if we have any Kitty events with proper structure
         try:
             kitty_event_structure = machine.succeed(
-                "su - postgres -c 'psql -d sinex -t -c \"SELECT jsonb_object_keys(payload) FROM raw.events WHERE source = '\"'\"'shell.kitty'\"'\"' LIMIT 1;\"'"
+                "su - postgres -c 'psql -d sinex -t -c \"SELECT jsonb_object_keys(payload) FROM core.events WHERE source = '\"'\"'shell.kitty'\"'\"' LIMIT 1;\"'"
             )
             
             if kitty_event_structure.strip():
@@ -440,7 +440,7 @@ EOF
         
         # Query for all event sources to verify system health
         sources = machine.succeed(
-            "su - postgres -c 'psql -d sinex -t -c \"SELECT DISTINCT source FROM raw.events ORDER BY source;\"'"
+            "su - postgres -c 'psql -d sinex -t -c \"SELECT DISTINCT source FROM core.events ORDER BY source;\"'"
         )
         print(f"Active event sources:\n{sources}")
         

@@ -5,7 +5,8 @@
 //! manual RawEvent construction and ensure consistency across all event sources.
 
 use crate::event_types;
-use crate::{JsonValue, RawEventBuilder};
+use crate::raw_event::RawEvent;
+use crate::JsonValue;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::collections::HashMap;
@@ -28,11 +29,24 @@ impl EventFactory {
     }
 
     /// Create a generic event with manual payload
-    pub fn create_event(&self, event_type: &str, payload: JsonValue) -> crate::RawEvent {
-        RawEventBuilder::new(&self.source_name, event_type, payload)
-            .with_host(&self.host)
-            .with_ingestor_version(&self.ingestor_version)
-            .build()
+    pub fn create_event(&self, event_type: &str, payload: JsonValue) -> RawEvent {
+        RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: self.source_name.clone(),
+            event_type: event_type.to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: self.host.clone(),
+            ingestor_version: Some(self.ingestor_version.clone()),
+            payload_schema_id: None,
+            payload,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        }
     }
 
     /// Create a filesystem event builder
@@ -187,16 +201,23 @@ impl FilesystemEventBuilder {
             }
         }
 
-        let mut builder =
-            RawEventBuilder::new(&self.source_name, operation.as_event_type(), payload)
-                .with_host(&self.host)
-                .with_ingestor_version(&self.ingestor_version);
-
-        if let Some(ts) = self.timestamp {
-            builder = builder.with_orig_timestamp(ts);
+        RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: self.source_name.clone(),
+            event_type: operation.as_event_type().to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: self.timestamp,
+            host: self.host.clone(),
+            ingestor_version: Some(self.ingestor_version.clone()),
+            payload_schema_id: None,
+            payload,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         }
-
-        builder.build()
     }
 }
 
@@ -326,15 +347,23 @@ impl TerminalEventBuilder {
         payload["completion_timestamp"] =
             json!(self.timestamp.unwrap_or_else(Utc::now).to_rfc3339());
 
-        let mut builder = RawEventBuilder::new(&self.source_name, event_type, payload)
-            .with_host(&self.host)
-            .with_ingestor_version(&self.ingestor_version);
-
-        if let Some(ts) = self.timestamp {
-            builder = builder.with_orig_timestamp(ts);
+        RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: self.source_name.clone(),
+            event_type: event_type.to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: self.timestamp,
+            host: self.host.clone(),
+            ingestor_version: Some(self.ingestor_version.clone()),
+            payload_schema_id: None,
+            payload,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         }
-
-        builder.build()
     }
 }
 
@@ -460,15 +489,23 @@ impl ClipboardEventBuilder {
             _ => "clipboard.copied",
         };
 
-        let mut builder = RawEventBuilder::new(&self.source_name, event_type, payload)
-            .with_host(&self.host)
-            .with_ingestor_version(&self.ingestor_version);
-
-        if let Some(ts) = self.timestamp {
-            builder = builder.with_orig_timestamp(ts);
+        RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: self.source_name.clone(),
+            event_type: event_type.to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: self.timestamp,
+            host: self.host.clone(),
+            ingestor_version: Some(self.ingestor_version.clone()),
+            payload_schema_id: None,
+            payload,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         }
-
-        builder.build()
     }
 }
 
@@ -609,15 +646,23 @@ impl WindowManagerEventBuilder {
             payload["event_data"] = json!(data);
         }
 
-        let mut builder = RawEventBuilder::new(&self.source_name, event_type, payload)
-            .with_host(&self.host)
-            .with_ingestor_version(&self.ingestor_version);
-
-        if let Some(ts) = self.timestamp {
-            builder = builder.with_orig_timestamp(ts);
+        RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: self.source_name.clone(),
+            event_type: event_type.to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: self.timestamp,
+            host: self.host.clone(),
+            ingestor_version: Some(self.ingestor_version.clone()),
+            payload_schema_id: None,
+            payload,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
         }
-
-        builder.build()
     }
 }
 
@@ -733,13 +778,23 @@ impl SystemEventBuilder {
             payload["fields"] = json!(self.fields);
         }
 
-        let mut builder = RawEventBuilder::new(&self.source_name, "entry.written", payload)
-            .with_host(&self.host)
-            .with_ingestor_version(&self.ingestor_version);
-
-        builder = builder.with_orig_timestamp(timestamp);
-
-        builder.build()
+        RawEvent {
+            id: sinex_ulid::Ulid::new(),
+            source: self.source_name.clone(),
+            event_type: "entry.written".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: Some(timestamp),
+            host: self.host.clone(),
+            ingestor_version: Some(self.ingestor_version.clone()),
+            payload_schema_id: None,
+            payload,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        }
     }
 }
 

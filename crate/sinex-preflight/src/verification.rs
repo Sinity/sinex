@@ -10,6 +10,8 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use sinex_db::queries::{EventQueries, OperationQueries, SchemaQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_db::{ulid_to_uuid, uuid_to_ulid};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
@@ -689,14 +691,11 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
         test_ids.push(result.id);
     }
 
-    // Verify all events were inserted
-    let count_result = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE source = $1",
-        "sinex-preflight-pipeline-test"
-    )
-    .fetch_one(pool)
-    .await
-    .context("Failed to count inserted events")?;
+    // Verify all events were inserted using centralized query
+    let count_result = EventQueries::count_by_source("sinex-preflight-pipeline-test")
+        .fetch_one(pool)
+        .await
+        .context("Failed to count inserted events")?;
 
     let inserted_count = count_result.count.unwrap_or(0) as usize;
 
@@ -720,10 +719,9 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
     Ok(inserted_count)
 }
 
-
 async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
     // Test automaton checkpoint table operations
-    
+
     // Check if automaton_checkpoints table exists
     let table_exists = sqlx::query!(
         r#"
@@ -756,7 +754,7 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
         RETURNING id::uuid as "id!"
         "#,
         "test-automaton",
-        "test-group", 
+        "test-group",
         "test-consumer",
         "0-0",
         0i64,
@@ -780,9 +778,10 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
                 "checkpoint_id": checkpoint.id.to_string()
             }))
         }
-        Err(e) => {
-            Err(anyhow::anyhow!("Automaton checkpoint insert test failed: {}", e))
-        }
+        Err(e) => Err(anyhow::anyhow!(
+            "Automaton checkpoint insert test failed: {}",
+            e
+        )),
     }
 }
 
@@ -857,7 +856,7 @@ async fn test_database_performance(pool: &PgPool) -> Result<Value> {
     for _ in 0..query_count {
         let query_start = Instant::now();
 
-        sqlx::query!("SELECT COUNT(*) as count FROM core.events")
+        EventQueries::count_all()
             .fetch_one(pool)
             .await
             .context("Performance test query failed")?;

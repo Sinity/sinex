@@ -8,19 +8,19 @@
 //! - Blob storage for large content
 //! - Linux primary selection support
 
-use sinex_satellite_sdk::SatelliteResult;
+use chrono::Utc;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use serde_json::json;
-use sinex_core::{RawEvent, Timestamp};
-use sinex_events::RawEventBuilder;
 use sinex_annex::{AnnexConfig, BlobManager};
+use sinex_core_types::{RawEvent, Timestamp};
+use sinex_events::EventFactory;
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-use chrono::Utc;
 
 /// Rich clipboard content information
 #[derive(Debug, Clone)]
@@ -78,14 +78,17 @@ impl ClipboardWatcher {
 
         // Check for clipboard tools availability
         watcher.check_clipboard_tools().await?;
-        
+
         // Initialize blob manager if database connection is available
         if let Some(blob_manager) = watcher.initialize_blob_manager().await {
             watcher.blob_manager = Some(blob_manager);
             info!("Blob manager initialized for large clipboard content");
         }
 
-        info!("Advanced clipboard watcher initialized with {}s polling interval", poll_interval_secs);
+        info!(
+            "Advanced clipboard watcher initialized with {}s polling interval",
+            poll_interval_secs
+        );
         Ok(watcher)
     }
 
@@ -107,7 +110,8 @@ impl ClipboardWatcher {
 
         if !wl_paste_available && !xclip_available {
             return Err(sinex_satellite_sdk::SatelliteError::Processing(
-                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring".to_string()
+                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring"
+                    .to_string(),
             ));
         }
 
@@ -175,12 +179,7 @@ impl ClipboardWatcher {
         }
         // Detect URLs
         else if content.starts_with("http://") || content.starts_with("https://") {
-            let preview = Some(
-                content
-                    .chars()
-                    .take(self.max_preview_length)
-                    .collect(),
-            );
+            let preview = Some(content.chars().take(self.max_preview_length).collect());
             ("url".to_string(), preview, None)
         }
         // Default to text
@@ -338,9 +337,10 @@ impl ClipboardWatcher {
         content: &str,
         _content_hash: &str,
     ) -> Result<(String, Option<String>), String> {
-        let blob_manager = self.blob_manager.as_ref().ok_or_else(|| {
-            "BlobManager not configured for large content storage".to_string()
-        })?;
+        let blob_manager = self
+            .blob_manager
+            .as_ref()
+            .ok_or_else(|| "BlobManager not configured for large content storage".to_string())?;
 
         // Use BlobManager to ingest content directly from bytes
         let metadata = blob_manager
@@ -359,9 +359,11 @@ impl ClipboardWatcher {
     /// Get enriched clipboard content with metadata
     async fn get_clipboard_content(&self) -> Option<ClipboardContent> {
         // Try to get content via external tools first for better compatibility
-        let text = self.get_clipboard_content_external("clipboard").await
+        let text = self
+            .get_clipboard_content_external("clipboard")
+            .await
             .or_else(|| self.get_clipboard_content_fallback());
-        
+
         if let Some(text) = text {
             if text.is_empty() {
                 return None;
@@ -440,15 +442,13 @@ impl ClipboardWatcher {
     /// Fallback to copypasta for clipboard access
     fn get_clipboard_content_fallback(&self) -> Option<String> {
         match ClipboardContext::new() {
-            Ok(mut ctx) => {
-                match ctx.get_contents() {
-                    Ok(text) => Some(text),
-                    Err(e) => {
-                        debug!("Failed to get clipboard contents via copypasta: {}", e);
-                        None
-                    }
+            Ok(mut ctx) => match ctx.get_contents() {
+                Ok(text) => Some(text),
+                Err(e) => {
+                    debug!("Failed to get clipboard contents via copypasta: {}", e);
+                    None
                 }
-            }
+            },
             Err(e) => {
                 warn!("Failed to create clipboard context: {}", e);
                 None
@@ -463,7 +463,7 @@ impl ClipboardWatcher {
         }
 
         let text = self.get_clipboard_content_external("primary").await?;
-        
+
         if text.is_empty() {
             return None;
         }
@@ -489,7 +489,11 @@ impl ClipboardWatcher {
     }
 
     /// Create rich clipboard changed event
-    async fn create_clipboard_event(&self, content: &ClipboardContent, operation: &str) -> RawEvent {
+    async fn create_clipboard_event(
+        &self,
+        content: &ClipboardContent,
+        operation: &str,
+    ) -> RawEvent {
         // Check if this is a re-copy
         let original_hash = if self.enable_history {
             self.find_original_hash(&content.hash)
@@ -503,8 +507,7 @@ impl ClipboardWatcher {
                 Ok((key, id)) => {
                     info!(
                         "Stored large clipboard content ({} bytes) in blob storage: {}",
-                        content.size_bytes,
-                        key
+                        content.size_bytes, key
                     );
                     (
                         Some("[Content stored in blob storage]".to_string()),
@@ -543,9 +546,8 @@ impl ClipboardWatcher {
             "timestamp": content.timestamp.to_rfc3339(),
         });
 
-        RawEventBuilder::new(sinex_core::sources::CLIPBOARD, "copied", payload)
-            .with_host(gethostname::gethostname().to_string_lossy().to_string())
-            .build()
+        let factory = EventFactory::new(sinex_core_types::sources::CLIPBOARD);
+        factory.create_event("copied", payload)
     }
 
     /// Create rich primary selection event
@@ -563,8 +565,7 @@ impl ClipboardWatcher {
                 Ok((key, id)) => {
                     info!(
                         "Stored large primary selection content ({} bytes) in blob storage: {}",
-                        content.size_bytes,
-                        key
+                        content.size_bytes, key
                     );
                     (
                         Some("[Content stored in blob storage]".to_string()),
@@ -573,7 +574,10 @@ impl ClipboardWatcher {
                     )
                 }
                 Err(e) => {
-                    error!("Failed to store large primary selection in blob storage: {}", e);
+                    error!(
+                        "Failed to store large primary selection in blob storage: {}",
+                        e
+                    );
                     (
                         Some("[Content too large - storage failed]".to_string()),
                         None,
@@ -598,13 +602,15 @@ impl ClipboardWatcher {
             "timestamp": content.timestamp.to_rfc3339(),
         });
 
-        RawEventBuilder::new(sinex_core::sources::CLIPBOARD, "selected", payload)
-            .with_host(gethostname::gethostname().to_string_lossy().to_string())
-            .build()
+        let factory = EventFactory::new(sinex_core_types::sources::CLIPBOARD);
+        factory.create_event("selected", payload)
     }
 
     /// Check for clipboard changes with enhanced monitoring
-    async fn check_clipboard_changes(&mut self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn check_clipboard_changes(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         // Check main clipboard
         if let Some(current_content) = self.get_clipboard_content().await {
             let content_changed = match &self.last_content {
@@ -622,15 +628,18 @@ impl ClipboardWatcher {
                 );
 
                 let event = self.create_clipboard_event(&current_content, "copy").await;
-                
+
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
                     return Ok(());
                 }
 
                 // Update history
-                self.update_history(current_content.hash.clone(), current_content.content_type.clone());
-                
+                self.update_history(
+                    current_content.hash.clone(),
+                    current_content.content_type.clone(),
+                );
+
                 self.last_content = Some(current_content);
             }
         }
@@ -653,15 +662,18 @@ impl ClipboardWatcher {
                     );
 
                     let event = self.create_primary_selection_event(&current_primary).await;
-                    
+
                     if tx.send(event).is_err() {
                         warn!("Event channel closed");
                         return Ok(());
                     }
 
                     // Update history
-                    self.update_history(current_primary.hash.clone(), current_primary.content_type.clone());
-                    
+                    self.update_history(
+                        current_primary.hash.clone(),
+                        current_primary.content_type.clone(),
+                    );
+
                     self.last_primary_content = Some(current_primary);
                 }
             }
@@ -671,7 +683,10 @@ impl ClipboardWatcher {
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting clipboard event streaming");
 
         let mut poll_interval = interval(self.poll_interval);

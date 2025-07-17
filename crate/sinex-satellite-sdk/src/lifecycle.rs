@@ -1,6 +1,6 @@
 //! Service lifecycle management for satellite services
 
-use crate::heartbeat::{HeartbeatEmitter, HeartbeatCounterHandle};
+use crate::heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter};
 use crate::SatelliteResult;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -73,7 +73,9 @@ impl LifecycleManager {
 
     /// Get heartbeat counter handle for tracking metrics
     pub fn get_heartbeat_handle(&self) -> Option<HeartbeatCounterHandle> {
-        self.heartbeat_emitter.as_ref().map(|emitter| emitter.get_counter_handle())
+        self.heartbeat_emitter
+            .as_ref()
+            .map(|emitter| emitter.get_counter_handle())
     }
 
     /// Get current status
@@ -213,7 +215,10 @@ impl LifecycleManager {
                     *status.lock().unwrap() = ServiceStatus::Failed;
 
                     // Notify systemd of failure
-                    let _ = sd_notify::notify(false, &[sd_notify::NotifyState::Status("Health check failed")]);
+                    let _ = sd_notify::notify(
+                        false,
+                        &[sd_notify::NotifyState::Status("Health check failed")],
+                    );
                 }
             }
         });
@@ -223,12 +228,12 @@ impl LifecycleManager {
             let emitter_clone = emitter.clone(); // We need to implement Clone for HeartbeatEmitter
             let shutdown_flag_clone = self.shutdown_flag.clone();
             let service_name_clone = self.service_name.clone();
-            
+
             Some(tokio::spawn(async move {
                 info!(service = %service_name_clone, "Starting heartbeat emission");
-                
+
                 // Create a metadata provider that includes current status
-                let _metadata_provider: Box<dyn Fn() -> Option<serde_json::Value> + Send> = 
+                let _metadata_provider: Box<dyn Fn() -> Option<serde_json::Value> + Send> =
                     Box::new(move || {
                         Some(serde_json::json!({
                             "service_type": "satellite",
@@ -237,9 +242,9 @@ impl LifecycleManager {
                     });
 
                 // Start periodic heartbeat emission
-                let mut interval = tokio::time::interval(
-                    tokio::time::Duration::from_secs(emitter_clone.interval_seconds)
-                );
+                let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(
+                    emitter_clone.interval_seconds,
+                ));
 
                 loop {
                     interval.tick().await;
@@ -363,28 +368,29 @@ macro_rules! satellite_main {
     ($service_name:expr, $runner:expr) => {
         #[tokio::main]
         async fn main() -> Result<(), Box<dyn std::error::Error>> {
-            use $crate::lifecycle::LifecycleManager;
             use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+            use $crate::lifecycle::LifecycleManager;
 
             // Initialize logging
             tracing_subscriber::registry()
                 .with(
                     tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "info".into())
+                        .unwrap_or_else(|_| "info".into()),
                 )
                 .with(tracing_subscriber::fmt::layer())
                 .init();
 
             // Create lifecycle manager with heartbeat enabled
-            let mut lifecycle = LifecycleManager::new($service_name.to_string())
-                .with_heartbeat(30); // 30 second heartbeat interval
+            let mut lifecycle = LifecycleManager::new($service_name.to_string()).with_heartbeat(30); // 30 second heartbeat interval
             lifecycle.initialize().await?;
 
             // Run service with lifecycle management
-            let result = lifecycle.run_with_health_check(
-                || async { $runner.await },
-                || async { true } // Default health check always returns true
-            ).await;
+            let result = lifecycle
+                .run_with_health_check(
+                    || async { $runner.await },
+                    || async { true }, // Default health check always returns true
+                )
+                .await;
 
             // Graceful shutdown
             lifecycle.shutdown().await?;
@@ -396,28 +402,26 @@ macro_rules! satellite_main {
     ($service_name:expr, $runner:expr, $health_check:expr) => {
         #[tokio::main]
         async fn main() -> Result<(), Box<dyn std::error::Error>> {
-            use $crate::lifecycle::LifecycleManager;
             use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+            use $crate::lifecycle::LifecycleManager;
 
             // Initialize logging
             tracing_subscriber::registry()
                 .with(
                     tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "info".into())
+                        .unwrap_or_else(|_| "info".into()),
                 )
                 .with(tracing_subscriber::fmt::layer())
                 .init();
 
             // Create lifecycle manager with heartbeat enabled
-            let mut lifecycle = LifecycleManager::new($service_name.to_string())
-                .with_heartbeat(30); // 30 second heartbeat interval
+            let mut lifecycle = LifecycleManager::new($service_name.to_string()).with_heartbeat(30); // 30 second heartbeat interval
             lifecycle.initialize().await?;
 
             // Run service with lifecycle management
-            let result = lifecycle.run_with_health_check(
-                || async { $runner.await },
-                $health_check
-            ).await;
+            let result = lifecycle
+                .run_with_health_check(|| async { $runner.await }, $health_check)
+                .await;
 
             // Graceful shutdown
             lifecycle.shutdown().await?;
@@ -429,14 +433,14 @@ macro_rules! satellite_main {
     ($service_name:expr, $runner:expr, $heartbeat_interval:expr) => {
         #[tokio::main]
         async fn main() -> Result<(), Box<dyn std::error::Error>> {
-            use $crate::lifecycle::LifecycleManager;
             use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+            use $crate::lifecycle::LifecycleManager;
 
             // Initialize logging
             tracing_subscriber::registry()
                 .with(
                     tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| "info".into())
+                        .unwrap_or_else(|_| "info".into()),
                 )
                 .with(tracing_subscriber::fmt::layer())
                 .init();
@@ -447,10 +451,12 @@ macro_rules! satellite_main {
             lifecycle.initialize().await?;
 
             // Run service with lifecycle management
-            let result = lifecycle.run_with_health_check(
-                || async { $runner.await },
-                || async { true } // Default health check always returns true
-            ).await;
+            let result = lifecycle
+                .run_with_health_check(
+                    || async { $runner.await },
+                    || async { true }, // Default health check always returns true
+                )
+                .await;
 
             // Graceful shutdown
             lifecycle.shutdown().await?;

@@ -8,6 +8,7 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
+use sinex_db::queries::EventQueries;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -413,19 +414,9 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         "custom_metrics": serde_json::to_value(report)?,
     });
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (source, event_type, host, payload)
-        VALUES ($1, $2, $3, $4)
-        "#,
-        "sinex.process",
-        "process.heartbeat",
-        report.system_info.hostname,
-        payload
-    )
-    .execute(&pool)
-    .await
-    .context("Failed to record verification result")?;
+    EventQueries::insert_event(&pool, "sinex.process", "process.heartbeat", &report.system_info.hostname, payload)
+        .await
+        .context("Failed to record verification result")?;
 
     Ok(())
 }
@@ -520,24 +511,9 @@ async fn generate_verification_report(
         .await
         .context("Failed to connect to database")?;
 
-    let recent_verifications = sqlx::query!(
-        r#"
-        SELECT 
-            event_id::text as id,
-            payload->>'health_status' as status,
-            payload as metrics,
-            ts_ingest as timestamp
-        FROM core.events
-        WHERE source = 'sinex.process'
-          AND event_type = 'process.heartbeat'
-          AND payload->>'process_name' = 'sinex-preflight'
-        ORDER BY ts_ingest DESC
-        LIMIT 10
-        "#
-    )
-    .fetch_all(&pool)
-    .await
-    .context("Failed to fetch verification history")?;
+    let recent_verifications = EventQueries::get_process_heartbeats(&pool, "sinex-preflight", 10)
+        .await
+        .context("Failed to fetch verification history")?;
 
     let report = if detailed {
         serde_json::json!({
@@ -559,9 +535,7 @@ async fn generate_verification_report(
             for verification in &recent_verifications {
                 println!(
                     "  {} - {} ({})",
-                    verification
-                        .timestamp
-                        .to_string(),
+                    verification.timestamp.to_string(),
                     verification.status.as_deref().unwrap_or("UNKNOWN"),
                     verification.id.as_deref().unwrap_or("N/A")
                 );

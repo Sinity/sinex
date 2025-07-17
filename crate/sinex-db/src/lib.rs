@@ -1,13 +1,22 @@
 pub mod models;
-// Re-export RawEvent and RawEventBuilder from sinex-core for type unification
-pub use sinex_core::{RawEvent, RawEventBuilder};
+// Re-export RawEvent from sinex-events for type unification
+pub use sinex_events::RawEvent;
 // pub mod enhanced_queries; // Removed - superseded by *_correct modules
 pub mod pool;
 // pub mod queries; // Removed - superseded by domain-specific modules
+pub mod integrity;
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
 pub mod validation;
+
+// New centralized query system
+pub mod queries;
+pub mod query_builder;
+pub mod query_macros;
+
+#[cfg(test)]
+pub mod query_system_test;
 
 // New API modules
 pub mod annotations;
@@ -16,7 +25,6 @@ pub mod knowledge_graph;
 
 // Domain-specific query modules
 pub mod events;
-
 
 // Old queries module removed - all functions migrated to domain-specific modules
 
@@ -43,21 +51,27 @@ pub use query_helpers::{
     with_retry_transaction, with_transaction, DbError, DbResult, RetryConfig, UlidArrayExt,
 };
 
+// Re-export centralized query system
+pub use queries::{
+    ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+};
+pub use query_builder::{QueryBuilder, QueryParam};
+
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
     pub use crate::models::{
         // New API models (now enabled)
         Artifact,
-        Revision,
         CreateAnnotationInput,
-        CreateRevisionInput,
         CreateArtifactInput,
         CreateEntityInput,
         CreateRelationInput,
+        CreateRevisionInput,
         Entity,
         EntityRelation,
         EventAnnotation,
         EventPayloadSchema,
+        Revision,
     };
     // Use domain-specific modules
     pub use crate::events::*;
@@ -70,8 +84,13 @@ pub mod prelude {
     pub use crate::artifacts::*;
     pub use crate::knowledge_graph::*;
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, PoolConfig, Timestamp};
+    // Re-export centralized query system in prelude
+    pub use crate::queries::{
+        ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+    };
+    pub use crate::query_builder::{QueryBuilder, QueryParam};
     pub use anyhow::Result;
-    pub use sinex_core::{RawEvent, RawEventBuilder};
+    pub use sinex_events::RawEvent;
     pub use sinex_ulid::Ulid;
     pub use sqlx::{FromRow, Postgres, Transaction};
 }
@@ -83,7 +102,6 @@ use sqlx::{migrate::MigrateDatabase, PgPool, Postgres, Row};
 use std::env;
 use std::time::Duration;
 use tracing::{info, warn};
-
 
 // Common type aliases for database operations
 pub type DbPool = PgPool;
@@ -269,7 +287,7 @@ pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
 mod tests {
     use chrono::Utc;
     use serde_json::json;
-    use sinex_core::RawEvent;
+    use sinex_events::RawEvent;
     use sinex_ulid::Ulid;
 
     #[test]
@@ -285,6 +303,11 @@ mod tests {
             payload_schema_id: None,
             payload: json!({"test": "data"}),
             source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         assert_eq!(event.source, "test.source");
@@ -293,7 +316,6 @@ mod tests {
         assert_eq!(event.ingestor_version, Some("1.0.0".to_string()));
         assert_eq!(event.payload["test"], "data");
     }
-
 
     #[test]
     fn test_ulid_in_models() {
@@ -332,6 +354,11 @@ mod tests {
             payload_schema_id: None,
             payload: simple_payload.clone(),
             source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         assert_eq!(event.payload["key"], "value");
@@ -360,6 +387,11 @@ mod tests {
             payload_schema_id: None,
             payload: complex_payload,
             source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         assert_eq!(complex_event.payload["metadata"]["version"], "1.0");
@@ -383,6 +415,11 @@ mod tests {
             payload_schema_id: None,
             payload: json!({}),
             source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
         };
 
         // Test that ingestion timestamp is after original timestamp
@@ -392,7 +429,6 @@ mod tests {
         assert_eq!(event.ts_ingest, now);
         assert_eq!(event.ts_orig.unwrap(), past);
     }
-
 
     #[tokio::test]
     async fn test_pool_creation() {

@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use sinex_events::event_types;
 use sinex_satellite_sdk::SatelliteResult;
 use sinex_satellite_sdk::{
     EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult,
@@ -40,7 +41,10 @@ impl RpcDispatcherAutomaton {
     async fn route_rpc_request(&self, request: Value) -> SatelliteResult<()> {
         let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or(json!({}));
-        let request_id = request.get("id").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let request_id = request
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         // Store pending request
         let pending_request = PendingRequest {
@@ -63,12 +67,14 @@ impl RpcDispatcherAutomaton {
             m if m.starts_with("content.") => ("content", m),
             _ => {
                 warn!("Unknown RPC method: {}", method);
-                return self.send_error_response(
-                    request_id,
-                    -32601,
-                    "Method not found",
-                    format!("Unknown method: {}", method),
-                ).await;
+                return self
+                    .send_error_response(
+                        request_id,
+                        -32601,
+                        "Method not found",
+                        format!("Unknown method: {}", method),
+                    )
+                    .await;
             }
         };
 
@@ -113,8 +119,14 @@ impl RpcDispatcherAutomaton {
 
     /// Handle service response and complete RPC request
     async fn handle_service_response(&self, response: Value) -> SatelliteResult<()> {
-        let request_id = response.get("request_id").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let service_name = response.get("service").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let request_id = response
+            .get("request_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let service_name = response
+            .get("service")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         // Remove from pending requests
         let pending_request = {
@@ -157,7 +169,10 @@ impl RpcDispatcherAutomaton {
         // For now, just log - synthesis events need to be implemented in gRPC
         info!("Service response logged");
 
-        info!("Completed RPC request {} for service {}", request_id, service_name);
+        info!(
+            "Completed RPC request {} for service {}",
+            request_id, service_name
+        );
         Ok(())
     }
 
@@ -176,7 +191,7 @@ impl RpcDispatcherAutomaton {
         for key in expired_keys {
             if let Some(request) = pending.remove(&key) {
                 warn!("Request {} expired after timeout", request.request_id);
-                
+
                 // Send timeout error response
                 drop(pending); // Release lock before async operation
                 self.send_error_response(
@@ -184,8 +199,9 @@ impl RpcDispatcherAutomaton {
                     -32603,
                     "Request timeout",
                     format!("Request {} timed out", request.request_id),
-                ).await?;
-                
+                )
+                .await?;
+
                 // Re-acquire lock for next iteration
                 pending = self.pending_requests.write().await;
             }
@@ -206,12 +222,12 @@ impl HotlogAutomaton for RpcDispatcherAutomaton {
     fn automaton_name(&self) -> &str {
         "rpc-dispatcher"
     }
-    
+
     async fn initialize(&mut self, ctx: HotlogAutomatonContext) -> SatelliteResult<()> {
         info!("Initializing RPC dispatcher automaton");
-        
+
         self.context = Some(ctx);
-        
+
         info!("RPC dispatcher automaton initialized successfully");
         Ok(())
     }
@@ -219,43 +235,60 @@ impl HotlogAutomaton for RpcDispatcherAutomaton {
     fn event_filters(&self) -> Vec<EventFilter> {
         vec![
             // Listen for incoming RPC requests
-            EventFilter::new(Some("rpc.gateway".to_string()), Some("request".to_string())),
+            EventFilter::new(Some(event_types::rpc::GATEWAY_PREFIX.to_string()), Some(event_types::rpc::REQUEST.to_string())),
             // Listen for service responses
-            EventFilter::new(Some("rpc.analytics".to_string()), Some("response".to_string())),
-            EventFilter::new(Some("rpc.pkm".to_string()), Some("response".to_string())),
-            EventFilter::new(Some("rpc.search".to_string()), Some("response".to_string())),
-            EventFilter::new(Some("rpc.content".to_string()), Some("response".to_string())),
+            EventFilter::new(
+                Some(event_types::rpc::ANALYTICS_PREFIX.to_string()),
+                Some(event_types::rpc::RESPONSE.to_string()),
+            ),
+            EventFilter::new(Some(event_types::rpc::PKM_PREFIX.to_string()), Some(event_types::rpc::RESPONSE.to_string())),
+            EventFilter::new(Some(event_types::rpc::SEARCH_PREFIX.to_string()), Some(event_types::rpc::RESPONSE.to_string())),
+            EventFilter::new(
+                Some(event_types::rpc::CONTENT_PREFIX.to_string()),
+                Some(event_types::rpc::RESPONSE.to_string()),
+            ),
             // Listen for service errors
-            EventFilter::new(Some("rpc.analytics".to_string()), Some("error".to_string())),
-            EventFilter::new(Some("rpc.pkm".to_string()), Some("error".to_string())),
-            EventFilter::new(Some("rpc.search".to_string()), Some("error".to_string())),
-            EventFilter::new(Some("rpc.content".to_string()), Some("error".to_string())),
+            EventFilter::new(Some(event_types::rpc::ANALYTICS_PREFIX.to_string()), Some(event_types::rpc::ERROR.to_string())),
+            EventFilter::new(Some(event_types::rpc::PKM_PREFIX.to_string()), Some(event_types::rpc::ERROR.to_string())),
+            EventFilter::new(Some(event_types::rpc::SEARCH_PREFIX.to_string()), Some(event_types::rpc::ERROR.to_string())),
+            EventFilter::new(Some(event_types::rpc::CONTENT_PREFIX.to_string()), Some(event_types::rpc::ERROR.to_string())),
         ]
     }
 
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         let payload = event.event.payload.clone();
-        
+
         match (event.event.source.as_str(), event.event.event_type.as_str()) {
             ("rpc.gateway", "request") => {
                 // Route incoming RPC request
                 self.route_rpc_request(payload).await?;
-                Ok(ProcessingResult::Success { checkpoint_data: None })
+                Ok(ProcessingResult::Success {
+                    checkpoint_data: None,
+                })
             }
             (source, "response") if source.starts_with("rpc.") => {
                 // Handle service response
                 self.handle_service_response(payload).await?;
-                Ok(ProcessingResult::Success { checkpoint_data: None })
+                Ok(ProcessingResult::Success {
+                    checkpoint_data: None,
+                })
             }
             (source, "error") if source.starts_with("rpc.") => {
                 // Handle service error response
                 self.handle_service_response(payload).await?;
-                Ok(ProcessingResult::Success { checkpoint_data: None })
+                Ok(ProcessingResult::Success {
+                    checkpoint_data: None,
+                })
             }
             _ => {
                 // Clean up expired requests periodically
                 self.cleanup_expired_requests().await?;
-                Ok(ProcessingResult::Skip { reason: "Not an RPC event".to_string() })
+                Ok(ProcessingResult::Skip {
+                    reason: "Not an RPC event".to_string(),
+                })
             }
         }
     }

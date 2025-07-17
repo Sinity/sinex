@@ -12,7 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Core Sinex dependencies
-sinex-core = { path = "../sinex-core" }
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-events = { path = "../sinex-events" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 sinex-db = { path = "../sinex-db" }

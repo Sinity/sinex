@@ -14,7 +14,7 @@ graph TB
         UC[🔄 UnifiedCollector<br/>✅ Multi-source ingestion]
         RT[⚙️ IngestorRuntime<br/>✅ Lifecycle management]
         CFG[📋 Configuration<br/>✅ TOML-based filtering]
-        ES[📡 EventSource Trait<br/>✅ Source abstraction]
+        ES[📡 StatefulStreamProcessor<br/>✅ Unified processing interface]
         ET[🏷️ EventType Trait<br/>✅ Event abstraction]
     end
     
@@ -22,7 +22,7 @@ graph TB
         direction TB
         
         subgraph "raw schema"
-            RAW[🗄️ raw.events<br/>✅ TimescaleDB hypertable<br/>ULID primary keys]
+            RAW[🗄️ core.events<br/>✅ TimescaleDB hypertable<br/>ULID primary keys]
         end
         
         subgraph "sinex_schemas"

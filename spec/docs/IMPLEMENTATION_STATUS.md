@@ -20,7 +20,7 @@ Sinex has completed its evolution from prototype to production-ready personal di
 
 ### Database Infrastructure
 - **32 Migrations** - Complete schema with proper versioning
-- **Event Tables** - `core.events` (raw), `synthesis.events` (processed)
+- **Event Tables** - `core.events` (unified - raw events have source_event_ids=NULL, synthesis events have source_event_ids populated)
 - **Processor Manifests** - Dynamic processor registration and management
 - **Source Material Registry** - Blob storage with FastCDC chunking
 - **Operations Log** - Comprehensive audit trail

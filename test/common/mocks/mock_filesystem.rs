@@ -1,11 +1,13 @@
-//! Mock filesystem implementation for testing
-//!
-//! Provides a controllable filesystem substitute that can simulate:
-//! - Permission errors
-//! - Disk full conditions
-//! - File corruption
-//! - Network filesystem issues
-//! - Concurrent access problems
+// Mock filesystem implementation for testing
+//
+// Provides a controllable filesystem substitute that can simulate:
+// - Permission errors
+// - Disk full conditions
+// - File corruption
+// - Network filesystem issues
+// - Concurrent access problems
+
+use crate::common::prelude::*;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -40,7 +42,7 @@ impl Default for MockFilesystemConfig {
     fn default() -> Self {
         Self {
             max_files: 10000,
-            max_file_size: 10 * 1024 * 1024, // 10MB
+            max_file_size: 10 * 1024 * 1024,   // 10MB
             disk_capacity: 1024 * 1024 * 1024, // 1GB
             permission_error_rate: 0.0,
             disk_full_rate: 0.0,
@@ -90,20 +92,23 @@ struct MockDirectory {
 impl MockFilesystem {
     pub fn new(config: MockFilesystemConfig) -> Self {
         let mut directories = HashMap::new();
-        
+
         // Create root directory
-        directories.insert(PathBuf::from("/"), MockDirectory {
-            path: PathBuf::from("/"),
-            entries: Vec::new(),
-            metadata: MockFileMetadata {
-                size: 0,
-                created: Instant::now(),
-                modified: Instant::now(),
-                accessed: Instant::now(),
-                permissions: 0o755,
-                is_directory: true,
+        directories.insert(
+            PathBuf::from("/"),
+            MockDirectory {
+                path: PathBuf::from("/"),
+                entries: Vec::new(),
+                metadata: MockFileMetadata {
+                    size: 0,
+                    created: Instant::now(),
+                    modified: Instant::now(),
+                    accessed: Instant::now(),
+                    permissions: 0o755,
+                    is_directory: true,
+                },
             },
-        });
+        );
 
         Self {
             config,
@@ -115,7 +120,11 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn create_file(&self, path: &Path, content: &[u8]) -> Result<(), MockFilesystemError> {
+    pub async fn create_file(
+        &self,
+        path: &Path,
+        content: &[u8],
+    ) -> AnyhowResult<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -181,7 +190,7 @@ impl MockFilesystem {
         Ok(())
     }
 
-    pub async fn read_file(&self, path: &Path) -> Result<Vec<u8>, MockFilesystemError> {
+    pub async fn read_file(&self, path: &Path) -> AnyhowResult<Vec<u8>, MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.should_fail_permission().await {
@@ -195,7 +204,7 @@ impl MockFilesystem {
         match files.get_mut(path) {
             Some(file) => {
                 file.metadata.accessed = Instant::now();
-                
+
                 // Simulate corruption
                 if self.should_corrupt_file().await {
                     return Err(MockFilesystemError::FileCorrupted);
@@ -207,7 +216,11 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn write_file(&self, path: &Path, content: &[u8]) -> Result<(), MockFilesystemError> {
+    pub async fn write_file(
+        &self,
+        path: &Path,
+        content: &[u8],
+    ) -> AnyhowResult<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -256,7 +269,7 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn delete_file(&self, path: &Path) -> Result<(), MockFilesystemError> {
+    pub async fn delete_file(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -291,11 +304,11 @@ impl MockFilesystem {
 
         let files = self.files.read().await;
         let directories = self.directories.read().await;
-        
+
         files.contains_key(path) || directories.contains_key(path)
     }
 
-    pub async fn create_directory(&self, path: &Path) -> Result<(), MockFilesystemError> {
+    pub async fn create_directory(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -310,7 +323,7 @@ impl MockFilesystem {
         tokio::time::sleep(self.config.io_latency).await;
 
         let mut directories = self.directories.write().await;
-        
+
         // Check if directory already exists
         if directories.contains_key(path) {
             return Ok(()); // Directory already exists
@@ -344,7 +357,10 @@ impl MockFilesystem {
         Ok(())
     }
 
-    pub async fn list_directory(&self, path: &Path) -> Result<Vec<PathBuf>, MockFilesystemError> {
+    pub async fn list_directory(
+        &self,
+        path: &Path,
+    ) -> AnyhowResult<Vec<PathBuf>, MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.should_fail_permission().await {
@@ -356,7 +372,7 @@ impl MockFilesystem {
 
         let directories = self.directories.read().await;
         let files = self.files.read().await;
-        
+
         // Check if directory exists
         if !directories.contains_key(path) {
             return Err(MockFilesystemError::DirectoryNotFound);
@@ -385,7 +401,10 @@ impl MockFilesystem {
         Ok(entries)
     }
 
-    pub async fn get_metadata(&self, path: &Path) -> Result<MockFileMetadata, MockFilesystemError> {
+    pub async fn get_metadata(
+        &self,
+        path: &Path,
+    ) -> AnyhowResult<MockFileMetadata, MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.should_fail_permission().await {
@@ -407,7 +426,7 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn lock_file(&self, path: &Path) -> Result<(), MockFilesystemError> {
+    pub async fn lock_file(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
         if !self.config.simulate_concurrent_access {
             return Ok(());
         }
@@ -426,7 +445,7 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn unlock_file(&self, path: &Path) -> Result<(), MockFilesystemError> {
+    pub async fn unlock_file(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
         if !self.config.simulate_concurrent_access {
             return Ok(());
         }
@@ -459,27 +478,30 @@ impl MockFilesystem {
     pub async fn reset(&self) {
         let mut files = self.files.write().await;
         files.clear();
-        
+
         let mut directories = self.directories.write().await;
         directories.clear();
-        
+
         // Recreate root directory
-        directories.insert(PathBuf::from("/"), MockDirectory {
-            path: PathBuf::from("/"),
-            entries: Vec::new(),
-            metadata: MockFileMetadata {
-                size: 0,
-                created: Instant::now(),
-                modified: Instant::now(),
-                accessed: Instant::now(),
-                permissions: 0o755,
-                is_directory: true,
+        directories.insert(
+            PathBuf::from("/"),
+            MockDirectory {
+                path: PathBuf::from("/"),
+                entries: Vec::new(),
+                metadata: MockFileMetadata {
+                    size: 0,
+                    created: Instant::now(),
+                    modified: Instant::now(),
+                    accessed: Instant::now(),
+                    permissions: 0o755,
+                    is_directory: true,
+                },
             },
-        });
-        
+        );
+
         let mut disk_usage = self.disk_usage.write().await;
         *disk_usage = 0;
-        
+
         let mut operation_count = self.operation_count.write().await;
         *operation_count = 0;
     }

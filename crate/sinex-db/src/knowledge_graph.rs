@@ -1,4 +1,6 @@
 use crate::models::{CreateEntityInput, CreateRelationInput, Entity, EntityRelation};
+use crate::queries::{EventQueries, OperationQueries};
+use crate::query_builder::{QueryBuilder, QueryParam};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::DbPoolRef;
 use anyhow::Result;
@@ -7,6 +9,7 @@ use sinex_ulid::Ulid;
 use sqlx::types::Uuid;
 
 /// Create a new entity following the exact same pattern as add_to_work_queue
+#[sinex_macros::auto_db_metrics(operation = "create_entity")]
 pub async fn create_entity(pool: DbPoolRef<'_>, input: CreateEntityInput) -> Result<Entity> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let canonical_name = input.canonical_name.unwrap_or_else(|| input.name.clone());

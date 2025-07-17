@@ -1,13 +1,15 @@
-//! Property tests for Redis Streams-based event processing
-//! 
-//! This module provides property tests for Redis Streams architecture,
-//! verifying correctness properties including event ordering, consumer
-//! group behavior, and duplicate detection.
+// Property tests for Redis Streams-based event processing
+// 
+// This module provides property tests for Redis Streams architecture,
+// verifying correctness properties including event ordering, consumer
+// group behavior, and duplicate detection.
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use proptest::prelude::*;
 use redis::aio::MultiplexedConnection;
-use redis::{AsyncCommands, RedisResult};
+use redis::{AsyncCommands, RedisResult, cmd};
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -63,7 +65,7 @@ async fn automaton_consumer_with_crashes(
     crash_probability: f64,
     runtime_seconds: u64,
     seed: u64,
-) -> Result<(), anyhow::Error> {
+) -> AnyhowResult<(), anyhow::Error> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -139,9 +141,8 @@ async fn automaton_consumer_with_crashes(
     Ok(())
 }
 
-#[tokio::test]
-async fn test_no_duplicate_processing_with_crashes() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> TestResult {
     
     // Setup Redis connection
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
@@ -273,9 +274,8 @@ async fn test_no_duplicate_processing_with_crashes() -> Result<(), anyhow::Error
     Ok(())
 }
 
-#[tokio::test]
-async fn test_consumer_group_scaling_properties() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_consumer_group_scaling_properties(ctx: TestContext) -> TestResult {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -342,13 +342,16 @@ async fn test_consumer_group_scaling_properties() -> Result<(), anyhow::Error> {
                     // Process events until none are left
                     loop {
                         let result: RedisResult<Vec<(String, Vec<(String, String)>)>> = redis
-                            .xreadgroup(
-                                &group_name_clone,
-                                &consumer_name,
-                                Some(batch_size),
-                                false,
-                                &[(&stream_key_clone, ">")],
-                            )
+                            .cmd("XREADGROUP")
+                        .arg("GROUP")
+                        .arg(&group_name_clone)
+                        .arg(&consumer_name)
+                        .arg("COUNT")
+                        .arg(batch_size)
+                        .arg("STREAMS")
+                        .arg(&stream_key_clone)
+                        .arg(">")
+                        .query_async(&mut redis)
                             .await;
 
                         match result {
@@ -422,7 +425,7 @@ async fn test_consumer_group_scaling_properties() -> Result<(), anyhow::Error> {
 
 /// Test that Redis Streams maintain message ordering within partitions
 #[tokio::test]
-async fn test_redis_stream_ordering_guarantees() -> Result<(), anyhow::Error> {
+async fn test_redis_stream_ordering_guarantees() -> AnyhowResult<(), anyhow::Error> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let mut redis = ConnectionManager::new(redis_client).await?;
 
@@ -528,9 +531,8 @@ async fn test_redis_stream_ordering_guarantees() -> Result<(), anyhow::Error> {
 }
 
 /// Test checkpoint-based recovery after consumer crashes
-#[tokio::test]
-async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
 
     proptest!(|(
         events_before_crash in 20..=50usize,
@@ -569,7 +571,7 @@ async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
             
             for i in 0..crash_point {
                 checkpoint.processed_count += 1;
-                checkpoint.last_processed_id = Some(event_ids[i].to_string());
+                checkpoint.set_last_processed_id(Some(event_ids[i].to_string()));
                 
                 // Save checkpoint periodically (every 10 events)
                 if i % 10 == 9 {
@@ -595,7 +597,7 @@ async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
 
             // Property: Should be able to resume from checkpoint
             prop_assert!(
-                recovered_checkpoint.last_processed_id.is_some(),
+                recovered_checkpoint.last_processed_id().is_some(),
                 "Checkpoint should have last processed ID"
             );
 
@@ -603,7 +605,7 @@ async fn test_checkpoint_recovery_properties() -> Result<(), anyhow::Error> {
             let mut final_checkpoint = recovered_checkpoint;
             for i in crash_point..events_before_crash {
                 final_checkpoint.processed_count += 1;
-                final_checkpoint.last_processed_id = Some(event_ids[i].to_string());
+                final_checkpoint.set_last_processed_id(Some(event_ids[i].to_string()));
             }
             checkpoint_mgr.save_checkpoint(&final_checkpoint).await?;
 

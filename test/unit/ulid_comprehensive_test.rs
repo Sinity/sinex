@@ -1,17 +1,19 @@
-//! Comprehensive ULID test suite consolidating all functionality, edge cases, and validations
-//!
-//! This test module combines tests from:
-//! - ulid_unit_tests.rs (basic functionality)
-//! - ulid_edge_case_tests.rs (comprehensive edge cases)
-//! - performance_comparison_test.rs (performance validation)
-//! - bit_layout_verification.rs (correctness validation)
-//!
-//! Organization:
-//! - `basic_functionality` - Core ULID operations
-//! - `edge_cases` - Boundary conditions and error handling
-//! - `correctness` - Spec compliance and bit-level validation
-//! - `performance` - Throughput and ordering guarantees
-//! - `properties` - Property-based testing
+// Comprehensive ULID test suite consolidating all functionality, edge cases, and validations
+//
+// This test module combines tests from:
+// - ulid_unit_tests.rs (basic functionality)
+// - ulid_edge_case_tests.rs (comprehensive edge cases)
+// - performance_comparison_test.rs (performance validation)
+// - bit_layout_verification.rs (correctness validation)
+//
+// Organization:
+// - `basic_functionality` - Core ULID operations
+// - `edge_cases` - Boundary conditions and error handling
+// - `correctness` - Spec compliance and bit-level validation
+// - `performance` - Throughput and ordering guarantees
+// - `properties` - Property-based testing
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use proptest::prelude::*;

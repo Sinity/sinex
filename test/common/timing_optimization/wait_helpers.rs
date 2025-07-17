@@ -1,17 +1,20 @@
-//! Test-specific wait helpers with anyhow::Error compatibility
-//!
-//! This module provides test-compatible wrappers around production wait helpers.
+// Test-specific wait helpers with anyhow::Error compatibility
+//
+// This module provides test-compatible wrappers around production wait helpers.
+
+use crate::common::prelude::*;
 
 // Re-export production wait helpers for backwards compatibility
-pub use sinex_core::wait_helpers::{
-    wait_for_event_count,
-};
+pub use sinex_core_types::wait_helpers::wait_for_event_count;
 
 /// Wait for satellite to establish connection with ingestd.
 ///
 /// This function should wait for a satellite service to successfully
 /// connect to the ingestd socket and be ready for event submission.
-pub async fn wait_for_satellite_connection(_socket_path: &str, _timeout_secs: u64) -> anyhow::Result<()> {
+pub async fn wait_for_satellite_connection(
+    _socket_path: &str,
+    _timeout_secs: u64,
+) -> anyhow::Result<()> {
     // Implementation needed: Check socket connectivity and gRPC health
     todo!("Implement satellite connection wait helper")
 }
@@ -20,7 +23,12 @@ pub async fn wait_for_satellite_connection(_socket_path: &str, _timeout_secs: u6
 ///
 /// This function should wait for a specific number of events from a given
 /// source to be successfully ingested and stored in the database.
-pub async fn wait_for_satellite_events_ingested(_pool: &sqlx::PgPool, _source: &str, _expected: u64, _timeout_secs: u64) -> anyhow::Result<()> {
+pub async fn wait_for_satellite_events_ingested(
+    _pool: &sqlx::PgPool,
+    _source: &str,
+    _expected: u64,
+    _timeout_secs: u64,
+) -> anyhow::Result<()> {
     // Implementation needed: Query database for event count by source
     todo!("Implement satellite event ingestion wait helper")
 }
@@ -37,11 +45,11 @@ where
         let fut = condition();
         async move {
             fut.await
-                .map_err(|e| sinex_core::CoreError::Other(e.to_string()))
+                .map_err(|e| sinex_core_types::CoreError::Unknown(e.to_string()))
         }
     };
 
-    sinex_core::wait_helpers::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
+    sinex_core_utils::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
         .await
         .map(|_| ())
         .map_err(anyhow::Error::new)

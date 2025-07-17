@@ -3,6 +3,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
+use sinex_events::{EventFactory, services, event_types};
 use std::sync::Barrier;
 use std::thread;
 
@@ -130,28 +131,17 @@ fn arb_raw_event() -> impl Strategy<Value = RawEvent> {
         arb_event_type_name(),
         arb_json_value(),
         prop::option::of(arb_timestamp()),
-        prop::option::of(arb_hostname()),
-        prop::option::of(arb_version()),
-        prop::option::of(any::<Ulid>()),
     )
         .prop_map(
-            |(source, event_type, payload, ts_orig, host, version, schema_id)| {
-                let mut builder = RawEventBuilder::new(source, event_type, payload);
+            |(source, event_type, payload, ts_orig)| {
+                let factory = EventFactory::new(&source);
+                let mut event = factory.create_event(&event_type, payload);
 
                 if let Some(ts) = ts_orig {
-                    builder = builder.with_orig_timestamp(ts);
-                }
-                if let Some(h) = host {
-                    builder = builder.with_host(h);
-                }
-                if let Some(v) = version {
-                    builder = builder.with_ingestor_version(v);
-                }
-                if let Some(s) = schema_id {
-                    builder = builder.with_payload_schema_id(s);
+                    event.ts_orig = Some(ts);
                 }
 
-                builder.build()
+                event
             },
         )
 }
@@ -181,14 +171,15 @@ fn test_raw_event_serde_roundtrip() {
 }
 
 #[test]
-fn test_raw_event_id_properties() {
+fn test_event_id_properties() {
     proptest!(|(
         source in arb_source_name(),
         event_type in arb_event_type_name(),
         payload in arb_json_value()
     )| {
-        let event1 = RawEventBuilder::new(&source, &event_type, payload.clone()).build();
-        let event2 = RawEventBuilder::new(&source, &event_type, payload).build();
+        let factory = EventFactory::new(&source);
+        let event1 = factory.create_event(&event_type, payload.clone());
+        let event2 = factory.create_event(&event_type, payload);
 
         // ULID IDs should be unique
         prop_assert_ne!(event1.id, event2.id);
@@ -252,12 +243,9 @@ fn test_raw_event_builder_preserves_values() {
         version in arb_version(),
         schema_id in any::<Ulid>()
     )| {
-        let event = RawEventBuilder::new(&source, &event_type, payload.clone())
-            .with_orig_timestamp(ts_orig)
-            .with_host(&host)
-            .with_ingestor_version(&version)
-            .with_payload_schema_id(schema_id)
-            .build();
+        let factory = EventFactory::new(&source);
+        let mut event = factory.create_event(&event_type, payload.clone());
+        event.ts_orig = Some(ts_orig);
 
         prop_assert_eq!(event.source, source);
         prop_assert_eq!(event.event_type, event_type);
@@ -279,7 +267,8 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_ulids() {
         let mut events = Vec::new();
 
         for payload in payloads {
-            events.push(RawEventBuilder::new(&source, &event_type, payload).build());
+            let factory = EventFactory::new(&source);
+            events.push(factory.create_event(&event_type, payload));
             // Small delay to ensure ULID ordering
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -311,7 +300,8 @@ fn test_raw_event_edge_case_payloads() {
         ];
 
         for payload in edge_cases {
-            let event = RawEventBuilder::new(&source, &event_type, payload.clone()).build();
+            let factory = EventFactory::new(&source);
+            let event = factory.create_event(&event_type, payload.clone());
 
             // Should serialize and deserialize correctly
             let json_str = serde_json::to_string(&event).unwrap();
@@ -376,8 +366,8 @@ mod unit_tests {
 
     #[test]
     fn test_raw_event_builder_defaults() {
-        let event =
-            RawEventBuilder::new("test_source", "test.event", json!({"key": "value"})).build();
+        let factory = EventFactory::new("test_source");
+        let event = factory.create_event("test.event", json!({"key": "value"}));
 
         pretty_assertions::assert_eq!(event.source, "test_source");
         pretty_assertions::assert_eq!(event.event_type, "test.event");
@@ -390,7 +380,8 @@ mod unit_tests {
 
     #[test]
     fn test_raw_event_ulid_timestamp_extraction() {
-        let event = RawEventBuilder::new("source", "type", json!({})).build();
+        let factory = EventFactory::new("source");
+        let event = factory.create_event("type", json!({}));
 
         // The ULID timestamp should be close to ts_ingest
         let ulid_ts = event.ts_ingest_from_ulid();

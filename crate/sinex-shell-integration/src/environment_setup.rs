@@ -46,7 +46,7 @@ pub struct EnvironmentSetup {
 
 impl EnvironmentSetup {
     /// Create a new environment setup manager
-    pub fn new(shell_info: &ShellInfo) -> sinex_core::Result<Self> {
+    pub fn new(shell_info: &ShellInfo) -> sinex_core_types::Result<Self> {
         let original_env = Self::capture_current_env();
 
         Ok(Self {
@@ -60,7 +60,7 @@ impl EnvironmentSetup {
     pub async fn configure_environment(
         &mut self,
         config: &IntegrationConfig,
-    ) -> sinex_core::Result<()> {
+    ) -> sinex_core_types::Result<()> {
         let env_config = self.create_environment_config(config)?;
 
         // Set environment variables
@@ -78,7 +78,7 @@ impl EnvironmentSetup {
     }
 
     /// Clean up environment modifications
-    pub async fn cleanup_environment(&mut self) -> sinex_core::Result<()> {
+    pub async fn cleanup_environment(&mut self) -> sinex_core_types::Result<()> {
         if let Some(config) = &self.current_config {
             // Restore original environment variables
             self.restore_environment_variables(config).await?;
@@ -118,7 +118,7 @@ impl EnvironmentSetup {
     fn create_environment_config(
         &self,
         config: &IntegrationConfig,
-    ) -> sinex_core::Result<EnvironmentConfig> {
+    ) -> sinex_core_types::Result<EnvironmentConfig> {
         let mut env_config = EnvironmentConfig::default();
 
         // Set Sinex-specific environment variables
@@ -165,7 +165,7 @@ impl EnvironmentSetup {
     async fn set_environment_variables(
         &self,
         config: &EnvironmentConfig,
-    ) -> sinex_core::Result<()> {
+    ) -> sinex_core_types::Result<()> {
         for (key, value) in &config.environment_vars {
             env::set_var(key, value);
             debug!("Set environment variable: {}={}", key, value);
@@ -191,7 +191,7 @@ impl EnvironmentSetup {
     async fn restore_environment_variables(
         &self,
         config: &EnvironmentConfig,
-    ) -> sinex_core::Result<()> {
+    ) -> sinex_core_types::Result<()> {
         // Remove Sinex-specific variables
         for key in config.environment_vars.keys() {
             if key.starts_with("SINEX_") {
@@ -209,7 +209,7 @@ impl EnvironmentSetup {
         Ok(())
     }
 
-    async fn modify_shell_profile(&self, config: &EnvironmentConfig) -> sinex_core::Result<()> {
+    async fn modify_shell_profile(&self, config: &EnvironmentConfig) -> sinex_core_types::Result<()> {
         let profile_file = self.get_profile_file()?;
 
         if config.profile_additions.is_empty() {
@@ -219,7 +219,7 @@ impl EnvironmentSetup {
         // Read existing profile
         let existing_content = if profile_file.exists() {
             fs::read_to_string(&profile_file).await.map_err(|e| {
-                sinex_core::CoreError::Io(format!("Failed to read profile file: {}", e))
+                sinex_core_types::CoreError::Io(format!("Failed to read profile file: {}", e))
             })?
         } else {
             String::new()
@@ -246,14 +246,14 @@ impl EnvironmentSetup {
         fs::write(&profile_file, updated_content)
             .await
             .map_err(|e| {
-                sinex_core::CoreError::Io(format!("Failed to write profile file: {}", e))
+                sinex_core_types::CoreError::Io(format!("Failed to write profile file: {}", e))
             })?;
 
         info!("Modified shell profile: {}", profile_file.display());
         Ok(())
     }
 
-    async fn cleanup_shell_profile(&self, _config: &EnvironmentConfig) -> sinex_core::Result<()> {
+    async fn cleanup_shell_profile(&self, _config: &EnvironmentConfig) -> sinex_core_types::Result<()> {
         let profile_file = self.get_profile_file()?;
 
         if !profile_file.exists() {
@@ -262,7 +262,7 @@ impl EnvironmentSetup {
 
         // Read current profile
         let current_content = fs::read_to_string(&profile_file).await.map_err(|e| {
-            sinex_core::CoreError::Io(format!("Failed to read profile file: {}", e))
+            sinex_core_types::CoreError::Io(format!("Failed to read profile file: {}", e))
         })?;
 
         // Remove Sinex section
@@ -290,19 +290,19 @@ impl EnvironmentSetup {
         fs::write(&profile_file, cleaned_content)
             .await
             .map_err(|e| {
-                sinex_core::CoreError::Io(format!("Failed to write profile file: {}", e))
+                sinex_core_types::CoreError::Io(format!("Failed to write profile file: {}", e))
             })?;
 
         info!("Cleaned up shell profile: {}", profile_file.display());
         Ok(())
     }
 
-    fn get_profile_file(&self) -> sinex_core::Result<PathBuf> {
+    fn get_profile_file(&self) -> sinex_core_types::Result<PathBuf> {
         match &self.shell_info.shell_type {
             ShellType::Bash => {
                 // Try .bash_profile first, then .bashrc
                 let home = dirs::home_dir().ok_or_else(|| {
-                    sinex_core::CoreError::Configuration("Cannot find home directory".to_string())
+                    sinex_core_types::CoreError::Configuration("Cannot find home directory".to_string())
                 })?;
 
                 let bash_profile = home.join(".bash_profile");
@@ -314,17 +314,17 @@ impl EnvironmentSetup {
             }
             ShellType::Zsh => {
                 let home = dirs::home_dir().ok_or_else(|| {
-                    sinex_core::CoreError::Configuration("Cannot find home directory".to_string())
+                    sinex_core_types::CoreError::Configuration("Cannot find home directory".to_string())
                 })?;
                 Ok(home.join(".zshrc"))
             }
             ShellType::Fish => {
                 let home = dirs::home_dir().ok_or_else(|| {
-                    sinex_core::CoreError::Configuration("Cannot find home directory".to_string())
+                    sinex_core_types::CoreError::Configuration("Cannot find home directory".to_string())
                 })?;
                 Ok(home.join(".config/fish/config.fish"))
             }
-            _ => Err(sinex_core::CoreError::Configuration(format!(
+            _ => Err(sinex_core_types::CoreError::Configuration(format!(
                 "Profile modification not supported for {}",
                 self.shell_info.shell_type.name()
             ))),
@@ -334,7 +334,7 @@ impl EnvironmentSetup {
     fn generate_profile_additions(
         &self,
         config: &IntegrationConfig,
-    ) -> sinex_core::Result<Vec<String>> {
+    ) -> sinex_core_types::Result<Vec<String>> {
         let mut additions = Vec::new();
 
         // Add environment variable exports

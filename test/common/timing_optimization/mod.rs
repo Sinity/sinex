@@ -1,4 +1,4 @@
-//! Timing optimization utilities to replace sleep-based synchronization
+// Timing optimization utilities to replace sleep-based synchronization
 
 use crate::common::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -31,7 +31,7 @@ impl TestSynchronizer {
     }
 
     /// Wait for condition to be signaled or timeout
-    pub async fn wait(&self) -> Result<(), tokio::time::error::Elapsed> {
+    pub async fn wait(&self) -> AnyhowResult<(), tokio::time::error::Elapsed> {
         if self.condition.load(Ordering::Acquire) {
             return Ok(());
         }
@@ -82,7 +82,7 @@ impl EventCounter {
     pub async fn wait_for_target(
         &self,
         timeout_duration: Duration,
-    ) -> Result<usize, tokio::time::error::Elapsed> {
+    ) -> AnyhowResult<usize, tokio::time::error::Elapsed> {
         loop {
             let current = self.count.load(Ordering::Acquire);
             if current >= self.target {
@@ -140,7 +140,7 @@ impl ProgressTracker {
     pub async fn wait_for_completion(
         &self,
         timeout_duration: Duration,
-    ) -> Result<(), tokio::time::error::Elapsed> {
+    ) -> AnyhowResult<(), tokio::time::error::Elapsed> {
         loop {
             if self.is_complete() {
                 return Ok(());
@@ -194,7 +194,7 @@ impl TestBarrier {
     pub async fn wait(
         &self,
         timeout_duration: Duration,
-    ) -> Result<(), tokio::time::error::Elapsed> {
+    ) -> AnyhowResult<(), tokio::time::error::Elapsed> {
         let current_generation = self.generation.load(Ordering::Acquire);
         let count = self.counter.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -235,7 +235,7 @@ pub mod patterns {
     pub async fn wait_for_workers(
         worker_count: usize,
         timeout: Duration,
-    ) -> Result<TestBarrier, tokio::time::error::Elapsed> {
+    ) -> AnyhowResult<TestBarrier, tokio::time::error::Elapsed> {
         let barrier = TestBarrier::new(worker_count);
         barrier.wait(timeout).await?;
         Ok(barrier)
@@ -245,7 +245,7 @@ pub mod patterns {
     pub async fn wait_for_event_processing(
         target_count: usize,
         timeout: Duration,
-    ) -> Result<EventCounter, tokio::time::error::Elapsed> {
+    ) -> AnyhowResult<EventCounter, tokio::time::error::Elapsed> {
         let counter = EventCounter::new(target_count);
         counter.wait_for_target(timeout).await?;
         Ok(counter)

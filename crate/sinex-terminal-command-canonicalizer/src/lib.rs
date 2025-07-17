@@ -1,19 +1,25 @@
 //! Terminal Command Canonicalizer Automaton
 //!
 //! This automaton creates canonical command events as synthesis events based on terminal
-//! command events from multiple sources (kitty, atuin, shell history). Uses the new 
-//! dual-log architecture where synthesis events are stored in synthesis.events.
+//! command events from multiple sources (kitty, atuin, shell history). Uses the unified
+//! architecture where all events are stored in core.events with source_event_ids for provenance.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
-use sqlx::PgPool;
+use sinex_core_types::CoreError;
+use sinex_db::queries::EventQueries;
+use sinex_events::{EventFactory, event_types, sources};
+use sinex_macros::with_context;
 use sinex_satellite_sdk::{
-    automaton::{HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult, EventFilter},
+    automaton::{
+        EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
+        ProcessingResult,
+    },
     SatelliteError, SatelliteResult,
 };
-use sinex_events::RawEventBuilder;
 use sinex_ulid::Ulid;
+use sqlx::PgPool;
 use tracing::{debug, info};
 
 /// Terminal command canonicalizer automaton
@@ -24,52 +30,53 @@ pub struct TerminalCommandCanonicalizer {
 impl TerminalCommandCanonicalizer {
     /// Create a new terminal command canonicalizer
     pub fn new() -> Self {
-        Self {
-            context: None,
-        }
+        Self { context: None }
     }
 
     /// Find existing canonical command near the given timestamp
+    #[with_context(
+        operation = "find_existing_canonical_command",
+        retry_count = 2,
+        timeout_ms = 5000,
+        enable_metrics
+    )]
     async fn find_existing_canonical_command(
         &self,
         pool: &PgPool,
         command_text: &str,
         timestamp: DateTime<Utc>,
         window_secs: i64,
-    ) -> SatelliteResult<Option<String>> {
+    ) -> Result<Option<String>, CoreError> {
         let start_time = timestamp - Duration::seconds(window_secs);
         let end_time = timestamp + Duration::seconds(window_secs);
 
-        let row = sqlx::query!(
-            r#"
-            SELECT id::text as event_id
-            FROM synthesis.events
-            WHERE source = 'canonical.terminal'
-                AND event_type = 'command.canonical'
-                AND ts_ingest >= $1
-                AND ts_ingest <= $2
-                AND payload->>'command' = $3
-            ORDER BY ts_ingest ASC
-            LIMIT 1
-            "#,
+        let event_id = EventQueries::find_canonical_command_by_time_and_text(
+            pool,
             start_time,
             end_time,
-            command_text
+            command_text.to_string(),
         )
-        .fetch_optional(pool)
         .await?;
 
-        Ok(row.map(|r| r.event_id.unwrap_or_default()))
+        Ok(event_id)
     }
 
     /// Create a new canonical command synthesis event
+    #[with_context(
+        operation = "create_canonical_command",
+        retry_count = 3,
+        timeout_ms = 10000,
+        enable_metrics,
+        context = "component=synthesis"
+    )]
     async fn create_canonical_command(
         &self,
         command_data: &CommandData,
-    ) -> SatelliteResult<String> {
-        let context = self.context.as_ref().ok_or_else(|| {
-            SatelliteError::Automaton("Context not initialized".to_string())
-        })?;
+    ) -> Result<String, CoreError> {
+        let context = self
+            .context
+            .as_ref()
+            .ok_or_else(|| SatelliteError::Automaton("Context not initialized".to_string()))?;
 
         let payload = json!({
             "command": command_data.command,
@@ -86,16 +93,12 @@ impl TerminalCommandCanonicalizer {
         });
 
         // Create synthesis event with provenance links
-        let synthesis_event = RawEventBuilder::new(
-            "canonical.terminal",
-            "command.canonical",
-            payload,
-        )
-        .with_host(command_data.host.as_deref().unwrap_or("unknown"))
-        .with_orig_timestamp(command_data.timestamp)
-        .with_ingestor_version("0.4.2")
-        .with_source_events(command_data.source_events.clone())
-        .build();
+        let factory = EventFactory::new("canonical.terminal");
+        let mut synthesis_event = factory.create_event("command.canonical", payload);
+        
+        // Set additional fields that EventFactory doesn't handle
+        synthesis_event.ts_orig = Some(command_data.timestamp);
+        synthesis_event.source_event_ids = Some(command_data.source_events.clone());
 
         // Submit synthesis event via ingest client
         let event_id = context.emit_synthesis_event(synthesis_event).await?;
@@ -110,6 +113,13 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Enrich existing canonical command with new data
+    #[with_context(
+        operation = "enrich_canonical_command",
+        retry_count = 2,
+        timeout_ms = 8000,
+        enable_metrics,
+        context = "component=enrichment"
+    )]
     async fn enrich_canonical_command(
         &self,
         pool: &PgPool,
@@ -117,19 +127,9 @@ impl TerminalCommandCanonicalizer {
         enrichment_data: &EnrichmentData,
     ) -> SatelliteResult<()> {
         // First, get the current event payload
-        let current_event = sqlx::query!(
-            r#"
-            SELECT payload
-            FROM synthesis.events
-            WHERE id::text = $1
-            "#,
-            event_id
-        )
-        .fetch_one(pool)
-        .await?;
+        let mut payload: Value =
+            EventQueries::get_payload_by_event_id_text(pool, event_id.to_string()).await?;
 
-        let mut payload: Value = current_event.payload;
-        
         // Add enrichment to history
         let enrichment_entry = json!({
             "timestamp": enrichment_data.timestamp.to_rfc3339(),
@@ -155,19 +155,8 @@ impl TerminalCommandCanonicalizer {
             payload["end_time"] = end_time.clone();
         }
 
-        // Update the event in synthesis.events (this is allowed for synthesis events)
-        sqlx::query!(
-            r#"
-            UPDATE synthesis.events 
-            SET 
-                payload = $1
-            WHERE id::text = $2
-            "#,
-            payload,
-            event_id
-        )
-        .execute(pool)
-        .await?;
+        // Update the event in core.events (this is allowed for synthesis events)
+        EventQueries::update_payload_by_event_id_text(pool, event_id.to_string(), payload).await?;
 
         info!(
             event_id = %event_id,
@@ -179,7 +168,11 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Extract command data from an event
-    fn extract_command_data(&self, event: &HotlogAutomatonEvent) -> SatelliteResult<Option<CommandData>> {
+    #[with_context(operation = "extract_command_data", context = "component=extraction")]
+    fn extract_command_data(
+        &self,
+        event: &HotlogAutomatonEvent,
+    ) -> SatelliteResult<Option<CommandData>> {
         let data = &event.event.payload;
 
         // Extract command text - this is required
@@ -241,7 +234,14 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Extract enrichment data from an event
-    fn extract_enrichment_data(&self, event: &HotlogAutomatonEvent) -> SatelliteResult<Option<EnrichmentData>> {
+    #[with_context(
+        operation = "extract_enrichment_data",
+        context = "component=extraction"
+    )]
+    fn extract_enrichment_data(
+        &self,
+        event: &HotlogAutomatonEvent,
+    ) -> SatelliteResult<Option<EnrichmentData>> {
         let data = &event.event.payload;
 
         // Check if this event can enrich an existing command
@@ -276,7 +276,10 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
         Ok(())
     }
 
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         debug!(
             event_id = %event.event.id,
             source = %event.event.source,
@@ -284,9 +287,10 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
             "Processing event for terminal command canonicalization"
         );
 
-        let context = self.context.as_ref().ok_or_else(|| {
-            SatelliteError::Automaton("Context not initialized".to_string())
-        })?;
+        let context = self
+            .context
+            .as_ref()
+            .ok_or_else(|| SatelliteError::Automaton("Context not initialized".to_string()))?;
 
         let pool = &context.db_pool;
 
@@ -305,8 +309,9 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
                 Some(event_id) => {
                     // Existing command found - enrich it
                     if let Some(enrichment_data) = self.extract_enrichment_data(&event)? {
-                        self.enrich_canonical_command(pool, &event_id, &enrichment_data).await?;
-                        
+                        self.enrich_canonical_command(pool, &event_id, &enrichment_data)
+                            .await?;
+
                         return Ok(ProcessingResult::Success {
                             checkpoint_data: Some(json!({
                                 "action": "enriched",
@@ -319,7 +324,7 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
                 None => {
                     // No existing command - create new canonical event (synthesis)
                     let event_id = self.create_canonical_command(&command_data).await?;
-                    
+
                     return Ok(ProcessingResult::Success {
                         checkpoint_data: Some(json!({
                             "action": "synthesized",
@@ -344,8 +349,9 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
                     )
                     .await?
                 {
-                    self.enrich_canonical_command(pool, &event_id, &enrichment_data).await?;
-                    
+                    self.enrich_canonical_command(pool, &event_id, &enrichment_data)
+                        .await?;
+
                     return Ok(ProcessingResult::Success {
                         checkpoint_data: Some(json!({
                             "action": "enriched",
@@ -370,14 +376,26 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
     fn event_filters(&self) -> Vec<EventFilter> {
         vec![
             // Terminal command events from various sources
-            EventFilter::new(Some("shell.kitty".to_string()), Some("command.executed".to_string())),
-            EventFilter::new(Some("shell.atuin".to_string()), Some("command.imported".to_string())),
-            EventFilter::new(Some("shell.history".to_string()), Some("command.imported".to_string())),
-            EventFilter::new(Some("shell.recording".to_string()), Some("command.executed".to_string())),
+            EventFilter::new(
+                Some(sources::SHELL_KITTY.to_string()),
+                Some(event_types::shell::COMMAND_EXECUTED.to_string()),
+            ),
+            EventFilter::new(
+                Some(sources::SHELL_ATUIN.to_string()),
+                Some(event_types::shell::COMMAND_IMPORTED.to_string()),
+            ),
+            EventFilter::new(
+                Some(sources::SHELL_HISTORY.to_string()),
+                Some(event_types::shell::COMMAND_IMPORTED.to_string()),
+            ),
+            EventFilter::new(
+                Some(sources::SHELL_RECORDING.to_string()),
+                Some(event_types::shell::COMMAND_EXECUTED.to_string()),
+            ),
             // Legacy event types for backward compatibility
-            EventFilter::new(None, Some("shell.command.executed".to_string())),
-            EventFilter::new(None, Some("shell.command.completed".to_string())),
-            EventFilter::new(None, Some("command.executed".to_string())),
+            EventFilter::new(None, Some(event_types::shell::SHELL_COMMAND_EXECUTED.to_string())),
+            EventFilter::new(None, Some(event_types::shell::SHELL_COMMAND_COMPLETED.to_string())),
+            EventFilter::new(None, Some(event_types::shell::COMMAND_EXECUTED.to_string())),
         ]
     }
 }

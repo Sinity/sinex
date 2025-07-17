@@ -1,26 +1,65 @@
-//! Test utilities for satellite architecture
-//! 
-//! Provides helpers for testing satellites, ingestd, Redis Streams,
-//! and automaton interactions.
+// Test utilities for satellite architecture
+//
+// Provides helpers for testing satellites, ingestd, Redis Streams,
+// and automaton interactions.
 
 use crate::common::prelude::*;
 use redis::aio::MultiplexedConnection;
+use redis::AsyncCommands;
+use std::str::FromStr;
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, SatelliteConfig},
     grpc_client::IngestClient,
+    stream_processor::Checkpoint,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tonic::transport::Server;
+use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+
+// Helper function to convert proto::RawEvent to RawEvent
+fn proto_to_raw_event(proto: sinex_ingestd::proto::RawEvent) -> AnyhowResult<RawEvent> {
+    let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
+    
+    let blob_id = if let Some(blob_id_str) = proto.blob_id {
+        Some(Ulid::from_str(&blob_id_str)?)
+    } else {
+        None
+    };
+    
+    let id = Ulid::from_str(&proto.id)?;
+    let ts_orig = chrono::DateTime::parse_from_rfc3339(&proto.ts_orig)?
+        .with_timezone(&chrono::Utc);
+    
+    Ok(RawEvent {
+        id,
+        ts_orig,
+        ts_ingest: chrono::Utc::now(),
+        source: proto.source,
+        source_id: proto.source_id,
+        event_type: proto.event_type,
+        payload,
+        digest: proto.digest,
+        tags: proto.tags,
+        blob_id,
+        parent_id: if let Some(parent_id_str) = proto.parent_id {
+            Some(Ulid::from_str(&parent_id_str)?)
+        } else {
+            None
+        },
+        dedup_keys: proto.dedup_keys,
+    })
+}
 
 /// Handle to a running test ingestd instance
 pub struct TestIngestdHandle {
     pub socket_path: String,
     pub server_handle: JoinHandle<()>,
-    pub events_received: Arc<Mutex<Vec<sinex_core::RawEvent>>>,
+    pub events_received: Arc<Mutex<Vec<sinex_core_types::RawEvent>>>,
 }
 
 impl TestIngestdHandle {
@@ -31,7 +70,7 @@ impl TestIngestdHandle {
     }
 
     /// Get events received by this ingestd
-    pub async fn get_received_events(&self) -> Vec<sinex_core::RawEvent> {
+    pub async fn get_received_events(&self) -> Vec<sinex_core_types::RawEvent> {
         self.events_received.lock().await.clone()
     }
 }
@@ -40,7 +79,7 @@ impl TestIngestdHandle {
 pub struct TestSatelliteHandle {
     pub satellite_id: String,
     pub task_handle: JoinHandle<()>,
-    pub events_sent: Arc<Mutex<Vec<sinex_core::RawEvent>>>,
+    pub events_sent: Arc<Mutex<Vec<sinex_core_types::RawEvent>>>,
 }
 
 impl TestSatelliteHandle {
@@ -60,10 +99,7 @@ impl TestSatelliteHandle {
     }
 
     /// Start a test satellite with configuration
-    pub async fn start(
-        config: SatelliteConfig,
-        pool: sqlx::PgPool,
-    ) -> Result<Self> {
+    pub async fn start(config: SatelliteConfig, pool: sqlx::PgPool) -> AnyhowResult<Self> {
         let satellite_id = format!("test-satellite-{}", Ulid::new());
         let satellite_id_clone = satellite_id.clone();
         let events_sent = Arc::new(Mutex::new(Vec::new()));
@@ -73,21 +109,21 @@ impl TestSatelliteHandle {
         let task_handle = tokio::spawn(async move {
             // Simplified satellite behavior for testing
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Generate a test event
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.satellite",
+                let factory = EventFactory::new("test.satellite");
+                let event = factory.create_event(
                     "test.event",
                     serde_json::json!({
                         "satellite_id": satellite_id_clone,
                         "timestamp": chrono::Utc::now(),
                         "sequence": events_sent_clone.lock().await.len()
-                    })
-                ).build();
-                
+                    }),
+                );
+
                 events_sent_clone.lock().await.push(event);
             }
         });
@@ -120,8 +156,11 @@ impl TestAutomatonHandle {
     }
 
     /// Get current checkpoint
-    pub async fn get_checkpoint(&self) -> Result<CheckpointState> {
-        self.checkpoint_manager.load_checkpoint().await.map_err(|e| anyhow::anyhow!(e))
+    pub async fn get_checkpoint(&self) -> AnyhowResult<CheckpointState> {
+        self.checkpoint_manager
+            .load_checkpoint()
+            .await
+            .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Get processed event count
@@ -134,7 +173,7 @@ impl TestAutomatonHandle {
         automaton_type: &str,
         pool: sqlx::PgPool,
         redis: MultiplexedConnection,
-    ) -> Result<Self> {
+    ) -> AnyhowResult<Self> {
         let automaton_id = format!("test-{}-{}", automaton_type, Ulid::new());
         let checkpoint_manager = CheckpointManager::new(
             pool.clone(),
@@ -142,7 +181,7 @@ impl TestAutomatonHandle {
             format!("{}-group", automaton_type),
             automaton_id.clone(),
         );
-        
+
         let processed_events = Arc::new(Mutex::new(Vec::new()));
         let processed_events_clone = processed_events.clone();
         let automaton_id_clone = automaton_id.clone();
@@ -150,32 +189,31 @@ impl TestAutomatonHandle {
         let task_handle = tokio::spawn(async move {
             // Simplified automaton that processes events from database
             let mut last_id: Option<Ulid> = None;
-            
+
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                
-                // Query for new events
+
+                // Query for new events using centralized query system
                 let query = if let Some(id) = last_id {
-                    sqlx::query!(
-                        "SELECT event_id::text, source, event_type, payload 
-                         FROM core.events 
-                         WHERE event_id::uuid > $1::uuid 
-                         ORDER BY event_id 
-                         LIMIT 10",
-                        id.to_uuid()
-                    )
+                    QueryBuilder::select()
+                        .where_clause("event_id::uuid > $1::uuid")
+                        .order_by("event_id")
+                        .limit(10)
+                        .params(vec![QueryParam::Uuid(id.to_uuid())])
+                        .build()
                 } else {
-                    sqlx::query!(
-                        "SELECT event_id::text, source, event_type, payload 
-                         FROM core.events 
-                         ORDER BY event_id 
-                         LIMIT 10"
-                    )
+                    QueryBuilder::select()
+                        .order_by("event_id")
+                        .limit(10)
+                        .build()
                 };
-                
-                if let Ok(rows) = query.fetch_all(&pool).await {
+
+                let rows = EventQueries::query_events_with_fields(&pool, &query, &["event_id::text as id", "source", "event_type", "payload"])
+                    .await;
+
+                if let Ok(rows) = rows {
                     for row in rows {
-                        if let Ok(id) = Ulid::from_string(&row.id) {
+                        if let Ok(id) = Ulid::from_str(&row.id) {
                             processed_events_clone.lock().await.push(row.id.clone());
                             last_id = Some(id);
                         }
@@ -196,12 +234,15 @@ impl TestAutomatonHandle {
 /// Extensions to TestContext for satellite architecture
 impl TestContext {
     /// Start a test ingestd server
-    pub async fn start_test_ingestd(&self) -> Result<TestIngestdHandle> {
+    pub async fn start_test_ingestd(&self) -> AnyhowResult<TestIngestdHandle> {
         start_test_ingestd_with_config(self, TestIngestdConfig::default()).await
     }
 
     /// Start a test satellite
-    pub async fn start_test_satellite(&self, config: SatelliteConfig) -> Result<TestSatelliteHandle> {
+    pub async fn start_test_satellite(
+        &self,
+        config: SatelliteConfig,
+    ) -> AnyhowResult<TestSatelliteHandle> {
         let satellite_id = format!("test-satellite-{}", Ulid::new());
         let events_sent = Arc::new(Mutex::new(Vec::new()));
         let events_sent_clone = events_sent.clone();
@@ -210,17 +251,17 @@ impl TestContext {
         let task_handle = tokio::spawn(async move {
             // Simplified satellite behavior for testing
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
-            
+
             loop {
                 interval.tick().await;
-                
+
                 // Generate a test event
-                let event = sinex_events::RawEventBuilder::new(
-                    "test.satellite",
+                let factory = EventFactory::new("test.satellite");
+                let event = factory.create_event(
                     "test.event",
                     serde_json::json!({"satellite_id": satellite_id, "timestamp": chrono::Utc::now()})
-                ).build();
-                
+                );
+
                 events_sent_clone.lock().await.push(event);
             }
         });
@@ -233,7 +274,10 @@ impl TestContext {
     }
 
     /// Start a test automaton
-    pub async fn start_test_automaton(&self, automaton_type: &str) -> Result<TestAutomatonHandle> {
+    pub async fn start_test_automaton(
+        &self,
+        automaton_type: &str,
+    ) -> AnyhowResult<TestAutomatonHandle> {
         let automaton_id = format!("test-{}-{}", automaton_type, Ulid::new());
         let checkpoint_manager = CheckpointManager::new(
             self.pool().clone(),
@@ -241,7 +285,7 @@ impl TestContext {
             format!("{}-group", automaton_type),
             automaton_id.clone(),
         );
-        
+
         let processed_events = Arc::new(Mutex::new(Vec::new()));
         let processed_events_clone = processed_events.clone();
         let pool = self.pool().clone();
@@ -250,32 +294,31 @@ impl TestContext {
         let task_handle = tokio::spawn(async move {
             // Simplified automaton that processes events from database
             let mut last_id: Option<Ulid> = None;
-            
+
             loop {
                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                
-                // Query for new events
+
+                // Query for new events using centralized query system
                 let query = if let Some(id) = last_id {
-                    sqlx::query!(
-                        "SELECT event_id::text, source, event_type, payload 
-                         FROM core.events 
-                         WHERE event_id::uuid > $1::uuid 
-                         ORDER BY event_id 
-                         LIMIT 10",
-                        id.to_uuid()
-                    )
+                    QueryBuilder::select()
+                        .where_clause("event_id::uuid > $1::uuid")
+                        .order_by("event_id")
+                        .limit(10)
+                        .params(vec![QueryParam::Uuid(id.to_uuid())])
+                        .build()
                 } else {
-                    sqlx::query!(
-                        "SELECT event_id::text, source, event_type, payload 
-                         FROM core.events 
-                         ORDER BY event_id 
-                         LIMIT 10"
-                    )
+                    QueryBuilder::select()
+                        .order_by("event_id")
+                        .limit(10)
+                        .build()
                 };
-                
-                if let Ok(rows) = query.fetch_all(&pool).await {
+
+                let rows = EventQueries::query_events_with_fields(pool, &query, &["event_id::text as id", "source", "event_type", "payload"])
+                    .await;
+
+                if let Ok(rows) = rows {
                     for row in rows {
-                        if let Ok(id) = Ulid::from_string(&row.id) {
+                        if let Ok(id) = Ulid::from_str(&row.id) {
                             processed_events_clone.lock().await.push(row.id.clone());
                             last_id = Some(id);
                         }
@@ -298,18 +341,18 @@ impl TestContext {
         redis: &mut MultiplexedConnection,
         stream: &str,
         expected: usize,
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         use redis::AsyncCommands;
-        
+
         let timeout = std::time::Duration::from_secs(5);
         let start = std::time::Instant::now();
-        
+
         loop {
-            let len: usize = redis.xlen(stream).await.unwrap_or(0);
+            let len: usize = redis.xlen::<_, usize>(stream).await.unwrap_or(0);
             if len >= expected {
                 return Ok(());
             }
-            
+
             if start.elapsed() > timeout {
                 return Err(anyhow::anyhow!(
                     "Timeout waiting for {} events in stream {}, got {}",
@@ -318,7 +361,7 @@ impl TestContext {
                     len
                 ));
             }
-            
+
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
@@ -328,16 +371,16 @@ impl TestContext {
         &self,
         automaton: &TestAutomatonHandle,
         expected_count: u64,
-    ) -> Result<()> {
+    ) -> AnyhowResult<()> {
         let timeout = std::time::Duration::from_secs(10);
         let start = std::time::Instant::now();
-        
+
         loop {
             let checkpoint = automaton.get_checkpoint().await?;
             if checkpoint.processed_count >= expected_count {
                 return Ok(());
             }
-            
+
             if start.elapsed() > timeout {
                 return Err(anyhow::anyhow!(
                     "Timeout waiting for checkpoint to reach {}, got {}",
@@ -345,7 +388,7 @@ impl TestContext {
                     checkpoint.processed_count
                 ));
             }
-            
+
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
@@ -354,39 +397,39 @@ impl TestContext {
     pub async fn verify_automaton_checkpoint(
         &self,
         automaton_id: &str,
-    ) -> Result<CheckpointState> {
-        let checkpoint = sqlx::query!(
-            r#"
-            SELECT 
-                last_processed_id,
-                processed_count,
-                last_activity,
-                state_data,
-                checkpoint_version
-            FROM core.automaton_checkpoints
-            WHERE automaton_name = $1
-            ORDER BY last_activity DESC
-            LIMIT 1
-            "#,
-            automaton_id
-        )
-        .fetch_optional(self.pool())
-        .await?;
+    ) -> AnyhowResult<CheckpointState> {
+        let checkpoint = CheckpointQueries::get_latest(self.pool(), automaton_id)
+            .await?;
 
         match checkpoint {
-            Some(row) => Ok(CheckpointState {
-                last_processed_id: row.last_processed_id,
-                processed_count: row.processed_count as u64,
-                last_activity: row.last_activity,
-                data: row.data,
-                version: row.version as u32,
-            }),
+            Some(row) => {
+                let checkpoint = if let Some(last_processed_id) = row.last_processed_id {
+                    // Try to parse the last_processed_id as a ULID
+                    match last_processed_id.parse::<Ulid>() {
+                        Ok(ulid) => Checkpoint::Internal {
+                            event_id: ulid,
+                            message_count: row.processed_count as u64,
+                        },
+                        Err(_) => Checkpoint::None, // Invalid ULID, fallback to None
+                    }
+                } else {
+                    Checkpoint::None
+                };
+                
+                Ok(CheckpointState {
+                    checkpoint,
+                    processed_count: row.processed_count as u64,
+                    last_activity: row.last_activity,
+                    data: row.data,
+                    version: row.version as u32,
+                })
+            }
             None => Ok(CheckpointState::default()),
         }
     }
 
     /// Create a test Redis connection
-    pub async fn create_redis_connection(&self) -> Result<MultiplexedConnection> {
+    pub async fn create_redis_connection(&self) -> AnyhowResult<MultiplexedConnection> {
         let client = redis::Client::open("redis://127.0.0.1/")?;
         Ok(client.get_multiplexed_async_connection().await?)
     }
@@ -396,10 +439,10 @@ impl TestContext {
         &self,
         redis: &mut MultiplexedConnection,
         stream: &str,
-        event: &sinex_core::RawEvent,
-    ) -> Result<String> {
+        event: &sinex_core_types::RawEvent,
+    ) -> AnyhowResult<String> {
         use redis::AsyncCommands;
-        
+
         let event_json = serde_json::to_string(event)?;
         let message_id: String = redis
             .xadd(
@@ -412,7 +455,7 @@ impl TestContext {
                 ],
             )
             .await?;
-        
+
         Ok(message_id)
     }
 
@@ -423,26 +466,40 @@ impl TestContext {
         stream: &str,
         group: &str,
         consumer: &str,
-    ) -> Result<Vec<StreamMessage>> {
-        use redis::AsyncCommands;
-        
-        let result: Vec<(String, Vec<(String, String)>)> = redis
-            .xreadgroup(
-                group,
-                consumer,
-                Some(10), // Read up to 10 messages
-                false,    // Don't use NOACK
-                &[(stream, ">")],
-            )
+    ) -> AnyhowResult<Vec<StreamMessage>> {
+        use redis::cmd;
+
+        // Use Redis XREADGROUP command
+        let result: redis::streams::StreamReadReply = cmd("XREADGROUP")
+            .arg("GROUP")
+            .arg(group)
+            .arg(consumer)
+            .arg("COUNT")
+            .arg(10)
+            .arg("STREAMS")
+            .arg(stream)
+            .arg(">")
+            .query_async(redis)
             .await?;
-        
+
         let mut messages = Vec::new();
-        for (_stream, stream_messages) in result {
-            for (id, fields) in stream_messages {
-                messages.push(StreamMessage { id, fields });
+        for stream_key in result.keys {
+            for stream_id in stream_key.ids {
+                messages.push(StreamMessage { 
+                    id: stream_id.id, 
+                    fields: stream_id.map.into_iter()
+                        .filter_map(|(k, v)| {
+                            if let redis::Value::Data(data) = v {
+                                Some((k, String::from_utf8_lossy(&data).to_string()))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                });
             }
         }
-        
+
         Ok(messages)
     }
 }
@@ -469,84 +526,88 @@ impl Default for TestIngestdConfig {
 pub async fn start_test_ingestd_with_config(
     ctx: &TestContext,
     config: TestIngestdConfig,
-) -> Result<TestIngestdHandle> {
-    let socket_path = ctx.work_dir().join(format!("test-ingestd-{}.sock", Ulid::new()));
+) -> AnyhowResult<TestIngestdHandle> {
+    let socket_path = ctx
+        .work_dir()
+        .join(format!("test-ingestd-{}.sock", Ulid::new()));
     let socket_path_str = socket_path.to_string_lossy().to_string();
-    
+
     // Ensure parent directory exists
     if let Some(parent) = socket_path.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    
+
     // Remove socket if it exists
     let _ = tokio::fs::remove_file(&socket_path).await;
-    
+
     let events_received = Arc::new(Mutex::new(Vec::new()));
     let events_received_clone = events_received.clone();
     let pool = ctx.pool().clone();
-    
+
     // Create a minimal gRPC server that accepts events
     let server_handle = tokio::spawn(async move {
         use tonic::{Request, Response, Status};
-        
+
         #[derive(Default)]
         struct TestIngestService {
-            events: Arc<Mutex<Vec<sinex_core::RawEvent>>>,
+            events: Arc<Mutex<Vec<sinex_core_types::RawEvent>>>,
             pool: Option<sqlx::PgPool>,
             config: TestIngestdConfig,
         }
-        
+
         #[tonic::async_trait]
         impl sinex_ingestd::proto::ingest_service_server::IngestService for TestIngestService {
             async fn ingest_event(
                 &self,
                 request: Request<sinex_ingestd::proto::RawEvent>,
-            ) -> Result<Response<sinex_ingestd::proto::IngestResponse>, Status> {
+            ) -> AnyhowResult<Response<sinex_ingestd::proto::IngestResponse>, Status> {
                 let event_msg = request.into_inner();
-                
+
                 // Convert proto message to RawEvent
-                if let Ok(event) = sinex_core::RawEvent::try_from(event_msg) {
+                if let Ok(event) = proto_to_raw_event(event_msg) {
                     self.events.lock().await.push(event.clone());
-                    
+
                     // Optionally store in database
                     if self.config.store_events && self.pool.is_some() {
-                        let _ = sinex_db::events::insert_event_with_validator(
+                        let _ = sinex_db::insert_event_with_validator(
                             self.pool.as_ref().unwrap(),
                             &event,
                             None,
-                        ).await;
+                        )
+                        .await;
                     }
                 }
-                
+
                 Ok(Response::new(sinex_ingestd::proto::IngestResponse {
                     success: true,
                     error: None,
                     event_id: Some(sinex_ulid::Ulid::new().to_string()),
                 }))
             }
-            
+
             async fn ingest_batch(
                 &self,
                 request: Request<sinex_ingestd::proto::EventBatch>,
-            ) -> Result<Response<sinex_ingestd::proto::BatchResponse>, Status> {
+            ) -> AnyhowResult<Response<sinex_ingestd::proto::BatchResponse>, Status> {
                 let batch = request.into_inner();
                 let mut success_count = 0;
-                
+
                 for event_msg in batch.events {
-                    if let Ok(event) = sinex_core::RawEvent::try_from(event_msg) {
+                    if let Ok(event) = proto_to_raw_event(event_msg) {
                         self.events.lock().await.push(event.clone());
                         success_count += 1;
-                        
+
                         if self.config.store_events && self.pool.is_some() {
-                            let _ = sinex_db::events::insert_event_with_validator(
+                            let _ = sinex_db::insert_event_with_validator(
                                 self.pool.as_ref().unwrap(),
                                 &event,
                                 None,
-                            ).await;
+                            )
+                            .await;
                         }
                     }
                 }
-                
+
                 Ok(Response::new(sinex_ingestd::proto::BatchResponse {
                     success: true,
                     error: None,
@@ -559,7 +620,7 @@ pub async fn start_test_ingestd_with_config(
             async fn health(
                 &self,
                 _request: Request<sinex_ingestd::proto::HealthRequest>,
-            ) -> Result<Response<sinex_ingestd::proto::HealthResponse>, Status> {
+            ) -> AnyhowResult<Response<sinex_ingestd::proto::HealthResponse>, Status> {
                 Ok(Response::new(sinex_ingestd::proto::HealthResponse {
                     healthy: true,
                     status: "OK".to_string(),
@@ -567,25 +628,31 @@ pub async fn start_test_ingestd_with_config(
                 }))
             }
         }
-        
+
         let service = TestIngestService {
             events: events_received_clone,
-            pool: if config.store_events { Some(pool) } else { None },
+            pool: if config.store_events {
+                Some(pool)
+            } else {
+                None
+            },
             config,
         };
-        
+
         let addr = format!("unix://{}", socket_path_str);
-        
+
         Server::builder()
-            .add_service(sinex_ingestd::proto::ingest_service_server::IngestServiceServer::new(service))
+            .add_service(
+                sinex_ingestd::proto::ingest_service_server::IngestServiceServer::new(service),
+            )
             .serve(addr.parse().unwrap())
             .await
             .unwrap();
     });
-    
+
     // Wait for server to start
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-    
+
     Ok(TestIngestdHandle {
         socket_path: socket_path_str,
         server_handle,
@@ -602,7 +669,7 @@ pub struct StreamMessage {
 
 impl StreamMessage {
     /// Get the event from the message
-    pub fn get_event(&self) -> Result<sinex_core::RawEvent> {
+    pub fn get_event(&self) -> AnyhowResult<sinex_core_types::RawEvent> {
         for (key, value) in &self.fields {
             if key == "event" {
                 return serde_json::from_str(value)
@@ -623,41 +690,47 @@ pub async fn simulate_redis_consumer(
     tokio::spawn(async move {
         let mut processed = Vec::new();
         let mut redis_conn = redis;
-        
+
         loop {
-            use redis::AsyncCommands;
-            
-            let result: redis::RedisResult<Vec<(String, Vec<(String, String)>)>> = redis_conn
-                .xreadgroup(
-                    &group_name,
-                    &consumer_name,
-                    Some(10),
-                    false,
-                    &[(&stream_key, ">")],
-                )
+            use redis::{cmd, AsyncCommands};
+
+            // Use Redis XREADGROUP command
+            let result: redis::RedisResult<redis::streams::StreamReadReply> = cmd("XREADGROUP")
+                .arg("GROUP")
+                .arg(&group_name)
+                .arg(&consumer_name)
+                .arg("COUNT")
+                .arg(10)
+                .arg("STREAMS")
+                .arg(&stream_key)
+                .arg(">")
+                .query_async(&mut redis_conn)
                 .await;
-                
+
             match result {
-                Ok(streams) => {
-                    if streams.is_empty() || streams[0].1.is_empty() {
-                        break; // No more messages
+                Ok(reply) => {
+                    let mut found_messages = false;
+                    for stream_key_data in reply.keys {
+                        if !stream_key_data.ids.is_empty() {
+                            found_messages = true;
+                            for stream_id in stream_key_data.ids {
+                                processed.push(stream_id.id.clone());
+
+                                // Acknowledge the message
+                                let _: redis::RedisResult<i64> =
+                                    redis_conn.xack(&stream_key, &group_name, &[&stream_id.id]).await;
+                            }
+                        }
                     }
                     
-                    for (_stream, messages) in streams {
-                        for (id, _fields) in messages {
-                            processed.push(id.clone());
-                            
-                            // Acknowledge the message
-                            let _: redis::RedisResult<i64> = redis_conn
-                                .xack(&stream_key, &group_name, &[&id])
-                                .await;
-                        }
+                    if !found_messages {
+                        break; // No more messages
                     }
                 }
                 Err(_) => break,
             }
         }
-        
+
         processed
     })
 }

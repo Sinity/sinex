@@ -7,10 +7,14 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, event_types, sources, services};
+use sinex_macros::with_context;
 use sinex_satellite_sdk::{
-    cli::{ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, MissingItem, SourceState},
     checkpoint::CheckpointManager,
+    cli::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
+    },
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -35,7 +39,7 @@ pub struct TerminalConfig {
     pub scrollback_capture_enabled: bool,
     pub polling_interval_secs: u64,
     pub batch_size: usize,
-    
+
     // Scanner-specific configuration
     pub scanner_batch_size: usize,
     pub scanner_max_file_size_mb: u64,
@@ -44,7 +48,7 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
     fn default() -> Self {
         let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
-        
+
         Self {
             enabled_sources: [
                 ("atuin".to_string(), true),
@@ -52,7 +56,9 @@ impl Default for TerminalConfig {
                 ("kitty".to_string(), false), // Disabled by default, requires setup
                 ("recording".to_string(), false),
                 ("scrollback".to_string(), false),
-            ].into_iter().collect(),
+            ]
+            .into_iter()
+            .collect(),
             atuin_db_path: Some(home.join(".local/share/atuin/history.db")),
             history_files: vec![
                 home.join(".bash_history"),
@@ -75,16 +81,16 @@ impl Default for TerminalConfig {
 pub struct TerminalState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,
-    
+
     /// Enabled source types
     pub enabled_sources: Vec<String>,
-    
+
     /// History file status
     pub history_file_status: HashMap<PathBuf, HistoryFileStatus>,
-    
+
     /// Atuin database status
     pub atuin_status: Option<AtuinStatus>,
-    
+
     /// Recent activity summary
     pub recent_activity: Vec<String>,
 }
@@ -111,20 +117,20 @@ pub struct AtuinStatus {
 pub struct TerminalProcessor {
     /// Current processing context (set during initialization)
     context: Option<StreamProcessorContext>,
-    
+
     /// Terminal monitoring configuration
     config: TerminalConfig,
-    
+
     /// Individual watchers (initialized during operation)
     atuin_watcher: Option<AtuinWatcher>,
     history_watcher: Option<HistoryWatcher>,
     kitty_watcher: Option<KittyWatcher>,
     recording_watcher: Option<RecordingWatcher>,
     scrollback_watcher: Option<ScrollbackWatcher>,
-    
+
     /// Last captured terminal state for snapshots
     last_state: Option<TerminalState>,
-    
+
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
 }
@@ -144,7 +150,7 @@ impl TerminalProcessor {
             checkpoint_manager: None,
         }
     }
-    
+
     /// Create processor with custom configuration
     pub fn with_config(config: TerminalConfig) -> Self {
         Self {
@@ -161,18 +167,24 @@ impl TerminalProcessor {
     }
 
     /// Take a snapshot of current terminal state
+    #[with_context(
+        operation = "take_terminal_snapshot",
+        retry_count = 2,
+        timeout_ms = 15000,
+        enable_metrics
+    )]
     async fn take_snapshot(&mut self) -> SatelliteResult<TerminalState> {
         let mut enabled_sources = Vec::new();
         let mut history_file_status = HashMap::new();
         let mut atuin_status = None;
-        
+
         // Check enabled sources
         for (source, enabled) in &self.config.enabled_sources {
             if *enabled {
                 enabled_sources.push(source.clone());
             }
         }
-        
+
         // Check history files
         for history_file in &self.config.history_files {
             let status = if history_file.exists() {
@@ -181,14 +193,14 @@ impl TerminalProcessor {
                 let last_modified = metadata
                     .and_then(|m| m.modified().ok())
                     .map(|t| DateTime::<Utc>::from(t));
-                
+
                 // Estimate entries by counting lines (rough estimate)
                 let estimated_entries = if let Ok(content) = std::fs::read_to_string(history_file) {
                     content.lines().count() as u64
                 } else {
                     0
                 };
-                
+
                 HistoryFileStatus {
                     exists: true,
                     size_bytes,
@@ -203,20 +215,20 @@ impl TerminalProcessor {
                     estimated_entries: 0,
                 }
             };
-            
+
             history_file_status.insert(history_file.clone(), status);
         }
-        
+
         // Check Atuin database
         if let Some(ref atuin_path) = self.config.atuin_db_path {
             if atuin_path.exists() {
                 let metadata = std::fs::metadata(atuin_path).ok();
                 let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
-                
+
                 // For now, provide a rough estimate
                 // In a real implementation, we'd query the SQLite database
                 let estimated_entries = db_size_bytes / 100; // Very rough estimate
-                
+
                 atuin_status = Some(AtuinStatus {
                     db_exists: true,
                     db_size_bytes,
@@ -225,30 +237,44 @@ impl TerminalProcessor {
                 });
             }
         }
-        
+
         let state = TerminalState {
             captured_at: Utc::now(),
             enabled_sources,
             history_file_status,
             atuin_status,
-            recent_activity: vec![
-                "Terminal processor snapshot taken".to_string(),
-            ],
+            recent_activity: vec!["Terminal processor snapshot taken".to_string()],
         };
-        
+
         self.last_state = Some(state.clone());
         Ok(state)
     }
-    
+
     /// Initialize watchers based on enabled sources
+    #[with_context(
+        operation = "initialize_terminal_watchers",
+        retry_count = 3,
+        timeout_ms = 20000,
+        enable_metrics,
+        context = "component=watcher_initialization"
+    )]
     async fn initialize_watchers(&mut self) -> SatelliteResult<()> {
         // For now, stub implementations - will be implemented properly later
-        
+
         // Initialize Atuin watcher
-        if self.config.enabled_sources.get("atuin").copied().unwrap_or(false) {
+        if self
+            .config
+            .enabled_sources
+            .get("atuin")
+            .copied()
+            .unwrap_or(false)
+        {
             if let Some(ref atuin_path) = self.config.atuin_db_path {
                 if atuin_path.exists() {
-                    info!("Initializing Atuin watcher: {} (stub)", atuin_path.display());
+                    info!(
+                        "Initializing Atuin watcher: {} (stub)",
+                        atuin_path.display()
+                    );
                     info!("✅ Atuin watcher initialized (stub)");
                 } else {
                     warn!("Atuin database not found: {}", atuin_path.display());
@@ -257,14 +283,26 @@ impl TerminalProcessor {
         }
 
         // Initialize History watcher
-        if self.config.enabled_sources.get("history").copied().unwrap_or(false) {
-            let existing_files: Vec<PathBuf> = self.config.history_files.iter()
+        if self
+            .config
+            .enabled_sources
+            .get("history")
+            .copied()
+            .unwrap_or(false)
+        {
+            let existing_files: Vec<PathBuf> = self
+                .config
+                .history_files
+                .iter()
                 .filter(|f| f.exists())
                 .cloned()
                 .collect();
-            
+
             if !existing_files.is_empty() {
-                info!("Initializing History watcher for {} files (stub)", existing_files.len());
+                info!(
+                    "Initializing History watcher for {} files (stub)",
+                    existing_files.len()
+                );
                 info!("✅ History watcher initialized (stub)");
             } else {
                 warn!("No history files found");
@@ -272,21 +310,42 @@ impl TerminalProcessor {
         }
 
         // Initialize Kitty watcher (if requested and available)
-        if self.config.enabled_sources.get("kitty").copied().unwrap_or(false) {
+        if self
+            .config
+            .enabled_sources
+            .get("kitty")
+            .copied()
+            .unwrap_or(false)
+        {
             info!("Initializing Kitty watcher (stub)");
             info!("✅ Kitty watcher initialized (stub)");
         }
 
         // Initialize Recording watcher (if requested)
-        if self.config.enabled_sources.get("recording").copied().unwrap_or(false) {
+        if self
+            .config
+            .enabled_sources
+            .get("recording")
+            .copied()
+            .unwrap_or(false)
+        {
             if let Some(ref output_dir) = self.config.recording_output_dir {
-                info!("Initializing Recording watcher: {} (stub)", output_dir.display());
+                info!(
+                    "Initializing Recording watcher: {} (stub)",
+                    output_dir.display()
+                );
                 info!("✅ Recording watcher initialized (stub)");
             }
         }
 
         // Initialize Scrollback watcher (if requested)
-        if self.config.enabled_sources.get("scrollback").copied().unwrap_or(false) {
+        if self
+            .config
+            .enabled_sources
+            .get("scrollback")
+            .copied()
+            .unwrap_or(false)
+        {
             info!("Initializing Scrollback watcher (stub)");
             info!("✅ Scrollback watcher initialized (stub)");
         }
@@ -295,32 +354,41 @@ impl TerminalProcessor {
     }
 
     /// Start continuous terminal monitoring
-    async fn start_continuous_monitoring(&mut self, _from_checkpoint: Checkpoint) -> SatelliteResult<()> {
+    #[with_context(
+        operation = "start_continuous_terminal_monitoring",
+        enable_metrics,
+        context = "component=continuous_monitoring"
+    )]
+    async fn start_continuous_monitoring(
+        &mut self,
+        _from_checkpoint: Checkpoint,
+    ) -> SatelliteResult<()> {
         info!("Starting continuous terminal monitoring");
-        
+
         // For now, stub implementation - will be implemented properly later
         // This would start the actual watchers and forward events
-        
+
         if let Some(ref context) = self.context {
             info!("Terminal monitoring context available");
-            
+
             // Create a sample event to show the interface works
-            let sample_event = RawEventBuilder::new(
-                "terminal", 
-                "terminal.monitoring_started", 
+            let factory = EventFactory::new(services::TERMINAL_SATELLITE);
+            let sample_event = factory.create_event(
+                "terminal.monitoring_started",
                 json!({
                     "enabled_sources": self.config.enabled_sources,
                     "start_time": Utc::now()
-                })
-            ).build();
-            
+                }),
+            );
+
             context.emit_event(sample_event).await?;
         }
-        
+
         Ok(())
     }
 
     /// Perform historical scan on terminal sources
+    #[with_context(operation = "scan_historical_terminal_data")]
     async fn scan_historical_terminal_data(
         &self,
         _from: &Checkpoint,
@@ -329,53 +397,65 @@ impl TerminalProcessor {
         emit_events: bool,
     ) -> SatelliteResult<u64> {
         let mut event_count = 0;
-        
+
         // This would implement historical scanning of terminal data
         // For now, just provide a placeholder that shows the structure
-        
+
         if let Some(ref context) = self.context {
             // Example: scan Atuin database for historical entries
-            if self.config.enabled_sources.get("atuin").copied().unwrap_or(false) {
+            if self
+                .config
+                .enabled_sources
+                .get("atuin")
+                .copied()
+                .unwrap_or(false)
+            {
                 if let Some(ref atuin_path) = self.config.atuin_db_path {
                     if atuin_path.exists() && emit_events {
                         // Create a sample historical event
-                        let event = RawEventBuilder::new(
-                            "terminal", 
-                            "shell.command.historical", 
+                        let factory = EventFactory::new(services::TERMINAL_SATELLITE);
+                        let event = factory.create_event(
+                            event_types::shell::SHELL_COMMAND_HISTORICAL,
                             json!({
                                 "source": "atuin",
                                 "db_path": atuin_path,
                                 "scan_type": "historical"
-                            })
-                        ).build();
-                        
+                            }),
+                        );
+
                         context.emit_event(event).await?;
                         event_count += 1;
                     }
                 }
             }
-            
+
             // Example: scan history files for historical entries
-            if self.config.enabled_sources.get("history").copied().unwrap_or(false) {
+            if self
+                .config
+                .enabled_sources
+                .get("history")
+                .copied()
+                .unwrap_or(false)
+            {
                 for history_file in &self.config.history_files {
                     if history_file.exists() && emit_events {
-                        let event = RawEventBuilder::new(
-                            "terminal", 
-                            "shell.history.historical", 
+                        let factory = EventFactory::new(services::TERMINAL_SATELLITE);
+                        let event = factory.create_event(
+                            event_types::shell::SHELL_HISTORY_HISTORICAL,
                             json!({
                                 "source": "history_file",
                                 "file_path": history_file,
                                 "scan_type": "historical"
-                            })
-                        ).build();
-                        
+                            }),
+                        );
+
                         context.emit_event(event).await?;
                         event_count += 1;
                     }
                 }
             }
         }
-        
+
         Ok(event_count)
     }
 }
@@ -386,6 +466,7 @@ impl Default for TerminalProcessor {
     }
 }
 
+#[sinex_macros::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=terminal"])]
 #[async_trait]
 impl StatefulStreamProcessor for TerminalProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
@@ -394,10 +475,10 @@ impl StatefulStreamProcessor for TerminalProcessor {
             service = %ctx.service_name,
             "Initializing terminal processor"
         );
-        
+
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
-        
+
         // Parse configuration from processor context
         if let Some(config_json) = ctx.config.get("terminal") {
             match serde_json::from_value::<TerminalConfig>(config_json.clone()) {
@@ -412,7 +493,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
 
         // Override with individual config values if present
         if let Some(enabled_sources_json) = ctx.config.get("enabled_sources") {
-            if let Ok(sources) = serde_json::from_value::<HashMap<String, bool>>(enabled_sources_json.clone()) {
+            if let Ok(sources) =
+                serde_json::from_value::<HashMap<String, bool>>(enabled_sources_json.clone())
+            {
                 self.config.enabled_sources = sources;
             }
         }
@@ -465,7 +548,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
         let mut successful_targets = Vec::new();
         let mut failed_targets = Vec::new();
         let mut warnings = Vec::new();
-        
+
         info!(
             processor = self.processor_name(),
             from = %from.description(),
@@ -474,17 +557,17 @@ impl StatefulStreamProcessor for TerminalProcessor {
             dry_run = args.dry_run,
             "Starting terminal scan"
         );
-        
+
         match until {
             TimeHorizon::Snapshot => {
                 // Take current state snapshot
                 let _state = self.take_snapshot().await?;
-                
+
                 // Initialize watchers for snapshot capabilities
                 if let Err(e) = self.initialize_watchers().await {
                     warnings.push(format!("Failed to initialize some watchers: {}", e));
                 }
-                
+
                 // Count available terminal sources
                 let active_watchers = [
                     self.atuin_watcher.is_some(),
@@ -492,48 +575,55 @@ impl StatefulStreamProcessor for TerminalProcessor {
                     self.kitty_watcher.is_some(),
                     self.recording_watcher.is_some(),
                     self.scrollback_watcher.is_some(),
-                ].iter().filter(|&&x| x).count();
-                
+                ]
+                .iter()
+                .filter(|&&x| x)
+                .count();
+
                 events_processed = active_watchers as u64;
                 successful_targets.push("terminal_state_snapshot".to_string());
-                
+
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = RawEventBuilder::new(
-                            "terminal", 
-                            "terminal.snapshot", 
+                        let factory = EventFactory::new(services::TERMINAL_SATELLITE);
+                        let snapshot_event = factory.create_event(
+                            "terminal.snapshot",
                             json!({
                                 "active_watchers": active_watchers,
                                 "enabled_sources": self.config.enabled_sources,
                                 "snapshot_time": Utc::now()
-                            })
-                        ).build();
-                        
+                            }),
+                        );
+
                         context.emit_event(snapshot_event).await?;
                     }
                 }
             }
-            
+
             TimeHorizon::Historical { .. } => {
                 // Historical scan of terminal data
                 warnings.push("Historical terminal scanning has limited capabilities".to_string());
-                
-                match self.scan_historical_terminal_data(&from, &until, &args, !args.dry_run).await {
+
+                match self
+                    .scan_historical_terminal_data(&from, &until, &args, !args.dry_run)
+                    .await
+                {
                     Ok(count) => {
                         events_processed = count;
                         successful_targets.push("terminal_historical_scan".to_string());
                     }
                     Err(e) => {
-                        failed_targets.push(("terminal_historical_scan".to_string(), e.to_string()));
+                        failed_targets
+                            .push(("terminal_historical_scan".to_string(), e.to_string()));
                     }
                 }
             }
-            
+
             TimeHorizon::Continuous => {
                 // Initialize watchers for continuous monitoring
                 self.initialize_watchers().await?;
-                
+
                 // Start continuous monitoring
                 info!("Starting continuous terminal monitoring");
                 self.start_continuous_monitoring(from.clone()).await?;
@@ -541,9 +631,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 events_processed = 0; // Can't count events in continuous mode
             }
         }
-        
+
         let final_checkpoint = Checkpoint::timestamp(Utc::now(), None);
-        
+
         Ok(ScanReport {
             events_processed,
             duration: start_time.elapsed(),
@@ -556,8 +646,14 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 Utc::now(),
             )),
             processor_stats: HashMap::from([
-                ("enabled_sources".to_string(), self.config.enabled_sources.len() as u64),
-                ("successful_targets".to_string(), successful_targets.len() as u64),
+                (
+                    "enabled_sources".to_string(),
+                    self.config.enabled_sources.len() as u64,
+                ),
+                (
+                    "successful_targets".to_string(),
+                    successful_targets.len() as u64,
+                ),
                 ("failed_targets".to_string(), failed_targets.len() as u64),
             ]),
             successful_targets,
@@ -565,15 +661,15 @@ impl StatefulStreamProcessor for TerminalProcessor {
             warnings,
         })
     }
-    
+
     fn processor_name(&self) -> &str {
         "terminal-processor"
     }
-    
+
     fn processor_type(&self) -> ProcessorType {
         ProcessorType::Ingestor
     }
-    
+
     fn capabilities(&self) -> ProcessorCapabilities {
         ProcessorCapabilities {
             supports_continuous: true,
@@ -584,12 +680,12 @@ impl StatefulStreamProcessor for TerminalProcessor {
             supports_concurrent: false,
         }
     }
-    
+
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For terminal monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
-    
+
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
@@ -598,7 +694,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
     ) -> SatelliteResult<ScanEstimate> {
         let mut estimated_events = 0;
         let mut warnings = Vec::new();
-        
+
         // Estimate based on enabled sources and their potential
         for (source, enabled) in &self.config.enabled_sources {
             if *enabled {
@@ -620,7 +716,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
                     }
                     "history" => {
                         // Sum estimates from all history files
-                        self.config.history_files.iter()
+                        self.config
+                            .history_files
+                            .iter()
                             .filter_map(|f| {
                                 if f.exists() {
                                     std::fs::read_to_string(f)
@@ -637,21 +735,26 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 estimated_events += source_estimate;
             }
         }
-        
+
         // Adjust estimate based on time horizon
         let (duration_factor, confidence) = match until {
             TimeHorizon::Snapshot => (0.1, 0.8), // Only current state
             TimeHorizon::Historical { .. } => (1.0, 0.6), // Full history
             TimeHorizon::Continuous => (f64::INFINITY, 0.1), // Unknown duration
         };
-        
+
         let adjusted_events = (estimated_events as f64 * duration_factor) as u64;
-        
+
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
             estimated_duration: Duration::from_millis(adjusted_events * 5), // ~5ms per event
-            estimated_data_size: adjusted_events * 512, // ~512 bytes per event
-            estimated_targets: self.config.enabled_sources.values().filter(|&&enabled| enabled).count() as u64,
+            estimated_data_size: adjusted_events * 512,                     // ~512 bytes per event
+            estimated_targets: self
+                .config
+                .enabled_sources
+                .values()
+                .filter(|&&enabled| enabled)
+                .count() as u64,
             warnings,
             confidence,
         })
@@ -662,39 +765,73 @@ impl StatefulStreamProcessor for TerminalProcessor {
 impl ExplorationProvider for TerminalProcessor {
     fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
         let recent_activity = if let Some(ref state) = self.last_state {
-            state.recent_activity.iter().enumerate().map(|(i, desc)| ActivityEntry {
-                timestamp: state.captured_at - chrono::Duration::minutes(i as i64),
-                description: desc.clone(),
-                data: None,
-            }).collect()
+            state
+                .recent_activity
+                .iter()
+                .enumerate()
+                .map(|(i, desc)| ActivityEntry {
+                    timestamp: state.captured_at - chrono::Duration::minutes(i as i64),
+                    description: desc.clone(),
+                    data: None,
+                })
+                .collect()
         } else {
             vec![]
         };
-        
+
         let total_items = self.last_state.as_ref().map(|s| {
-            s.history_file_status.values().map(|status| status.estimated_entries).sum::<u64>() +
-            s.atuin_status.as_ref().map(|a| a.estimated_entries).unwrap_or(0)
+            s.history_file_status
+                .values()
+                .map(|status| status.estimated_entries)
+                .sum::<u64>()
+                + s.atuin_status
+                    .as_ref()
+                    .map(|a| a.estimated_entries)
+                    .unwrap_or(0)
         });
-        
+
         Ok(SourceState {
             description: format!(
                 "Terminal processor monitoring {} sources",
-                self.config.enabled_sources.values().filter(|&&enabled| enabled).count()
+                self.config
+                    .enabled_sources
+                    .values()
+                    .filter(|&&enabled| enabled)
+                    .count()
             ),
-            last_updated: self.last_state.as_ref().map(|s| s.captured_at).unwrap_or_else(Utc::now),
+            last_updated: self
+                .last_state
+                .as_ref()
+                .map(|s| s.captured_at)
+                .unwrap_or_else(Utc::now),
             total_items,
             metadata: HashMap::from([
-                ("enabled_sources".to_string(), serde_json::to_value(&self.config.enabled_sources)?),
-                ("atuin_db_path".to_string(), serde_json::to_value(&self.config.atuin_db_path)?),
-                ("history_files".to_string(), serde_json::to_value(&self.config.history_files)?),
-                ("polling_interval_secs".to_string(), serde_json::to_value(self.config.polling_interval_secs)?),
-                ("processor_type".to_string(), serde_json::Value::String("ingestor".to_string())),
+                (
+                    "enabled_sources".to_string(),
+                    serde_json::to_value(&self.config.enabled_sources)?,
+                ),
+                (
+                    "atuin_db_path".to_string(),
+                    serde_json::to_value(&self.config.atuin_db_path)?,
+                ),
+                (
+                    "history_files".to_string(),
+                    serde_json::to_value(&self.config.history_files)?,
+                ),
+                (
+                    "polling_interval_secs".to_string(),
+                    serde_json::to_value(self.config.polling_interval_secs)?,
+                ),
+                (
+                    "processor_type".to_string(),
+                    serde_json::Value::String("ingestor".to_string()),
+                ),
             ]),
             healthy: true,
             recent_activity,
         })
     }
-    
+
     fn get_ingestion_history(
         &self,
         _limit: u64,
@@ -703,7 +840,7 @@ impl ExplorationProvider for TerminalProcessor {
         // For now, return empty as this requires database access
         Ok(vec![])
     }
-    
+
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
@@ -714,12 +851,22 @@ impl ExplorationProvider for TerminalProcessor {
             let hour_ago = now - chrono::Duration::hours(1);
             (hour_ago, now)
         });
-        
-        let source_total = self.last_state.as_ref().map(|s| {
-            s.history_file_status.values().map(|status| status.estimated_entries).sum::<u64>() +
-            s.atuin_status.as_ref().map(|a| a.estimated_entries).unwrap_or(0)
-        }).unwrap_or(0);
-        
+
+        let source_total = self
+            .last_state
+            .as_ref()
+            .map(|s| {
+                s.history_file_status
+                    .values()
+                    .map(|status| status.estimated_entries)
+                    .sum::<u64>()
+                    + s.atuin_status
+                        .as_ref()
+                        .map(|a| a.estimated_entries)
+                        .unwrap_or(0)
+            })
+            .unwrap_or(0);
+
         Ok(CoverageAnalysis {
             time_range: (start_time, end_time),
             source_total,
@@ -740,7 +887,7 @@ impl ExplorationProvider for TerminalProcessor {
             ],
         })
     }
-    
+
     fn export_data(
         &self,
         path: &PathBuf,
@@ -759,7 +906,7 @@ impl ExplorationProvider for TerminalProcessor {
                 }
                 ExportFormat::Raw => format!("{:#?}", state),
             };
-            
+
             std::fs::write(path, content)?;
         } else {
             // Export configuration if no state available
@@ -770,16 +917,16 @@ impl ExplorationProvider for TerminalProcessor {
                 "polling_interval_secs": self.config.polling_interval_secs,
                 "batch_size": self.config.batch_size
             });
-            
+
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(&config_data)?,
                 ExportFormat::Raw => format!("{:#?}", config_data),
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
-            
+
             std::fs::write(path, content)?;
         }
-        
+
         Ok(())
     }
 }

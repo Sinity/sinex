@@ -6,15 +6,12 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::fmt;
-use std::path::Path;
 
 use crate::{ServiceError, ServiceName, ServiceResult};
 
 /// Configuration source types
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConfigSource {
-    /// Configuration from a file
-    File(String),
     /// Configuration from environment variables
     Environment,
     /// Configuration from command line arguments
@@ -28,7 +25,6 @@ pub enum ConfigSource {
 impl fmt::Display for ConfigSource {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ConfigSource::File(path) => write!(f, "file:{}", path),
             ConfigSource::Environment => write!(f, "environment"),
             ConfigSource::CommandLine => write!(f, "command-line"),
             ConfigSource::Remote(url) => write!(f, "remote:{}", url),
@@ -219,44 +215,6 @@ impl ConfigManager {
         }
     }
 
-    /// Load configuration from a TOML file
-    pub async fn load_from_file(
-        &mut self,
-        service_name: impl Into<ServiceName>,
-        file_path: impl AsRef<Path>,
-    ) -> ServiceResult<()> {
-        let service_name = service_name.into();
-        let file_path = file_path.as_ref();
-
-        let content = tokio::fs::read_to_string(file_path).await.map_err(|e| {
-            ServiceError::Configuration(format!(
-                "Failed to read config file {}: {}",
-                file_path.display(),
-                e
-            ))
-        })?;
-
-        let toml_value: toml::Value = content.parse().map_err(|e| {
-            ServiceError::Configuration(format!("Failed to parse TOML config: {}", e))
-        })?;
-
-        let json_value = toml_to_json(toml_value);
-
-        let config = self
-            .configs
-            .entry(service_name.clone())
-            .or_insert_with(|| ServiceConfig::new(&service_name));
-        let source = ConfigSource::File(file_path.to_string_lossy().to_string());
-
-        if let serde_json::Value::Object(map) = json_value {
-            for (key, value) in map {
-                config.set(key, value, source.clone());
-            }
-        }
-
-        Ok(())
-    }
-
     /// Load configuration from environment variables
     pub fn load_from_env(
         &mut self,
@@ -359,14 +317,16 @@ impl ConfigManager {
 
         let mut reloaded_keys = Vec::new();
 
-        // Find file sources to reload
-        let file_sources: Vec<String> = config
+        // Reload environment variables for hot-reloadable entries
+        let env_entries: Vec<String> = config
             .entries
             .values()
             .filter_map(|entry| {
                 if entry.hot_reloadable {
-                    if let ConfigSource::File(path) = &entry.source {
-                        Some(path.clone())
+                    if let ConfigSource::Environment = &entry.source {
+                        // For environment sources, we could potentially re-read env vars
+                        // but typically environment variables don't change during runtime
+                        None
                     } else {
                         None
                     }
@@ -376,14 +336,8 @@ impl ConfigManager {
             })
             .collect();
 
-        // Reload each file source
-        for file_path in file_sources {
-            if Path::new(&file_path).exists() {
-                self.load_from_file(service_name, &file_path).await?;
-                reloaded_keys.push(file_path);
-            }
-        }
-
+        // Note: Hot reload for environment-only configuration is limited
+        // Environment variables typically don't change during service runtime
         Ok(reloaded_keys)
     }
 }
@@ -394,29 +348,6 @@ impl Default for ConfigManager {
     }
 }
 
-/// Convert TOML value to JSON value
-fn toml_to_json(toml_value: toml::Value) -> serde_json::Value {
-    match toml_value {
-        toml::Value::String(s) => serde_json::Value::String(s),
-        toml::Value::Integer(i) => serde_json::Value::Number(i.into()),
-        toml::Value::Float(f) => {
-            serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| 0.into()))
-        }
-        toml::Value::Boolean(b) => serde_json::Value::Bool(b),
-        toml::Value::Array(arr) => {
-            let json_arr: Vec<serde_json::Value> = arr.into_iter().map(toml_to_json).collect();
-            serde_json::Value::Array(json_arr)
-        }
-        toml::Value::Table(table) => {
-            let json_obj: serde_json::Map<String, serde_json::Value> = table
-                .into_iter()
-                .map(|(k, v)| (k, toml_to_json(v)))
-                .collect();
-            serde_json::Value::Object(json_obj)
-        }
-        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
-    }
-}
 
 /// Parse environment variable value to appropriate JSON type
 fn parse_env_value(value: &str) -> serde_json::Value {

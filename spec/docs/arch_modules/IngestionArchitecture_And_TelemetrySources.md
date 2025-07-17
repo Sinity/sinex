@@ -446,7 +446,7 @@ This section details ingestors for data originating from specific applications o
 Captures web browsing activity.
 *   **Architectural Approach:** A Manifest V3 compliant browser extension communicates with a local native messaging host (`sinex_browser_native_host`).
 *   **Extension Capabilities (WebExtension APIs):** Uses `webNavigation` (navigation lifecycle), `storage.local` (cache/config), `tabs` (tab lifecycle, state), `history`, `bookmarks`, `scripting`/Content Scripts (page content extraction, in-page interaction capture).
-*   **Native Messaging:** Protocol uses JSON messages length-prefixed over stdin/stdout. Native host (Rust/Python) processes messages and ingests to `raw.events`. NixOS manages host manifest.
+*   **Native Messaging:** Protocol uses JSON messages length-prefixed over stdin/stdout. Native host (Rust/Python) processes messages and ingests to `core.events`. NixOS manages host manifest.
 *   **Key Data Captured:** Visited URLs, page titles, navigation transitions, tab states, bookmarks, form submissions (redacted), downloaded files metadata, extracted page text/main content.
 *   **Referenced TIMs:**
     *   `[TIM-BrowserExtensionAPIs.md](docs/tims/ingestors/application/TIM-BrowserExtensionAPIs.md)`

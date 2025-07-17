@@ -5,10 +5,10 @@
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use sinex_satellite_sdk::{SatelliteResult, SatelliteError};
 use sinex_satellite_sdk::{
     EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent, ProcessingResult,
 };
+use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 use sinex_services::{SearchQuery, SearchService};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -70,16 +70,16 @@ impl HotlogAutomaton for SearchServiceAutomaton {
     fn automaton_name(&self) -> &str {
         "search-service"
     }
-    
+
     async fn initialize(&mut self, ctx: HotlogAutomatonContext) -> SatelliteResult<()> {
         info!("Initializing search service automaton");
-        
+
         // Initialize the search service
         let service = Arc::new(SearchService::new(ctx.db_pool.clone()));
-        
+
         self.service = Some(service);
         self.context = Some(ctx);
-        
+
         info!("Search service automaton initialized successfully");
         Ok(())
     }
@@ -91,16 +91,19 @@ impl HotlogAutomaton for SearchServiceAutomaton {
         ]
     }
 
-    async fn process_event(&mut self, event: HotlogAutomatonEvent) -> SatelliteResult<ProcessingResult> {
+    async fn process_event(
+        &mut self,
+        event: HotlogAutomatonEvent,
+    ) -> SatelliteResult<ProcessingResult> {
         let payload = event.event.payload.clone();
-        
+
         // Handle search RPC requests
         if event.event.source == "rpc.search" && event.event.event_type == "request" {
             match self.handle_search_request(payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
                     let _ctx = self.context.as_ref().unwrap();
-                    
+
                     let _response_event = serde_json::json!({
                         "request_id": payload.get("request_id"),
                         "response": response,
@@ -110,11 +113,13 @@ impl HotlogAutomaton for SearchServiceAutomaton {
                     // For now, just log - synthesis events need to be implemented in gRPC
                     info!("Service response logged");
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
                 Err(e) => {
                     warn!("Search request failed: {}", e);
-                    
+
                     // Submit error response
                     let _ctx = self.context.as_ref().unwrap();
                     let _error_response = serde_json::json!({
@@ -129,11 +134,15 @@ impl HotlogAutomaton for SearchServiceAutomaton {
                     // For now, just log - synthesis events need to be implemented in gRPC
                     info!("Service response logged");
 
-                    Ok(ProcessingResult::Success { checkpoint_data: None })
+                    Ok(ProcessingResult::Success {
+                        checkpoint_data: None,
+                    })
                 }
             }
         } else {
-            Ok(ProcessingResult::Skip { reason: "Not a search request".to_string() })
+            Ok(ProcessingResult::Skip {
+                reason: "Not a search request".to_string(),
+            })
         }
     }
 }

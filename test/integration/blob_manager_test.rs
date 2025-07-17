@@ -1,21 +1,24 @@
-//! BlobManager Integration Tests  
-//!
-//! Comprehensive test suite for BlobManager component focusing on:
-//! 1. Content-based deduplication using BLAKE3 hashing
-//! 2. Git-annex integration (add, get, verify operations)
-//! 3. Graceful degradation when git-annex unavailable
-//! 4. Large blob handling and performance characteristics
-//! 5. Concurrent operations and thread safety
-//! 6. Error handling and edge cases
-//! 7. Integrity verification and corruption detection
-//!
-//! IMPORTANT: These tests require git-annex to be available. If git-annex
-//! is not installed, tests will be skipped with appropriate warnings.
+// BlobManager Integration Tests
+//
+// Comprehensive test suite for BlobManager component focusing on:
+// 1. Content-based deduplication using BLAKE3 hashing
+// 2. Git-annex integration (add, get, verify operations)
+// 3. Graceful degradation when git-annex unavailable
+// 4. Large blob handling and performance characteristics
+// 5. Concurrent operations and thread safety
+// 6. Error handling and edge cases
+// 7. Integrity verification and corruption detection
+//
+// IMPORTANT: These tests require git-annex to be available. If git-annex
+// is not installed, tests will be skipped with appropriate warnings.
+
+use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::resources::{create_test_file, temp_dir};
 use futures;
 use sinex_annex::{AnnexConfig, BlobManager, GitAnnex};
+use sinex_events::{sources, event_types};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -30,7 +33,7 @@ struct BlobManagerTest {
 
 impl BlobManagerTest {
     /// Create a new test fixture with BlobManager and temporary git-annex repo
-    async fn new(pool: &DbPool) -> Result<Self, Box<dyn std::error::Error>> {
+    async fn new(pool: &DbPool) -> AnyhowResult<Self, Box<dyn std::error::Error>> {
         let temp_dir = temp_dir()?;
         let annex_path = temp_dir.path().join("test-annex");
 
@@ -53,7 +56,7 @@ impl BlobManagerTest {
     }
 
     /// Initialize a test git-annex repository with proper setup
-    async fn init_test_annex(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    async fn init_test_annex(path: &Path) -> AnyhowResult<(), Box<dyn std::error::Error>> {
         fs::create_dir_all(path).await?;
 
         // Check if git-annex is available
@@ -813,7 +816,7 @@ async fn test_storage_statistics_emission(ctx: TestContext) -> TestResult {
     let recent_events = crate::common::get_recent_events(ctx.pool(), 10).await?;
     let stats_events: Vec<_> = recent_events
         .iter()
-        .filter(|e| e.source == "blob_storage" && e.event_type == "metrics.blob_storage.statistics")
+        .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_STATISTICS)
         .collect();
 
     assert!(
@@ -840,7 +843,7 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult
     let events_before = crate::common::get_recent_events(ctx.pool(), 100).await?;
     let metrics_before = events_before
         .iter()
-        .filter(|e| e.source == "blob_storage" && e.event_type == "metrics.blob_storage.operation")
+        .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)
         .count();
 
     // Perform blob operations
@@ -858,7 +861,7 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult
     let events_after = crate::common::get_recent_events(ctx.pool(), 100).await?;
     let metrics_after = events_after
         .iter()
-        .filter(|e| e.source == "blob_storage" && e.event_type == "metrics.blob_storage.operation")
+        .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)
         .count();
 
     // Should have at least ingest and retrieve metrics
@@ -870,7 +873,7 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult
     // Verify metrics contain expected fields
     let operation_events: Vec<_> = events_after
         .iter()
-        .filter(|e| e.source == "blob_storage" && e.event_type == "metrics.blob_storage.operation")
+        .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)
         .collect();
 
     for event in operation_events.iter().take(2) {

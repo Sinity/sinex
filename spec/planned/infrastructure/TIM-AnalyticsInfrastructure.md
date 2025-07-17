@@ -272,15 +272,15 @@ Optimized indexes for temporal pattern queries:
 
 ```sql
 -- Temporal pattern index
-CREATE INDEX idx_events_temporal_pattern ON raw.events 
+CREATE INDEX idx_events_temporal_pattern ON core.events 
 USING GIST (source, tstzrange(occurred_at, occurred_at + interval '1 hour'));
 
 -- Trigram index for payload pattern matching
-CREATE INDEX idx_events_payload_pattern ON raw.events 
+CREATE INDEX idx_events_payload_pattern ON core.events 
 USING GIN ((payload::text) gin_trgm_ops);
 
 -- Composite index for session-based queries
-CREATE INDEX idx_events_session ON raw.events 
+CREATE INDEX idx_events_session ON core.events 
 (source, occurred_at, event_type) 
 WHERE occurred_at > NOW() - interval '7 days';
 
@@ -292,7 +292,7 @@ SELECT
     event_type,
     COUNT(*) as event_count,
     AVG(EXTRACT(epoch FROM (ts_ingest - occurred_at))) as avg_processing_delay
-FROM raw.events
+FROM core.events
 GROUP BY hour, source, event_type;
 ```
 
@@ -708,7 +708,7 @@ impl DataLifecycleManager {
                 COUNT(*) as event_count,
                 EXTRACT_PATTERNS(array_agg(payload)) as common_patterns,
                 CALCULATE_ENTROPY(array_agg(payload)) as information_content
-            FROM raw.events 
+            FROM core.events 
             WHERE occurred_at BETWEEN $1 AND $2
             GROUP BY hour, source, event_type
             ON CONFLICT (hour, source, event_type) DO UPDATE SET

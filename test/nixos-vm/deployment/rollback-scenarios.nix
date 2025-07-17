@@ -51,7 +51,7 @@
               ;;
             "database")
               echo "Injecting database failure..."
-              sudo -u postgres psql -c "DROP TABLE raw.events CASCADE"
+              sudo -u postgres psql -c "DROP TABLE core.events CASCADE"
               ;;
             "permission")
               echo "Injecting permission failure..."
@@ -74,7 +74,7 @@
           
           # Check event flow
           EVENT_COUNT=$(sudo -u postgres psql -d sinex -t -c \
-            "SELECT COUNT(*) FROM raw.events")
+            "SELECT COUNT(*) FROM core.events")
           
           if [ "$EVENT_COUNT" -gt 0 ]; then
             echo "✓ Event collection operational"
@@ -107,7 +107,7 @@
         
         baseline_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         assert baseline_count > 0, "Baseline events not captured"
@@ -204,7 +204,7 @@
         # Verify event collection continues
         pre_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         sinex.execute("touch /tmp/rollback-test")
@@ -212,7 +212,7 @@
         
         post_count = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         assert post_count > pre_count, "Event collection not restored"
@@ -232,7 +232,7 @@
         # Verify events in raw table
         sinex.succeed(
             "sudo -u postgres psql -d sinex -c "
-            "'SELECT COUNT(*) FROM raw.events WHERE "
+            "'SELECT COUNT(*) FROM core.events WHERE "
             "source = \"filesystem\" AND "
             "created_at > NOW() - INTERVAL \"1 minute\"'"
         )
@@ -249,7 +249,7 @@
         # Record current state
         initial_events = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         # Create events during "update"
@@ -272,7 +272,7 @@
         # Final event count should include preserved events
         final_events = int(sinex.succeed(
             "sudo -u postgres psql -d sinex -t -c "
-            "'SELECT COUNT(*) FROM raw.events'"
+            "'SELECT COUNT(*) FROM core.events'"
         ).strip())
         
         # Some events should have been preserved

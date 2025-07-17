@@ -1,7 +1,9 @@
 use crate::common::prelude::*;
-use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use sinex_events::{EventFactory, services, event_types};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
+use sinex_db::queries::{EventQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -438,9 +440,8 @@ fn test_ulid_ordering_property_in_memory() {
     });
 }
 
-#[tokio::test]
-async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
     proptest!(|(
         ulid_count in 3..15usize,
         time_gap_seconds in 1..10u64,
@@ -458,14 +459,12 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
                     tokio::time::sleep(tokio::time::Duration::from_millis(time_gap_seconds * 100)).await;
                 }
 
-                let event = crate::common::insert_event_with_validator(
+                let raw_event = EventFactory::new("property.ulid_ordering")
+                    .create_event("ordering_test", json!({"sequence": i}));
+                
+                let event = sinex_db::insert_event_with_validator(
                     pool,
-                    "property.ulid_ordering",
-                    "ordering_test",
-                    "localhost",
-                    json!({"sequence": i}),
-                    None,
-                    Some("1.0.0"),
+                    &raw_event,
                     None,
                 ).await.expect("DB insert failed");
 
@@ -480,9 +479,9 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
 
             // Property: Database ordering should match generation order
             let db_ordered_ids: Vec<String> = sqlx::query_scalar(
-                "SELECT id::text FROM core.events
+                "SELECT event_id::text FROM core.events
                  WHERE source = 'property.ulid_ordering'
-                 ORDER BY id"
+                 ORDER BY event_id"
             )
             .fetch_all(pool)
             .await
@@ -494,7 +493,7 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
 
             // Property: Ordering by id should match ordering by ts_ingest
             let ts_ordered_ids: Vec<String> = sqlx::query_scalar(
-                "SELECT id::text FROM core.events
+                "SELECT event_id::text FROM core.events
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY ts_ingest"
             )
@@ -505,21 +504,14 @@ async fn test_ulid_database_ordering_property() -> Result<(), anyhow::Error> {
             prop_assert_eq!(db_ordered_ids, ts_ordered_ids,
                 "Ordering by ULID should match ordering by extracted timestamp");
 
-            // Cleanup
-            sqlx::query("DELETE FROM core.events WHERE source = 'property.ulid_ordering'")
-                .execute(pool)
-                .await
-                .expect("Cleanup failed");
-
             Ok(())
         })?
     });
     Ok(())
 }
 
-#[tokio::test]
-async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
     proptest!(|(
         batch1_size in 2..8usize,
         batch2_size in 2..8usize,
@@ -534,14 +526,12 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
             let mut batch1_ulids = Vec::new();
 
             for i in 0..batch1_size {
-                let event = crate::common::insert_event_with_validator(
+                let raw_event = EventFactory::new(&source_name)
+                    .create_event("batch1_event", json!({"batch": 1, "sequence": i}));
+                
+                let event = sinex_db::insert_event_with_validator(
                     pool,
-                    &source_name,
-                    "batch1_event",
-                    "localhost",
-                    json!({"batch": 1, "sequence": i}),
-                    None,
-                    Some("1.0.0"),
+                    &raw_event,
                     None,
                 ).await.expect("DB insert failed");
 
@@ -563,14 +553,12 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
             let mut batch2_ulids = Vec::new();
 
             for i in 0..batch2_size {
-                let event = crate::common::insert_event_with_validator(
+                let raw_event = EventFactory::new(&source_name)
+                    .create_event("batch2_event", json!({"batch": 2, "sequence": i}));
+                
+                let event = sinex_db::insert_event_with_validator(
                     pool,
-                    &source_name,
-                    "batch2_event",
-                    "localhost",
-                    json!({"batch": 2, "sequence": i}),
-                    None,
-                    Some("1.0.0"),
+                    &raw_event,
                     None,
                 ).await.expect("DB insert failed");
 
@@ -580,23 +568,23 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
                 tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
             }
 
-            // Property: Range queries should partition events correctly
+            // Property: Range queries should partition events correctly - keeping as raw SQL for ULID comparison
             let count_before: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM core.events
-                 WHERE source = $1 AND id < $2::ulid"
+                 WHERE source = $1 AND event_id < $2::uuid"
             )
             .bind(&source_name)
-            .bind(cutoff_ulid.to_string())
+            .bind(cutoff_ulid.to_uuid())
             .fetch_one(pool)
             .await
             .expect("Query failed");
 
             let count_after: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM core.events
-                 WHERE source = $1 AND id >= $2::ulid"
+                 WHERE source = $1 AND event_id >= $2::uuid"
             )
             .bind(&source_name)
-            .bind(cutoff_ulid.to_string())
+            .bind(cutoff_ulid.to_uuid())
             .fetch_one(pool)
             .await
             .expect("Query failed");
@@ -632,13 +620,6 @@ async fn test_ulid_range_query_property() -> Result<(), anyhow::Error> {
                 "Range query counts should sum to total");
             prop_assert_eq!(total_count as usize, batch1_size + batch2_size,
                 "Total count should equal sum of batch sizes");
-
-            // Cleanup
-            sqlx::query("DELETE FROM core.events WHERE source = $1")
-                .bind(&source_name)
-                .execute(pool)
-                .await
-                .expect("Cleanup failed");
 
             Ok(())
         })?
@@ -738,9 +719,8 @@ fn test_ulid_monotonic_property_with_rapid_generation() {
     });
 }
 
-#[tokio::test]
-async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Error> {
-    let ctx = TestContext::new().await?;
+#[sinex_test]
+async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestResult {
     proptest!(|(
         num_relationships in 1..10usize,
     )| {
@@ -767,14 +747,12 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
             // Create relationships
             for i in 0..num_relationships {
                 // Insert event with ULID
-                let event = crate::common::insert_event_with_validator(
+                let raw_event = EventFactory::new("property.fk_test")
+                    .create_event("foreign_key_test", json!({"relationship": i}));
+                
+                let event = sinex_db::insert_event_with_validator(
                     pool,
-                    "property.fk_test",
-                    "foreign_key_test",
-                    "localhost",
-                    json!({"relationship": i}),
-                    None,
-                    Some("1.0.0"),
+                    &raw_event,
                     None,
                 ).await.expect("Event insert failed");
 
@@ -784,7 +762,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
                 let queue_ulid = Ulid::new();
                 sqlx::query(
                     "INSERT INTO sinex_schemas.work_queue
-                     (queue_id, raw_event_id, target_automaton_name, max_attempts)
+                     (queue_id, event_id, target_automaton_name, max_attempts)
                      VALUES ($1::uuid, $2::uuid, $3, 3)"
                 )
                 .bind(queue_ulid.to_uuid())
@@ -800,9 +778,9 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
             // Property: All foreign key relationships should be queryable
             for i in 0..num_relationships {
                 let found_event_id: String = sqlx::query_scalar(
-                    "SELECT e.id::text
+                    "SELECT event_id::text
                      FROM core.events e
-                     JOIN sinex_schemas.work_queue q ON e.id = q.raw_event_id
+                     JOIN sinex_schemas.work_queue q ON e.id = q.event_id
                      WHERE q.queue_id = $1::ulid"
                 )
                 .bind(queue_ulids[i].to_string())
@@ -817,9 +795,9 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
             // Property: Reverse lookup should also work
             for i in 0..num_relationships {
                 let found_queue_id: String = sqlx::query_scalar(
-                    "SELECT q.queue_id::text
+                    "SELECT event_id::text
                      FROM sinex_schemas.work_queue q
-                     WHERE q.raw_event_id = $1::ulid"
+                     WHERE q.event_id = $1::ulid"
                 )
                 .bind(event_ulids[i].to_string())
                 .fetch_one(pool)
@@ -834,7 +812,7 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
             let join_count: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*)
                  FROM core.events e
-                 JOIN sinex_schemas.work_queue q ON e.id = q.raw_event_id
+                 JOIN sinex_schemas.work_queue q ON e.id = q.event_id
                  WHERE e.source = 'property.fk_test'"
             )
             .fetch_one(pool)
@@ -843,24 +821,6 @@ async fn test_ulid_foreign_key_consistency_property() -> Result<(), anyhow::Erro
 
             prop_assert_eq!(join_count as usize, num_relationships,
                 "Join count should match number of created relationships");
-
-            // Cleanup
-            sqlx::query("DELETE FROM sinex_schemas.work_queue WHERE target_automaton_name = $1")
-                .bind(&agent_name)
-                .execute(pool)
-                .await
-                .expect("Queue cleanup failed");
-
-            sqlx::query("DELETE FROM core.events WHERE source = 'property.fk_test'")
-                .execute(pool)
-                .await
-                .expect("Event cleanup failed");
-
-            sqlx::query("DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'")
-                .bind(&agent_name)
-                .execute(pool)
-                .await
-                .expect("Agent cleanup failed");
 
             Ok(())
         })?

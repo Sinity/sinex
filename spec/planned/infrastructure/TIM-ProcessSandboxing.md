@@ -143,7 +143,7 @@ This is critical due to keylogging risk. Refer to UG Section 22.3 for the full s
     *   Minimal `evdev` reader component (e.g., `interception-tools` plugin or small C/Rust binary using `libevdev`). Runs with minimal privileges (only access to specific keyboard `evdev` node).
     *   Heavily sandboxed with its own seccomp/AppArmor profile allowing only `read`/`poll`/`ioctl` on keyboard FD, `write` to its IPC output, `exit`.
     *   Forwards raw scancode data via secure local IPC (permissioned UNIX socket) to an unprivileged `EvdevEventProcessorAgent`.
-    *   `EvdevEventProcessorAgent` (unprivileged) parses, (attempts context filtering), structures for `raw.events`, inserts to DB. Has NO direct `evdev` access.
+    *   `EvdevEventProcessorAgent` (unprivileged) parses, (attempts context filtering), structures for `core.events`, inserts to DB. Has NO direct `evdev` access.
 2.  **User Opt-In & Clear Persistent Notification (Mandatory).**
 3.  **Prefer Higher-Level Input Capture (Default).**
 4.  **Context-Aware Filtering (Best-Effort, Unreliable):** `EvdevEventProcessorAgent` attempts to suppress logging for password fields.

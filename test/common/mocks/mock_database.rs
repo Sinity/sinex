@@ -1,11 +1,11 @@
-//! Mock database implementation for testing
-//!
-//! Provides a controllable database substitute that can simulate:
-//! - Connection failures
-//! - Query timeouts
-//! - Data corruption
-//! - Constraint violations
-//! - Transaction failures
+// Mock database implementation for testing
+//
+// Provides a controllable database substitute that can simulate:
+// - Connection failures
+// - Query timeouts
+// - Data corruption
+// - Constraint violations
+// - Transaction failures
 
 use crate::common::prelude::*;
 use std::collections::HashMap;
@@ -88,12 +88,11 @@ struct MockCheckpoint {
 
 impl MockDatabase {
     pub fn new(config: MockDatabaseConfig) -> Self {
-        let failure_injector = super::failure_injector::FailureInjector::new(
-            super::failure_injector::FailureConfig {
+        let failure_injector =
+            super::failure_injector::FailureInjector::new(super::failure_injector::FailureConfig {
                 patterns: config.failure_patterns.clone(),
                 enabled: true,
-            }
-        );
+            });
 
         Self {
             config,
@@ -106,7 +105,7 @@ impl MockDatabase {
         }
     }
 
-    pub async fn connect(&self) -> Result<MockDatabaseConnection, MockDatabaseError> {
+    pub async fn connect(&self) -> AnyhowResult<MockDatabaseConnection, MockDatabaseError> {
         // Check connection limit
         let mut connections = self.connections.lock().await;
         if *connections >= self.config.max_connections {
@@ -138,8 +137,7 @@ impl MockDatabase {
 
     async fn should_fail_query(&self, query_type: &str) -> bool {
         let mut injector = self.failure_injector.lock().await;
-        injector.should_fail(query_type).await
-            || fastrand::f64() < self.config.query_failure_rate
+        injector.should_fail(query_type).await || fastrand::f64() < self.config.query_failure_rate
     }
 
     pub async fn get_stats(&self) -> MockDatabaseStats {
@@ -177,7 +175,7 @@ impl MockDatabase {
     pub async fn simulate_corruption(&self, percentage: f64) {
         let mut events = self.events.write().await;
         let corrupt_count = (events.len() as f64 * percentage) as usize;
-        
+
         for i in 0..corrupt_count.min(events.len()) {
             // Corrupt event data
             events[i].payload = serde_json::json!({"corrupted": true});
@@ -218,7 +216,7 @@ pub struct MockDatabaseConnection {
 }
 
 impl MockDatabaseConnection {
-    pub async fn insert_event(&mut self, event: &RawEvent) -> Result<(), MockDatabaseError> {
+    pub async fn insert_event(&mut self, event: &RawEvent) -> AnyhowResult<(), MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -237,10 +235,14 @@ impl MockDatabaseConnection {
         // Validate constraints if enabled
         if self.database.config.enforce_constraints {
             if event.source.is_empty() {
-                return Err(MockDatabaseError::ConstraintViolation("Source cannot be empty".to_string()));
+                return Err(MockDatabaseError::ConstraintViolation(
+                    "Source cannot be empty".to_string(),
+                ));
             }
             if event.event_type.is_empty() {
-                return Err(MockDatabaseError::ConstraintViolation("Event type cannot be empty".to_string()));
+                return Err(MockDatabaseError::ConstraintViolation(
+                    "Event type cannot be empty".to_string(),
+                ));
             }
         }
 
@@ -262,7 +264,10 @@ impl MockDatabaseConnection {
         Ok(())
     }
 
-    pub async fn query_events(&mut self, limit: Option<usize>) -> Result<Vec<RawEvent>, MockDatabaseError> {
+    pub async fn query_events(
+        &mut self,
+        limit: Option<usize>,
+    ) -> AnyhowResult<Vec<RawEvent>, MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -298,13 +303,18 @@ impl MockDatabaseConnection {
                 ingestor_version: event.ingestor_version.clone(),
                 payload_schema_id: None,
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             });
         }
 
         Ok(result)
     }
 
-    pub async fn count_events(&mut self) -> Result<usize, MockDatabaseError> {
+    pub async fn count_events(&mut self) -> AnyhowResult<usize, MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -332,7 +342,7 @@ impl MockDatabaseConnection {
         processed_count: u64,
         last_processed_id: Option<&str>,
         state_data: Option<&serde_json::Value>,
-    ) -> Result<(), MockDatabaseError> {
+    ) -> AnyhowResult<(), MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -370,7 +380,8 @@ impl MockDatabaseConnection {
         automaton_name: &str,
         consumer_group: &str,
         consumer_name: &str,
-    ) -> Result<Option<(u64, Option<String>, Option<serde_json::Value>)>, MockDatabaseError> {
+    ) -> AnyhowResult<Option<(u64, Option<String>, Option<serde_json::Value>)>, MockDatabaseError>
+    {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -388,7 +399,7 @@ impl MockDatabaseConnection {
 
         let checkpoints = self.database.checkpoints.read().await;
         let key = format!("{}:{}:{}", automaton_name, consumer_group, consumer_name);
-        
+
         match checkpoints.get(&key) {
             Some(checkpoint) => Ok(Some((
                 checkpoint.processed_count,
@@ -399,9 +410,9 @@ impl MockDatabaseConnection {
         }
     }
 
-    pub async fn transaction<F, T>(&mut self, f: F) -> Result<T, MockDatabaseError>
+    pub async fn transaction<F, T>(&mut self, f: F) -> AnyhowResult<T, MockDatabaseError>
     where
-        F: FnOnce(&mut Self) -> Result<T, MockDatabaseError>,
+        F: FnOnce(&mut Self) -> AnyhowResult<T, MockDatabaseError>,
     {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
@@ -418,7 +429,7 @@ impl MockDatabaseConnection {
         f(self)
     }
 
-    pub async fn disconnect(&mut self) -> Result<(), MockDatabaseError> {
+    pub async fn disconnect(&mut self) -> AnyhowResult<(), MockDatabaseError> {
         if self.connected {
             self.connected = false;
             let mut connections = self.database.connections.lock().await;
@@ -457,7 +468,9 @@ impl std::fmt::Display for MockDatabaseError {
             MockDatabaseError::ConnectionFailed => write!(f, "Failed to connect to database"),
             MockDatabaseError::ConnectionLimitExceeded => write!(f, "Connection limit exceeded"),
             MockDatabaseError::QueryFailed(msg) => write!(f, "Query failed: {}", msg),
-            MockDatabaseError::ConstraintViolation(msg) => write!(f, "Constraint violation: {}", msg),
+            MockDatabaseError::ConstraintViolation(msg) => {
+                write!(f, "Constraint violation: {}", msg)
+            }
             MockDatabaseError::TransactionFailed => write!(f, "Transaction failed"),
             MockDatabaseError::Timeout => write!(f, "Database operation timed out"),
             MockDatabaseError::Corrupted => write!(f, "Database corrupted"),
@@ -521,7 +534,8 @@ impl MockDatabase {
 
     pub async fn get_events_by_source(&self, source: &str) -> Vec<RawEvent> {
         let events = self.events.read().await;
-        events.iter()
+        events
+            .iter()
             .filter(|e| e.source == source)
             .map(|e| RawEvent {
                 id: e.id,
@@ -534,6 +548,11 @@ impl MockDatabase {
                 ingestor_version: e.ingestor_version.clone(),
                 payload_schema_id: None,
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             })
             .collect()
     }
@@ -542,7 +561,10 @@ impl MockDatabase {
         let checkpoints = self.checkpoints.read().await;
         for (key, checkpoint) in checkpoints.iter() {
             if key.starts_with(&format!("{}:", automaton_name)) {
-                return Some((checkpoint.processed_count, checkpoint.last_processed_id.clone()));
+                return Some((
+                    checkpoint.processed_count,
+                    checkpoint.last_processed_id.clone(),
+                ));
             }
         }
         None

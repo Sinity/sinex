@@ -142,7 +142,7 @@ Essential for high data quality.
 
 ## 8. Exocortex Entity Resolution Agent (`agent/entity_resolver`)
 
-*   **Triggers:** Consumes new textual content (from `core_artifact_contents`, specific `raw.events.payload` fields).
+*   **Triggers:** Consumes new textual content (from `core_artifact_contents`, specific `core.events.payload` fields).
 *   **Pipeline:**
     1.  **NER:** Extract mentions (spaCy or Transformers model).
     2.  **Blocking/Candidate Generation:** For each mention, retrieve candidate entities from `core_entities` using `pg_trgm` (filtered by predicted entity type) and/or other blocking strategies (phonetic, LSH if `core_entities` is very large). If `core_entities` has embeddings, also use vector similarity for candidates.

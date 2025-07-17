@@ -1,18 +1,18 @@
-//! # Concurrency Test Suite
-//!
-//! Comprehensive concurrency and race condition testing.
-//! This module tests system behavior under concurrent access patterns.
-//!
-//! ## Test Categories
-//! - **Race Conditions**: Worker claiming, event causality, data consistency
-//! - **Worker Coordination**: Synchronization, deadlock prevention, resource sharing
-//! - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
-//! - **Memory Concurrency**: Shared state, atomic operations, cache coherency
+// # Concurrency Test Suite
+//
+// Comprehensive concurrency and race condition testing.
+// This module tests system behavior under concurrent access patterns.
+//
+// ## Test Categories
+// - **Race Conditions**: Worker claiming, event causality, data consistency
+// - **Worker Coordination**: Synchronization, deadlock prevention, resource sharing
+// - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
+// - **Memory Concurrency**: Shared state, atomic operations, cache coherency
+
+use crate::common::prelude::*;
 
 use crate::common::events;
-use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_db::events as db_events;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
@@ -29,7 +29,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     // Insert event to be claimed
     let event = events::race_test_event("race");
 
-    let inserted = db_events::insert_event_with_validator(pool, &event, None).await?;
+    let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
     let event_id = inserted.id;
 
     // Create high-precision synchronization
@@ -389,7 +389,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
             None,
         );
 
-        db_events::insert_event_with_validator(pool, &event, None)
+        sinex_db::insert_event_with_validator(pool, &event, None)
             .await
             .unwrap();
         event_ids.push(event.id);
@@ -838,7 +838,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
         "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     println!(
@@ -949,7 +949,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
         "SELECT payload->>'lock_count' as lock_count FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     let final_lock_count: i32 = final_state

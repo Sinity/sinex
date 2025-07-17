@@ -1,15 +1,22 @@
-//! Procedural macros for Sinex error handling
+//! Procedural macros for Sinex codebase
 //!
-//! This module provides the `#[with_context]` macro for automatic error context enrichment.
-//! The macro automatically adds contextual information like function name, module path,
-//! and custom context to errors returned from functions.
+//! This crate provides code generation macros to reduce boilerplate and improve
+//! maintainability across the Sinex codebase. The macros focus on common patterns
+//! that would benefit from automation:
+//!
+//! - Event type registration and handling
+//! - Validation chain construction
+//! - Configuration struct generation
+//! - Stream processor implementations
+//! - Database query helpers
+//! - Error context enrichment
 //!
 //! # Usage
 //!
 //! ## Basic usage (adds function name and module path):
 //! ```rust
 //! use sinex_macros::with_context;
-//! use sinex_core::{CoreError, Result};
+//! use sinex_core_types::{CoreError, Result};
 //!
 //! #[with_context]
 //! fn read_config() -> Result<String> {
@@ -18,7 +25,9 @@
 //! }
 //! ```
 //!
-//! ## With custom operation:
+//! ## Examples
+//!
+//! ### Error Context Enrichment
 //! ```rust
 //! #[with_context(operation = "database_insert")]
 //! async fn insert_event(pool: &PgPool, event: &RawEvent) -> Result<()> {
@@ -26,220 +35,429 @@
 //! }
 //! ```
 //!
-//! ## With custom context:
+//! ### Event Registry Generation
 //! ```rust
-//! #[with_context(context = [("table", "events"), ("operation", "select")])]
-//! fn query_events() -> Result<Vec<Event>> {
-//!     // function body
+//! event_registry! {
+//!     sources {
+//!         FILESYSTEM => "fs",
+//!         SHELL => "shell",
+//!     }
+//!     
+//!     events {
+//!         filesystem => FILESYSTEM {
+//!             FILE_CREATED => "file.created" with FileCreatedPayload,
+//!             FILE_MODIFIED => "file.modified" with FileModifiedPayload,
+//!         },
+//!     }
+//! }
+//! ```
+//!
+//! ### Configuration Struct Generation
+//! ```rust
+//! config_struct! {
+//!     pub struct DatabaseConfig {
+//!         #[config(env = "DATABASE_URL", validate = "not_empty")]
+//!         pub url: String,
+//!         
+//!         #[config(env = "DATABASE_MAX_CONNECTIONS", default = 10)]
+//!         pub max_connections: u32,
+//!     }
 //! }
 //! ```
 
+mod auto_metrics;
+mod config_struct;
+mod database_helpers;
+mod error_context;
+mod event_registry;
+mod satellite_helpers;
+mod stream_processor;
+mod typed_event_envelope;
+mod validation_chain;
+
 use proc_macro::TokenStream;
-use quote::quote;
-use syn::{
-    parse_macro_input, punctuated::Punctuated, token::Comma, Expr, ItemFn, Lit, Meta,
-    PathArguments, ReturnType, Type, TypePath,
-};
+
+// Re-export all macros
 
 /// Procedural macro for automatic error context enrichment
 ///
-/// This macro wraps functions that return `Result<T, E>` where `E: Into<CoreError>`
-/// and automatically adds contextual information to any errors that occur.
-///
-/// # Attributes
-///
-/// - `operation = "string"` - Sets a custom operation name (defaults to function name)
-/// - `context = [("key", "value"), ...]` - Adds custom key-value context pairs
+/// Automatically adds function name, module path, and operation context to errors.
 ///
 /// # Examples
 ///
 /// ```rust
+/// use sinex_macros::with_context;
+///
 /// #[with_context]
-/// fn simple_function() -> Result<(), CoreError> {
-///     // Errors will include function name and module path
-///     Ok(())
+/// fn read_config() -> Result<String, std::io::Error> {
+///     std::fs::read_to_string("config.toml")
 /// }
 ///
-/// #[with_context(operation = "custom_op")]
-/// async fn async_function() -> Result<String, std::io::Error> {
-///     // Errors will include custom operation name
-///     Ok("result".to_string())
+/// #[with_context(operation = "database_insert")]
+/// async fn insert_event(event: &RawEvent) -> Result<(), CoreError> {
+///     // function body
 /// }
 /// ```
 #[proc_macro_attribute]
 pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let args = parse_macro_input!(attr with Punctuated::<Meta, Comma>::parse_terminated);
-    let input_fn = parse_macro_input!(item as ItemFn);
-
-    // Parse macro arguments
-    let mut operation_name: Option<String> = None;
-    let context_pairs: Vec<(String, String)> = Vec::new();
-
-    for arg in args {
-        match arg {
-            Meta::NameValue(nv) if nv.path.is_ident("operation") => {
-                if let Expr::Lit(expr_lit) = &nv.value {
-                    if let Lit::Str(lit_str) = &expr_lit.lit {
-                        operation_name = Some(lit_str.value());
-                    }
-                }
-            }
-            Meta::NameValue(nv) if nv.path.is_ident("context") => {
-                // For now, we'll implement a simpler version that doesn't parse complex arrays
-                // This can be enhanced later to support context = [("key", "value")] syntax
-            }
-            _ => {} // Ignore unknown attributes
-        }
-    }
-
-    // Validate function signature
-    if !is_result_return_type(&input_fn.sig.output) {
-        return syn::Error::new_spanned(
-            input_fn.sig.fn_token,
-            "with_context can only be applied to functions that return Result<T, E>",
-        )
-        .to_compile_error()
-        .into();
-    }
-
-    // Extract function components
-    let fn_name = &input_fn.sig.ident;
-    let fn_name_str = fn_name.to_string();
-    let operation = operation_name.unwrap_or_else(|| fn_name_str.clone());
-    let fn_vis = &input_fn.vis;
-    let fn_attrs = &input_fn.attrs;
-    let fn_sig = &input_fn.sig;
-    let fn_block = &input_fn.block;
-    let is_async = fn_sig.asyncness.is_some();
-
-    // Generate context building code
-    let mut context_building = quote! {
-        core_err.context()
-            .with_operation(#operation)
-            .with_context("function", #fn_name_str)
-            .with_context("module", module_path!())
-    };
-
-    // Add custom context pairs
-    for (key, value) in context_pairs {
-        context_building = quote! {
-            #context_building
-                .with_context(#key, #value)
-        };
-    }
-
-    context_building = quote! {
-        #context_building.build()
-    };
-
-    // Extract return type for the closure
-    let return_type = &fn_sig.output;
-
-    // Determine the correct error type path based on context
-    // If we're in sinex-core crate itself, use crate::CoreError
-    // Otherwise, use sinex_core::CoreError
-    let error_type = quote! {
-        #[allow(unused_imports)]
-        use crate::CoreError as __CoreError;
-        let core_err: __CoreError = e.into();
-    };
-
-    // Generate the transformed function
-    let transformed = if is_async {
-        quote! {
-            #(#fn_attrs)*
-            #fn_vis #fn_sig {
-                let __original_fn = async move || #return_type {
-                    #fn_block
-                };
-
-                __original_fn().await.map_err(|e| {
-                    #error_type
-                    #context_building
-                })
-            }
-        }
-    } else {
-        quote! {
-            #(#fn_attrs)*
-            #fn_vis #fn_sig {
-                let __original_fn = move || #return_type {
-                    #fn_block
-                };
-
-                __original_fn().map_err(|e| {
-                    #error_type
-                    #context_building
-                })
-            }
-        }
-    };
-
-    transformed.into()
+    error_context::with_context(attr, item)
 }
 
-/// Check if a return type is Result<T, E>
-fn is_result_return_type(return_type: &ReturnType) -> bool {
-    match return_type {
-        ReturnType::Type(_, ty) => is_result_type(ty),
-        ReturnType::Default => false,
-    }
+/// Macro for generating event type registries with automatic constant generation
+///
+/// Generates source constants, event type constants, and EventEnvelope implementations.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::event_registry;
+///
+/// event_registry! {
+///     sources {
+///         FILESYSTEM => "fs",
+///         SHELL => "shell",
+///     }
+///     
+///     events {
+///         filesystem => FILESYSTEM {
+///             FILE_CREATED => "file.created" with FileCreatedPayload,
+///             FILE_MODIFIED => "file.modified" with FileModifiedPayload,
+///         },
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn event_registry(input: TokenStream) -> TokenStream {
+    event_registry::event_registry(input)
 }
 
-/// Check if a type is Result<T, E>
-fn is_result_type(ty: &Type) -> bool {
-    match ty {
-        Type::Path(TypePath { path, .. }) => {
-            if let Some(segment) = path.segments.last() {
-                if segment.ident == "Result" {
-                    // Check if it has generic arguments
-                    if let PathArguments::AngleBracketed(args) = &segment.arguments {
-                        return !args.args.is_empty(); // Result<T> or Result<T, E>
-                    }
-                }
-            }
-            false
-        }
-        _ => false,
-    }
+/// Macro for generating typed event envelope implementations
+///
+/// Automatically generates to_json_event() and helper methods for event envelopes.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::typed_event_envelope;
+///
+/// #[typed_event_envelope]
+/// pub enum EventEnvelope {
+///     FileCreated(TypedRawEvent<FileCreatedPayload>),
+///     FileModified(TypedRawEvent<FileModifiedPayload>),
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn typed_event_envelope(attr: TokenStream, item: TokenStream) -> TokenStream {
+    typed_event_envelope::typed_event_envelope(attr, item)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use syn::parse_quote;
+/// Macro for creating fluent validation chains
+///
+/// Provides a concise syntax for building validation chains.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::validation_chain;
+///
+/// validation_chain! {
+///     username: String => {
+///         not_empty(),
+///         min_length(3),
+///         max_length(50),
+///     },
+///     port: u16 => {
+///         in_range(1, 65535),
+///     },
+/// }
+/// ```
+#[proc_macro]
+pub fn validation_chain(input: TokenStream) -> TokenStream {
+    validation_chain::validation_chain(input)
+}
 
-    #[test]
-    fn test_result_type_detection() {
-        // Test valid Result types
-        let result_unit: Type = parse_quote!(Result<(), CoreError>);
-        assert!(is_result_type(&result_unit));
+/// Macro for creating custom validation functions
+///
+/// Helps create validation functions that can be used with ValidationChain.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::validation_fn;
+///
+/// validation_fn! {
+///     fn is_valid_port(value: u16) -> bool {
+///         value > 0 && value < 65536
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn validation_fn(input: TokenStream) -> TokenStream {
+    validation_chain::validation_fn(input)
+}
 
-        let result_string: Type = parse_quote!(Result<String>);
-        assert!(is_result_type(&result_string));
+/// Macro for generating configuration structs with validation and defaults
+///
+/// Automatically generates Default impl, validation methods, and environment loading.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::config_struct;
+///
+/// config_struct! {
+///     pub struct DatabaseConfig {
+///         #[config(env = "DATABASE_URL", validate = "not_empty")]
+///         pub url: String,
+///         
+///         #[config(env = "DATABASE_MAX_CONNECTIONS", default = 10)]
+///         pub max_connections: u32,
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn config_struct(input: TokenStream) -> TokenStream {
+    config_struct::config_struct(input)
+}
 
-        let result_qualified: Type = parse_quote!(std::result::Result<i32, std::io::Error>);
-        assert!(is_result_type(&result_qualified));
+/// Macro for generating StatefulStreamProcessor implementations
+///
+/// Reduces boilerplate for implementing StatefulStreamProcessor trait.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::stream_processor;
+///
+/// #[stream_processor(
+///     processor_type = "ingestor",
+///     checkpoint_type = "external",
+///     source = "filesystem"
+/// )]
+/// pub struct FilesystemWatcher {
+///     config: FilesystemConfig,
+///     #[state]
+///     last_scan_time: Option<DateTime<Utc>>,
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn stream_processor(attr: TokenStream, item: TokenStream) -> TokenStream {
+    stream_processor::stream_processor(attr, item)
+}
 
-        // Test invalid types
-        let option_type: Type = parse_quote!(Option<String>);
-        assert!(!is_result_type(&option_type));
+/// Macro for generating database query helpers with automatic ULID/UUID conversion
+///
+/// Generates query functions with proper ULID/UUID handling.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::db_query;
+///
+/// db_query! {
+///     async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<RawEvent> {
+///         "SELECT * FROM raw.events WHERE id = $1"
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn db_query(input: TokenStream) -> TokenStream {
+    database_helpers::db_query(input)
+}
 
-        let simple_type: Type = parse_quote!(String);
-        assert!(!is_result_type(&simple_type));
-    }
+/// Macro for generating database transaction helpers
+///
+/// Generates transaction functions with automatic rollback handling.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::db_transaction;
+///
+/// db_transaction! {
+///     async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), CoreError> {
+///         for event in events {
+///             // Insert logic here
+///         }
+///     }
+/// }
+/// ```
+#[proc_macro]
+pub fn db_transaction(input: TokenStream) -> TokenStream {
+    database_helpers::db_transaction(input)
+}
 
-    #[test]
-    fn test_return_type_detection() {
-        // Test valid return types
-        let return_result: ReturnType = parse_quote!(-> Result<(), CoreError>);
-        assert!(is_result_return_type(&return_result));
+// Satellite processing macros are temporarily disabled due to syn 2.x compatibility issues
+// These will be reimplemented with proper syn 2.x support in a future update
 
-        // Test invalid return types
-        let return_unit: ReturnType = parse_quote!(-> ());
-        assert!(!is_result_return_type(&return_unit));
+/// Derive macro for basic satellite processor implementation
+///
+/// Generates basic StatefulStreamProcessor-compatible methods.
+/// This is a simplified version that demonstrates the concept.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::SatelliteProcessor;
+///
+/// #[derive(Default, SatelliteProcessor)]
+/// pub struct FilesystemProcessor {
+///     config: FilesystemConfig,
+/// }
+/// ```
+#[proc_macro_derive(SatelliteProcessor)]
+pub fn satellite_processor_derive(input: TokenStream) -> TokenStream {
+    satellite_helpers::satellite_processor_derive(input)
+}
 
-        let return_default = ReturnType::Default;
-        assert!(!is_result_return_type(&return_default));
-    }
+/// Derive macro for basic event handler implementation
+///
+/// Generates event processing methods with retry logic.
+/// This is a simplified version that demonstrates the concept.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::EventHandler;
+///
+/// #[derive(Default, EventHandler)]
+/// pub struct FileEventHandler;
+/// ```
+#[proc_macro_derive(EventHandler)]
+pub fn event_handler_derive(input: TokenStream) -> TokenStream {
+    satellite_helpers::event_handler_derive(input)
+}
+
+/// Derive macro for basic satellite configuration
+///
+/// Generates configuration loading and validation methods.
+/// This is a simplified version that demonstrates the concept.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::SatelliteConfig;
+///
+/// #[derive(Default, SatelliteConfig)]
+/// pub struct FilesystemConfig {
+///     pub watch_patterns: Vec<String>,
+///     pub debounce_ms: u64,
+/// }
+/// ```
+#[proc_macro_derive(SatelliteConfig)]
+pub fn satellite_config_derive(input: TokenStream) -> TokenStream {
+    satellite_helpers::satellite_config_derive(input)
+}
+
+/// Derive macro for basic payload extractor
+///
+/// Generates payload extraction methods with type safety.
+/// This is a simplified version that demonstrates the concept.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::PayloadExtractor;
+///
+/// #[derive(Default, PayloadExtractor)]
+/// pub struct FileCreatedExtractor;
+/// ```
+#[proc_macro_derive(PayloadExtractor)]
+pub fn payload_extractor_derive(input: TokenStream) -> TokenStream {
+    satellite_helpers::payload_extractor_derive(input)
+}
+
+/// Automatic function metrics collection
+///
+/// Automatically wraps functions with metrics tracking.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::auto_metrics;
+///
+/// #[auto_metrics]
+/// async fn process_data(data: &str) -> Result<String, Box<dyn std::error::Error>> {
+///     // function body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn auto_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
+    auto_metrics::auto_metrics(attr, item)
+}
+
+/// Automatic database operation metrics collection
+///
+/// Automatically wraps database functions with database-specific metrics tracking.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::auto_db_metrics;
+///
+/// #[auto_db_metrics(operation = "user_lookup")]
+/// async fn get_user_by_id(user_id: u64) -> Result<String, Box<dyn std::error::Error>> {
+///     // function body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn auto_db_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
+    auto_metrics::auto_db_metrics(attr, item)
+}
+
+/// Automatic event processing metrics collection
+///
+/// Automatically wraps event processing functions with event-specific metrics tracking.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::auto_event_metrics;
+///
+/// #[auto_event_metrics(event_type = "file.created")]
+/// async fn handle_file_created(event: &str) -> Result<(), Box<dyn std::error::Error>> {
+///     // function body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn auto_event_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
+    auto_metrics::auto_event_metrics(attr, item)
+}
+
+/// Automatic resource usage metrics collection
+///
+/// Automatically wraps functions with resource usage metrics tracking.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::auto_resource_metrics;
+///
+/// #[auto_resource_metrics(track = ["memory", "cpu", "disk"])]
+/// async fn resource_intensive_task(data: Vec<u8>) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+///     // function body
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn auto_resource_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
+    auto_metrics::auto_resource_metrics(attr, item)
+}
+
+/// Automatic satellite metrics collection for trait implementations
+///
+/// Automatically wraps StatefulStreamProcessor implementations with satellite-specific metrics tracking.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::auto_satellite_metrics;
+///
+/// #[auto_satellite_metrics(processor_type = "ingestor", labels = ["source=filesystem"])]
+/// impl StatefulStreamProcessor for FilesystemWatcher {
+///     // implementation
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn auto_satellite_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
+    auto_metrics::auto_satellite_metrics(attr, item)
 }

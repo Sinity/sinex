@@ -3,8 +3,7 @@
 //! Monitors D-Bus signals using external dbus-monitor command
 
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
 use std::time::Duration;
@@ -45,20 +44,22 @@ impl DbusWatcher {
                 "message.received"
             };
 
-            Some(RawEventBuilder::new(
-                sinex_core::sources::DBUS,
-                event_type,
-                payload,
+            Some(
+                {
+                    let factory = EventFactory::new(sinex_core_types::sources::DBUS);
+                    factory.create_event(event_type, payload)
+                }
             )
-            .with_host("localhost")
-            .build())
         } else {
             None
         }
     }
 
     /// Monitor D-Bus session bus
-    async fn monitor_session_bus(&self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn monitor_session_bus(
+        &self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting D-Bus session bus monitoring via dbus-monitor");
 
         loop {
@@ -68,11 +69,16 @@ impl DbusWatcher {
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start dbus-monitor: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!(
+                        "Failed to start dbus-monitor: {}",
+                        e
+                    ))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::Processing("Failed to get dbus-monitor stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing(
+                    "Failed to get dbus-monitor stdout".to_string(),
+                )
             })?;
 
             let reader = BufReader::new(stdout);
@@ -129,11 +135,16 @@ impl DbusWatcher {
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to start dbus-monitor: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!(
+                        "Failed to start dbus-monitor: {}",
+                        e
+                    ))
                 })?;
 
             let stdout = child.stdout.take().ok_or_else(|| {
-                sinex_satellite_sdk::SatelliteError::Processing("Failed to get dbus-monitor stdout".to_string())
+                sinex_satellite_sdk::SatelliteError::Processing(
+                    "Failed to get dbus-monitor stdout".to_string(),
+                )
             })?;
 
             let reader = BufReader::new(stdout);
@@ -180,21 +191,20 @@ impl DbusWatcher {
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting D-Bus event streaming for buses: {}", self.buses);
 
         match self.buses.as_str() {
-            "session" => {
-                self.monitor_session_bus(tx).await
-            }
-            "system" => {
-                self.monitor_system_bus(tx).await
-            }
+            "session" => self.monitor_session_bus(tx).await,
+            "system" => self.monitor_system_bus(tx).await,
             "both" => {
                 // Monitor both buses concurrently
                 let tx_session = tx.clone();
                 let tx_system = tx;
-                
+
                 let session_task = {
                     let buses = self.buses.clone();
                     tokio::spawn(async move {
@@ -202,7 +212,7 @@ impl DbusWatcher {
                         watcher.monitor_session_bus(tx_session).await
                     })
                 };
-                
+
                 let system_task = {
                     let buses = self.buses.clone();
                     tokio::spawn(async move {
@@ -210,7 +220,7 @@ impl DbusWatcher {
                         watcher.monitor_system_bus(tx_system).await
                     })
                 };
-                
+
                 // Wait for either task to complete
                 tokio::select! {
                     result = session_task => {
@@ -227,11 +237,10 @@ impl DbusWatcher {
                     }
                 }
             }
-            _ => {
-                Err(sinex_satellite_sdk::SatelliteError::Processing(
-                    format!("Invalid D-Bus buses configuration: {}", self.buses)
-                ))
-            }
+            _ => Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Invalid D-Bus buses configuration: {}",
+                self.buses
+            ))),
         }
     }
 }

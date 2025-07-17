@@ -2,11 +2,10 @@
 //!
 //! Watches for Kitty terminal events and shell integration via Unix socket
 
-use sinex_satellite_sdk::SatelliteResult;
 use regex::Regex;
 use serde_json::json;
-use sinex_core::RawEvent;
-use sinex_events::RawEventBuilder;
+use sinex_events::{EventFactory, RawEvent};
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
@@ -76,11 +75,14 @@ impl KittyWatcher {
 
         // Try to discover Kitty socket
         if let Err(e) = watcher.discover_kitty_socket().await {
-            warn!("Failed to discover Kitty socket: {}. Kitty monitoring will be limited.", e);
+            warn!(
+                "Failed to discover Kitty socket: {}. Kitty monitoring will be limited.",
+                e
+            );
         } else {
             info!("Kitty socket discovered at: {:?}", watcher.socket_path);
         }
-        
+
         Ok(watcher)
     }
 
@@ -128,32 +130,52 @@ impl KittyWatcher {
         )))
     }
 
-    async fn send_kitty_command(&self, command: serde_json::Value) -> SatelliteResult<serde_json::Value> {
+    async fn send_kitty_command(
+        &self,
+        command: serde_json::Value,
+    ) -> SatelliteResult<serde_json::Value> {
         let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::Processing("No Kitty socket configured".to_string())
+            sinex_satellite_sdk::SatelliteError::Processing(
+                "No Kitty socket configured".to_string(),
+            )
         })?;
 
         let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to connect to socket: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to connect to socket: {}",
+                e
+            ))
         })?;
 
         let cmd_str = command.to_string();
         let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
 
         stream.write_all(framed_cmd.as_bytes()).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to write command: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Failed to write command: {}",
+                e
+            ))
         })?;
         stream.flush().await.map_err(|e| {
             sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to flush: {}", e))
         })?;
 
         let mut response_buffer = Vec::new();
-        stream.read_to_end(&mut response_buffer).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to read response: {}", e))
-        })?;
+        stream
+            .read_to_end(&mut response_buffer)
+            .await
+            .map_err(|e| {
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to read response: {}",
+                    e
+                ))
+            })?;
 
         let response_str = String::from_utf8(response_buffer).map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Invalid UTF-8 in response: {}", e))
+            sinex_satellite_sdk::SatelliteError::Processing(format!(
+                "Invalid UTF-8 in response: {}",
+                e
+            ))
         })?;
 
         // Extract JSON from framed response
@@ -161,7 +183,10 @@ impl KittyWatcher {
             if let Some(end) = response_str.rfind('}') {
                 let json_str = &response_str[start..=end];
                 return serde_json::from_str(json_str).map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to parse JSON: {}", e))
+                    sinex_satellite_sdk::SatelliteError::Processing(format!(
+                        "Failed to parse JSON: {}",
+                        e
+                    ))
                 });
             }
         }
@@ -171,7 +196,9 @@ impl KittyWatcher {
         ))
     }
 
-    async fn get_kitty_tabs_and_windows(&self) -> SatelliteResult<(Vec<(String, String, u32, bool)>, Vec<KittyWindow>)> {
+    async fn get_kitty_tabs_and_windows(
+        &self,
+    ) -> SatelliteResult<(Vec<(String, String, u32, bool)>, Vec<KittyWindow>)> {
         let ls_command = serde_json::json!({"cmd": "ls"});
         let response = self.send_kitty_command(ls_command).await?;
 
@@ -263,7 +290,11 @@ impl KittyWatcher {
         }
     }
 
-    async fn process_window_commands(&mut self, window: &KittyWindow, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn process_window_commands(
+        &mut self,
+        window: &KittyWindow,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let window_id = window.id.to_string();
 
         // Process changed if foreground processes changed
@@ -295,9 +326,11 @@ impl KittyWatcher {
                     "working_directory": window.cwd.clone(),
                 });
 
-                let process_event = RawEventBuilder::new(sinex_core::sources::SHELL_KITTY, "process.changed", process_payload)
-                    .with_host("localhost")
-                    .build();
+                let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+                let process_event = factory.create_event(
+                    "process.changed",
+                    process_payload,
+                );
 
                 if tx.send(process_event).is_err() {
                     warn!("Event channel closed");
@@ -305,26 +338,26 @@ impl KittyWatcher {
                 }
 
                 // Update stored process state
-                self.process_states.insert(window_id.clone(), current_process_info);
+                self.process_states
+                    .insert(window_id.clone(), current_process_info);
             }
         }
 
         // Try to get last command output using shell integration
         if let Ok(last_output) = self.get_last_command_output(&window_id).await {
             if !last_output.trim().is_empty() {
-                let window_state = self.window_states
-                    .entry(window_id.clone())
-                    .or_insert_with(|| KittyWindowState {
-                        tab_id: window.parent_tab_id.clone(),
-                        last_command: None,
-                        last_prompt_time: None,
-                    });
+                let window_state =
+                    self.window_states
+                        .entry(window_id.clone())
+                        .or_insert_with(|| KittyWindowState {
+                            tab_id: window.parent_tab_id.clone(),
+                            last_command: None,
+                            last_prompt_time: None,
+                        });
 
                 // Try to extract command from the output (look for prompt patterns)
-                let extracted_command = Self::extract_command_from_output(
-                    &self.prompt_patterns,
-                    &last_output,
-                );
+                let extracted_command =
+                    Self::extract_command_from_output(&self.prompt_patterns, &last_output);
 
                 if let Some(command_text) = extracted_command {
                     // Create command completion event with both command and output
@@ -342,9 +375,11 @@ impl KittyWatcher {
                         "completion_timestamp": chrono::Utc::now().to_rfc3339(),
                     });
 
-                    let completion_event = RawEventBuilder::new(sinex_core::sources::SHELL_KITTY, "command.completed", completion_payload)
-                        .with_host("localhost")
-                        .build();
+                    let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+                    let completion_event = factory.create_event(
+                        "command.completed",
+                        completion_payload,
+                    );
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
@@ -382,7 +417,11 @@ impl KittyWatcher {
         None
     }
 
-    async fn process_tab_focus_changes(&mut self, tabs: Vec<(String, String, u32, bool)>, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn process_tab_focus_changes(
+        &mut self,
+        tabs: Vec<(String, String, u32, bool)>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let timestamp = chrono::Utc::now().to_rfc3339();
 
         // Check for focus changes - just emit events when focus changes
@@ -401,9 +440,11 @@ impl KittyWatcher {
                     "focus_timestamp": timestamp,
                 });
 
-                let tab_focused_event = RawEventBuilder::new(sinex_core::sources::SHELL_KITTY, "tab.focused", tab_focused_payload)
-                    .with_host("localhost")
-                    .build();
+                let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+                let tab_focused_event = factory.create_event(
+                    "tab.focused",
+                    tab_focused_payload,
+                );
 
                 if tx.send(tab_focused_event).is_err() {
                     warn!("Event channel closed");
@@ -418,7 +459,11 @@ impl KittyWatcher {
         Ok(())
     }
 
-    async fn capture_incremental_scrollback(&mut self, window: &KittyWindow, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    async fn capture_incremental_scrollback(
+        &mut self,
+        window: &KittyWindow,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let window_id = window.id.to_string();
 
         // Get current scrollback content
@@ -448,9 +493,11 @@ impl KittyWatcher {
                 "capture_timestamp": chrono::Utc::now().to_rfc3339(),
             });
 
-            let scrollback_event = RawEventBuilder::new(sinex_core::sources::SHELL_KITTY, "content.streamed", incremental_payload)
-                .with_host("localhost")
-                .build();
+            let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+            let scrollback_event = factory.create_event(
+                "content.streamed",
+                incremental_payload,
+            );
 
             if tx.send(scrollback_event).is_err() {
                 warn!("Event channel closed");
@@ -465,13 +512,17 @@ impl KittyWatcher {
         }
 
         // Update stored line count for this window
-        self.last_scrollback_line_counts.insert(window_id, current_line_count);
+        self.last_scrollback_line_counts
+            .insert(window_id, current_line_count);
 
         Ok(())
     }
 
     /// Start streaming events
-    pub async fn start_streaming(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         if self.socket_path.is_none() {
             warn!("No Kitty socket available, skipping Kitty event streaming");
             return Ok(());
@@ -498,15 +549,23 @@ impl KittyWatcher {
                         }
 
                         // Capture incremental scrollback every 3 minutes (safety net)
-                        if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
-                            if let Err(e) = self.capture_incremental_scrollback(&window, &tx).await {
-                                error!("Failed to capture incremental scrollback for window {}: {}", window.id, e);
+                        if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO)
+                            >= scrollback_interval
+                        {
+                            if let Err(e) = self.capture_incremental_scrollback(&window, &tx).await
+                            {
+                                error!(
+                                    "Failed to capture incremental scrollback for window {}: {}",
+                                    window.id, e
+                                );
                             }
                         }
                     }
 
                     // Update scrollback capture timestamp
-                    if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO) >= scrollback_interval {
+                    if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO)
+                        >= scrollback_interval
+                    {
                         last_scrollback_capture = SystemTime::now();
                     }
                 }

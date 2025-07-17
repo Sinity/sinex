@@ -8,7 +8,9 @@
 pub mod unified_processor;
 
 // Re-export the new unified processor as the primary interface
-pub use unified_processor::{FilesystemProcessor, FilesystemConfig, FilesystemState, RenameOperation};
+pub use unified_processor::{
+    FilesystemConfig, FilesystemProcessor, FilesystemState, RenameOperation,
+};
 
 // Main type alias for convenience
 pub use unified_processor::FilesystemProcessor as FilesystemWatcher;

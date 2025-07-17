@@ -46,8 +46,11 @@ sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid"
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
-sinex-core = { path = "../sinex-core" }
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-events = { path = "../sinex-events" }
 sinex-annex = { path = "../sinex-annex" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
+sinex-macros = { path = "../sinex-macros" }
+sinex-metrics-lib = { path = "../sinex-metrics-lib" }

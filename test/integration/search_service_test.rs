@@ -1,9 +1,10 @@
-//! Comprehensive tests for SearchService
-//!
-//! CRITICAL: These tests expose SQL injection vulnerabilities in the current implementation.
-//! The SearchService MUST be fixed to use proper parameterized queries before production use!
+// Comprehensive tests for SearchService
+//
+// CRITICAL: These tests expose SQL injection vulnerabilities in the current implementation.
+// The SearchService MUST be fixed to use proper parameterized queries before production use!
 
 use crate::common::prelude::*;
+use sinex_events::{EventFactory, services, event_types};
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_services::{SearchQuery, SearchService};
@@ -16,16 +17,14 @@ async fn create_test_event(
     event_type: &str,
     payload_content: serde_json::Value,
     time_offset: Option<Duration>,
-) -> Result<Ulid, Box<dyn std::error::Error>> {
-    let mut builder =
-        RawEventBuilder::new(source, event_type, payload_content).with_host("test-host");
+) -> AnyhowResult<Ulid, Box<dyn std::error::Error>> {
+    let mut event = EventFactory::new(source)
+        .create_event(event_type, payload_content);
 
     if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;
-        builder = builder.with_timestamp(timestamp);
+        event.ts_orig = Some(timestamp);
     }
-
-    let event = builder.build();
     let event_id = event.id;
 
     insert_event(pool, &event).await?;
@@ -34,7 +33,7 @@ async fn create_test_event(
 }
 
 /// Create a set of diverse test events
-async fn setup_test_data(pool: &DbPool) -> Result<Vec<Ulid>, Box<dyn std::error::Error>> {
+async fn setup_test_data(pool: &DbPool) -> AnyhowResult<Vec<Ulid>, Box<dyn std::error::Error>> {
     let mut event_ids = Vec::new();
 
     // Recent events (within last hour)
@@ -707,7 +706,6 @@ async fn test_search_sql_injection_limit_offset_vulnerability(ctx: TestContext) 
 // Additional test to verify the SQL query construction issue
 #[cfg(test)]
 mod sql_construction_tests {
-    
 
     /// This test demonstrates the SQL construction vulnerability
     /// The params vector is built but never actually used in the query execution

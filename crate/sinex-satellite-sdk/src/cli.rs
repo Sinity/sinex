@@ -3,9 +3,7 @@
 //! This module provides the standardized CLI interface for all satellite binaries
 //! implementing the service/scan/explore subcommand pattern.
 
-use crate::stream_processor::{
-    Checkpoint, ScanReport, TimeHorizon,
-};
+use crate::stream_processor::{Checkpoint, ScanReport, TimeHorizon};
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
@@ -41,9 +39,6 @@ pub struct ProcessorCli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-    /// Configuration file path
-    #[arg(short, long)]
-    pub config: Option<PathBuf>,
 
     /// Processor-specific configuration as JSON
     #[arg(long)]
@@ -302,14 +297,18 @@ pub enum ExportFormat {
 }
 
 /// Generic CLI runner for stream processor satellites
-/// 
+///
 /// This provides a standardized way to run any StatefulStreamProcessor with
 /// the unified CLI interface supporting service/scan/explore subcommands.
-pub struct ProcessorCliRunner<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider + 'static> {
+pub struct ProcessorCliRunner<
+    T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider + 'static,
+> {
     processor: Option<T>,
 }
 
-impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider + 'static> ProcessorCliRunner<T> {
+impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider + 'static>
+    ProcessorCliRunner<T>
+{
     /// Create new CLI runner with a processor instance
     pub fn new(processor: T) -> Self {
         Self {
@@ -318,69 +317,75 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
     }
 
     /// Run the CLI with parsed arguments
-    pub async fn run(
-        &mut self,
-        args: ProcessorCli,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::stream_processor::{StreamProcessorRunner, ScanArgs};
+    pub async fn run(&mut self, args: ProcessorCli) -> Result<(), Box<dyn std::error::Error>> {
         use crate::grpc_client::IngestClient;
+        use crate::stream_processor::{ScanArgs, StreamProcessorRunner};
         use sinex_db::SqlxPgPool;
-        
+
         // Initialize logging based on verbosity
         let log_level = match args.verbose {
             0 => "info",
             1 => "debug",
             _ => "trace",
         };
-        
+
         tracing_subscriber::fmt()
             .with_env_filter(format!("sinex={}", log_level))
             .init();
 
         // Parse processor configuration
-        let processor_config: HashMap<String, serde_json::Value> = if let Some(config_str) = args.processor_config {
-            serde_json::from_str(&config_str)?
-        } else {
-            HashMap::new()
-        };
+        let processor_config: HashMap<String, serde_json::Value> =
+            if let Some(config_str) = args.processor_config {
+                serde_json::from_str(&config_str)?
+            } else {
+                HashMap::new()
+            };
 
         // Take ownership of the processor
-        let processor = self.processor.take()
-            .ok_or("Processor already consumed")?;
+        let processor = self.processor.take().ok_or("Processor already consumed")?;
 
         match args.command {
-            ProcessorCommand::Service { dry_run, consumer_group: _ } => {
+            ProcessorCommand::Service {
+                dry_run,
+                consumer_group: _,
+            } => {
                 info!("Starting processor service mode");
-                
+
                 // Create stream processor runner
                 let mut runner = StreamProcessorRunner::new(processor);
-                
+
                 // Set up dependencies
-                let service_name = args.service_name.unwrap_or_else(|| "sinex-processor".to_string());
-                let work_dir = args.work_dir.unwrap_or_else(|| std::path::PathBuf::from("/tmp/sinex/processor"));
-                
+                let service_name = args
+                    .service_name
+                    .unwrap_or_else(|| "sinex-processor".to_string());
+                let work_dir = args
+                    .work_dir
+                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/sinex/processor"));
+
                 // Create database pool
                 let db_pool = if let Some(db_url) = args.database_url {
                     SqlxPgPool::connect(&db_url).await?
                 } else {
-                    let db_url = std::env::var("DATABASE_URL")
-                        .map_err(|_| "DATABASE_URL not set")?;
+                    let db_url =
+                        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL not set")?;
                     SqlxPgPool::connect(&db_url).await?
                 };
-                
+
                 // Create ingest client
                 let ingest_client = IngestClient::new(&args.ingest_socket_path).await?;
-                
+
                 // Initialize runner
-                runner.initialize(
-                    service_name,
-                    processor_config,
-                    db_pool,
-                    ingest_client,
-                    work_dir,
-                    dry_run,
-                ).await?;
-                
+                runner
+                    .initialize(
+                        service_name,
+                        processor_config,
+                        db_pool,
+                        ingest_client,
+                        work_dir,
+                        dry_run,
+                    )
+                    .await?;
+
                 // Run service with startup sequence
                 runner.run_service().await?;
             }
@@ -399,14 +404,18 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
 
                 let checkpoint = parse_checkpoint(&from)?;
                 let time_horizon = parse_time_horizon(&until)?;
-                
+
                 // Create stream processor runner
                 let mut runner = StreamProcessorRunner::new(processor);
-                
+
                 // Set up minimal dependencies for scan mode
-                let service_name = args.service_name.unwrap_or_else(|| "sinex-processor".to_string());
-                let work_dir = args.work_dir.unwrap_or_else(|| std::path::PathBuf::from("/tmp/sinex/processor"));
-                
+                let service_name = args
+                    .service_name
+                    .unwrap_or_else(|| "sinex-processor".to_string());
+                let work_dir = args
+                    .work_dir
+                    .unwrap_or_else(|| std::path::PathBuf::from("/tmp/sinex/processor"));
+
                 // For scan mode, database connection is optional for dry runs
                 let db_pool = if dry_run {
                     // Create dummy pool for dry runs - the processor should handle this gracefully
@@ -424,23 +433,25 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 } else if let Some(db_url) = args.database_url {
                     SqlxPgPool::connect(&db_url).await?
                 } else {
-                    let db_url = std::env::var("DATABASE_URL")
-                        .map_err(|_| "DATABASE_URL not set")?;
+                    let db_url =
+                        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL not set")?;
                     SqlxPgPool::connect(&db_url).await?
                 };
-                
+
                 let ingest_client = IngestClient::new(&args.ingest_socket_path).await?;
-                
+
                 // Initialize runner
-                runner.initialize(
-                    service_name,
-                    processor_config,
-                    db_pool,
-                    ingest_client,
-                    work_dir,
-                    dry_run,
-                ).await?;
-                
+                runner
+                    .initialize(
+                        service_name,
+                        processor_config,
+                        db_pool,
+                        ingest_client,
+                        work_dir,
+                        dry_run,
+                    )
+                    .await?;
+
                 // Create scan args
                 let scan_args = ScanArgs {
                     targets,
@@ -450,14 +461,22 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     skip_duplicates: !no_skip_duplicates,
                     config: HashMap::new(),
                 };
-                
+
                 // Run estimation if requested
                 if estimate {
-                    let estimate_result = runner.estimate_scan_scope(&checkpoint, &time_horizon, &scan_args).await?;
+                    let estimate_result = runner
+                        .estimate_scan_scope(&checkpoint, &time_horizon, &scan_args)
+                        .await?;
                     println!("Scan Estimation:");
                     println!("  Estimated events: {}", estimate_result.estimated_events);
-                    println!("  Estimated duration: {:?}", estimate_result.estimated_duration);
-                    println!("  Estimated data size: {} bytes", estimate_result.estimated_data_size);
+                    println!(
+                        "  Estimated duration: {:?}",
+                        estimate_result.estimated_duration
+                    );
+                    println!(
+                        "  Estimated data size: {} bytes",
+                        estimate_result.estimated_data_size
+                    );
                     println!("  Estimated targets: {}", estimate_result.estimated_targets);
                     println!("  Confidence: {:.1}%", estimate_result.confidence * 100.0);
                     if !estimate_result.warnings.is_empty() {
@@ -467,7 +486,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         }
                     }
                     println!();
-                    
+
                     if interactive {
                         print!("Proceed with scan? [y/N] ");
                         use std::io::{self, Write};
@@ -480,41 +499,48 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         }
                     }
                 }
-                
+
                 // Run scan
                 let report = runner.run_scan(checkpoint, time_horizon, scan_args).await?;
-                
+
                 // Display results
                 println!("Scan Results:");
                 println!("  Events processed: {}", report.events_processed);
                 println!("  Duration: {:?}", report.duration);
-                println!("  Final checkpoint: {}", report.final_checkpoint.description());
-                
+                println!(
+                    "  Final checkpoint: {}",
+                    report.final_checkpoint.description()
+                );
+
                 if let Some((start, end)) = report.time_range {
-                    println!("  Time range: {} to {}", start.format("%Y-%m-%d %H:%M:%S"), end.format("%Y-%m-%d %H:%M:%S"));
+                    println!(
+                        "  Time range: {} to {}",
+                        start.format("%Y-%m-%d %H:%M:%S"),
+                        end.format("%Y-%m-%d %H:%M:%S")
+                    );
                 }
-                
+
                 if !report.processor_stats.is_empty() {
                     println!("  Processor stats:");
                     for (key, value) in &report.processor_stats {
                         println!("    {}: {}", key, value);
                     }
                 }
-                
+
                 if !report.successful_targets.is_empty() {
                     println!("  Successful targets: {}", report.successful_targets.len());
                     for target in &report.successful_targets {
                         println!("    - {}", target);
                     }
                 }
-                
+
                 if !report.failed_targets.is_empty() {
                     println!("  Failed targets:");
                     for (target, error) in &report.failed_targets {
                         println!("    - {}: {}", target, error);
                     }
                 }
-                
+
                 if !report.warnings.is_empty() {
                     println!("  Warnings:");
                     for warning in &report.warnings {
@@ -531,26 +557,33 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 export_to,
             } => {
                 info!("Running exploration mode");
-                
+
                 // For exploration, we can work with the processor directly
                 if source_state {
                     match processor.get_source_state() {
                         Ok(state) => {
                             println!("Source State:");
                             println!("  Description: {}", state.description);
-                            println!("  Last updated: {}", state.last_updated.format("%Y-%m-%d %H:%M:%S"));
+                            println!(
+                                "  Last updated: {}",
+                                state.last_updated.format("%Y-%m-%d %H:%M:%S")
+                            );
                             if let Some(total) = state.total_items {
                                 println!("  Total items: {}", total);
                             }
                             println!("  Healthy: {}", state.healthy);
-                            
+
                             if !state.recent_activity.is_empty() {
                                 println!("  Recent activity:");
                                 for activity in &state.recent_activity {
-                                    println!("    - {}: {}", activity.timestamp.format("%H:%M:%S"), activity.description);
+                                    println!(
+                                        "    - {}: {}",
+                                        activity.timestamp.format("%H:%M:%S"),
+                                        activity.description
+                                    );
                                 }
                             }
-                            
+
                             if !state.metadata.is_empty() {
                                 println!("  Metadata:");
                                 for (key, value) in &state.metadata {
@@ -564,16 +597,22 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     }
                     println!();
                 }
-                
+
                 if ingestion_history {
                     match processor.get_ingestion_history(limit) {
                         Ok(history) => {
                             println!("Ingestion History ({} entries):", history.len());
                             for entry in &history {
                                 println!("  ID: {}", entry.id);
-                                println!("    Started: {}", entry.started_at.format("%Y-%m-%d %H:%M:%S"));
+                                println!(
+                                    "    Started: {}",
+                                    entry.started_at.format("%Y-%m-%d %H:%M:%S")
+                                );
                                 if let Some(completed) = entry.completed_at {
-                                    println!("    Completed: {}", completed.format("%Y-%m-%d %H:%M:%S"));
+                                    println!(
+                                        "    Completed: {}",
+                                        completed.format("%Y-%m-%d %H:%M:%S")
+                                    );
                                 }
                                 println!("    Events: {}", entry.events_generated);
                                 if let Some(error) = &entry.error {
@@ -587,28 +626,34 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     }
                     println!();
                 }
-                
+
                 if coverage_analysis {
                     match processor.get_coverage_analysis(None) {
                         Ok(analysis) => {
                             println!("Coverage Analysis:");
-                            println!("  Time range: {} to {}", 
-                                     analysis.time_range.0.format("%Y-%m-%d %H:%M:%S"),
-                                     analysis.time_range.1.format("%Y-%m-%d %H:%M:%S"));
+                            println!(
+                                "  Time range: {} to {}",
+                                analysis.time_range.0.format("%Y-%m-%d %H:%M:%S"),
+                                analysis.time_range.1.format("%Y-%m-%d %H:%M:%S")
+                            );
                             println!("  Source total: {}", analysis.source_total);
                             println!("  Sinex total: {}", analysis.sinex_total);
                             println!("  Coverage: {:.1}%", analysis.coverage_percentage);
                             println!("  Missing: {}", analysis.missing_count);
                             println!("  Duplicates: {}", analysis.duplicate_count);
-                            
+
                             if !analysis.missing_samples.is_empty() {
                                 println!("  Missing samples:");
                                 for sample in &analysis.missing_samples {
-                                    println!("    - {}: {} ({})", sample.source_id, sample.description, 
-                                            sample.missing_reason.as_deref().unwrap_or("Unknown"));
+                                    println!(
+                                        "    - {}: {} ({})",
+                                        sample.source_id,
+                                        sample.description,
+                                        sample.missing_reason.as_deref().unwrap_or("Unknown")
+                                    );
                                 }
                             }
-                            
+
                             if !analysis.recommendations.is_empty() {
                                 println!("  Recommendations:");
                                 for rec in &analysis.recommendations {
@@ -622,14 +667,14 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     }
                     println!();
                 }
-                
+
                 if let Some(export_path) = export_to {
                     let format = match export_path.extension().and_then(|s| s.to_str()) {
                         Some("json") => ExportFormat::Json,
                         Some("csv") => ExportFormat::Csv,
                         _ => ExportFormat::Raw,
                     };
-                    
+
                     match processor.export_data(&export_path, format) {
                         Ok(_) => {
                             println!("Data exported to: {}", export_path.display());
@@ -641,7 +686,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 }
             }
         }
-        
+
         Ok(())
     }
 }
@@ -653,26 +698,58 @@ macro_rules! processor_main {
         #[tokio::main]
         async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use clap::Parser;
-            use $crate::cli::{ProcessorCli, ProcessorCliRunner};
+            use $crate::cli::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
+            use $crate::heartbeat::HeartbeatEmitter;
 
             let args = ProcessorCli::parse();
             let processor = <$processor_type>::new();
             let mut runner = ProcessorCliRunner::new(processor);
-            
+
+            // Auto-spawn HeartbeatEmitter for service mode
+            if matches!(args.command, ProcessorCommand::Service { .. }) {
+                let service_name = args
+                    .service_name
+                    .clone()
+                    .unwrap_or_else(|| "sinex-processor".to_string());
+                
+                let heartbeat_emitter = HeartbeatEmitter::new(service_name, 30);
+                
+                // Spawn heartbeat task concurrently
+                tokio::spawn(async move {
+                    heartbeat_emitter.start_periodic_heartbeat(None).await;
+                });
+            }
+
             runner.run(args).await
         }
     };
-    
+
     ($processor_type:ty, $processor_expr:expr) => {
         #[tokio::main]
         async fn main() -> Result<(), Box<dyn std::error::Error>> {
             use clap::Parser;
-            use $crate::cli::{ProcessorCli, ProcessorCliRunner};
+            use $crate::cli::{ProcessorCli, ProcessorCliRunner, ProcessorCommand};
+            use $crate::heartbeat::HeartbeatEmitter;
 
             let args = ProcessorCli::parse();
             let processor = $processor_expr;
             let mut runner = ProcessorCliRunner::new(processor);
-            
+
+            // Auto-spawn HeartbeatEmitter for service mode
+            if matches!(args.command, ProcessorCommand::Service { .. }) {
+                let service_name = args
+                    .service_name
+                    .clone()
+                    .unwrap_or_else(|| "sinex-processor".to_string());
+                
+                let heartbeat_emitter = HeartbeatEmitter::new(service_name, 30);
+                
+                // Spawn heartbeat task concurrently
+                tokio::spawn(async move {
+                    heartbeat_emitter.start_periodic_heartbeat(None).await;
+                });
+            }
+
             runner.run(args).await
         }
     };

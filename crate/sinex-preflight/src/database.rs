@@ -10,7 +10,9 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use sinex_core::timeouts;
+use sinex_core_types::timeouts;
+use sinex_db::queries::{EventQueries, OperationQueries, SchemaQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
@@ -196,7 +198,7 @@ async fn test_basic_operations(
     messages: &mut Vec<String>,
     details: &mut HashMap<&str, Value>,
 ) -> Result<()> {
-    // Test basic connectivity
+    // Test basic connectivity - keep as raw SQL for system function
     let version_result = sqlx::query!("SELECT version() as version")
         .fetch_one(pool)
         .await
@@ -208,7 +210,7 @@ async fn test_basic_operations(
     // Test transaction handling
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
-    sqlx::query!("SELECT 1 as test_query")
+    OperationQueries::health_check()
         .fetch_one(&mut *tx)
         .await
         .context("Failed to execute test query in transaction")?;
@@ -550,10 +552,7 @@ async fn verify_schema_compatibility(
     info!("Verifying schema compatibility");
 
     // Check for existence of critical tables
-    let critical_tables = vec![
-        "core.events",
-        "core.automaton_checkpoints",
-    ];
+    let critical_tables = vec!["core.events", "core.automaton_checkpoints"];
 
     let mut table_status = HashMap::new();
 

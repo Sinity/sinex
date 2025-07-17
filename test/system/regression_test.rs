@@ -1,30 +1,35 @@
-//! # Regression Testing
-//!
-//! Tests that prevent specific bugs from reoccurring by testing previously fixed issues:
-//! - Complex interaction bugs
-//! - Performance regression detection
-//! - Configuration edge cases
-//! - Concurrent access issues
-//! - Validation edge cases
-//!
-//! ## Test Categories
-//!
-//! - **Concurrent Database Tests**: Database-related race conditions and concurrency issues
-//! - **Configuration Reload Tests**: Config management and reload-related bugs
-//! - **JSON Payload Tests**: JSON handling and serialization edge cases
-//! - **ULID Overflow Tests**: ULID generation and overflow edge cases
-//! - **Validation Edge Cases**: Input validation boundary conditions
-//!
-//! ## Performance Expectations
-//!
-//! - **Individual tests**: 10-30 seconds
-//! - **Resource usage**: Moderate to high concurrency testing
-//! - **Purpose**: Prevent regression of known issues
+// # Regression Testing
+//
+// Tests that prevent specific bugs from reoccurring by testing previously fixed issues:
+// - Complex interaction bugs
+// - Performance regression detection
+// - Configuration edge cases
+// - Concurrent access issues
+// - Validation edge cases
+//
+// ## Test Categories
+//
+// - **Concurrent Database Tests**: Database-related race conditions and concurrency issues
+// - **Configuration Reload Tests**: Config management and reload-related bugs
+// - **JSON Payload Tests**: JSON handling and serialization edge cases
+// - **ULID Overflow Tests**: ULID generation and overflow edge cases
+// - **Validation Edge Cases**: Input validation boundary conditions
+//
+// ## Performance Expectations
+//
+// - **Individual tests**: 10-30 seconds
+// - **Resource usage**: Moderate to high concurrency testing
+// - **Purpose**: Prevent regression of known issues
 
 use crate::common::prelude::*;
+
 use crate::common::resources;
-use sinex_collector::config::{CollectorConfig, ConfigManager};
+// DEPRECATED: CollectorConfig no longer exists after modernization to environment-only configuration
+// use sinex_collector::config::{CollectorConfig, ConfigManager};
 use sinex_db::validation::EventValidator;
+use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_events::{EventFactory, services, event_types};
 
 // ==================== CONCURRENT DATABASE TESTS ====================
 
@@ -111,23 +116,13 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
     let worker1 = tokio::spawn(async move {
         b1.wait().await;
         // Try to claim event for processing
-        sqlx::query!(
-            "UPDATE core.events SET payload = payload || '{\"processed_by\": \"worker1\"}'::jsonb WHERE event_id::uuid = $1::uuid",
-            event_id.to_uuid()
-        )
-        .execute(&pool1)
-        .await
+        EventQueries::update_event_payload_merge(&pool1, event_id, json!({"processed_by": "worker1"})).await
     });
 
     let worker2 = tokio::spawn(async move {
         b2.wait().await;
         // Try to claim same event
-        sqlx::query!(
-            "UPDATE core.events SET payload = payload || '{\"processed_by\": \"worker2\"}'::jsonb WHERE event_id::uuid = $1::uuid",
-            event_id.to_uuid()
-        )
-        .execute(&pool2)
-        .await
+        EventQueries::update_event_payload_merge(&pool2, event_id, json!({"processed_by": "worker2"})).await
     });
 
     let (r1, r2) = tokio::join!(worker1, worker2);
@@ -140,14 +135,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
     );
 
     // Check final state
-    let final_event = sqlx::query!(
-        "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
-        event_id.to_uuid()
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap();
-
+    let final_event = EventQueries::get_event_by_id(pool, event_id).await.unwrap();
     println!("Final payload: {}", final_event.payload);
     // This will show that both workers processed it - a bug!
 
@@ -169,21 +157,9 @@ async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> Tes
 
             // Insert a test event within transaction
             let event =
-                RawEventBuilder::new("connection_test", "test_event", json!({"connection_id": i}))
-                    .build();
+                EventFactory::new("connection_test").create_event("test_event", json!({"connection_id": i}));
 
-            sqlx::query(
-                "INSERT INTO core.events (id, source, event_type, payload, host, ts_ingest)
-                 VALUES ($1, $2, $3, $4, $5, $6)",
-            )
-            .bind(event.id.to_uuid())
-            .bind(&event.source)
-            .bind(&event.event_type)
-            .bind(&event.payload)
-            .bind(&event.host)
-            .bind(event.ts_ingest)
-            .execute(&mut *tx)
-            .await?;
+            EventQueries::insert_raw_event_in_tx(&mut *tx, &event).await?;
 
             // Hold the connection briefly
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -222,7 +198,12 @@ async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> Tes
 }
 
 // ==================== CONFIGURATION RELOAD TESTS ====================
+// 
+// DEPRECATED: The following tests used the old CollectorConfig::load_from_file architecture
+// which has been modernized to environment-only configuration. These tests are preserved
+// for reference but are commented out as they no longer compile with the current codebase.
 
+/*
 #[sinex_test(timeout = 30)]
 async fn test_config_reload_race_condition(ctx: TestContext) -> TestResult {
     // Create a config manager with a test config file
@@ -372,6 +353,7 @@ async fn test_config_file_permissions(ctx: TestContext) -> TestResult {
 
     Ok(())
 }
+*/
 
 // ==================== JSON PAYLOAD TESTS ====================
 
@@ -628,20 +610,16 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
     let test_ulid = Ulid::new();
 
     // Insert event with specific ULID
-    let event = RawEventBuilder::new("ulid_test", "storage_test", json!({"test": "ulid storage"}))
-        .with_id(test_ulid)
-        .build();
+    let mut event = EventFactory::new("ulid_test").create_event("storage_test", json!({"test": "ulid storage"}));
+    event.id = test_ulid;
 
     insert_event(pool, &event).await?;
 
     // Retrieve and verify
-    let retrieved = sqlx::query!(
-        "SELECT event_id::uuid as id FROM core.events WHERE source = 'ulid_test' AND event_type = 'storage_test'"
-    )
-    .fetch_one(pool)
-    .await?;
-
-    let retrieved_ulid = Ulid::from_uuid(retrieved.id.expect("Event should have an ID"));
+    let retrieved_events = EventQueries::get_events_by_source_and_type(pool, "ulid_test", "storage_test").await?;
+    assert!(!retrieved_events.is_empty(), "Should have found the test event");
+    
+    let retrieved_ulid = retrieved_events[0].id;
     assert_eq!(
         retrieved_ulid, test_ulid,
         "ULID should roundtrip through database"
@@ -649,23 +627,17 @@ async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
 
     // Test sorting by ULID
     let newer_ulid = Ulid::new();
-    let newer_event =
-        RawEventBuilder::new("ulid_test", "storage_test", json!({"test": "newer event"}))
-            .with_id(newer_ulid)
-            .build();
+    let mut newer_event = EventFactory::new("ulid_test").create_event("storage_test", json!({"test": "newer event"}));
+    newer_event.id = newer_ulid;
 
     insert_event(pool, &newer_event).await?;
 
     // Query in chronological order
-    let ordered_events = sqlx::query!(
-        "SELECT event_id::uuid as id FROM core.events WHERE source = 'ulid_test' ORDER BY id"
-    )
-    .fetch_all(pool)
-    .await?;
+    let ordered_events = EventQueries::get_events_by_source_ordered_by_id(pool, "ulid_test").await?;
 
     assert_eq!(ordered_events.len(), 2);
-    let first_ulid = Ulid::from_uuid(ordered_events[0].id.expect("Event should have an ID"));
-    let second_ulid = Ulid::from_uuid(ordered_events[1].id.expect("Event should have an ID"));
+    let first_ulid = ordered_events[0].id;
+    let second_ulid = ordered_events[1].id;
 
     assert!(
         first_ulid < second_ulid,
