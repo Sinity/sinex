@@ -74,7 +74,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     // Phase 3: Verify all events are in database with correct structure
     let mut stored_events = Vec::new();
     for event_id in &ingested_event_ids {
-        let event = EventQueries::get_event_by_id(pool, *event_id).await?;
+        let event = sinex_db::get_event_by_id(pool, *event_id).await?;
         stored_events.push(event);
     }
 
@@ -97,11 +97,10 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     }
 
     // Phase 5: Verify timeseries properties (TimescaleDB)
-    let time_range_events = EventQueries::count_events_in_time_range(
-        pool,
+    let (time_range_events,) = EventQueries::count_by_time_range(
         Utc::now() - Duration::hours(1),
         Utc::now()
-    ).await?;
+    ).fetch_one::<(i64,)>(pool).await?;
 
     assert!(
         time_range_events >= satellite_events.len() as i64,
@@ -189,7 +188,11 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     );
 
     // Verify database state
-    let total_events = EventQueries::count_events_by_source_pattern(pool, "satellite-%").await?;
+    // Count events by pattern using LIKE
+    let (total_events,) = QueryBuilder::select("core.events")
+        .columns(&["COUNT(*) as count"])
+        .where_op("source", "LIKE", QueryParam::String("satellite-%".to_string()))
+        .fetch_one::<(i64,)>(pool).await?;
 
     assert_eq!(
         total_events,
@@ -198,7 +201,10 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     );
 
     // Verify no data corruption with concurrent writes
-    let distinct_event_ids = EventQueries::count_distinct_events_by_source_pattern(pool, "satellite-%").await?;
+    let (distinct_event_ids,) = QueryBuilder::select("core.events")
+        .columns(&["COUNT(DISTINCT event_id) as count"])
+        .where_op("source", "LIKE", QueryParam::String("satellite-%".to_string()))
+        .fetch_one::<(i64,)>(pool).await?;
 
     assert_eq!(
         distinct_event_ids,
@@ -622,7 +628,7 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 
     // Phase 5: Verify component heartbeats in database
     for component in &components {
-        let heartbeat_count = EventQueries::count_events_by_source_and_type(
+        let heartbeat_count = EventQueries::count_by_source(
             pool,
             component,
             &format!("{}.heartbeat", component)
@@ -761,7 +767,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
         "recovery.attempt%"
     ).await?;
 
-    let normal_events = EventQueries::count_events_by_source_and_type(
+    let normal_events = EventQueries::count_by_source(
         pool,
         component_name,
         "normal.operation"
@@ -777,7 +783,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 5: Verify system resilience
-    let total_events = EventQueries::count_events_by_source(pool, component_name).await?;
+    let total_events = EventQueries::count_by_source(pool, component_name).fetch_one::<(i64,)>(pool).await.map(|r| r.0)?;
 
     assert!(
         total_events > operation_count as i64 / 2,
@@ -901,7 +907,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 7: Verify database consistency under load
-    let total_db_events = EventQueries::count_events_by_source_pattern(pool, "load-worker-%").await?;
+    let total_db_events = EventQueries::count_by_source(pool, "load-worker-%").fetch_one::<(i64,)>(pool).await.map(|r| r.0)?;
 
     assert_eq!(
         total_db_events,
@@ -1065,7 +1071,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     for event in referential_check {
         if let Some(prev_id) = event.previous_event_id {
             let event_id = prev_id.parse::<sinex_ulid::Ulid>().unwrap_or_default();
-            let prev_exists_result = EventQueries::get_event_by_id(&pool, event_id).await;
+            let prev_exists_result = sinex_db::get_event_by_id(&pool, event_id).await;
             let prev_exists = if prev_exists_result.is_ok() { 1 } else { 0 };
 
             if prev_exists == 0 {

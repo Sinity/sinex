@@ -94,12 +94,12 @@ pub mod behavior {
             (true, true) => Ok(()),   // Expected timeout
             (false, false) => Ok(()), // Expected receive
             (false, true) => Err(
-                CoreError::validation("Expected timeout but received value")
+                sinex_error::CoreError::validation("Expected timeout but received value")
                     .with_context("timeout_duration", format!("{:?}", timeout))
                     .build().into()
             ),
             (true, false) => Err(
-                CoreError::validation("Expected receive but got timeout/close")
+                sinex_error::CoreError::validation("Expected receive but got timeout/close")
                     .with_context("timeout_duration", format!("{:?}", timeout))
                     .build().into()
             ),
@@ -131,7 +131,7 @@ pub mod behavior {
 
             if batch.is_empty() {
                 return Err(
-                    CoreError::validation("Received empty batch before all items collected")
+                    sinex_error::CoreError::validation("Received empty batch before all items collected")
                         .with_context("total_received", total_received)
                         .with_context("expected_total", items.len())
                         .build().into()
@@ -144,7 +144,7 @@ pub mod behavior {
             // Prevent infinite loops
             if batch_count > 100 {
                 return Err(
-                    CoreError::validation("Too many batches - possible infinite loop")
+                    sinex_error::CoreError::validation("Too many batches - possible infinite loop")
                         .with_context("batch_count", batch_count)
                         .build().into()
                 );

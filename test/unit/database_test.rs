@@ -10,6 +10,7 @@
 
 use crate::common::prelude::*;
 use serde_json::json;
+use sinex_error::ErrorContext;
 // Sources and event types now in sinex_events
 use sinex_events::{EventFactory, services as event_sources, event_types, sources};
 use sinex_db::queries::{EventQueries, CheckpointQueries};
@@ -46,10 +47,10 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
     let inserted_event = sinex_db::get_event_by_id(ctx.pool(), event_id)
         .await
         .map_err(|e| {
-            CoreError::database("Failed to retrieve inserted event")
-                .with_event_id(event_id)
+            sinex_error::CoreError::database("Failed to retrieve inserted event")
+                .with_context("event_id", event_id)
                 .with_context("test_name", "basic_event_insertion")
-                .with_source(e)
+                .with_context("source", e.to_string())
                 .build()
         })?;
 
@@ -143,11 +144,12 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     let test_name = ctx.test_name();
     assert!(!test_name.is_empty());
 
-    // Simple database query
-    let result = EventQueries::test_connection()
-        .fetch_one(ctx.pool())
+    // Simple database query - test basic connectivity
+    let (count,) = EventQueries::count_all()
+        .fetch_one::<(i64,)>(ctx.pool())
         .await?;
-    pretty_assertions::assert_eq!(result, Some(4));
+    // Just verify we can query the database
+    assert!(count >= 0);
 
     // Test event creation helpers
     let event = ctx.filesystem_event("/test/file.txt");
@@ -157,7 +159,7 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event).await?;
 
     // Verify it exists
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(ctx.pool()).await?.0;
+    let count = sinex_db::count_events().fetch_one::<(i64,)>(ctx.pool()).await?.0;
     assert!(count >= 1);
 
     Ok(())
@@ -247,15 +249,15 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     sinex_db::insert_event(ctx.pool(), &command_event).await?;
 
     // Query by event type
-    let create_events = EventQueries::get_by_type("file.created", 10).fetch_all(ctx.pool()).await?;
+    let create_events = EventQueries::get_by_event_type("file.created", 10).fetch_all(ctx.pool()).await?;
     assert!(!create_events.is_empty());
     assert!(create_events.iter().all(|e| e.event_type == "file.created"));
 
-    let delete_events = EventQueries::get_by_type("file.deleted", 10).fetch_all(ctx.pool()).await?;
+    let delete_events = EventQueries::get_by_event_type("file.deleted", 10).fetch_all(ctx.pool()).await?;
     assert!(!delete_events.is_empty());
     assert!(delete_events.iter().all(|e| e.event_type == "file.deleted"));
 
-    let command_events = EventQueries::get_by_type("command.executed", 10).fetch_all(ctx.pool()).await?;
+    let command_events = EventQueries::get_by_event_type("command.executed", 10).fetch_all(ctx.pool()).await?;
     assert!(!command_events.is_empty());
     assert!(command_events
         .iter()

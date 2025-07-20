@@ -80,7 +80,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }
 
     // Check total count - use centralized query
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(ctx.pool()).await?;
+    let count = sinex_db::count_events().fetch_one::<(i64,)>(ctx.pool()).await?;
     assert!(count.0 >= 10);
 
     Ok(())
@@ -714,7 +714,7 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     let checkpoint_id = Ulid::new();
 
     // Insert checkpoint
-    CheckpointQueries::insert_checkpoint(
+    CheckpointQueries::upsert_checkpoint(
         checkpoint_id,
         automaton_name,
         consumer_group,
@@ -757,7 +757,7 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     let checkpoint_id = Ulid::new();
 
     // Insert initial checkpoint
-    CheckpointQueries::insert_checkpoint(
+    CheckpointQueries::upsert_checkpoint(
         checkpoint_id,
         automaton_name,
         "default_group",
@@ -814,7 +814,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     let checkpoint_ids = [Ulid::new(), Ulid::new(), Ulid::new()];
 
     for (i, checkpoint_id) in checkpoint_ids.iter().enumerate() {
-        CheckpointQueries::insert_checkpoint_with_timestamp(
+        CheckpointQueries::upsert_checkpoint(
             *checkpoint_id,
             automaton_name,
             "default_group",
@@ -835,7 +835,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
 
     // Get the most recent checkpoint
-    let latest_checkpoint = CheckpointQueries::get_by_automaton(automaton_name)
+    let latest_checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name)
         .fetch_one(pool)
         .await?;
 

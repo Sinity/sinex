@@ -100,7 +100,7 @@ impl FilesystemMonitor {
         
         // Call the scan method to populate internal events
         self.scan(
-            sinex_satellite_sdk::stream_processor::Checkpoint::Beginning,
+            sinex_satellite_sdk::stream_processor::Checkpoint::None,
             sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
             args,
         ).await?;
@@ -282,7 +282,7 @@ impl ShellHistoryMonitor {
         
         // Call the scan method to populate internal events
         self.scan(
-            sinex_satellite_sdk::stream_processor::Checkpoint::Beginning,
+            sinex_satellite_sdk::stream_processor::Checkpoint::None,
             sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
             args,
         ).await?;
@@ -379,7 +379,7 @@ impl AtuinHistoryImporter {
         
         // Call the scan method to populate internal events
         self.scan(
-            sinex_satellite_sdk::stream_processor::Checkpoint::Beginning,
+            sinex_satellite_sdk::stream_processor::Checkpoint::None,
             sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
             args,
         ).await?;

@@ -592,9 +592,7 @@ pub mod generators {
 
 /// Helper for getting event count from database
 pub async fn get_event_count(pool: &DbPool) -> AnyhowResult<i64> {
-    let (count,): (i64,) = EventQueries::count_all().fetch_one(pool)
-        .await?;
-    Ok(count)
+    sinex_db::count_events(pool).await
 }
 
 /// Helper for checking if an event exists by ULID
@@ -940,7 +938,7 @@ pub mod automaton_testing {
         pool: &DbPool,
         automaton_name: &str,
     ) -> AnyhowResult<Option<CheckpointState>> {
-        let checkpoint = CheckpointQueries::get_by_automaton(automaton_name)
+        let checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name)
             .fetch_optional(pool)
             .await?;
 
@@ -1133,7 +1131,7 @@ pub mod cleanup {
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
         // Clean up test data manually
-        EventQueries::delete_by_source_pattern("test_%")
+        EventQueries::delete_by_source("test_%")
             .execute(pool)
             .await?;
 
@@ -1355,12 +1353,12 @@ pub mod event_sources {
 
     /// Create EventSourceConfig with test configuration
     pub fn test_context(config: Value) -> EventSourceConfig {
-        EventSourceConfig::new(config)
+        EventSourceConfig { base: Default::default(), batch_size: 100, batch_timeout_secs: 1, source_config: config.into() }
     }
 
     /// Create EventSourceConfig with database pool
     pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceConfig {
-        EventSourceConfig::new(config).with_db_pool(pool)
+        { let mut config = EventSourceConfig { base: Default::default(), batch_size: 100, batch_timeout_secs: 1, source_config: Default::default() }; config.base.db_pool = Some(pool); config }
     }
 
     /// Standard filesystem event source config

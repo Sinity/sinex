@@ -383,7 +383,7 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> AnyhowResult<b
 async fn test_database_recovery_scenario(pool: &DbPool) -> AnyhowResult<bool> {
     let factory = EventFactory::new("recovery_test");
     let test_event = factory.create_event("system.test", json!({"test": true}));
-    let insert_result = EventQueries::insert_raw_event(pool, &test_event).await;
+    let insert_result = sinex_db::insert_event(pool, &test_event).await;
 
     assert!(
         insert_result.is_ok(),
@@ -598,7 +598,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     println!("✓ Channel operations testing completed");
 
     // Test database state
-    let event_count = EventQueries::count_events_by_source(ctx.pool(), "integration_test").await?;
+    let event_count = EventQueries::count_by_source(ctx.pool(), "integration_test").await?;
 
     assert_with_context(
         event_count >= 1,
@@ -608,7 +608,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     println!("✓ Database state validation completed");
 
-    let retrieved_event = EventQueries::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), event_id).await?;
     assert_events_equivalent(&retrieved_event, &test_event)?;
 
     println!("✅ Comprehensive abstraction integration test completed successfully!");
@@ -812,7 +812,7 @@ async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
         }
 
         if event.event_type == "test.event" {
-            EventQueries::insert_raw_event(ctx.pool(), &event).await?;
+            sinex_db::insert_event(ctx.pool(), &event).await?;
         }
     }
 
@@ -826,7 +826,7 @@ async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
         "Not all events should be corrupted"
     );
 
-    let stored_count = EventQueries::count_all_events(ctx.pool()).await?;
+    let stored_count = sinex_db::count_events(ctx.pool()).await?;
     assert_eq!(
         stored_count,
         received_events - corrupted_events,
@@ -873,14 +873,14 @@ async fn test_database_connection_recovery(pool: &DbPool) -> AnyhowResult<bool> 
         }),
     );
 
-    let normal_insert = EventQueries::insert_raw_event(pool, &test_event).await;
+    let normal_insert = sinex_db::insert_event(pool, &test_event).await;
     assert!(
         normal_insert.is_ok(),
         "Normal database operation should work"
     );
 
     let timeout_result =
-        tokio::time::timeout(Duration::from_millis(100), EventQueries::insert_raw_event(pool, &test_event)).await;
+        tokio::time::timeout(Duration::from_millis(100), sinex_db::insert_event(pool, &test_event)).await;
 
     let connection_resilient = match timeout_result {
         Ok(Ok(_)) => true,
@@ -898,7 +898,7 @@ async fn test_database_connection_recovery(pool: &DbPool) -> AnyhowResult<bool> 
         }),
     );
 
-    let recovery_insert = EventQueries::insert_raw_event(pool, &recovery_event).await;
+    let recovery_insert = sinex_db::insert_event(pool, &recovery_event).await;
     let system_recovered = recovery_insert.is_ok();
 
     Ok(connection_resilient && system_recovered)
@@ -932,7 +932,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
     let mut successful_inserts = 0;
 
     for event in buffered.iter() {
-        if EventQueries::insert_raw_event(pool, event).await.is_ok() {
+        if sinex_db::insert_event(pool, event).await.is_ok() {
             successful_inserts += 1;
         }
     }
@@ -943,7 +943,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
         "All buffered events should be processed on recovery"
     );
 
-    let count = EventQueries::count_events_by_source(pool, "buffering_test").await?;
+    let count = EventQueries::count_by_source(pool, "buffering_test").fetch_one::<(i64,)>(pool).await.map(|r| r.0)?;
     pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
 
     Ok(true)
@@ -1170,7 +1170,7 @@ async fn test_component_health_checks(
 async fn check_database_health(pool: &DbPool) -> AnyhowResult<HealthStatus> {
     match OperationQueries::health_check_basic(pool).await {
         Ok(true) => {
-            match EventQueries::count_all_events(pool).await {
+            match sinex_db::count_events(pool).await {
                 Ok(_) => Ok(HealthStatus::Healthy),
                 Err(_) => Ok(HealthStatus::Degraded),
             }
@@ -1290,9 +1290,9 @@ async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
     let factory = EventFactory::new("test.boundary");
     let event = factory.create_event("small.payload", payload);
 
-    EventQueries::insert_raw_event(ctx.pool(), &event).await?;
+    sinex_db::insert_event(ctx.pool(), &event).await?;
 
-    let retrieved = EventQueries::get_event_by_id(ctx.pool(), event.id).await?;
+    let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
     assert_eq!(retrieved.id, event.id);
     assert_eq!(
         retrieved.payload["content"].as_str().unwrap().len(),
@@ -1315,7 +1315,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
     let event = factory.create_event("large.payload", payload);
 
     let start = std::time::Instant::now();
-    let result = EventQueries::insert_raw_event(ctx.pool(), &event).await;
+    let result = sinex_db::insert_event(ctx.pool(), &event).await;
     let duration = start.elapsed();
 
     match result {
@@ -1323,7 +1323,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
             println!("Large payload insert took: {:?}", duration);
 
             let start_retrieval = std::time::Instant::now();
-            let retrieved = EventQueries::get_event_by_id(ctx.pool(), event.id).await?;
+            let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
             let retrieval_duration = start_retrieval.elapsed();
 
             println!("Large payload retrieval took: {:?}", retrieval_duration);
@@ -1357,7 +1357,7 @@ async fn test_extreme_payload_rejection(ctx: TestContext) -> TestResult {
     let factory = EventFactory::new("test.boundary");
     let event = factory.create_event("extreme.payload", payload);
 
-    let result = EventQueries::insert_raw_event(ctx.pool(), &event).await;
+    let result = sinex_db::insert_event(ctx.pool(), &event).await;
     assert!(result.is_err(), "Extreme payloads should be rejected");
 
     let error_msg = result.unwrap_err().to_string();
@@ -1831,11 +1831,11 @@ async fn test_large_file_event_capture(
         }),
     );
 
-    let large_event_id = EventQueries::insert_raw_event(pool, &large_file_event).await?;
-    let medium_event_id = EventQueries::insert_raw_event(pool, &medium_file_event).await?;
+    let large_event_id = sinex_db::insert_event(pool, &large_file_event).await?;
+    let medium_event_id = sinex_db::insert_event(pool, &medium_file_event).await?;
 
-    let retrieved_large = EventQueries::get_event_by_id(pool, large_event_id).await?;
-    let retrieved_medium = EventQueries::get_event_by_id(pool, medium_event_id).await?;
+    let retrieved_large = sinex_db::get_event_by_id(pool, large_event_id).await?;
+    let retrieved_medium = sinex_db::get_event_by_id(pool, medium_event_id).await?;
 
     pretty_assertions::assert_eq!(retrieved_large.source, "fs");
     pretty_assertions::assert_eq!(retrieved_large.event_type, "file.created");
@@ -1916,7 +1916,7 @@ async fn test_event_processing_with_annex_blobs(
 
     let mut event_ids = Vec::new();
     for event in &events {
-        let inserted_event_id = EventQueries::insert_raw_event(pool, event).await?;
+        let inserted_event_id = sinex_db::insert_event(pool, event).await?;
         event_ids.push(inserted_event_id);
         OperationQueries::add_to_work_queue(pool, inserted_event_id, "annex-test-agent", 3).await?;
     }
@@ -1935,7 +1935,7 @@ async fn test_event_processing_with_annex_blobs(
         );
 
         let queue_item = &claimed_items[0];
-        let event = EventQueries::get_event_by_id(pool, *event_id).await?;
+        let event = sinex_db::get_event_by_id(pool, *event_id).await?;
 
         if let Some(_annex_key) = event.payload["git_annex_key"].as_str() {
             let file_name = match event.source.as_str() {
@@ -2002,9 +2002,9 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), anyh
         }),
     );
 
-    let inserted_event_id = EventQueries::insert_raw_event(pool, &fallback_event).await?;
+    let inserted_event_id = sinex_db::insert_event(pool, &fallback_event).await?;
 
-    let retrieved_event = EventQueries::get_event_by_id(pool, inserted_event_id).await?;
+    let retrieved_event = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
     pretty_assertions::assert_eq!(
         retrieved_event.payload["storage_type"].as_str().unwrap(),
         "inline"
@@ -2050,9 +2050,9 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> AnyhowResult<()
             }),
         );
 
-        let inserted_event_id = EventQueries::insert_raw_event(pool, &failure_event).await?;
+        let inserted_event_id = sinex_db::insert_event(pool, &failure_event).await?;
 
-        let retrieved = EventQueries::get_event_by_id(pool, inserted_event_id).await?;
+        let retrieved = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
         pretty_assertions::assert_eq!(
             retrieved.payload["git_annex_error"].as_str().unwrap(),
             error_message

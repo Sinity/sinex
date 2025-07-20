@@ -233,7 +233,7 @@ async fn test_core_error_from_sql_error(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
     let error_context =
-        CoreError::validation("Base validation error").with_context("field", "test_field");
+        sinex_error::CoreError::validation("Base validation error").with_context("field", "test_field");
 
     let built_error = error_context.build();
     match built_error {
@@ -249,10 +249,10 @@ async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
 /// Test CoreError result extension methods
 #[sinex_test]
 async fn test_core_error_result_extensions(_ctx: TestContext) -> TestResult {
-    let result: CoreResult<String> = Err(CoreError::validation("Test error").build());
+    let result: CoreResult<String> = Err(CoreError::Validation("Test error").build());
 
     let extended_result = result.with_context(|| {
-        CoreError::validation("Test error").with_context("operation", "test_operation")
+        sinex_error::CoreError::validation("Test error").with_context("operation", "test_operation")
     });
 
     match extended_result {

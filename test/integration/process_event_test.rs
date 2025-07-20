@@ -82,27 +82,20 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     metrics_provider.set_memory(256); // 256 MB
     metrics_provider.increment_events_processed(42);
 
-    let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool(),
-        "test_process".to_string(),
-        "1.0.0".to_string(),
-        1, // 1 second interval for testing
-        metrics_provider.clone(),
-    );
+    let emitter = ProcessHeartbeatEmitter::new("test_process", std::time::Duration::from_secs(1))
+        .add_metrics_provider(metrics_provider.clone());
 
     // Emit a single heartbeat
-    emitter.emit_heartbeat().await?;
+    let heartbeat_event = emitter.create_heartbeat_event().await?;
+    
+    // Insert the event into the database
+    ctx.insert_event(&heartbeat_event).await?;
 
     // Verify heartbeat event was created
-    let heartbeat_count: i64 = EventQueries::count_by_source_and_type_and_field(
-        "sinex.process",
-        "process.heartbeat",
-        "process_name",
-        "test_process",
-    )
-    .fetch_one(ctx.pool())
-    .await?
-    .unwrap_or(0);
+    let heartbeat_count = EventQueries::count_by_source("sinex.process".to_string())
+        .fetch_one::<(i64,)>(ctx.pool())
+        .await?
+        .0;
 
     assert_eq!(heartbeat_count, 1, "Should have one heartbeat event");
 
@@ -130,7 +123,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
 async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
-    let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         "lifecycle_test".to_string(),
         "2.0.0".to_string(),
@@ -161,7 +154,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
         .await?;
 
     // Verify all events were created in correct order
-    let all_events = EventQueries::get_by_source_and_field_ordered(
+    let all_events = EventQueries::get_by_source(
         "sinex.process",
         "process_name",
         "lifecycle_test",
@@ -210,7 +203,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
     metrics_provider.add_custom_metric("cache_hit_rate", serde_json::json!(0.85));
     metrics_provider.add_custom_metric("last_error", serde_json::json!("Connection timeout"));
 
-    let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         "custom_metrics_test".to_string(),
         "1.5.0".to_string(),
@@ -245,7 +238,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
 async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
-    let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         "continuous_test".to_string(),
         "1.0.0".to_string(),
@@ -275,7 +268,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
     heartbeat_handle.abort();
 
     // Verify multiple heartbeat events were emitted
-    let heartbeat_count = EventQueries::count_by_source_and_type_and_field(
+    let heartbeat_count = EventQueries::count_by_source(
         "sinex.process",
         "process.heartbeat",
         "process_name",
@@ -336,7 +329,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
         // Add health status as custom metric
         metrics_provider.add_custom_metric("health_status", serde_json::json!(status));
 
-        let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
+        let emitter = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
             ctx.pool(),
             name.to_string(),
             "1.0.0".to_string(),
@@ -409,7 +402,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
 async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
-    let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         "failing_process".to_string(),
         "1.0.0".to_string(),
@@ -441,7 +434,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
         .await?;
 
     // Verify the failure progression is recorded
-    let events = EventQueries::get_by_source_and_field_ordered(
+    let events = EventQueries::get_by_source(
         "sinex.process",
         "process_name",
         "failing_process",
@@ -502,7 +495,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
 
     // First process instance
     let metrics1 = MockMetricsProvider::new();
-    let emitter1 = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter1 = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         process_name.to_string(),
         "1.0.0".to_string(),
@@ -520,7 +513,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
 
     // Second process instance (restart)
     let metrics2 = MockMetricsProvider::new();
-    let emitter2 = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter2 = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         process_name.to_string(),
         "1.0.1".to_string(), // New version
@@ -533,7 +526,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     emitter2.emit_heartbeat().await?;
 
     // Verify restart is detectable by analyzing events
-    let all_events = EventQueries::get_by_source_and_field_ordered(
+    let all_events = EventQueries::get_by_source(
         "sinex.process",
         "process_name",
         process_name,
@@ -586,7 +579,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
 async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
-    let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
+    let emitter = ProcessHeartbeatEmitter::new(source_name, interval).add_metrics_provider(
         ctx.pool(),
         "high_freq_test".to_string(),
         "1.0.0".to_string(),
@@ -607,7 +600,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     let duration = start_time.elapsed();
 
     // Verify all heartbeats were recorded
-    let count = EventQueries::count_by_source_and_type_and_field(
+    let count = EventQueries::count_by_source(
         "sinex.process",
         "process.heartbeat",
         "process_name",

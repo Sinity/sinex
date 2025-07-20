@@ -135,7 +135,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
     );
 
     // Check final state
-    let final_event = EventQueries::get_event_by_id(pool, event_id).await.unwrap();
+    let final_event = sinex_db::get_event_by_id(pool, event_id).await.unwrap();
     println!("Final payload: {}", final_event.payload);
     // This will show that both workers processed it - a bug!
 
@@ -159,7 +159,7 @@ async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> Tes
             let event =
                 EventFactory::new("connection_test").create_event("test_event", json!({"connection_id": i}));
 
-            EventQueries::insert_raw_event_in_tx(&mut *tx, &event).await?;
+            EventQueries::insert_event_in_tx(&mut *tx, &event).await?;
 
             // Hold the connection briefly
             tokio::time::sleep(Duration::from_millis(100)).await;

@@ -19,7 +19,7 @@ where
     T: Debug + PartialEq,
 {
     if left != right {
-        let error = CoreError::validation("Assertion failed")
+        let error = sinex_error::CoreError::validation("Assertion failed")
             .with_context("assertion_type", "equality")
             .with_context("context", context)
             .with_context("expected", format!("{:?}", right))
@@ -34,7 +34,7 @@ where
 /// Assert that a condition is true with error context
 pub fn assert_with_context(condition: bool, message: &str, context: &str) -> TestResult {
     if !condition {
-        let error = CoreError::validation(message)
+        let error = sinex_error::CoreError::validation(message)
             .with_context("context", context)
             .with_operation("assert_with_context")
             .build();
@@ -53,12 +53,12 @@ pub async fn assert_event_inserted_with_context(
     match insert_event(pool, event).await {
         Ok(id) => Ok(id),
         Err(e) => {
-            let error = CoreError::database("Event insertion failed")
+            let error = sinex_error::CoreError::database("Event insertion failed")
                 .with_context("test_context", test_context)
-                .with_event_id(event.id)
+                .with_context("event_id", event.id)
                 .with_context("source", &event.source)
                 .with_context("event_type", &event.event_type)
-                .with_source(e)
+                .with_context("source", e)
                 .build();
 
             Err(error.into())
@@ -92,7 +92,7 @@ where
 {
     if !chain.is_valid() {
         let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
-        let error = CoreError::validation("Validation chain failed")
+        let error = sinex_error::CoreError::validation("Validation chain failed")
             .with_context("errors_count", errors.len())
             .with_context("errors", errors.join("; "))
             .build();
@@ -111,7 +111,7 @@ where
     T: Debug,
 {
     if chain.is_valid() {
-        let error = CoreError::validation("Expected validation to fail but it passed")
+        let error = sinex_error::CoreError::validation("Expected validation to fail but it passed")
             .with_context("expected_error", expected_error_substring)
             .build();
 
@@ -122,7 +122,7 @@ where
     let combined_errors = errors.join("; ");
 
     if !combined_errors.contains(expected_error_substring) {
-        let error = CoreError::validation("Validation failed but with unexpected error")
+        let error = sinex_error::CoreError::validation("Validation failed but with unexpected error")
             .with_context("expected_substring", expected_error_substring)
             .with_context("actual_errors", combined_errors)
             .build();
@@ -165,16 +165,16 @@ where
         (true, true) => Ok(()),   // Expected timeout
         (false, false) => Ok(()), // Expected success
         (false, true) => {
-            let error = CoreError::validation("Expected channel send to timeout but it succeeded")
+            let error = sinex_error::CoreError::validation("Expected channel send to timeout but it succeeded")
                 .with_context("timeout_duration", format!("{:?}", timeout))
                 .build();
 
             Err(error.into())
         }
         (true, false) => {
-            let error = CoreError::validation("Expected channel send to succeed but it failed")
+            let error = sinex_error::CoreError::validation("Expected channel send to succeed but it failed")
                 .with_context("timeout_duration", format!("{:?}", timeout))
-                .with_source(result.unwrap_err())
+                .with_context("source", result.unwrap_err())
                 .build();
 
             Err(error.into())
@@ -189,9 +189,9 @@ pub fn assert_config_valid(
     config_name: &str,
 ) -> TestResult {
     validator(config).map_err(|e| {
-        let error = CoreError::configuration("Configuration validation failed")
+        let error = CoreError::Configuration("Configuration validation failed")
             .with_context("config_name", config_name)
-            .with_source(e)
+            .with_context("source", e)
             .build();
 
         error.into()
@@ -207,9 +207,9 @@ where
     T: Debug,
 {
     extraction_result.map_err(|e| {
-        let error = CoreError::configuration("Configuration extraction failed")
+        let error = CoreError::Configuration("Configuration extraction failed")
             .with_context("field_path", field_path)
-            .with_source(e)
+            .with_context("source", e)
             .build();
 
         error.into()
@@ -226,9 +226,9 @@ where
     F: Future<Output = Result<T, sqlx::Error>>,
 {
     checker.await.map_err(|e| {
-        let error = CoreError::database("Database state assertion failed")
+        let error = sinex_error::CoreError::database("Database state assertion failed")
             .with_context("assertion_description", description)
-            .with_source(e)
+            .with_context("source", e)
             .build();
 
         error.into()
@@ -282,7 +282,7 @@ impl TestAssertionBatch {
         if self.errors.is_empty() {
             Ok(())
         } else {
-            let error = CoreError::validation("Multiple assertions failed")
+            let error = sinex_error::CoreError::validation("Multiple assertions failed")
                 .with_context("batch_context", &self.context)
                 .with_context("failure_count", self.errors.len())
                 .with_context("failures", self.errors.join(" | "))

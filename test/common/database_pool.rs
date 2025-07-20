@@ -21,6 +21,7 @@ use crate::common::prelude::*;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use sinex_core_types::timeouts;
+use sinex_error::ErrorContext;
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -954,7 +955,7 @@ async fn check_required_extensions(pool: &DbPool) -> AnyhowResult<()> {
     }
 
     if !missing.is_empty() {
-        return Err(CoreError::database(format!(
+        return Err(sinex_error::CoreError::database(format!(
             "Missing required PostgreSQL extensions: {}",
             missing.join(", ")
         ))

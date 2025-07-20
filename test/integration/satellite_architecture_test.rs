@@ -120,7 +120,7 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     let raw_event = create_test_command_event("ls -la", "/home/user");
 
     // Step 2: Write to core.events (simulating what ingestd would do)
-    let event_id = EventQueries::insert_raw_event(ctx.pool(), &raw_event).await?;
+    let event_id = sinex_db::insert_event(ctx.pool(), &raw_event).await?;
 
     info!("✓ Raw event written to database");
 
@@ -139,12 +139,12 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     canonical_event.id = canonical_event_id;
     canonical_event.ts_orig = chrono::Utc::now();
     
-    EventQueries::insert_raw_event(ctx.pool(), &canonical_event).await?;
+    sinex_db::insert_event(ctx.pool(), &canonical_event).await?;
 
     info!("✓ Canonical event created from raw event");
 
     // Step 4: Verify the complete flow
-    let retrieved_canonical = EventQueries::get_event_by_id(ctx.pool(), canonical_event_id).await?;
+    let retrieved_canonical = sinex_db::get_event_by_id(ctx.pool(), canonical_event_id).await?;
 
     assert_eq!(retrieved_canonical.source, "canonical.terminal");
     assert_eq!(retrieved_canonical.event_type, "command.canonical");
