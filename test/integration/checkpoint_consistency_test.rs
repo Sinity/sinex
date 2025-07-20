@@ -10,7 +10,7 @@
 use crate::common::prelude::*;
 use sinex_db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{event_types, services, EventFactory};
 use std::collections::HashMap;
 
 #[sinex_test]
@@ -34,11 +34,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
         let event = {
             let factory = EventFactory::new("test.checkpoint");
             let event = factory.create_event("consistency_test", json!({"sequence": i}));
-            insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
+            insert_event_with_validator(&pool, &event, None)
         }
         .await?;
         event_ulids.push(event.id);
@@ -63,7 +59,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
 
     // Test checkpoint consistency verification
     let issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(pool, &automaton_name)
+        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &automaton_name)
             .await?;
 
     println!(
@@ -125,12 +121,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.gap_detection");
             let event = factory.create_event("batch1", json!({"batch": 1, "sequence": i}));
-            sinex_db::insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-            .await?
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?
         };
         batch1_events.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -158,19 +149,14 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.gap_detection");
             let event = factory.create_event("batch2", json!({"batch": 2, "sequence": i}));
-            sinex_db::insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-            .await?
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?
         };
         batch2_events.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
     // Run integrity check to detect gap
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 1,
@@ -381,11 +367,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         let event = {
             let factory = EventFactory::new("test.cross_validation");
             let event = factory.create_event("shared_event", json!({"sequence": i}));
-            insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
+            insert_event_with_validator(&pool, &event, None)
         }
         .await?;
         shared_events.push(event.id);
@@ -435,7 +417,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     for name in &automaton_names {
         let issues =
-            checkpoint_verification::verify_automaton_checkpoint_consistency(pool, name).await?;
+            checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, name).await?;
         println!("Automaton {}: {} issues", name, issues.len());
         for issue in &issues {
             println!("  - {}", issue);
@@ -558,7 +540,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
 
     // Verify this scenario is detected
     let issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(pool, &automaton_name)
+        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &automaton_name)
             .await?;
     assert!(
         !issues.is_empty(),
@@ -646,7 +628,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     );
 
     let missing_checkpoint_issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(pool, &automaton_name)
+        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &automaton_name)
             .await?;
     assert!(
         !missing_checkpoint_issues.is_empty(),
@@ -661,14 +643,11 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
 
     // Test Scenario 4: Checkpoint ahead of events (impossible scenario but test data corruption)
     let future_event = {
-            let factory = EventFactory::new("test.recovery");
-            let event = factory.create_event("future_reference", json!({"scenario": "future_reference"}));
-            insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-        }
+        let factory = EventFactory::new("test.recovery");
+        let event =
+            factory.create_event("future_reference", json!({"scenario": "future_reference"}));
+        insert_event_with_validator(&pool, &event, None)
+    }
     .await?;
 
     // Create a fake "future" ULID by modifying timestamp
@@ -689,7 +668,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
 
     // This scenario should be detected as checkpoint ahead of events
     let future_issues =
-        checkpoint_verification::verify_automaton_checkpoint_consistency(pool, &automaton_name)
+        checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, &automaton_name)
             .await?;
     assert!(
         !future_issues.is_empty(),
@@ -742,12 +721,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.data_loss");
             let event = factory.create_event("sequence_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-            .await?
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?
         };
         event_sequence.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -774,12 +748,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.data_loss");
             let event = factory.create_event("post_checkpoint_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-            .await?
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?
         };
         event_sequence.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;

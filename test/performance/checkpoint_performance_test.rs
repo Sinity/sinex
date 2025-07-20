@@ -204,7 +204,7 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
                 consumer_group,
                 checkpoint_state.last_processed_id(),
                 checkpoint_state.data
-            ).execute(pool).await;
+            ).execute(&pool).await;
             
             let save_duration = save_start.elapsed();
             let operation_key = format!("save_{}", size_label);
@@ -332,7 +332,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
             consumer_group,
             format!("event-id-{}", i * 100),
             checkpoint_data
-        ).execute(pool).await?;
+        ).execute(&pool).await?;
     }
     
     println!("  Testing individual checkpoint recovery");
@@ -460,14 +460,14 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
                         consumer_group,
                         format!("concurrent-event-{}-{}", thread_id, i),
                         checkpoint_data
-                    ).execute(pool_clone).await;
+                    ).execute(&pool_clone).await;
                     
                     if save_result.is_ok() {
                         // Immediately try to recover
                         let recovery_result = sqlx::query!(
                             "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1",
                             automaton_name
-                        ).fetch_optional(pool_clone).await;
+                        ).fetch_optional(&pool_clone).await;
                         
                         if recovery_result.is_ok() {
                             thread_recoveries += 1;
@@ -588,7 +588,7 @@ async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> TestResult 
                         consumer_group,
                         format!("event-{}-{}", automaton_id, update_id),
                         checkpoint_data
-                    ).execute(pool_clone).await;
+                    ).execute(&pool_clone).await;
                     
                     let update_duration = update_start.elapsed();
                     

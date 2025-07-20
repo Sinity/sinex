@@ -24,7 +24,7 @@ use crate::common::prelude::*;
 
 use crate::common::database_pool::acquire_test_database;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::EventFactory;
 use sinex_ulid::Ulid;
 use std::fs;
 
@@ -144,7 +144,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Use timing utility for event count verification with source filter
         let event_count =
-            wait_for_filtered_event_count(&pool, "source = $1", &["startup.test"], 10, 5)
+            wait_for_filtered_event_count(pool, "source = $1", &["startup.test"], 10, 5)
                 .await
                 .unwrap_or(0);
 
@@ -425,7 +425,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events =
-                wait_for_filtered_event_count(pool, "source = $1", &["interrupted.shutdown"], 0, 3)
+                wait_for_filtered_event_count(&pool, "source = $1", &["interrupted.shutdown"], 0, 3)
                     .await
                     .unwrap_or(0);
 
@@ -890,12 +890,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?
         .unwrap_or(0);
 
         let migration_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?
             .unwrap_or(0);
 
@@ -1002,14 +1002,14 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT state_data FROM core.automaton_checkpoints
                  WHERE automaton_name = 'migration_test_agent'"
         )
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await?
         .flatten();
 
         let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
             "SELECT payload FROM core.events WHERE source = 'migration.safety' LIMIT 1"
         )
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await?;
 
         Ok::<
@@ -1164,7 +1164,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         "degradation_test_event",
         json!({"version": "1.0.0", "description": "Graceful degradation test"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
@@ -1213,7 +1213,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn health_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .map_err(anyhow::Error::from)?
             .unwrap_or(0);
@@ -1223,7 +1223,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _checkpoint_check =
             sqlx::query!("SELECT automaton_name FROM core.automaton_checkpoints LIMIT 1")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 .map_err(anyhow::Error::from)?;
         Ok(())
@@ -1294,7 +1294,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     
     let recovery_test = timeout(
         Duration::from_secs(5),
-        sinex_db::insert_event_with_validator(pool, &event, None),
+        sinex_db::insert_event_with_validator(&pool, &event, None),
     )
     .await;
 
@@ -1598,7 +1598,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'resource.monitoring'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
 
@@ -1765,7 +1765,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM core.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
     )
-    .execute(pool)
+    .execute(&pool)
     .await
     .ok();
 

@@ -66,13 +66,19 @@ pub fn create_test_validator_with_rules(_rules: Vec<ValidationRule>) -> EventVal
 pub async fn create_test_integrity_validator(
     pool: &DbPool,
 ) -> AnyhowResult<DataIntegrityValidator> {
-    DataIntegrityValidator::new(pool).await
+    DataIntegrityValidator::new(pool.clone()).await
 }
 
 /// Create an integrity tester for comprehensive validation
 pub async fn create_test_integrity_tester(pool: &DbPool) -> AnyhowResult<IntegrityTester> {
-    IntegrityTester::new(pool).await
+    IntegrityTester::new(pool.clone()).await
 }
+
+/// Asserts that a given validation result contains a specific type of violation.
+// This was commented out in the original file, keeping it that way.
+// pub fn assert_validation_violation<T: 'static>(result: &Result<(), ValidationError>, description: &str) {
+// ...
+// }
 
 /// Validation rule for testing purposes
 #[derive(Debug, Clone)]
