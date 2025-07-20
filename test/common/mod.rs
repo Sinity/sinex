@@ -52,7 +52,7 @@ use tokio::net::UnixListener;
 pub async fn count_events_from_source(
     pool: &DbPool,
     source: &str,
-) -> AnyhowResult<u64, Box<dyn std::error::Error>> {
+) -> AnyhowResult<u64> {
     let (count,) = EventQueries::count_by_source(source.to_string())
         .fetch_one::<(i64,)>(pool)
         .await?;
@@ -953,34 +953,6 @@ pub mod automaton_testing {
         }))
     }
 
-    /// Wait for checkpoint to reach expected state with timeout
-    pub async fn wait_for_checkpoint_progress(
-        pool: &DbPool,
-        automaton_name: &str,
-        expected_count: u64,
-        timeout_secs: u64,
-    ) -> AnyhowResult<CheckpointState> {
-        let timeout = std::time::Duration::from_secs(timeout_secs);
-        let start = std::time::Instant::now();
-
-        loop {
-            if let Some(checkpoint) = get_checkpoint_state(pool, automaton_name).await? {
-                if checkpoint.processed_count >= expected_count {
-                    return Ok(checkpoint);
-                }
-            }
-
-            if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for automaton {} to reach count {}",
-                    automaton_name,
-                    expected_count
-                ));
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    }
 
     /// Verify automaton processed events in order
     pub async fn verify_processing_order(
@@ -1382,7 +1354,7 @@ pub mod event_sources {
     }
 
     /// Test event source until it produces events or times out
-    pub async fn test_event_production<T: EventSource>(
+    pub async fn test_event_production<T: EventSource + 'static>(
         mut source: T,
         timeout_secs: u64,
         min_events: usize,
@@ -1434,7 +1406,7 @@ pub mod parallelization {
         where
             F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
             Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
-                + Send,
+                + Send + 'static,
             T: Send + 'static,
         {
             let mut join_set = JoinSet::new();
@@ -1478,7 +1450,7 @@ pub mod parallelization {
     where
         F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
-            + Send,
+            + Send + 'static,
         T: Send + 'static,
     {
         ParallelTestExecutor::new(max_concurrent)

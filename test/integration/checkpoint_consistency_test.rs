@@ -281,7 +281,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
     // Insert a single event
     let factory = EventFactory::new("test.stale_checkpoint");
     let raw_event = factory.create_event("stale_test", json!({"data": "test"}));
-    let event = sinex_db::insert_event_with_validator(pool, &raw_event, None).await?;
+    let event = sinex_db::insert_event_with_validator(&pool, &raw_event, None).await?;
 
     // Create checkpoint with old timestamp (3 hours ago)
     sqlx::query!(
@@ -418,7 +418,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     }
 
     // Get expected automatons for validation
-    let expected_automatons = checkpoint_verification::get_expected_automatons(pool).await?;
+    let expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     println!("Expected automatons: {}", expected_automatons.len());
 
     // All test automatons should be in the expected list
@@ -639,7 +639,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
 
     // Test Scenario 3: Missing checkpoint (automaton exists but no checkpoint)
     // Just check that no checkpoint exists - this should be detected by the automaton list check
-    let expected_automatons = checkpoint_verification::get_expected_automatons(pool).await?;
+    let expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
     assert!(
         expected_automatons.contains(&automaton_name),
         "Test automaton should be in expected list"

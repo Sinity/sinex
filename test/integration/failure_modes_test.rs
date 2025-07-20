@@ -600,7 +600,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
     ) -> AnyhowResult<(), sqlx::Error> {
         match timeout(
             Duration::from_millis(500),
-            sqlx::query("SELECT 1").fetch_one(pool),
+            sqlx::query("SELECT 1").fetch_one(&pool),
         )
         .await
         {

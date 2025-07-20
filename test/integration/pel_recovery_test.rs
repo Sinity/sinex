@@ -555,7 +555,11 @@ async fn test_pel_recovery_message_ordering(ctx: TestContext) -> TestResult {
         // Process claimed messages and extract sequence numbers
         for claim in claimed {
             if let Some(sequence_value) = claim.ids[0].map.get("sequence") {
-                let sequence: i32 = sequence_value.parse().unwrap_or(-1);
+                let sequence: i32 = match sequence_value {
+                    redis::Value::Data(bytes) => String::from_utf8_lossy(bytes).parse().unwrap_or(-1),
+                    redis::Value::Int(i) => *i as i32,
+                    _ => -1,
+                };
                 recovered_sequences.push(sequence);
             }
 
@@ -809,20 +813,24 @@ async fn test_pel_recovery_malformed_messages(ctx: TestContext) -> TestResult {
     for claim in claimed {
         // Simulate processing with error handling
         if let Some(data) = claim.ids[0].map.get("data") {
-            match data.as_str() {
-                d if d.starts_with('{') && d.ends_with('}') => {
-                    // Try to parse as JSON
-                    match serde_json::from_str::<serde_json::Value>(d) {
-                        Ok(_) => processed_count += 1,
-                        Err(_) => error_count += 1,
-                    }
+            let data_str = match data {
+                redis::Value::Data(bytes) => String::from_utf8_lossy(bytes),
+                _ => continue,
+            };
+            
+            if data_str.is_empty() {
+                error_count += 1;
+            } else if data_str.starts_with('{') && data_str.ends_with('}') {
+                // Try to parse as JSON
+                match serde_json::from_str::<serde_json::Value>(&data_str) {
+                    Ok(_) => processed_count += 1,
+                    Err(_) => error_count += 1,
                 }
-                d if d.is_empty() => error_count += 1,
-                d if d.len() > 500 => {
-                    // Large message, might need special handling
-                    processed_count += 1;
-                }
-                _ => processed_count += 1,
+            } else if data_str.len() > 500 {
+                // Large message, might need special handling
+                processed_count += 1;
+            } else {
+                processed_count += 1;
             }
         }
 

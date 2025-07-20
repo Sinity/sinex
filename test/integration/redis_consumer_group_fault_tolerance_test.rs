@@ -436,7 +436,7 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
         .await;
 
     // Concurrent operations: producers and consumers
-    let mut join_set = JoinSet::new();
+    let mut join_set: JoinSet<(String, usize)> = JoinSet::new();
     let processed_messages = Arc::new(Mutex::new(Vec::<String>::new()));
 
     // Producer task
@@ -458,7 +458,7 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
             produced += 1;
             sleep(Duration::from_millis(10)).await;
         }
-        produced
+        ("producer".to_string(), produced)
     });
 
     // Consumer tasks
@@ -518,7 +518,7 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
     // Wait for all tasks to complete
     let mut results: Vec<(String, usize)> = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        results.push(result?);
+        results.push(result??);
     }
 
     // Verify consistency

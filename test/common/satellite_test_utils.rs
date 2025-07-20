@@ -275,6 +275,7 @@ pub async fn start_test_ingestd_with_config(
     let events_received = Arc::new(Mutex::new(Vec::new()));
     let events_received_clone = events_received.clone();
     let pool = ctx.pool().clone();
+    let socket_path_str_clone = socket_path_str.clone();
 
     // Create a minimal gRPC server that accepts events
     let server_handle = tokio::spawn(async move {
@@ -323,6 +324,7 @@ pub async fn start_test_ingestd_with_config(
             ) -> AnyhowResult<Response<sinex_ingestd::proto::BatchResponse>, Status> {
                 let batch = request.into_inner();
                 let mut success_count = 0;
+                let total_events = batch.events.len();
 
                 for event_msg in batch.events {
                     if let Ok(event) = proto_to_raw_event(event_msg) {
@@ -345,7 +347,7 @@ pub async fn start_test_ingestd_with_config(
                     error: None,
                     event_ids: vec![sinex_ulid::Ulid::new().to_string(); success_count],
                     processed_count: success_count as u32,
-                    failed_count: (batch.events.len() - success_count) as u32,
+                    failed_count: (total_events - success_count) as u32,
                 }))
             }
 
@@ -371,7 +373,7 @@ pub async fn start_test_ingestd_with_config(
             config,
         };
 
-        let addr = format!("unix://{}", socket_path_str);
+        let addr = format!("unix://{}", socket_path_str_clone);
 
         Server::builder()
             .add_service(

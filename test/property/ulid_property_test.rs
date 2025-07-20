@@ -768,7 +768,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                 .bind(queue_ulid.to_uuid())
                 .bind(event.id.to_uuid())
                 .bind(&agent_name)
-          .execute(&pool)(pool)
+                .execute(&pool)
                 .await
                 .expect("Queue insert failed");
 

@@ -490,7 +490,7 @@ impl TestContext {
         
         // Use xread for simplified testing since xreadgroup signature is different
         let result: Vec<(String, Vec<(String, String)>)> = conn
-            .xread(&[(stream_key, "0")], &[])
+            .xread::<_, _, &str>(&[(stream_key, "0")], &[])
             .await?;
         
         let mut messages = Vec::new();

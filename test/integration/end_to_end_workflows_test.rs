@@ -56,7 +56,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     let mut ingested_event_ids = Vec::new();
 
     for event in &satellite_events {
-        match sinex_db::insert_event_with_validator(pool, event, None).await {
+        match sinex_db::insert_event_with_validator(&pool, event, None).await {
             Ok(stored_event) => {
                 ingested_event_ids.push(stored_event.id);
                 println!("Ingested event: {}", stored_event.id);
@@ -74,7 +74,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     // Phase 3: Verify all events are in database with correct structure
     let mut stored_events = Vec::new();
     for event_id in &ingested_event_ids {
-        let event = sinex_db::get_event_by_id(pool, *event_id).await?;
+        let event = sinex_db::get_event_by_id(&pool, *event_id).await?;
         stored_events.push(event);
     }
 
@@ -100,7 +100,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     let (time_range_events,) = EventQueries::count_by_time_range(
         Utc::now() - Duration::hours(1),
         Utc::now()
-    ).fetch_one::<(i64,)>(pool).await?;
+    ).fetch_one::<(i64,)>(&pool).await?;
 
     assert!(
         time_range_events >= satellite_events.len() as i64,
@@ -192,7 +192,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     let (total_events,) = QueryBuilder::select("core.events")
         .columns(&["COUNT(*) as count"])
         .where_op("source", "LIKE", QueryParam::String("satellite-%".to_string()))
-        .fetch_one::<(i64,)>(pool).await?;
+        .fetch_one::<(i64,)>(&pool).await?;
 
     assert_eq!(
         total_events,
@@ -204,7 +204,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     let (distinct_event_ids,) = QueryBuilder::select("core.events")
         .columns(&["COUNT(DISTINCT event_id) as count"])
         .where_op("source", "LIKE", QueryParam::String("satellite-%".to_string()))
-        .fetch_one::<(i64,)>(pool).await?;
+        .fetch_one::<(i64,)>(&pool).await?;
 
     assert_eq!(
         distinct_event_ids,
@@ -275,7 +275,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 
     // Create consumer group
     match redis_conn
-        .xgroup_create_mkstream(stream_key, &consumer_group, "0")
+        .xgroup_create_mkstream::<_, _, _, ()>(stream_key, &consumer_group, "0")
         .await
     {
         Ok(_) => println!("Created consumer group: {}", consumer_group),
@@ -323,7 +323,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 
                     // Acknowledge message
                     match redis_conn
-                        .xack(stream_key, &consumer_group, &[&message.id])
+                        .xack::<_, _, _, ()>(stream_key, &consumer_group, &[&message.id])
                         .await
                     {
                         Ok(_) => println!("Acknowledged message: {}", message.id),
@@ -628,11 +628,10 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 
     // Phase 5: Verify component heartbeats in database
     for component in &components {
-        let heartbeat_count = EventQueries::count_by_source(
-            pool,
-            component,
-            &format!("{}.heartbeat", component)
-        ).await?;
+        let heartbeat_source = format!("{}.heartbeat", component);
+        let (heartbeat_count,): (i64,) = EventQueries::count_by_source(heartbeat_source)
+            .fetch_one(pool)
+            .await?;
 
         assert_eq!(
             heartbeat_count,
@@ -797,7 +796,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 5: Verify system resilience
-    let total_events = EventQueries::count_by_source(pool, component_name).fetch_one::<(i64,)>(pool).await.map(|r| r.0)?;
+    let total_events = EventQueries::count_by_source(component_name.to_string()).fetch_one::<(i64,)>(&pool).await.map(|r| r.0)?;
 
     assert!(
         total_events > operation_count as i64 / 2,
@@ -897,8 +896,9 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
     // Phase 5: Calculate performance metrics
     let throughput = successes as f64 / total_duration.as_secs_f64();
     let average_latency = times.iter().sum::<StdDuration>() / times.len() as u32;
-    let min_latency = times.iter().min().unwrap_or(&StdDuration::from_millis(0));
-    let max_latency = times.iter().max().unwrap_or(&StdDuration::from_millis(0));
+    let default_duration = StdDuration::from_millis(0);
+    let min_latency = times.iter().min().unwrap_or(&default_duration);
+    let max_latency = times.iter().max().unwrap_or(&default_duration);
 
     println!("Performance load test results:");
     println!("- Total duration: {:?}", total_duration);
@@ -921,7 +921,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 7: Verify database consistency under load
-    let total_db_events = EventQueries::count_by_source(pool, "load-worker-%").fetch_one::<(i64,)>(pool).await.map(|r| r.0)?;
+    let total_db_events = EventQueries::count_by_source("load-worker-%".to_string()).fetch_one::<(i64,)>(&pool).await.map(|r| r.0)?;
 
     assert_eq!(
         total_db_events,
@@ -992,7 +992,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         let mut chain_success = true;
 
         for event in chain_events {
-            match sinex_db::insert_event_with_validator(pool, event, None).await {
+            match sinex_db::insert_event_with_validator(&pool, event, None).await {
                 Ok(_) => {
                     println!(
                         "Inserted event for chain {} from component {}",
@@ -1043,7 +1043,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     // Group by chain and verify sequence
     let mut chain_groups: HashMap<String, Vec<_>> = HashMap::new();
     for event in temporal_check {
-        let chain_id = event.chain_id.unwrap_or_default();
+        let chain_id = event.chain_id.clone().unwrap_or_default();
         chain_groups
             .entry(chain_id)
             .or_insert_with(Vec::new)

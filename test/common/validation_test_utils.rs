@@ -50,7 +50,7 @@ pub fn create_test_validator() -> EventValidator {
 
 /// Create a test event validator loaded from database
 pub async fn create_test_validator_from_db(pool: &DbPool) -> AnyhowResult<EventValidator> {
-    EventValidator::load_from_db(pool).await
+    EventValidator::load_from_db(&pool).await
 }
 
 /// Create test validator with specific rules
@@ -66,12 +66,12 @@ pub fn create_test_validator_with_rules(_rules: Vec<ValidationRule>) -> EventVal
 pub async fn create_test_integrity_validator(
     pool: &DbPool,
 ) -> AnyhowResult<DataIntegrityValidator> {
-    DataIntegrityValidator::new(&pool).await
+    DataIntegrityValidator::new(pool.clone()).await
 }
 
 /// Create an integrity tester for comprehensive validation
 pub async fn create_test_integrity_tester(pool: &DbPool) -> AnyhowResult<IntegrityTester> {
-    IntegrityTester::new(&pool).await
+    IntegrityTester::new(pool.clone()).await
 }
 
 /// Validation rule for testing purposes

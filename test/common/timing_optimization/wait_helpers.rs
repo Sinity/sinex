@@ -65,29 +65,28 @@ pub async fn wait_for_satellite_events_ingested(
 }
 
 /// Test-compatible wait_for_condition that accepts anyhow::Result closures
-pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> anyhow::Result<()>
+pub async fn wait_for_condition<F, Fut>(mut condition: F, timeout_secs: u64) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
-    // Wrap the condition to convert anyhow::Error to CoreError
-    let mut condition = condition;
-    let wrapped_condition = move || {
-        let fut = condition();
-        async move {
-            fut.await
-                .map_err(|e| sinex_error::CoreError::Service(e.to_string()))
+    // Create a custom wait loop instead of wrapping
+    use tokio::time::{timeout, Duration};
+    
+    let duration = Duration::from_secs(timeout_secs);
+    timeout(duration, async {
+        loop {
+            match condition().await {
+                Ok(true) => return Ok(()),
+                Ok(false) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) => return Err(e),
+            }
         }
-    };
-
-    sinex_core_utils::wait_helpers::wait_for_condition(
-        wrapped_condition,
-        timeout_secs,
-        "test condition"
-    )
+    })
     .await
-    .map(|_| ())
-    .map_err(anyhow::Error::new)
+    .map_err(|_| anyhow::anyhow!("Timeout waiting for test condition after {} seconds", timeout_secs))?
 }
 
 /// Test-compatible wait_for_condition_or_timeout that accepts anyhow::Result closures

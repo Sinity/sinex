@@ -17,7 +17,7 @@ async fn create_test_event(
     event_type: &str,
     payload_content: serde_json::Value,
     time_offset: Option<Duration>,
-) -> AnyhowResult<Ulid, Box<dyn std::error::Error>> {
+) -> AnyhowResult<Ulid> {
     let mut event = EventFactory::new(source)
         .create_event(event_type, payload_content);
 
@@ -33,7 +33,7 @@ async fn create_test_event(
 }
 
 /// Create a set of diverse test events
-async fn setup_test_data(pool: &DbPool) -> AnyhowResult<Vec<Ulid>, Box<dyn std::error::Error>> {
+async fn setup_test_data(pool: &DbPool) -> AnyhowResult<Vec<Ulid>> {
     let mut event_ids = Vec::new();
 
     // Recent events (within last hour)
@@ -123,7 +123,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
     let service = SearchService::new(pool.clone());
 
     // Setup test data
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // CRITICAL: Test various SQL injection patterns
     let injection_patterns = vec![
@@ -164,7 +164,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
 
         // Verify the database wasn't corrupted
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?;
         assert!(
             count > 0,
@@ -181,7 +181,7 @@ async fn test_search_sql_injection_in_filters(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Test SQL injection in source filter
     let query = SearchQuery {
@@ -222,7 +222,7 @@ async fn test_search_basic_text_search(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Search for "important"
     let query = SearchQuery {
@@ -263,7 +263,7 @@ async fn test_search_source_filtering(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Filter by filesystem source
     let query = SearchQuery {
@@ -305,7 +305,7 @@ async fn test_search_event_type_filtering(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Filter by event type
     let query = SearchQuery {
@@ -330,7 +330,7 @@ async fn test_search_time_range_filtering(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Search for events from last 2 hours
     let query = SearchQuery {
@@ -358,7 +358,7 @@ async fn test_search_pagination(ctx: TestContext) -> TestResult {
 
     // Create more events for pagination testing
     for i in 0..15 {
-        create_test_event(pool, "test", "pagination.test", json!({ "index": i }), None).await?;
+        create_test_event(&pool, "test", "pagination.test", json!({ "index": i }), None).await?;
     }
 
     // First page
@@ -394,7 +394,7 @@ async fn test_search_limit_bounds(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Test with limit = 0 (should this be allowed?)
     let query = SearchQuery {
@@ -432,7 +432,7 @@ async fn test_search_combined_filters(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Combine text search with source filter
     let query = SearchQuery {
@@ -456,7 +456,7 @@ async fn test_search_ordering(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Get all events
     let query = SearchQuery {
@@ -490,7 +490,7 @@ async fn test_search_snippet_extraction(ctx: TestContext) -> TestResult {
     // Create event with long content
     let long_content = "a".repeat(50) + "FINDME" + &"b".repeat(50);
     create_test_event(
-        pool,
+        &pool,
         "test",
         "snippet.test",
         json!({ "content": long_content }),
@@ -528,7 +528,7 @@ async fn test_search_special_characters_in_text(ctx: TestContext) -> TestResult 
 
     // Create events with special characters
     create_test_event(
-        pool,
+        &pool,
         "test",
         "special.chars",
         json!({ "content": "test%value_here" }),
@@ -537,7 +537,7 @@ async fn test_search_special_characters_in_text(ctx: TestContext) -> TestResult 
     .await?;
 
     create_test_event(
-        pool,
+        &pool,
         "test",
         "special.chars",
         json!({ "content": "test_value%here" }),
@@ -587,7 +587,7 @@ async fn test_search_empty_results(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // Search for non-existent content
     let query = SearchQuery {
@@ -626,7 +626,7 @@ async fn test_search_result_format(ctx: TestContext) -> TestResult {
     let service = SearchService::new(pool.clone());
 
     let event_id = create_test_event(
-        pool,
+        &pool,
         "test.source",
         "test.type",
         json!({
@@ -668,7 +668,7 @@ async fn test_search_sql_injection_limit_offset_vulnerability(ctx: TestContext) 
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    setup_test_data(pool).await?;
+    setup_test_data(&pool).await?;
 
     // The current implementation directly concatenates limit/offset into SQL
     // This means negative values or SQL fragments could be injected

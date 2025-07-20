@@ -32,14 +32,11 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     let mut corrupted_event_ids = Vec::new();
 
     for (scenario, payload) in corruption_scenarios {
+        let factory = EventFactory::new("test.corruption");
+        let raw_event = factory.create_event(scenario, payload);
         let event = sinex_db::insert_event_with_validator(
             pool,
-            "test.corruption",
-            scenario,
-            "localhost",
-            payload,
-            None,
-            Some("1.0.0"),
+            &raw_event,
             None,
         )
         .await;
@@ -390,14 +387,11 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
     ];
 
     for (i, corrupt_payload) in payload_corruption_tests.iter().enumerate() {
+        let factory = EventFactory::new("test.encoding_corruption");
+        let raw_event = factory.create_event(&format!("payload_corruption_{}", i), corrupt_payload.clone());
         let result = sinex_db::insert_event_with_validator(
             pool,
-            "test.encoding_corruption",
-            &format!("payload_corruption_{}", i),
-            "localhost",
-            corrupt_payload.clone(),
-            None,
-            Some("1.0.0"),
+            &raw_event,
             None,
         )
         .await;
@@ -576,14 +570,11 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
             ),
         };
 
+        let factory = EventFactory::new("test.large_scale");
+        let raw_event = factory.create_event(event_type, payload);
         let result = sinex_db::insert_event_with_validator(
             pool,
-            "test.large_scale",
-            event_type,
-            "localhost",
-            payload,
-            None,
-            Some("1.0.0"),
+            &raw_event,
             None,
         )
         .await;

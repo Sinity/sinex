@@ -64,7 +64,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
     let db_ordered_ulids: Vec<String> = sqlx::query_scalar!(
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_ordering' ORDER BY event_id"
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?
     .into_iter()
     .filter_map(|opt| opt)
@@ -78,7 +78,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_ordering".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -221,7 +221,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
     // Cleanup
     EventQueries::delete_by_source("test.concurrent_ulid".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -280,7 +280,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
     let mut ordering_results = HashMap::new();
 
     for (name, query) in ordering_queries {
-        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(pool).await?;
+        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(&pool).await?;
         ordering_results.insert(name, result);
     }
 
@@ -347,7 +347,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.db_ordering".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -423,7 +423,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.clock_skew".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -484,7 +484,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
     let ordered_ids: Vec<String> = sqlx::query_scalar!(
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_performance' ORDER BY event_id"
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?
     .into_iter()
     .filter_map(|opt| opt)
@@ -543,7 +543,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_performance".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -551,6 +551,17 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
 
 // Helper function to insert test events with error handling
 async fn insert_test_event(pool: &DbPool, event: &RawEvent) -> AnyhowResult<RawEvent> {
+    // Convert ULIDs to UUIDs before the query to avoid temporary value issues
+    let source_event_uuids = event
+        .source_event_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>());
+    
+    let associated_blob_uuids = event
+        .associated_blob_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>());
+
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -569,21 +580,13 @@ async fn insert_test_event(pool: &DbPool, event: &RawEvent) -> AnyhowResult<RawE
         event.ts_orig,
         event.host,
         event.payload,
-        event
-            .source_event_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>())
-            .as_deref(),
+        source_event_uuids.as_deref(),
         event.source_material_id.map(|u| u.to_uuid()),
-        event
-            .associated_blob_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>())
-            .as_deref(),
+        associated_blob_uuids.as_deref(),
         event.ingestor_version,
         event.payload_schema_id.map(|u| u.to_uuid()),
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     Ok(event.clone())

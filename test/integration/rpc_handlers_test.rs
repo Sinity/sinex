@@ -139,7 +139,7 @@ async fn invoke_rpc_method(
     services: &ServiceContainer,
     method: &str,
     params: Value,
-) -> AnyhowResult<Value, Box<dyn std::error::Error>> {
+) -> AnyhowResult<Value> {
     // Direct handler invocation for testing RPC logic without HTTP server complexity
 
     match method {
@@ -203,7 +203,7 @@ async fn invoke_rpc_method(
 }
 
 /// Create service container for testing
-async fn create_test_services() -> AnyhowResult<ServiceContainer, Box<dyn std::error::Error>> {
+async fn create_test_services() -> AnyhowResult<ServiceContainer> {
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
 

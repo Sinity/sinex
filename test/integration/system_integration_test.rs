@@ -943,7 +943,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
         "All buffered events should be processed on recovery"
     );
 
-    let count = EventQueries::count_by_source(pool, "buffering_test").fetch_one::<(i64,)>(pool).await.map(|r| r.0)?;
+    let count = EventQueries::count_by_source("buffering_test".to_string()).fetch_one::<(i64,)>(&pool).await.map(|r| r.0)?;
     pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
 
     Ok(true)
@@ -1834,8 +1834,8 @@ async fn test_large_file_event_capture(
     let large_event_id = sinex_db::insert_event(pool, &large_file_event).await?;
     let medium_event_id = sinex_db::insert_event(pool, &medium_file_event).await?;
 
-    let retrieved_large = sinex_db::get_event_by_id(pool, large_event_id).await?;
-    let retrieved_medium = sinex_db::get_event_by_id(pool, medium_event_id).await?;
+    let retrieved_large = sinex_db::get_event_by_id(&pool, large_event_id).await?;
+    let retrieved_medium = sinex_db::get_event_by_id(&pool, medium_event_id).await?;
 
     pretty_assertions::assert_eq!(retrieved_large.source, "fs");
     pretty_assertions::assert_eq!(retrieved_large.event_type, "file.created");
@@ -1935,7 +1935,7 @@ async fn test_event_processing_with_annex_blobs(
         );
 
         let queue_item = &claimed_items[0];
-        let event = sinex_db::get_event_by_id(pool, *event_id).await?;
+        let event = sinex_db::get_event_by_id(&pool, *event_id).await?;
 
         if let Some(_annex_key) = event.payload["git_annex_key"].as_str() {
             let file_name = match event.source.as_str() {
@@ -2004,7 +2004,7 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), anyh
 
     let inserted_event_id = sinex_db::insert_event(pool, &fallback_event).await?;
 
-    let retrieved_event = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
+    let retrieved_event = sinex_db::get_event_by_id(&pool, inserted_event_id).await?;
     pretty_assertions::assert_eq!(
         retrieved_event.payload["storage_type"].as_str().unwrap(),
         "inline"
@@ -2018,7 +2018,7 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), anyh
         "git_annex_unavailable"
     );
 
-    let health_check = sqlx::query("SELECT 1").fetch_one(pool).await;
+    let health_check = sqlx::query("SELECT 1").fetch_one(&pool).await;
     assert!(
         health_check.is_ok(),
         "System should remain healthy without git-annex"
@@ -2052,7 +2052,7 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> AnyhowResult<()
 
         let inserted_event_id = sinex_db::insert_event(pool, &failure_event).await?;
 
-        let retrieved = sinex_db::get_event_by_id(pool, inserted_event_id).await?;
+        let retrieved = sinex_db::get_event_by_id(&pool, inserted_event_id).await?;
         pretty_assertions::assert_eq!(
             retrieved.payload["git_annex_error"].as_str().unwrap(),
             error_message

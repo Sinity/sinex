@@ -95,7 +95,7 @@ async fn setup_analytics_test_data(pool: &DbPool) -> TestResult {
 
     // Clipboard events - older
     create_analytics_test_event(
-        pool,
+        &pool,
         "clipboard",
         "copied",
         json!({
@@ -108,7 +108,7 @@ async fn setup_analytics_test_data(pool: &DbPool) -> TestResult {
 
     // System events - very old (outside typical time ranges)
     create_analytics_test_event(
-        pool,
+        &pool,
         "system",
         "boot.completed",
         json!({
@@ -127,7 +127,7 @@ async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> Test
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let counts = service.get_event_count_by_source(None, None).await?;
 
@@ -162,7 +162,7 @@ async fn test_get_event_count_by_source_with_time_filter(ctx: TestContext) -> Te
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let now = Utc::now();
     let one_hour_ago = now - Duration::hours(1);
@@ -200,7 +200,7 @@ async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestRe
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let counts = service.get_event_count_by_type(None, None).await?;
 
@@ -235,7 +235,7 @@ async fn test_get_event_count_by_type_with_time_filter(ctx: TestContext) -> Test
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let now = Utc::now();
     let two_hours_ago = now - Duration::hours(2);
@@ -269,7 +269,7 @@ async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestRes
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let now = Utc::now();
     let three_hours_ago = now - Duration::hours(3);
@@ -305,7 +305,7 @@ async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> Test
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let now = Utc::now();
     let six_hours_ago = now - Duration::hours(6);
@@ -340,7 +340,7 @@ async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let top_commands = service.get_top_commands(None, None, 10).await?;
 
@@ -380,7 +380,7 @@ async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let top_3_commands = service.get_top_commands(None, None, 3).await?;
 
@@ -398,7 +398,7 @@ async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> TestResult 
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     let now = Utc::now();
     let thirty_minutes_ago = now - Duration::minutes(30);
@@ -456,7 +456,7 @@ async fn test_analytics_with_single_event(ctx: TestContext) -> TestResult {
 
     // Create single test event
     create_analytics_test_event(
-        pool,
+        &pool,
         "test.source",
         "test.event",
         json!({"test": "data"}),
@@ -492,7 +492,7 @@ async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult {
 
     // Create event exactly at boundary
     create_analytics_test_event(
-        pool,
+        &pool,
         "boundary.test",
         "boundary.event",
         json!({"boundary": true}),
@@ -536,7 +536,7 @@ async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResu
 
     // Create mixed events - only command.executed should be included
     create_analytics_test_event(
-        pool,
+        &pool,
         "shell.kitty",
         "command.executed",
         json!({"command": "test command"}),
@@ -545,7 +545,7 @@ async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResu
     .await?;
 
     create_analytics_test_event(
-        pool,
+        &pool,
         "shell.kitty",
         "session.started",
         json!({"shell": "bash"}),
@@ -554,7 +554,7 @@ async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResu
     .await?;
 
     create_analytics_test_event(
-        pool,
+        &pool,
         "fs",
         "file.created",
         json!({"path": "/test", "command": "not a real command"}),
@@ -598,7 +598,7 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult {
 
             for _ in 0..count {
                 create_analytics_test_event(
-                    pool,
+                    &pool,
                     source,
                     event_type,
                     json!({"test": "precision"}),
@@ -648,7 +648,7 @@ async fn test_activity_heatmap_legacy_method(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(pool).await?;
+    setup_analytics_test_data(&pool).await?;
 
     // Test the legacy activity_heatmap method
     let heatmap = service.activity_heatmap(60, 10).await?;
@@ -687,7 +687,7 @@ async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResul
 
     for i in 0..100 {
         create_analytics_test_event(
-            pool,
+            &pool,
             &format!("perf_source_{}", i % 5),
             &format!("perf_type_{}", i % 3),
             json!({"sequence": i, "performance_test": true}),

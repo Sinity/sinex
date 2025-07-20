@@ -807,8 +807,8 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     // Create CheckpointManager
     use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
     let checkpoint_manager = CheckpointManager::new(
-        pool.clone(),
-        automaton_name.clone(),
+        ctx.pool().clone(),
+        automaton_name.to_string(),
         "default_group".to_string(),
         "test_consumer".to_string(),
     );
@@ -875,11 +875,17 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     for (i, checkpoint_id) in checkpoint_ids.iter().enumerate() {
         CheckpointQueries::upsert_checkpoint(
             *checkpoint_id,
-            automaton_name,
-            "default_group",
-            Some(&format!("event_{}", i)),
-            &json!({"processed_count": i * 10}),
+            automaton_name.to_string(),
+            "default_group".to_string(),
+            format!("consumer_{}", i),
+            Some(format!("event_{}", i)),
+            (i * 10) as i64,
             Utc::now() - Duration::hours((i + 1) as i64),
+            Some(json!({"processed_count": i * 10})),
+            1,
+            None,
+            false,
+            false,
         )
         .execute(&pool)
         .await?;

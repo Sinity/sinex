@@ -113,7 +113,7 @@ impl MockIngestd {
             };
 
             let uds = tokio::net::UnixListener::bind(&socket_path)
-                .map_err(|e| tonic::transport::Error::from_source(e))?;
+                .map_err(|e| anyhow::Error::new(e))?;
             let uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
 
             Server::builder()

@@ -199,13 +199,13 @@ impl StressTestUtils {
             "DELETE FROM core.events WHERE source LIKE $1",
             format!("{}%", source_prefix)
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         sqlx::query!(
             "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             agent_name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         Ok(())
@@ -238,7 +238,7 @@ impl StressTestUtils {
                 payload,
                 "test-host"
             )
-            .execute(pool)
+            .execute(&pool)
             .await?;
 
             event_ids.push(event_id.to_string());
@@ -467,7 +467,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             "status": "running"
         })
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -486,7 +486,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             json!({"deadlock_item": i}),
             "test-host"
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         
         // Create checkpoint entry for satellite architecture
@@ -502,7 +502,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             format!("deadlock_event_{}", i),
             json!({"deadlock_items": i + 1, "status": "active"})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -941,7 +941,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             "status": "running"
         })
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -961,7 +961,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             json!({"race_item": i}),
             "test-host"
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         
         // Create checkpoint entry for satellite architecture
@@ -977,7 +977,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             format!("race_event_{}", i),
             json!({"race_items": i + 1, "status": "active"})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -1477,7 +1477,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             "status": "running"
         })
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());

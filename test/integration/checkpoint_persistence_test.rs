@@ -91,9 +91,12 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     ctx: crate::TestContext,
 ) -> crate::TestResult {
     let pool = ctx.pool().clone();
-    let mut redis_client = ctx.redis().await?;
+    let mut redis_conn = ctx.redis().await?;
     // Start ingestd for this test
     let _ingestd = ctx.start_test_ingestd().await?;
+    
+    // Create RedisStreamClient for the automaton
+    let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
 
     // Test configuration
     let service_name = "test-checkpoint-automaton".to_string();
@@ -126,7 +129,7 @@ async fn test_checkpoint_persistence_and_restart_recovery(
         .await?;
 
     // Clear any existing consumer group state
-    let _: Result<(), _> = redis_client
+    let _: Result<(), _> = redis_conn
         .xgroup_destroy("sinex:streams:hotlog", &consumer_group)
         .await;
 
@@ -151,7 +154,7 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     // Add events to hotlog stream (simulating ingestd)
     for event in &test_events {
         let serialized = serde_json::to_string(event)?;
-        let _: String = redis_client
+        let _: String = redis_conn
             .xadd("sinex:streams:hotlog", "*", &[("data", serialized)])
             .await?;
     }
@@ -272,13 +275,13 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     info!("Step 6: Verifying no duplicate processing occurred");
 
     // Check Redis consumer group info to verify messages were ACKed properly
-    let pending_result: Result<redis::streams::StreamPendingReply, _> = redis_client
+    let pending_result: Result<redis::streams::StreamPendingReply, _> = redis_conn
         .xpending("sinex:streams:hotlog", &consumer_group)
         .await;
 
     match pending_result {
         Ok(pending) => {
-            info!("Pending messages in consumer group: {}", pending.count);
+            info!("Pending messages in consumer group: {}", pending.count());
             // All messages should have been ACKed if checkpoints work correctly
         }
         Err(_) => {

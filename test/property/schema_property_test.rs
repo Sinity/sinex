@@ -481,7 +481,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
             }
 
             // Load validator from database
-            let validator = EventValidator::load_from_db(pool).await.expect("Should load validator");
+            let validator = EventValidator::load_from_db(&pool).await.expect("Should load validator");
 
             // Test that schemas are accessible
             for (name, version) in &created_schemas {
@@ -579,7 +579,7 @@ async fn test_event_validator_database_integration(ctx: TestContext) -> TestResu
     let pool = ctx.pool().clone();
 
     // Test loading validator from empty database
-    let validator = EventValidator::load_from_db(pool)
+    let validator = EventValidator::load_from_db(&pool)
         .await
         .expect("Should be able to load from empty database");
 

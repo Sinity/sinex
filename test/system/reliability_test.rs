@@ -65,7 +65,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
@@ -73,7 +73,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
@@ -117,7 +117,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "startup_event_123",
             json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         // Insert some events
@@ -138,7 +138,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         // Verify data integrity after restart - use timing utilities for better reliability
         let checkpoint_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
@@ -421,7 +421,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let pool = ctx.pool().clone();
 
             // Database should still be responsive
-            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
+            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events =
@@ -817,7 +817,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT schema_name FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await?
         .into_iter()
         .flatten()
@@ -827,7 +827,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT table_name FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await?
         .into_iter()
         .flatten()
@@ -836,7 +836,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let extensions: Vec<String> = sqlx::query_scalar!(
             "SELECT extname FROM pg_extension WHERE extname IN ('timescaledb', 'uuid-ossp')"
         )
-        .fetch_all(&pool)
+        .fetch_all(pool)
         .await
         .unwrap_or_default();
 
@@ -890,12 +890,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
         let migration_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
 
@@ -937,7 +937,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "migration_event_456",
             json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         // Insert test events
@@ -956,7 +956,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Record initial state - use timing utilities for consistency
         let initial_checkpoint_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
@@ -982,7 +982,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Verify data preservation - use timing utilities for reliability
         let final_checkpoint_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
 
