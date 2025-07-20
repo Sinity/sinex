@@ -69,10 +69,7 @@ impl EventQueries {
                 QueryParam::OptionalTimestamp(ts_orig),
                 QueryParam::OptionalString(ingestor_version),
                 QueryParam::OptionalUlid(payload_schema_id),
-                match source_event_ids {
-                    Some(ids) => QueryParam::UlidArray(ids),
-                    None => QueryParam::OptionalUlid(None),
-                },
+                QueryParam::OptionalUlidArray(source_event_ids),
             ])
             .returning(&[
                 "event_id::uuid as \"id!\"",
@@ -119,10 +116,7 @@ impl EventQueries {
             QueryParam::OptionalString(ingestor_version),
             QueryParam::OptionalUlid(payload_schema_id),
             // Handle ULID array properly
-            match source_event_ids {
-                Some(ids) => QueryParam::UlidArray(ids),
-                None => QueryParam::OptionalUlid(None),
-            },
+            QueryParam::OptionalUlidArray(source_event_ids),
         ];
 
         builder = builder.values(&values);
@@ -137,7 +131,7 @@ impl EventQueries {
             "ingestor_version",
             "payload_schema_id::uuid as \"payload_schema_id\"",
             "payload as \"payload!\"",
-            "source_event_ids::uuid[] as \"source_event_ids\"",
+            "source_event_ids::ulid[] as \"source_event_ids\"",
         ])
     }
 
@@ -496,10 +490,7 @@ impl EventQueries {
                 QueryParam::OptionalString(ingestor_version),
                 QueryParam::OptionalUlid(payload_schema_id),
                 QueryParam::UlidArray(vec![blob_id]),
-                match source_event_ids {
-                    Some(ids) => QueryParam::UlidArray(ids),
-                    None => QueryParam::OptionalUlid(None),
-                },
+                QueryParam::OptionalUlidArray(source_event_ids),
             ])
             .returning(&[
                 "event_id::uuid as \"id!\"",

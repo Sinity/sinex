@@ -62,6 +62,8 @@ pub enum QueryParam {
     Ulid(Ulid),
     /// Array of ULIDs (automatically converted to UUID array)
     UlidArray(Vec<Ulid>),
+    /// Optional array of ULIDs (automatically converted to Optional UUID array)
+    OptionalUlidArray(Option<Vec<Ulid>>),
     /// Optional ULID (automatically converted to Optional UUID)
     OptionalUlid(Option<Ulid>),
     /// String value
@@ -102,6 +104,7 @@ impl QueryParam {
         match self {
             QueryParam::Ulid(_) => "uuid",
             QueryParam::UlidArray(_) => "uuid[]",
+            QueryParam::OptionalUlidArray(_) => "uuid[]",
             QueryParam::OptionalUlid(_) => "uuid",
             QueryParam::String(_) => "text",
             QueryParam::OptionalString(_) => "text",
@@ -128,6 +131,11 @@ impl QueryParam {
             QueryParam::UlidArray(ulids) => {
                 let uuids: Vec<Uuid> = ulids.iter().map(|u| ulid_to_uuid(*u)).collect();
                 RawQueryParam::UuidArray(uuids)
+            }
+            QueryParam::OptionalUlidArray(opt_ulids) => {
+                RawQueryParam::OptionalUuidArray(opt_ulids.as_ref().map(|ulids| {
+                    ulids.iter().map(|u| ulid_to_uuid(*u)).collect()
+                }))
             }
             QueryParam::OptionalUlid(opt_ulid) => {
                 RawQueryParam::OptionalUuid(opt_ulid.map(ulid_to_uuid))
@@ -156,6 +164,7 @@ impl QueryParam {
 pub enum RawQueryParam {
     Uuid(Uuid),
     UuidArray(Vec<Uuid>),
+    OptionalUuidArray(Option<Vec<Uuid>>),
     OptionalUuid(Option<Uuid>),
     String(String),
     OptionalString(Option<String>),
@@ -432,7 +441,7 @@ impl QueryBuilder {
                             if self.columns.get(i).map(|c| c == "source_event_ids").unwrap_or(false) {
                                 match param {
                                     QueryParam::UlidArray(_) => format!("${}::ulid[]", param_index),
-                                    QueryParam::OptionalUlid(_) => format!("${}", param_index),
+                                    QueryParam::OptionalUlidArray(_) => format!("${}::ulid[]", param_index),
                                     _ => format!("${}", param_index),
                                 }
                             } else {
@@ -461,6 +470,9 @@ impl QueryBuilder {
                         if column == "source_event_ids" {
                             match param {
                                 QueryParam::UlidArray(_) => {
+                                    set_parts.push(format!("{} = ${}::ulid[]", column, param_index));
+                                }
+                                QueryParam::OptionalUlidArray(_) => {
                                     set_parts.push(format!("{} = ${}::ulid[]", column, param_index));
                                 }
                                 _ => {
@@ -622,6 +634,7 @@ fn bind_param<T>(
     match param {
         RawQueryParam::Uuid(uuid) => query.bind(uuid),
         RawQueryParam::UuidArray(uuids) => query.bind(uuids),
+        RawQueryParam::OptionalUuidArray(opt_uuids) => query.bind(opt_uuids),
         RawQueryParam::OptionalUuid(opt_uuid) => query.bind(opt_uuid),
         RawQueryParam::String(s) => query.bind(s),
         RawQueryParam::OptionalString(opt_s) => query.bind(opt_s),
@@ -646,6 +659,7 @@ fn bind_param_raw(
     match param {
         RawQueryParam::Uuid(uuid) => query.bind(uuid),
         RawQueryParam::UuidArray(uuids) => query.bind(uuids),
+        RawQueryParam::OptionalUuidArray(opt_uuids) => query.bind(opt_uuids),
         RawQueryParam::OptionalUuid(opt_uuid) => query.bind(opt_uuid),
         RawQueryParam::String(s) => query.bind(s),
         RawQueryParam::OptionalString(opt_s) => query.bind(opt_s),
