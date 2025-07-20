@@ -72,6 +72,10 @@ pub enum QueryParam {
     Integer(i64),
     /// Optional integer value
     OptionalInteger(Option<i64>),
+    /// Float value
+    Float(f64),
+    /// Optional float value
+    OptionalFloat(Option<f64>),
     /// Boolean value
     Boolean(bool),
     /// Optional boolean value
@@ -103,6 +107,8 @@ impl QueryParam {
             QueryParam::OptionalString(_) => "text",
             QueryParam::Integer(_) => "bigint",
             QueryParam::OptionalInteger(_) => "bigint",
+            QueryParam::Float(_) => "float8",
+            QueryParam::OptionalFloat(_) => "float8",
             QueryParam::Boolean(_) => "boolean",
             QueryParam::OptionalBoolean(_) => "boolean",
             QueryParam::Json(_) => "jsonb",
@@ -130,6 +136,8 @@ impl QueryParam {
             QueryParam::OptionalString(opt_s) => RawQueryParam::OptionalString(opt_s.clone()),
             QueryParam::Integer(i) => RawQueryParam::Integer(*i),
             QueryParam::OptionalInteger(opt_i) => RawQueryParam::OptionalInteger(*opt_i),
+            QueryParam::Float(f) => RawQueryParam::Float(*f),
+            QueryParam::OptionalFloat(opt_f) => RawQueryParam::OptionalFloat(*opt_f),
             QueryParam::Boolean(b) => RawQueryParam::Boolean(*b),
             QueryParam::OptionalBoolean(opt_b) => RawQueryParam::OptionalBoolean(*opt_b),
             QueryParam::Json(j) => RawQueryParam::Json(j.clone()),
@@ -153,6 +161,8 @@ pub enum RawQueryParam {
     OptionalString(Option<String>),
     Integer(i64),
     OptionalInteger(Option<i64>),
+    Float(f64),
+    OptionalFloat(Option<f64>),
     Boolean(bool),
     OptionalBoolean(Option<bool>),
     Json(JsonValue),
@@ -172,11 +182,19 @@ pub enum QueryType {
 
 /// WHERE clause conditions
 #[derive(Debug, Clone)]
-pub struct WhereCondition {
-    pub column: String,
-    pub operator: String,
-    pub param: QueryParam,
-    pub param_index: usize,
+pub enum WhereCondition {
+    /// Standard condition with a parameter (e.g., column = $1)
+    Parameterized {
+        column: String,
+        operator: String,
+        param: QueryParam,
+        param_index: usize,
+    },
+    /// NULL check condition (e.g., column IS NULL)
+    NullCheck {
+        column: String,
+        is_null: bool,
+    },
 }
 
 /// ORDER BY clause
@@ -285,7 +303,7 @@ impl QueryBuilder {
     /// Add a WHERE condition with equality
     pub fn where_eq(mut self, column: &str, param: QueryParam) -> Self {
         let param_index = self.parameters.len() + 1;
-        self.conditions.push(WhereCondition {
+        self.conditions.push(WhereCondition::Parameterized {
             column: column.to_string(),
             operator: "=".to_string(),
             param: param.clone(),
@@ -298,7 +316,7 @@ impl QueryBuilder {
     /// Add a WHERE condition with custom operator
     pub fn where_op(mut self, column: &str, operator: &str, param: QueryParam) -> Self {
         let param_index = self.parameters.len() + 1;
-        self.conditions.push(WhereCondition {
+        self.conditions.push(WhereCondition::Parameterized {
             column: column.to_string(),
             operator: operator.to_string(),
             param: param.clone(),
@@ -311,13 +329,31 @@ impl QueryBuilder {
     /// Add a WHERE IN condition
     pub fn where_in(mut self, column: &str, param: QueryParam) -> Self {
         let param_index = self.parameters.len() + 1;
-        self.conditions.push(WhereCondition {
+        self.conditions.push(WhereCondition::Parameterized {
             column: column.to_string(),
             operator: "= ANY".to_string(),
             param: param.clone(),
             param_index,
         });
         self.parameters.push(param);
+        self
+    }
+
+    /// Add a WHERE IS NULL condition
+    pub fn where_is_null(mut self, column: &str) -> Self {
+        self.conditions.push(WhereCondition::NullCheck {
+            column: column.to_string(),
+            is_null: true,
+        });
+        self
+    }
+
+    /// Add a WHERE IS NOT NULL condition
+    pub fn where_is_not_null(mut self, column: &str) -> Self {
+        self.conditions.push(WhereCondition::NullCheck {
+            column: column.to_string(),
+            is_null: false,
+        });
         self
     }
 
@@ -423,13 +459,24 @@ impl QueryBuilder {
             sql.push_str(" WHERE ");
             let mut where_parts = Vec::new();
             for condition in &self.conditions {
-                let param_index = params.len() + 1;
-                let type_hint = condition.param.sql_type_hint();
-                where_parts.push(format!(
-                    "{} {} ${}::{}",
-                    condition.column, condition.operator, param_index, type_hint
-                ));
-                params.push(condition.param.to_raw_value());
+                match condition {
+                    WhereCondition::Parameterized { column, operator, param, .. } => {
+                        let param_index = params.len() + 1;
+                        let type_hint = param.sql_type_hint();
+                        where_parts.push(format!(
+                            "{} {} ${}::{}",
+                            column, operator, param_index, type_hint
+                        ));
+                        params.push(param.to_raw_value());
+                    }
+                    WhereCondition::NullCheck { column, is_null } => {
+                        if *is_null {
+                            where_parts.push(format!("{} IS NULL", column));
+                        } else {
+                            where_parts.push(format!("{} IS NOT NULL", column));
+                        }
+                    }
+                }
             }
             sql.push_str(&where_parts.join(" AND "));
         }
@@ -553,6 +600,8 @@ fn bind_param<T>(
         RawQueryParam::OptionalString(opt_s) => query.bind(opt_s),
         RawQueryParam::Integer(i) => query.bind(i),
         RawQueryParam::OptionalInteger(opt_i) => query.bind(opt_i),
+        RawQueryParam::Float(f) => query.bind(f),
+        RawQueryParam::OptionalFloat(opt_f) => query.bind(opt_f),
         RawQueryParam::Boolean(b) => query.bind(b),
         RawQueryParam::OptionalBoolean(opt_b) => query.bind(opt_b),
         RawQueryParam::Json(j) => query.bind(j),
@@ -575,6 +624,8 @@ fn bind_param_raw(
         RawQueryParam::OptionalString(opt_s) => query.bind(opt_s),
         RawQueryParam::Integer(i) => query.bind(i),
         RawQueryParam::OptionalInteger(opt_i) => query.bind(opt_i),
+        RawQueryParam::Float(f) => query.bind(f),
+        RawQueryParam::OptionalFloat(opt_f) => query.bind(opt_f),
         RawQueryParam::Boolean(b) => query.bind(b),
         RawQueryParam::OptionalBoolean(opt_b) => query.bind(opt_b),
         RawQueryParam::Json(j) => query.bind(j),
