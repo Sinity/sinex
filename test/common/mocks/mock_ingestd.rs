@@ -112,8 +112,10 @@ impl MockIngestd {
                 event_count: Arc::new(Mutex::new(0)),
             };
 
-            let uds = tokio::net::UnixListener::bind(&socket_path)
-                .map_err(|e| anyhow::Error::new(e))?;
+            let uds = match tokio::net::UnixListener::bind(&socket_path) {
+                Ok(listener) => listener,
+                Err(e) => return Err(std::io::Error::new(std::io::ErrorKind::Other, e).into()),
+            };
             let uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
 
             Server::builder()

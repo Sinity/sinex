@@ -489,15 +489,24 @@ impl TestContext {
             .await;
         
         // Use xread for simplified testing since xreadgroup signature is different
-        let result: Vec<(String, Vec<(String, String)>)> = conn
-            .xread::<_, _, String>(&[(stream_key, "0")], &[])
-            .await?;
+        let result: redis::RedisResult<redis::streams::StreamReadReply> = conn
+            .xread(&[stream_key], &["0"])
+            .await;
         
         let mut messages = Vec::new();
-        for (_stream, stream_messages) in result {
-            for (id, fields) in stream_messages {
-                messages.push(StreamMessage { id, fields: vec![("field".to_string(), fields)] });
+        match result {
+            Ok(reply) => {
+                for redis::streams::StreamKey { key: _, ids } in reply.keys {
+                    for redis::streams::StreamId { id, map } in ids {
+                        let mut fields = Vec::new();
+                        for (k, v) in map {
+                            fields.push((k, v));
+                        }
+                        messages.push(StreamMessage { id, fields });
+                    }
+                }
             }
+            Err(_) => {} // No messages
         }
         
         Ok(messages)

@@ -478,7 +478,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     sqlx::query!(
         "DELETE FROM core.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
     )
-    .execute(pool)
+    .execute(ctx.pool())
     .await
     .ok();
 
@@ -890,12 +890,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await?
         .unwrap_or(0);
 
         let migration_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(&pool)
+            .fetch_one(pool)
             .await?
             .unwrap_or(0);
 
@@ -1002,14 +1002,14 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT state_data FROM core.automaton_checkpoints
                  WHERE automaton_name = 'migration_test_agent'"
         )
-        .fetch_optional(&pool)
+        .fetch_optional(pool)
         .await?
         .flatten();
 
         let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
             "SELECT payload FROM core.events WHERE source = 'migration.safety' LIMIT 1"
         )
-        .fetch_optional(&pool)
+        .fetch_optional(pool)
         .await?;
 
         Ok::<
@@ -1332,14 +1332,14 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'degradation.test'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         agent_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     Ok(())

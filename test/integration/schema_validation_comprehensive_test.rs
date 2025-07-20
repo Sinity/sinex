@@ -283,7 +283,7 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> TestResult
     let _valid_event = sinex_db::insert_event_with_validator(&pool, &valid_event, None).await?;
 
     // Create integrity tester
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
 
     // Run comprehensive integrity tests
     let config = IntegrityTestConfig {

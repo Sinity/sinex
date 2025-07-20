@@ -737,7 +737,7 @@ impl<'a> DataIntegrityValidator<'a> {
     }
 
     /// Get the database pool
-    pub fn pool(&self) -> &'static DbPool {
+    pub fn pool(&self) -> &'a DbPool {
         self.pool
     }
 

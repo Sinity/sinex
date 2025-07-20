@@ -53,7 +53,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect corruption
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -156,9 +156,9 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
             test_ulid.timestamp(),
             "localhost",
             json!({"test": test_name}),
-            None::<Vec<Uuid>>,  // source_event_ids
+            None::<&[Uuid]>,  // source_event_ids
             None::<Uuid>,      // source_material_id
-            None::<Vec<Uuid>>, // associated_blob_ids
+            None::<&[Uuid]>, // associated_blob_ids
             Some("1.0.0"),     // ingestor_version
             None::<Uuid>,      // payload_schema_id
         )
@@ -189,7 +189,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect invalid ULIDs
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 24, // Look back far to catch ancient timestamps
@@ -279,7 +279,7 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
     // Note: Work queue integrity tests removed - work_queue table deprecated in satellite architecture
 
     // Run integrity check to detect foreign key issues
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -411,7 +411,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect encoding issues
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -538,7 +538,7 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.large_scale");
             let event = factory.create_event("valid_event", json!({"sequence": i}));
             let event_id = sinex_db::insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -600,7 +600,7 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
     // Run large-scale integrity scan
     let scan_start = std::time::Instant::now();
 
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: total_events as u64,
         check_window_hours: 1,

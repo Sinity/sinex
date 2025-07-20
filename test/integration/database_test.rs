@@ -884,8 +884,8 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
             Some(json!({"processed_count": i * 10})),
             1,
             None,
-            false,
-            false,
+            Utc::now() - Duration::hours((i + 1) as i64),
+            Utc::now(),
         )
         .execute(&pool)
         .await?;

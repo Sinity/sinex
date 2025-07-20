@@ -289,7 +289,7 @@ async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
             "*",
             &[
                 ("original_id", &message_id),
-                ("original_stream", stream_key.as_ref()),
+                ("original_stream", &stream_key.to_string()),
                 ("retry_count", &retry_count.to_string()),
                 ("type", &"retry.test".to_string()),
                 ("data", &"failing-message".to_string()),

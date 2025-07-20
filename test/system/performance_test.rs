@@ -48,7 +48,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
             }),
         );
 
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 events_inserted.fetch_add(1, Ordering::Relaxed);
             }
@@ -74,7 +74,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Verify events in database using timing utility
     let db_count = wait_for_filtered_event_count(
-        pool,
+        &pool,
         "source = $1",
         &["load_test"],
         target_events as i64,
@@ -164,7 +164,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Verify events in database using timing utility
     let db_count = wait_for_filtered_event_count(
-        pool,
+        &pool,
         "source = $1",
         &["concurrent_load_test"],
         (num_workers * events_per_worker) as i64,
@@ -428,7 +428,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     let batch_size = 100;
     for chunk in events.chunks(batch_size) {
         for event in chunk {
-            insert_event(pool, event).await?;
+            insert_event(&pool, event).await?;
         }
         tokio::task::yield_now().await;
     }

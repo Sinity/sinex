@@ -518,7 +518,7 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
     // Wait for all tasks to complete
     let mut results: Vec<(String, usize)> = Vec::new();
     while let Some(result) = join_set.join_next().await {
-        results.push(result??);
+        results.push(result?);
     }
 
     // Verify consistency

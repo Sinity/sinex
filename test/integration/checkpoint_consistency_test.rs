@@ -280,7 +280,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
     .await?;
 
     // Run integrity check to detect stale checkpoint
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 24, // Look back 24 hours to catch the stale checkpoint
@@ -446,7 +446,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     );
 
     // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 24,
@@ -569,7 +569,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     .await?;
 
     // Run integrity check for invalid ULID
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 1,
@@ -752,7 +752,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
