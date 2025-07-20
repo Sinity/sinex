@@ -31,13 +31,10 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
     // Insert some test events
     let mut event_ulids = Vec::new();
     for i in 0..10 {
-        let event = {
-            let factory = EventFactory::new("test.checkpoint");
-            let event = factory.create_event("consistency_test", json!({"sequence": i}));
-            insert_event_with_validator(&pool, &event, None)
-        }
-        .await?;
-        event_ulids.push(event.id);
+        let factory = EventFactory::new("test.checkpoint");
+        let event = factory.create_event("consistency_test", json!({"sequence": i}));
+        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
+        event_ulids.push(inserted_event.id);
 
         // Small delay between events
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;

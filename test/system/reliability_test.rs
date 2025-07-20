@@ -421,7 +421,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let pool = ctx.pool().clone();
 
             // Database should still be responsive
-            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
+            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events =

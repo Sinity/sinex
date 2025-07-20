@@ -214,8 +214,8 @@ pub struct EventValidator {
 /// - ULID ordering verification  
 /// - Checkpoint consistency checks
 /// - Data corruption detection
-pub struct DataIntegrityValidator {
-    pool: &'static DbPool,
+pub struct DataIntegrityValidator<'a> {
+    pool: &'a DbPool,
     event_validator: EventValidator,
 }
 
@@ -726,9 +726,9 @@ impl Default for EventValidator {
 // Data Integrity Validator Implementation
 // =============================================================================
 
-impl DataIntegrityValidator {
+impl<'a> DataIntegrityValidator<'a> {
     /// Create a new data integrity validator
-    pub async fn new(pool: &'static DbPool) -> Result<Self> {
+    pub async fn new(pool: &'a DbPool) -> Result<Self> {
         let event_validator = EventValidator::load_from_db(pool).await?;
         Ok(Self {
             pool,
