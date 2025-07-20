@@ -70,7 +70,7 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
     use sinex_satellite_sdk::stream_processor::Checkpoint;
 
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool().clone(),
+        ctx.pool(),
         "test-automaton".to_string(),
         "test-group".to_string(),
         "test-consumer".to_string(),

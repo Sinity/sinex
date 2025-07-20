@@ -25,33 +25,35 @@ use sinex_db::query_builder::{QueryBuilder, QueryParam};
 fn proto_to_raw_event(proto: sinex_ingestd::proto::RawEvent) -> AnyhowResult<RawEvent> {
     let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
     
-    let blob_id = if let Some(blob_id_str) = proto.blob_id {
-        Some(Ulid::from_str(&blob_id_str)?)
+    let id = Ulid::from_str(&proto.id)?;
+    let ts_orig = if !proto.ts_orig.is_empty() {
+        Some(chrono::DateTime::parse_from_rfc3339(&proto.ts_orig)?
+            .with_timezone(&chrono::Utc))
     } else {
         None
     };
-    
-    let id = Ulid::from_str(&proto.id)?;
-    let ts_orig = chrono::DateTime::parse_from_rfc3339(&proto.ts_orig)?
-        .with_timezone(&chrono::Utc);
     
     Ok(RawEvent {
         id,
         ts_orig,
         ts_ingest: chrono::Utc::now(),
         source: proto.source,
-        source_id: proto.source_id,
         event_type: proto.event_type,
-        payload,
-        digest: proto.digest,
-        tags: proto.tags,
-        blob_id,
-        parent_id: if let Some(parent_id_str) = proto.parent_id {
-            Some(Ulid::from_str(&parent_id_str)?)
+        host: proto.host.unwrap_or_else(|| "test-host".to_string()),
+        ingestor_version: None,
+        payload_schema_id: if let Some(schema_id_str) = proto.schema_name {
+            // schema_name was used as schema_id in proto, try to parse as ULID
+            Ulid::from_str(&schema_id_str).ok()
         } else {
             None
         },
-        dedup_keys: proto.dedup_keys,
+        payload,
+        source_event_ids: None,
+        source_material_id: None,
+        source_material_offset_start: None,
+        source_material_offset_end: None,
+        anchor_byte: None,
+        associated_blob_ids: None,
     })
 }
 
@@ -542,7 +544,7 @@ pub async fn start_test_ingestd_with_config(
 
     let events_received = Arc::new(Mutex::new(Vec::new()));
     let events_received_clone = events_received.clone();
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create a minimal gRPC server that accepts events
     let server_handle = tokio::spawn(async move {

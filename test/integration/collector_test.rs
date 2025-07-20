@@ -61,7 +61,7 @@ async fn test_output_config_database(ctx: TestContext) -> TestResult {
         dry_run: false,
     };
 
-    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool().clone()), None);
+    let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool()), None);
     Ok(())
 }
 
@@ -178,7 +178,7 @@ async fn test_collector_with_validator(ctx: TestContext) -> TestResult {
     let _collector = UnifiedCollector::new(
         config,
         output_config,
-        Some(ctx.pool().clone()),
+        Some(ctx.pool()),
         Some(validator),
     );
     Ok(())

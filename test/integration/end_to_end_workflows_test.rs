@@ -26,7 +26,7 @@ use sinex_events::{EventFactory, services, event_types};
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::EventSourceConfig,
-    redis_client::RedisStreamClient,
+    redis_conn::RedisStreamClient,
     stream_processor::Checkpoint,
     StatefulStreamProcessor,
 };
@@ -232,7 +232,9 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 1: Set up Redis stream
-    let redis_client = RedisClient::new().await?;
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let redis_conn = redis::Client::open(redis_url)?;
+    let mut redis_conn = redis_conn.get_multiplexed_async_connection().await?;
     let stream_key = "sinex:test:stream";
 
     // Phase 2: Add events to stream
@@ -248,7 +250,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
             "timestamp": event.ts_orig
         });
 
-        match redis_client.xadd(stream_key, "*", &stream_data).await {
+        match redis_conn.xadd(stream_key, "*", &stream_data).await {
             Ok(id) => {
                 stream_event_ids.push(id);
                 println!("Added event {} to stream", event.id);
@@ -266,7 +268,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     let processing_errors = Arc::new(Mutex::new(Vec::new()));
 
     // Create consumer group
-    match redis_client
+    match redis_conn
         .xgroup_create(stream_key, &consumer_group, "0", true)
         .await
     {
@@ -292,28 +294,30 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
             .arg("STREAMS")
             .arg(stream_key)
             .arg(">")
-            .query_async::<_, redis::streams::StreamReadReply>(&mut redis_client)
+            .query_async(&mut redis_conn)
             .await
         {
             Ok(messages) => {
+                let messages: redis::streams::StreamReadReply = messages;
                 if messages.keys.is_empty() {
                     println!("No more messages in stream");
                     break;
                 }
 
-                for message in messages {
+                for key in messages.keys {
+                    for message in key.ids {
                     processed_count += 1;
 
                     // Simulate processing
-                    let event_data = message.get("payload").unwrap_or(&serde_json::Value::Null);
+                    let event_data = message.map.get("payload").unwrap_or(&redis::Value::Nil);
 
                     // Store processing result
                     let mut processed = processed_events.lock().await;
-                    processed.push(message.clone());
+                    processed.push(message.id.clone());
 
                     // Acknowledge message
-                    match redis_client
-                        .xack(stream_key, &consumer_group, &message.id)
+                    match redis_conn
+                        .xack(stream_key, &consumer_group, &[&message.id])
                         .await
                     {
                         Ok(_) => println!("Acknowledged message: {}", message.id),
@@ -321,6 +325,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
                             let mut errors = processing_errors.lock().await;
                             errors.push(format!("ACK failed for {}: {}", message.id, e));
                         }
+                    }
                     }
                 }
             }
@@ -1012,7 +1017,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         ORDER BY payload->>'chain_id', payload->>'sequence_number'
         "#
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?;
 
     // Group by chain and verify sequence
@@ -1053,7 +1058,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         AND payload->>'previous_event_id' IS NOT NULL
         "#
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?;
 
     let mut referential_violations = 0;

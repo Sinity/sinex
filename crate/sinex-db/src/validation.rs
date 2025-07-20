@@ -304,13 +304,25 @@ pub enum CheckpointInconsistencyType {
 }
 
 /// Types of data corruption indicators
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataCorruptionType {
     InvalidUlid,
     NullPayload,
     TruncatedData,
     EncodingError,
     ForeignKeyViolation,
+}
+
+impl std::fmt::Display for DataCorruptionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidUlid => write!(f, "Invalid ULID"),
+            Self::NullPayload => write!(f, "Null Payload"),
+            Self::TruncatedData => write!(f, "Truncated Data"),
+            Self::EncodingError => write!(f, "Encoding Error"),
+            Self::ForeignKeyViolation => write!(f, "Foreign Key Violation"),
+        }
+    }
 }
 
 /// Overall severity of integrity check results

@@ -250,9 +250,8 @@ async fn test_consumer_group_scaling(ctx: TestContext) -> TestResult {
                     continue;
                 }
 
-                for stream_msgs in messages {
-                    for key in stream_msgs.keys {
-                        for msg in key.ids {
+                for key in messages.keys {
+                    for msg in key.ids {
                             consumer_messages.push(msg.id.clone());
                             total_processed += 1;
 
@@ -261,7 +260,6 @@ async fn test_consumer_group_scaling(ctx: TestContext) -> TestResult {
                                 .xack(stream_key, group_name, &[&msg.id])
                                 .await
                                 .unwrap_or(0);
-                        }
                     }
                 }
             }
@@ -497,9 +495,8 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
                     continue;
                 }
 
-                for stream_msgs in messages {
-                    for key in stream_msgs.keys {
-                        for msg in key.ids {
+                for key in messages.keys {
+                    for msg in key.ids {
                             // Add to processed list
                             {
                                 let mut processed = processed_clone.lock().await;
@@ -513,7 +510,6 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> TestResult {
                                 .unwrap_or(0);
 
                             consumer_processed += 1;
-                        }
                     }
                 }
             }

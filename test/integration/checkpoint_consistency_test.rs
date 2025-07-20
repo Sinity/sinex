@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 #[sinex_test]
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create test automaton
     let automaton_name = format!("test_automaton_{}", Ulid::new());
@@ -106,7 +106,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create test automaton
     let automaton_name = format!("gap_test_automaton_{}", Ulid::new());
@@ -265,7 +265,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create test automaton
     let automaton_name = format!("stale_test_automaton_{}", Ulid::new());
@@ -358,7 +358,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create multiple test automatons
     let automaton_names: Vec<String> = (0..3)
@@ -528,7 +528,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create test automaton for recovery scenarios
     let automaton_name = format!("recovery_test_automaton_{}", Ulid::new());
@@ -723,7 +723,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Create test automaton
     let automaton_name = format!("data_loss_test_automaton_{}", Ulid::new());

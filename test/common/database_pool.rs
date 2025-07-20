@@ -498,7 +498,7 @@ impl DatabasePool {
                         // Release the advisory lock
                         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                             .bind(lock_id)
-                            .execute(pool)
+                            .execute(&pool)
                             .await;
                         pool.close().await;
                         {

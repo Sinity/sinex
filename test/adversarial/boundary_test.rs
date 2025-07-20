@@ -67,7 +67,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
                     event.id.to_uuid(),
                     extra_data
                 )
-                .execute(&pool)
+                .execute(pool)
                 .await;
 
                 match update_result {
@@ -247,7 +247,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
         println!("Testing query complexity: {}", description);
 
         let start = Instant::now();
-        match timeout(Duration::from_secs(10), sqlx::query(query).fetch_all(&pool)).await {
+        match timeout(Duration::from_secs(10), sqlx::query(query).fetch_all(pool)).await {
             Ok(Ok(rows)) => {
                 let elapsed = start.elapsed();
                 println!("  SUCCESS: {} rows in {:?}", rows.len(), elapsed);
@@ -609,7 +609,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
                     "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await
                 {
                     Ok(row) => {
@@ -679,7 +679,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
                     "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
                     event.id.to_uuid()
                 )
-                .fetch_one(&pool)
+                .fetch_one(pool)
                 .await
                 {
                     Ok(row) => {

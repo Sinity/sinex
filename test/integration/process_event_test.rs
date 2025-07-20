@@ -83,7 +83,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     metrics_provider.increment_events_processed(42);
 
     let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         "test_process".to_string(),
         "1.0.0".to_string(),
         1, // 1 second interval for testing
@@ -131,7 +131,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
     let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         "lifecycle_test".to_string(),
         "2.0.0".to_string(),
         5, // 5 second interval
@@ -211,7 +211,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
     metrics_provider.add_custom_metric("last_error", serde_json::json!("Connection timeout"));
 
     let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         "custom_metrics_test".to_string(),
         "1.5.0".to_string(),
         1,
@@ -246,7 +246,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
     let metrics_provider = MockMetricsProvider::new();
 
     let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         "continuous_test".to_string(),
         "1.0.0".to_string(),
         1, // 1 second interval for fast testing
@@ -337,7 +337,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
         metrics_provider.add_custom_metric("health_status", serde_json::json!(status));
 
         let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-            ctx.pool().clone(),
+            ctx.pool(),
             name.to_string(),
             "1.0.0".to_string(),
             60, // 1 minute interval
@@ -410,7 +410,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
     let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         "failing_process".to_string(),
         "1.0.0".to_string(),
         5,
@@ -503,7 +503,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     // First process instance
     let metrics1 = MockMetricsProvider::new();
     let emitter1 = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         process_name.to_string(),
         "1.0.0".to_string(),
         1,
@@ -521,7 +521,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     // Second process instance (restart)
     let metrics2 = MockMetricsProvider::new();
     let emitter2 = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         process_name.to_string(),
         "1.0.1".to_string(), // New version
         1,
@@ -587,7 +587,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
 
     let emitter = ProcessHeartbeatEmitter::with_metrics_provider(
-        ctx.pool().clone(),
+        ctx.pool(),
         "high_freq_test".to_string(),
         "1.0.0".to_string(),
         1, // Very frequent for testing

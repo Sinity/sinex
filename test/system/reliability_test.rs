@@ -386,7 +386,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
     let interrupted_shutdown_test = timeout(Duration::from_secs(5), async {
         // Get pool outside of spawn to avoid Send issues
-        let pool = ctx.pool().clone();
+        let pool = ctx.pool();
 
         // Create long-running operation
         let long_operation = tokio::spawn(async move {
@@ -1212,7 +1212,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn health_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .map_err(anyhow::Error::from)?
             .unwrap_or(0);
@@ -1222,7 +1222,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _checkpoint_check =
             sqlx::query!("SELECT automaton_name FROM core.automaton_checkpoints LIMIT 1")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 .map_err(anyhow::Error::from)?;
         Ok(())

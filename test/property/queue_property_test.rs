@@ -258,7 +258,7 @@ async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> TestResu
 
                 // Create checkpoint manager for each consumer
                 let checkpoint_mgr = CheckpointManager::new(
-                    ctx.pool().clone(),
+                    ctx.pool(),
                     format!("test_automaton_{}_{}", test_id, consumer_num),
                     group_name_clone.clone(),
                     consumer_name.clone(),
@@ -791,7 +791,7 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
 
             // Create checkpoint manager
             let checkpoint_mgr = CheckpointManager::new(
-                ctx.pool().clone(),
+                ctx.pool(),
                 automaton_name.clone(),
                 group_name.clone(),
                 consumer_name.to_string(),

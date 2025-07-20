@@ -207,7 +207,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow
 
     // Spawn multiple tasks to insert events concurrently
     for i in 0..5 {
-        let pool = ctx.pool().clone();
+        let pool = ctx.pool();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
                 sinex_db::insert_event_with_validator(
@@ -273,7 +273,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
 
     // Spawn workers to process events concurrently
     for worker_id in 0..4 {
-        let pool = ctx.pool().clone();
+        let pool = ctx.pool();
         let handle = tokio::spawn(async move {
             let mut processed = 0;
 
@@ -296,7 +296,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                     FOR UPDATE SKIP LOCKED
                     "#,
                 )
-                .fetch_optional(&pool)
+                .fetch_optional(pool)
                 .await?;
 
                 if let Some((event_id,)) = maybe_event {

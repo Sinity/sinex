@@ -45,7 +45,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let insert_tasks: Vec<_> = events
         .iter()
         .map(|event| {
-            let pool = ctx.pool().clone();
+            let pool = ctx.pool();
             let event = event.clone();
             tokio::spawn(async move {
                 sinex_db::insert_event_with_validator(&pool, &event, None)
@@ -66,7 +66,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     let verify_tasks: Vec<_> = inserted_ids
         .iter()
         .map(|&id| {
-            let pool = ctx.pool().clone();
+            let pool = ctx.pool();
             tokio::spawn(async move {
                 get_event_by_id(&pool, id)
                     .await
@@ -99,7 +99,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     let insert_tasks: Vec<_> = events_to_insert
         .iter()
         .map(|&event| {
-            let pool = ctx.pool().clone();
+            let pool = ctx.pool();
             let event = event.clone();
             tokio::spawn(async move { assertions::assert_event_inserted(&pool, &event).await })
         })
@@ -1086,7 +1086,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
     // Use the existing managed pool instead of creating a new one
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Try to acquire more connections than the pool size
     let mut handles = vec![];
@@ -1135,7 +1135,7 @@ async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Spawn many concurrent tasks
     let mut handles = vec![];
@@ -1146,7 +1146,7 @@ async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResul
             // Each task does a quick query
             let result: i32 = sqlx::query_scalar("SELECT $1::int")
                 .bind(i)
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await?;
 
             Ok::<_, sqlx::Error>(result)

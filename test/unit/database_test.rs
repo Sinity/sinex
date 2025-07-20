@@ -192,17 +192,17 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert events from different sources
     let fs_event = EventFactory::new(sources::FS).create_event(
-        event_type_constants::filesystem::FILE_CREATED,
+        event_types::filesystem::FILE_CREATED,
         json!({"path": "/test/fs_file.txt"}),
     );
 
     let terminal_event = EventFactory::new(sources::SHELL_KITTY).create_event(
-        event_type_constants::shell::COMMAND_EXECUTED,
+        event_types::shell::COMMAND_EXECUTED,
         json!({"command": "ls"}),
     );
 
     let wm_event = EventFactory::new(sources::WM_HYPRLAND).create_event(
-        event_type_constants::window_manager::WINDOW_FOCUSED,
+        event_types::window_manager::WINDOW_FOCUSED,
         json!({"window_id": 123}),
     );
 
@@ -560,7 +560,7 @@ async fn test_redis_streams_event_processing(ctx: TestContext) -> TestResult {
 
     // Initialize checkpoint
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
+        ctx.pool(),
         automaton_name.to_string(),
         consumer_group.to_string(),
         "test_consumer".to_string(),
@@ -622,7 +622,7 @@ async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
     let consumer_group = "test_consumer_group";
 
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
+        ctx.pool(),
         automaton_name.to_string(),
         consumer_group.to_string(),
         "test_consumer".to_string(),
@@ -690,12 +690,12 @@ async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
     use tokio::task::JoinSet;
 
-    let _pool = Arc::new(ctx.pool().clone());
+    let _pool = Arc::new(ctx.pool());
     let mut join_set = JoinSet::new();
 
     // Spawn multiple concurrent insertions
     for i in 0..10 {
-        let pool_clone = Arc::new(ctx.pool().clone());
+        let pool_clone = Arc::new(ctx.pool());
         join_set.spawn(async move {
             let event = EventFactory::new("fs").create_event(
                 "file.created",
@@ -1003,7 +1003,7 @@ async fn test_satellite_processor_initialization(ctx: TestContext) -> TestResult
 
     // Test checkpoint initialization for satellite
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
+        ctx.pool(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
         "test_consumer".to_string(),
@@ -1080,7 +1080,7 @@ async fn test_satellite_event_streaming(ctx: TestContext) -> TestResult {
 async fn test_satellite_error_handling(ctx: TestContext) -> TestResult {
     // Test satellite error handling via checkpoint management
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
+        ctx.pool(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
         "test_consumer".to_string(),
@@ -1151,7 +1151,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
 
     // Test satellite database integration via checkpoint and event storage
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
+        ctx.pool(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
     );

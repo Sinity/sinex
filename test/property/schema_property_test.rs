@@ -473,7 +473,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                     name,
                     version,
                     schema_def
-                ).execute(&pool).await;
+                ).execute(pool).await;
 
                 if result.is_ok() {
                     created_schemas.push((name.clone(), version.clone()));

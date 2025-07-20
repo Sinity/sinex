@@ -1482,7 +1482,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
-    let create_pool = ctx.pool().clone();
+    let create_pool = ctx.pool();
     let create_agent = agent_name.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items {
@@ -1529,7 +1529,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
         let worker = StressTestWorker::new(
             format!("extreme_worker_{}", i),
-            ctx.pool().clone(),
+            ctx.pool(),
             metrics.clone(),
             agent_name.clone(),
             Duration::from_millis(200),
@@ -1541,7 +1541,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
         worker_handles.push(handle);
     }
 
-    let monitor_pool = ctx.pool().clone();
+    let monitor_pool = ctx.pool();
     let monitor_agent = agent_name.clone();
     let monitor_metrics = metrics.clone();
     let deadlock_monitor = tokio::spawn(async move {

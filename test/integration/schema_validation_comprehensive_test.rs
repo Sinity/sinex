@@ -275,7 +275,7 @@ async fn test_schema_validation_performance_under_load(ctx: TestContext) -> Test
 
 #[sinex_test]
 async fn test_comprehensive_integrity_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Insert some test events with known issues
     let valid_event = EventFactory::new("test.comprehensive")

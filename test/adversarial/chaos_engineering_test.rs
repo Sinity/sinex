@@ -657,7 +657,7 @@ async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
-    let pool_clone = ctx.pool().clone();
+    let pool_clone = ctx.pool();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
     let init_completed = Arc::new(AtomicU64::new(0));
 

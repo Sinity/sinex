@@ -70,7 +70,7 @@ pub async fn start_test_ingestd_at_path(
     let _ = std::fs::remove_file(socket_path);
 
     // Create a simple test ingestd that accepts events and stores them
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
     let socket_path_for_server = socket_path.to_string();
 
     let handle = tokio::spawn(async move {
@@ -592,15 +592,14 @@ pub mod generators {
 
 /// Helper for getting event count from database
 pub async fn get_event_count(pool: &DbPool) -> AnyhowResult<i64> {
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool)
-        .fetch_one(pool)
+    let (count,): (i64,) = EventQueries::count_all().fetch_one(pool)
         .await?;
-    Ok(count.unwrap_or(0i64))
+    Ok(count)
 }
 
 /// Helper for checking if an event exists by ULID
 pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> AnyhowResult<bool> {
-    let result = EventQueries::get_by_id(event_id)
+    let result: Option<RawEvent> = EventQueries::get_by_id(event_id)
         .fetch_optional(pool)
         .await?;
 
@@ -609,8 +608,7 @@ pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> AnyhowResult<bool> {
 
 /// Helper for getting recent events
 pub async fn get_recent_events(pool: &DbPool, limit: i64) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_recent(limit).fetch_all(pool)
-        .fetch_all(pool)
+    let events = EventQueries::get_recent(Some(limit), None).fetch_all(pool)
         .await?;
     Ok(events)
 }
@@ -653,7 +651,7 @@ pub async fn get_events_in_time_range(
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_time_range(start_time, end_time, None)
+    let events = EventQueries::get_by_time_range(start_time, end_time, None, None)
         .fetch_all(pool)
         .await?;
     Ok(events)

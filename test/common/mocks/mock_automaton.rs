@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 /// Configuration for mock automaton behavior
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MockAutomatonConfig {
     /// Automaton name/type
     pub automaton_name: String,
@@ -48,6 +48,24 @@ pub struct MockAutomatonConfig {
 
     /// Custom processing function
     pub custom_processor: Option<ProcessorFunction>,
+}
+
+impl std::fmt::Debug for MockAutomatonConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MockAutomatonConfig")
+            .field("automaton_name", &self.automaton_name)
+            .field("consumer_group", &self.consumer_group)
+            .field("consumer_name", &self.consumer_name)
+            .field("stream_key", &self.stream_key)
+            .field("processing_interval_ms", &self.processing_interval_ms)
+            .field("batch_size", &self.batch_size)
+            .field("processing_delay_ms", &self.processing_delay_ms)
+            .field("processing_failure_rate", &self.processing_failure_rate)
+            .field("save_checkpoints", &self.save_checkpoints)
+            .field("max_events", &self.max_events)
+            .field("custom_processor", &self.custom_processor.is_some())
+            .finish()
+    }
 }
 
 impl Default for MockAutomatonConfig {

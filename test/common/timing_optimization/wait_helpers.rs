@@ -5,7 +5,38 @@
 use crate::common::prelude::*;
 
 // Re-export production wait helpers for backwards compatibility
-pub use sinex_core_utils::wait_helpers::wait_for_event_count;
+// Note: wait_for_event_count is now implemented in test context only
+
+/// Wait for a specific number of events to exist in the database
+pub async fn wait_for_event_count(
+    pool: &DbPool,
+    expected_count: usize,
+    timeout_secs: u64,
+) -> anyhow::Result<usize> {
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(timeout_secs);
+    
+    while start.elapsed() < timeout_duration {
+        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0) as usize;
+        
+        if count >= expected_count {
+            return Ok(count);
+        }
+        
+        let elapsed = start.elapsed();
+        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        tokio::time::sleep(backoff).await;
+    }
+    
+    anyhow::bail!(
+        "Expected event count {} not reached within {} seconds",
+        expected_count,
+        timeout_secs
+    )
+}
 
 /// Wait for satellite to establish connection with ingestd.
 ///
@@ -49,10 +80,14 @@ where
         }
     };
 
-    sinex_core_utils::wait_helpers::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
-        .await
-        .map(|_| ())
-        .map_err(anyhow::Error::new)
+    sinex_core_utils::wait_helpers::wait_for_condition(
+        wrapped_condition,
+        timeout_secs,
+        "test condition"
+    )
+    .await
+    .map(|_| ())
+    .map_err(anyhow::Error::new)
 }
 
 /// Test-compatible wait_for_condition_or_timeout that accepts anyhow::Result closures

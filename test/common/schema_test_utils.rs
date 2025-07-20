@@ -5,6 +5,7 @@ use serde_json::{json, Value};
 use sinex_events::{event_types, sources};
 use sinex_db::queries::{EventQueries, SchemaQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use std::str::FromStr;
 
 /// Register test schema with event source and type
 pub async fn register_test_schema(
@@ -278,34 +279,67 @@ pub mod database {
         schema_version: &str,
         schema: Value,
     ) -> AnyhowResult<Ulid> {
-        let schema_id = SchemaQueries::insert_schema(
-            pool,
+        // Using raw SQL since the API has changed
+        let schema_id = Ulid::new();
+        
+        sqlx::query!(
+            r#"
+            INSERT INTO sinex_schemas.event_payload_schemas 
+            (id, event_source, event_type, schema_version, json_schema_definition)
+            VALUES ($1::ulid, $2, $3, $4, $5)
+            "#,
+            schema_id.to_string(),
             event_source,
             event_type,
             schema_version,
-            &schema,
-            &format!("Test schema for {}.{}", event_source, event_type)
+            schema
         )
+        .execute(pool)
         .await?;
 
-        return Ok(schema_id);
-
-        // Return value moved above
+        Ok(schema_id)
     }
 
     /// Get a schema from the database
     pub async fn get_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<Option<Value>> {
-        SchemaQueries::get_schema_by_id(pool, schema_id).await
+        let result = sqlx::query!(
+            "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid",
+            schema_id.to_string()
+        )
+        .fetch_optional(pool)
+        .await?;
+        
+        Ok(result.map(|r| r.json_schema_definition))
     }
 
     /// List all schemas in the database
     pub async fn list_schemas(pool: &DbPool) -> AnyhowResult<Vec<(Ulid, String, String, Value)>> {
-        SchemaQueries::list_all_schemas(pool).await
+        let rows = sqlx::query!(
+            r#"
+            SELECT id::text as id, event_type, schema_version as version, json_schema_definition 
+            FROM sinex_schemas.event_payload_schemas 
+            ORDER BY event_type, schema_version
+            "#
+        )
+        .fetch_all(pool)
+        .await?;
+        
+        Ok(rows.into_iter().map(|row| {
+            let id = Ulid::from_string(&row.id).unwrap();
+            (id, row.event_type, row.version, row.json_schema_definition)
+        }).collect())
     }
 
     /// Delete a schema from the database
     pub async fn delete_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<bool> {
-        SchemaQueries::delete_schema(pool, schema_id).await
+        let result = sqlx::query!(
+            "DELETE FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid",
+            schema_id.to_string()
+        )
+        .execute(pool)
+        .await?;
+        
+        Ok(result.rows_affected() > 0)
     }
 
     /// Setup test schemas in database
@@ -320,13 +354,12 @@ pub mod database {
         ];
 
         for (source, event_type, schema) in test_schemas {
-            let schema_id = SchemaQueries::insert_schema(
+            let schema_id = insert_test_schema(
                 pool,
                 source,
                 event_type,
                 "1.0",
-                &schema,
-                &format!("Test schema for {}.{}", source, event_type)
+                schema
             ).await?;
             
             let full_event_type = format!("{}.{}", source, event_type);
@@ -342,7 +375,7 @@ pub mod database {
         schema_ids: &[Ulid],
     ) -> AnyhowResult<(), anyhow::Error> {
         for &schema_id in schema_ids {
-            SchemaQueries::delete_schema(pool, schema_id).await?;
+            delete_schema(pool, schema_id).await?;
         }
         Ok(())
     }

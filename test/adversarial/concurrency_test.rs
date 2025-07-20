@@ -402,7 +402,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
     let mut handles = vec![];
 
     for worker_id in 0..5 {
-        let pool_clone = ctx.pool().clone();
+        let pool_clone = ctx.pool();
         let barrier_clone = barrier.clone();
         let double_claims_clone = double_claims.clone();
         let event_ids_clone = event_ids.clone();
@@ -427,7 +427,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
                     event_id.to_uuid(),
                     worker_id.to_string(),
                     Utc::now().to_rfc3339()
-                ).execute(&pool_clone).await;
+                ).execute(pool_clone).await;
 
                 let claim_duration = claim_start.elapsed();
 
@@ -440,7 +440,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
                             let verify_result = sqlx::query!(
                                 "SELECT payload->>'claimed_by' as claimer FROM core.events WHERE event_id::uuid = $1::uuid",
                                 event_id.to_uuid()
-                            ).fetch_one(&pool_clone).await;
+                            ).fetch_one(pool_clone).await;
 
                             if let Ok(record) = verify_result {
                                 if record.claimer != Some(worker_id.to_string()) {
@@ -838,7 +838,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
         "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
 
     println!(
@@ -949,7 +949,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
         "SELECT payload->>'lock_count' as lock_count FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
 
     let final_lock_count: i32 = final_state
