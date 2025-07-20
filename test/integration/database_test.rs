@@ -80,8 +80,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }
 
     // Check total count - use centralized query
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool).fetch_one(ctx.pool()).await?;
-    assert!(count.unwrap_or(0) >= 10);
+    let count = EventQueries::count_all().fetch_one::<(i64,)>(ctx.pool()).await?;
+    assert!(count.0 >= 10);
 
     Ok(())
 }
@@ -663,7 +663,7 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
     let _schema_id = schema_test_utils::register_test_schema(
         ctx.pool(),
         "fs",
-        event_type_constants::filesystem::FILE_CREATED,
+        event_types::filesystem::FILE_CREATED,
         fs_schema,
     )
     .await?;

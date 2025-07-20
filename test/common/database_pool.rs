@@ -615,7 +615,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
     }
 
     // Handle core.events separately (hypertable cannot be truncated)
-    match sqlx::query("DELETE FROM core.events").execute(&pool).await {
+    match sqlx::query("DELETE FROM core.events").execute(pool).await {
         Ok(result) => {
             let rows = result.rows_affected();
             if rows > 0 {
@@ -712,7 +712,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
                 Err(_e) => {
                     // CASCADE might not be supported, try without
                     let non_cascade = query.replace(" CASCADE", "");
-                    let _ = sqlx::query(&non_cascade).execute(&pool).await;
+                    let _ = sqlx::query(&non_cascade).execute(pool).await;
                 }
             }
         }
@@ -902,10 +902,9 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
         )
         .await
         .map_err(|_| {
-            CoreError::database(
-                "Migration timeout - check if all required extensions are installed",
+            CoreError::Database(
+                "Migration timeout - check if all required extensions are installed".to_string(),
             )
-            .build()
         })??;
 
         // Optimize template for faster copying
@@ -984,7 +983,7 @@ async fn apply_test_session_optimizations(pool: &DbPool) -> AnyhowResult<()> {
         ];
 
         for setting in optimizations {
-            if let Err(e) = sqlx::query(setting).execute(&pool).await {
+            if let Err(e) = sqlx::query(setting).execute(pool).await {
                 eprintln!("⚠️  Could not apply setting '{}': {}", setting, e);
             }
         }

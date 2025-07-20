@@ -475,9 +475,9 @@ pub mod generators {
         ];
 
         let event_types = [
-            event_type_constants::filesystem::FILE_CREATED,
-            event_type_constants::filesystem::FILE_MODIFIED,
-            event_type_constants::filesystem::FILE_DELETED,
+            sinex_events::event_types::filesystem::FILE_CREATED,
+            sinex_events::event_types::filesystem::FILE_MODIFIED,
+            sinex_events::event_types::filesystem::FILE_DELETED,
         ];
 
         (0..count)
@@ -557,7 +557,7 @@ pub mod generators {
             };
             test_event_with_payload(
                 sources::FS,
-                event_type_constants::filesystem::FILE_MODIFIED,
+                sinex_events::event_types::filesystem::FILE_MODIFIED,
                 payload
             )
         }).collect()

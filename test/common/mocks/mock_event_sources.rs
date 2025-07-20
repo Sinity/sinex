@@ -8,8 +8,15 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sinex_db::RawEvent;
 use sinex_satellite_sdk::{
-    EventSourceConfig, SatelliteResult, ScanArgs, ScanReport, StatefulStreamProcessor,
+    EventSourceConfig, SatelliteResult, ScanArgs, StatefulStreamProcessor,
 };
+// Define ScanReport locally as it may not be exported from SDK
+pub struct ScanReport {
+    pub events_generated: u64,
+    pub duration: std::time::Duration,
+    pub source_stats: std::collections::HashMap<String, u64>,
+    pub time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+}
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -81,6 +88,39 @@ impl FilesystemMonitor {
     pub async fn get_events(&self) -> Vec<RawEvent> {
         let events = self.events.lock().await;
         events.clone()
+    }
+    
+    /// Run scanner and send events through channel
+    pub async fn run_scanner(
+        &mut self,
+        tx: mpsc::Sender<RawEvent>,
+        args: ScanArgs,
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
+        // Call the scan method to populate internal events
+        self.scan(
+            sinex_satellite_sdk::stream_processor::Checkpoint::Beginning,
+            sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
+            args,
+        ).await?;
+        
+        // Send collected events through the channel
+        let events = self.get_events().await;
+        let events_count = events.len();
+        
+        for event in events {
+            let _ = tx.send(event).await;
+        }
+        
+        Ok(ScanReport {
+            events_generated: events_count as u64,
+            duration: start_time.elapsed(),
+            source_stats: std::collections::HashMap::from([
+                ("files_scanned".to_string(), events_count as u64),
+            ]),
+            time_range: None,
+        })
     }
 }
 
@@ -231,6 +271,39 @@ impl ShellHistoryMonitor {
         let events = self.events.lock().await;
         events.clone()
     }
+    
+    /// Run scanner and send events through channel
+    pub async fn run_scanner(
+        &mut self,
+        tx: mpsc::Sender<RawEvent>,
+        args: ScanArgs,
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
+        // Call the scan method to populate internal events
+        self.scan(
+            sinex_satellite_sdk::stream_processor::Checkpoint::Beginning,
+            sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
+            args,
+        ).await?;
+        
+        // Send collected events through the channel
+        let events = self.get_events().await;
+        let events_count = events.len();
+        
+        for event in events {
+            let _ = tx.send(event).await;
+        }
+        
+        Ok(ScanReport {
+            events_generated: events_count as u64,
+            duration: start_time.elapsed(),
+            source_stats: std::collections::HashMap::from([
+                ("shell_history_entries".to_string(), events_count as u64),
+            ]),
+            time_range: None,
+        })
+    }
 }
 
 #[async_trait]
@@ -294,6 +367,39 @@ impl AtuinHistoryImporter {
     pub async fn get_events(&self) -> Vec<RawEvent> {
         let events = self.events.lock().await;
         events.clone()
+    }
+    
+    /// Run scanner and send events through channel
+    pub async fn run_scanner(
+        &mut self,
+        tx: mpsc::Sender<RawEvent>,
+        args: ScanArgs,
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
+        // Call the scan method to populate internal events
+        self.scan(
+            sinex_satellite_sdk::stream_processor::Checkpoint::Beginning,
+            sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
+            args,
+        ).await?;
+        
+        // Send collected events through the channel
+        let events = self.get_events().await;
+        let events_count = events.len();
+        
+        for event in events {
+            let _ = tx.send(event).await;
+        }
+        
+        Ok(ScanReport {
+            events_generated: events_count as u64,
+            duration: start_time.elapsed(),
+            source_stats: std::collections::HashMap::from([
+                ("atuin_entries".to_string(), events_count as u64),
+            ]),
+            time_range: None,
+        })
     }
 }
 

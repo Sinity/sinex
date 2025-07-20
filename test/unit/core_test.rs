@@ -12,7 +12,7 @@ use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_core_types::{event_type_constants, CoreError};
+use sinex_core_types::CoreError;
 use sinex_core_types::Result as CoreResult;
 use sinex_events::{sources, EventFactory, event_types};
 use std::io;

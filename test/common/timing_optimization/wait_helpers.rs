@@ -5,7 +5,7 @@
 use crate::common::prelude::*;
 
 // Re-export production wait helpers for backwards compatibility
-pub use sinex_utils::wait_helpers::wait_for_event_count;
+pub use sinex_core_utils::wait_helpers::wait_for_event_count;
 
 /// Wait for satellite to establish connection with ingestd.
 ///
@@ -45,11 +45,11 @@ where
         let fut = condition();
         async move {
             fut.await
-                .map_err(|e| sinex_error::SinexError::Unknown(e.to_string()))
+                .map_err(|e| sinex_error::CoreError::Service(e.to_string()))
         }
     };
 
-    sinex_utils::wait_helpers::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
+    sinex_core_utils::wait_helpers::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
         .await
         .map(|_| ())
         .map_err(anyhow::Error::new)

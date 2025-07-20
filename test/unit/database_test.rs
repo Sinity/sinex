@@ -10,8 +10,8 @@
 
 use crate::common::prelude::*;
 use serde_json::json;
-use sinex_core_types::{event_type_constants, sources};
-use sinex_events::{EventFactory, services as event_sources, event_types};
+// Sources and event types now in sinex_events
+use sinex_events::{EventFactory, services as event_sources, event_types, sources};
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_db::query_helpers::ulid_to_uuid;
@@ -57,12 +57,17 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
     assert_events_equivalent(&inserted_event, &event)?;
 
     // Use ValidationChain to validate the event structure
-    let event_validation = assert_with_validation(inserted_event.clone(), "inserted_event")
-        .has_valid_source()
-        .has_valid_event_type()
-        .payload_is_object();
-
-    assert_validation_passes(event_validation)?;
+    let source_validation = ValidationChain::validate(inserted_event.source.clone(), "event_source")
+        .not_empty();
+    assert_validation_passes(source_validation)?;
+    
+    let event_type_validation = ValidationChain::validate(inserted_event.event_type.clone(), "event_type")
+        .not_empty();
+    assert_validation_passes(event_type_validation)?;
+    
+    let payload_validation = ValidationChain::validate(inserted_event.payload.clone(), "payload")
+        .json_type(sinex_validation::validation_chains::JsonType::Object);
+    assert_validation_passes(payload_validation)?;
 
     // Validate specific payload fields using ValidationChain
     let path_validation = assert_with_validation(
@@ -152,7 +157,7 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event).await?;
 
     // Verify it exists
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool).fetch_one(ctx.pool()).await?.unwrap_or(0);
+    let count = EventQueries::count_all().fetch_one::<(i64,)>(ctx.pool()).await?.0;
     assert!(count >= 1);
 
     Ok(())
@@ -739,7 +744,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     }
 
     // Query events ordered by ID (ULID)
-    let _ordered_events = EventQueries::get_recent(10).fetch_all(pool).fetch_all(ctx.pool()).await?;
+    let _ordered_events = EventQueries::get_recent(10).fetch_all(ctx.pool()).await?;
 
     // Verify ULID ordering matches insertion order
     for i in 1..events.len() {
@@ -1454,13 +1459,17 @@ async fn test_streamlined_validation_demo(_ctx: TestContext) -> TestResult {
         .build();
 
     // Validate using streamlined pattern
-    let validation_result = ValidationChain::validate(event.clone(), "demo_event")
-        .has_valid_source()
-        .has_valid_event_type()
-        .payload_is_object()
-        .into_result();
-
-    validation_result?;
+    ValidationChain::validate(event.source.clone(), "event_source")
+        .not_empty()
+        .into_result()?;
+    
+    ValidationChain::validate(event.event_type.clone(), "event_type")
+        .not_empty()
+        .into_result()?;
+    
+    ValidationChain::validate(event.payload.clone(), "payload")
+        .json_type(sinex_validation::validation_chains::JsonType::Object)
+        .into_result()?;
 
     // Also test with EventValidator
     let validator_result = validator.validate(&event);
