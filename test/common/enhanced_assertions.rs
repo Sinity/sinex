@@ -4,7 +4,7 @@
 // and other new abstractions to provide richer test failures and better debugging experience.
 
 use crate::common::prelude::*;
-use sinex_error::ErrorContext;
+use sinex_error::{CoreError, ErrorContext};
 use std::fmt::Debug;
 use std::future::Future;
 
@@ -189,7 +189,7 @@ pub fn assert_config_valid(
     config_name: &str,
 ) -> TestResult {
     validator(config).map_err(|e| {
-        let error = CoreError::Configuration("Configuration validation failed")
+        let error = CoreError::configuration("Configuration validation failed")
             .with_context("config_name", config_name)
             .with_context("source", e)
             .build();
@@ -207,7 +207,7 @@ where
     T: Debug,
 {
     extraction_result.map_err(|e| {
-        let error = CoreError::Configuration("Configuration extraction failed")
+        let error = CoreError::configuration("Configuration extraction failed")
             .with_context("field_path", field_path)
             .with_context("source", e)
             .build();

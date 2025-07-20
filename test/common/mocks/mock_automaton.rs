@@ -164,7 +164,9 @@ impl MockAutomaton {
             let mut processed_count = 0usize;
 
             // Create consumer group if it doesn't exist
-            let _: Result<String, redis::RedisError> = redis
+            let mut conn = redis.get_connection().await
+                .map_err(|e| anyhow::anyhow!("Failed to get Redis connection: {}", e))?;
+            let _: Result<String, redis::RedisError> = conn
                 .xgroup_create(&config.stream_key, &config.consumer_group, "$")
                 .await;
 

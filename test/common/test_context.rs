@@ -496,7 +496,7 @@ impl TestContext {
         let mut messages = Vec::new();
         for (_stream, stream_messages) in result {
             for (id, fields) in stream_messages {
-                messages.push(StreamMessage { id, fields: fields.into_iter().collect() });
+                messages.push(StreamMessage { id, fields });
             }
         }
         
@@ -809,13 +809,10 @@ impl TestContext {
         let start = std::time::Instant::now();
         
         loop {
-            let query = QueryBuilder::select()
-                .where_eq("event_type = $1")
-                .with_params(vec![QueryParam::String(event_type.to_string())])
-                .build();
-                
-            let actual_count = EventQueries::count_with_query(self.pool(), &query)
-                .await? as usize;
+            let count_result = EventQueries::count_by_event_type(event_type.to_string())
+                .fetch_one::<(i64,)>(self.pool())
+                .await?;
+            let actual_count = count_result.0 as usize;
             
             if actual_count >= count {
                 return Ok(());

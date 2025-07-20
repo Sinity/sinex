@@ -46,8 +46,19 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
     info!("✓ Event source configuration loads correctly");
 
     // Test 3: Verify database schema includes new tables
-    let table_exists = OperationQueries::check_table_exists(ctx.pool(), "core", "automaton_checkpoints").await?;
-    assert!(table_exists, "automaton_checkpoints table should exist");
+    let table_check = sqlx::query_scalar!(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_schema = $1 AND table_name = $2
+        )
+        "#,
+        "core",
+        "automaton_checkpoints"
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert!(table_check.unwrap_or(false), "automaton_checkpoints table should exist");
     info!("✓ New database schema is in place");
 
     // Test 4: Test checkpoint functionality
@@ -226,7 +237,9 @@ async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> AnyhowResult<()> 
     assert_eq!(loaded.processed_count, checkpoint.processed_count);
 
     // Test checkpoint stats via centralized queries
-    let checkpoint_count = CheckpointQueries::count_checkpoints_for_automaton(pool, "test-checkpoint-automaton").await?;
+    let checkpoint_count: i64 = CheckpointQueries::count_checkpoints_by_processor("test-checkpoint-automaton".to_string())
+        .fetch_one(pool)
+        .await?;
     assert!(checkpoint_count > 0, "Should have checkpoint records");
 
     info!("Checkpoint functionality test passed");

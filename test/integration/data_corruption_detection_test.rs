@@ -501,10 +501,10 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
     for issue in &manual_encoding_check {
         println!(
             "  Event {}: {} in {}/{}",
-            issue.event_id.as_deref().unwrap_or("unknown"), 
-            issue.encoding_issue.as_deref().unwrap_or("no_issue"), 
-            issue.source.as_deref().unwrap_or("unknown"),
-            issue.event_type.as_deref().unwrap_or("unknown")
+            issue.event_id.as_ref().map(|s| s.as_str()).unwrap_or("unknown"), 
+            issue.encoding_issue.as_ref().map(|s| s.as_str()).unwrap_or("no_issue"), 
+            issue.source.as_str(),
+            issue.event_type.as_str()
         );
     }
 

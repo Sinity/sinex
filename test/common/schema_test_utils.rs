@@ -325,7 +325,7 @@ pub mod database {
         .await?;
         
         Ok(rows.into_iter().map(|row| {
-            let id = Ulid::from_string(&row.id).unwrap();
+            let id = row.id.unwrap_or_default().parse::<Ulid>().unwrap();
             (id, row.event_type, row.version, row.json_schema_definition)
         }).collect())
     }

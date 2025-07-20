@@ -39,7 +39,7 @@ fn proto_to_raw_event(proto: sinex_ingestd::proto::RawEvent) -> AnyhowResult<Raw
         ts_ingest: chrono::Utc::now(),
         source: proto.source,
         event_type: proto.event_type,
-        host: proto.host.unwrap_or_else(|| "test-host".to_string()),
+        host: proto.host,
         ingestor_version: None,
         payload_schema_id: if let Some(schema_id_str) = proto.schema_name {
             // schema_name was used as schema_id in proto, try to parse as ULID
@@ -197,17 +197,14 @@ impl TestAutomatonHandle {
 
                 // Query for new events using centralized query system
                 let query = if let Some(id) = last_id {
-                    QueryBuilder::select()
-                        .where_eq("event_id::uuid > $1::uuid")
-                        .order_by("event_id")
+                    QueryBuilder::select("core.events")
+                        .where_op("event_id", ">", QueryParam::Ulid(id))
+                        .order_by("event_id", "ASC")
                         .limit(10)
-                        .with_params(vec![QueryParam::Uuid(id.to_uuid())])
-                        .build()
                 } else {
-                    QueryBuilder::select()
-                        .order_by("event_id")
+                    QueryBuilder::select("core.events")
+                        .order_by("event_id", "ASC")
                         .limit(10)
-                        .build()
                 };
 
                 let rows = EventQueries::get_by_ids(&pool, &query, &["event_id::text as id", "source", "event_type", "payload"])
@@ -302,17 +299,14 @@ impl TestContext {
 
                 // Query for new events using centralized query system
                 let query = if let Some(id) = last_id {
-                    QueryBuilder::select()
-                        .where_eq("event_id::uuid > $1::uuid")
-                        .order_by("event_id")
+                    QueryBuilder::select("core.events")
+                        .where_op("event_id", ">", QueryParam::Ulid(id))
+                        .order_by("event_id", "ASC")
                         .limit(10)
-                        .with_params(vec![QueryParam::Uuid(id.to_uuid())])
-                        .build()
                 } else {
-                    QueryBuilder::select()
-                        .order_by("event_id")
+                    QueryBuilder::select("core.events")
+                        .order_by("event_id", "ASC")
                         .limit(10)
-                        .build()
                 };
 
                 let rows = EventQueries::get_by_ids(pool, &query, &["event_id::text as id", "source", "event_type", "payload"])

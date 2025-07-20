@@ -1136,9 +1136,12 @@ pub mod cleanup {
             .await?;
 
         // Clean up test checkpoints
-        CheckpointQueries::delete_by_automaton_pattern("test_%")
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE $1",
+            "test_%"
+        )
+        .execute(pool)
+        .await?;
 
         Ok(())
     }

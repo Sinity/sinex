@@ -18,7 +18,7 @@ use crate::common::prelude::*;
 
 use crate::common::prelude::*;
 use crate::common::{events, generators, satellite_test_utils};
-use redis::cmd;
+use redis::{cmd, AsyncCommands};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_core_types::{CoreError};
@@ -26,7 +26,7 @@ use sinex_events::{EventFactory, services, event_types};
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::EventSourceConfig,
-    redis_conn::RedisStreamClient,
+    redis_client::RedisStreamClient,
     stream_processor::Checkpoint,
     StatefulStreamProcessor,
 };
@@ -262,7 +262,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
                 println!("Added event {} to stream", event.id);
             }
             Err(e) => {
-                return Err(CoreError::External(format!("Redis XADD failed: {}", e)).into());
+                return Err(CoreError::Service(format!("Redis XADD failed: {}", e)).into());
             }
         }
     }
@@ -275,7 +275,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 
     // Create consumer group
     match redis_conn
-        .xgroup_create(stream_key, &consumer_group, "0", true)
+        .xgroup_create_mkstream(stream_key, &consumer_group, "0")
         .await
     {
         Ok(_) => println!("Created consumer group: {}", consumer_group),
@@ -761,17 +761,29 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
     println!("- Successful operations: {}", successes.len());
 
     // Phase 4: Verify database state reflects recovery
-    let recovery_events = EventQueries::count_events_by_source_and_type_pattern(
-        pool,
+    let recovery_events: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)
+        FROM core.events
+        WHERE source = $1 AND event_type LIKE $2
+        "#,
         component_name,
         "recovery.attempt%"
-    ).await?;
+    )
+    .fetch_one(pool)
+    .await?;
 
-    let normal_events = EventQueries::count_by_source(
-        pool,
+    let normal_events: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)
+        FROM core.events
+        WHERE source = $1 AND event_type = $2
+        "#,
         component_name,
         "normal.operation"
-    ).await?;
+    )
+    .fetch_one(pool)
+    .await?;
 
     assert!(
         recovery_events > 0,

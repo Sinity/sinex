@@ -159,7 +159,9 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event).await?;
 
     // Verify it exists
-    let count = sinex_db::count_events().fetch_one::<(i64,)>(ctx.pool()).await?.0;
+    let count: i64 = EventQueries::count_all()
+        .fetch_one(ctx.pool())
+        .await?;
     assert!(count >= 1);
 
     Ok(())
@@ -1181,7 +1183,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
     }
 
     // Verify events were stored with proper satellite tracking
-    let count: i64 = EventQueries::count_by_type(&unique_event_type)
+    let count: i64 = EventQueries::count_by_event_type(unique_event_type.clone())
         .fetch_one(ctx.pool())
         .await?;
 
@@ -1200,13 +1202,17 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
     );
 
     // Test checkpoint-based event correlation
-    let events_from_checkpoint = EventQueries::get_ids_by_type_ordered(&unique_event_type, "ts_ingest")
+    #[derive(sqlx::FromRow)]
+    struct EventId {
+        id: sqlx::types::Uuid,
+    }
+    let events_from_checkpoint: Vec<EventId> = EventQueries::get_by_event_type(unique_event_type.clone(), None, None)
         .fetch_all(ctx.pool())
         .await?;
 
     assert_eq!(events_from_checkpoint.len(), 2);
     assert_eq!(
-        events_from_checkpoint[1].id.unwrap(),
+        events_from_checkpoint[1].id,
         processed_events[1].to_uuid()
     );
 

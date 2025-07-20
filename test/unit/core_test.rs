@@ -9,11 +9,8 @@
 // - Event constants and source identifiers
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_core_types::CoreError;
-use sinex_core_types::Result as CoreResult;
+use sinex_error::{CoreError, Result as CoreResult, ResultExt};
 use sinex_events::{sources, EventFactory, event_types};
 use std::io;
 
@@ -249,7 +246,7 @@ async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
 /// Test CoreError result extension methods
 #[sinex_test]
 async fn test_core_error_result_extensions(_ctx: TestContext) -> TestResult {
-    let result: CoreResult<String> = Err(CoreError::Validation("Test error").build());
+    let result: CoreResult<String> = Err(CoreError::validation("Test error").build());
 
     let extended_result = result.with_context(|| {
         sinex_error::CoreError::validation("Test error").with_context("operation", "test_operation")

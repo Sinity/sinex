@@ -1,5 +1,6 @@
 use crate::common::prelude::*;
 use async_trait::async_trait;
+use redis::AsyncCommands;
 use serde_json::json;
 use sinex_db::SqlxPgPool;
 use sinex_events::RawEvent;
@@ -91,7 +92,8 @@ async fn test_checkpoint_persistence_and_restart_recovery(
 ) -> crate::TestResult {
     let pool = ctx.pool();
     let mut redis_client = ctx.redis().await?;
-    let ingest_client = ctx.ingest_client().await?;
+    // Start ingestd for this test
+    let _ingestd = ctx.start_test_ingestd().await?;
 
     // Test configuration
     let service_name = "test-checkpoint-automaton".to_string();
@@ -123,8 +125,8 @@ async fn test_checkpoint_persistence_and_restart_recovery(
         .await?;
 
     // Clear any existing consumer group state
-    let _ = redis_client
-        .delete_consumer_group("sinex:streams:hotlog", &consumer_group)
+    let _: Result<(), _> = redis_client
+        .xgroup_destroy("sinex:streams:hotlog", &consumer_group)
         .await;
 
     // Create checkpoint manager for verification
@@ -171,8 +173,8 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     // Add events to hotlog stream (simulating ingestd)
     for event in &test_events {
         let serialized = serde_json::to_string(event)?;
-        redis_client
-            .add_to_stream("sinex:streams:hotlog", &[("data".to_string(), serialized)])
+        let _: String = redis_client
+            .xadd("sinex:streams:hotlog", "*", &[("data", serialized)])
             .await?;
     }
 
@@ -292,19 +294,13 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     info!("Step 6: Verifying no duplicate processing occurred");
 
     // Check Redis consumer group info to verify messages were ACKed properly
-    let pending_messages = redis_client
-        .pending_messages(
-            "sinex:streams:hotlog",
-            &consumer_group,
-            None,
-            None,
-            Some(100),
-        )
+    let pending_result: Result<redis::streams::StreamPendingReply, _> = redis_client
+        .xpending("sinex:streams:hotlog", &consumer_group)
         .await;
 
-    match pending_messages {
+    match pending_result {
         Ok(pending) => {
-            info!("Pending messages in consumer group: {}", pending.len());
+            info!("Pending messages in consumer group: {}", pending.count);
             // All messages should have been ACKed if checkpoints work correctly
         }
         Err(_) => {

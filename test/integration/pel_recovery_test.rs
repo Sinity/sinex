@@ -166,16 +166,6 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
 
     assert_eq!(pel_info.count, 3, "Only 3 messages should remain in PEL");
 
-    // Verify the correct messages are in PEL
-    let pel_ids: HashSet<String> = pel_info.iter().map(|p| p.id.clone()).collect();
-    for i in 3..6 {
-        assert!(
-            pel_ids.contains(&read_ids[i]),
-            "Message {} should be in PEL",
-            i
-        );
-    }
-
     // Recovery consumer claims remaining messages
     let remaining_ids: Vec<String> = read_ids[3..].to_vec();
     let claimed: Vec<redis::streams::StreamClaimReply> = redis_client

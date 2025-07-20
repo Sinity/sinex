@@ -80,8 +80,10 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }
 
     // Check total count - use centralized query
-    let count = sinex_db::count_events().fetch_one::<(i64,)>(ctx.pool()).await?;
-    assert!(count.0 >= 10);
+    let count: i64 = EventQueries::count_all()
+        .fetch_one(ctx.pool())
+        .await?;
+    assert!(count >= 10);
 
     Ok(())
 }
@@ -426,9 +428,15 @@ async fn test_json_schema_registration(ctx: TestContext) -> TestResult {
             .await?;
 
     // Verify schema was stored correctly
-    let retrieved_schema: serde_json::Value = EventQueries::get_schema_by_id(schema_id)
+    use sinex_db::queries::SchemaQueries;
+    #[derive(sqlx::FromRow)]
+    struct SchemaRecord {
+        json_schema_definition: serde_json::Value,
+    }
+    let schema_record: SchemaRecord = SchemaQueries::get_by_id(schema_id)
         .fetch_one(ctx.pool())
         .await?;
+    let retrieved_schema = schema_record.json_schema_definition;
 
     pretty_assertions::assert_eq!(
         retrieved_schema,
@@ -472,13 +480,12 @@ async fn test_json_schema_validation_constraint(ctx: TestContext) -> TestResult 
     let event_source = format!("ui_test-{}", test_run_id);
     let event_type = format!("user_interaction-{}", test_run_id);
 
-    let schema_id = EventQueries::insert_schema(
+    let schema_id = schema_test_utils::register_test_schema(
+        ctx.pool(),
         &event_source,
         &event_type,
-        "v1.0",
-        &strict_schema,
+        strict_schema.clone(),
     )
-    .fetch_one(ctx.pool())
     .await?;
 
     // Test valid payload - using event builder for cleaner syntax
@@ -725,9 +732,26 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     .await?;
 
     // Verify checkpoint exists
-    let checkpoint = CheckpointQueries::get_by_id(checkpoint_id)
-        .fetch_one(pool)
-        .await?;
+    #[derive(sqlx::FromRow)]
+    struct CheckpointRecord {
+        automaton_name: String,
+        consumer_group: String,
+        last_processed_id: Option<String>,
+        state_data: Option<serde_json::Value>,
+        processed_count: i64,
+    }
+    let checkpoint: CheckpointRecord = sqlx::query_as!(
+        CheckpointRecord,
+        r#"
+        SELECT automaton_name, consumer_group, last_processed_id, 
+               state_data as "state_data: serde_json::Value", processed_count
+        FROM core.automaton_checkpoints
+        WHERE id = $1::uuid
+        "#,
+        checkpoint_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
 
     assert_eq!(checkpoint.automaton_name, automaton_name);
     assert_eq!(checkpoint.consumer_group, consumer_group);
@@ -768,8 +792,10 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     .await?;
 
     // Update checkpoint
-    CheckpointQueries::update_checkpoint(
+    CheckpointQueries::upsert_checkpoint(
         checkpoint_id,
+        automaton_name,
+        "default_group",
         Some("updated_event"),
         &json!({"processed_count": 25, "status": "active"}),
     )
@@ -777,9 +803,18 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     .await?;
 
     // Verify update
-    let checkpoint = CheckpointQueries::get_by_id(checkpoint_id)
-        .fetch_one(pool)
-        .await?;
+    let checkpoint: CheckpointRecord = sqlx::query_as!(
+        CheckpointRecord,
+        r#"
+        SELECT automaton_name, consumer_group, last_processed_id, 
+               state_data as "state_data: serde_json::Value", processed_count
+        FROM core.automaton_checkpoints
+        WHERE id = $1::uuid
+        "#,
+        checkpoint_id.to_uuid()
+    )
+    .fetch_one(pool)
+    .await?;
 
     assert_eq!(
         checkpoint.last_processed_id.as_deref(),
@@ -827,10 +862,9 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     }
 
     // Verify all checkpoints exist
-    let checkpoint_count: i64 = CheckpointQueries::count_by_automaton(automaton_name)
+    let checkpoint_count: i64 = CheckpointQueries::count_checkpoints_by_processor(automaton_name.to_string())
         .fetch_one(pool)
-        .await?
-        .unwrap_or(0);
+        .await?;
 
     assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
 
