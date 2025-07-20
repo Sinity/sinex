@@ -1363,12 +1363,20 @@ pub mod event_sources {
 
     /// Create EventSourceConfig with test configuration
     pub fn test_context(config: Value) -> EventSourceConfig {
-        EventSourceConfig { base: Default::default(), batch_size: 100, batch_timeout_secs: 1, source_config: config.into() }
+        EventSourceConfig { 
+            base: sinex_satellite_sdk::config::SatelliteConfig::load_from_env("test"), 
+            batch_size: 100, 
+            batch_timeout_secs: 1, 
+            source_config: config.into() 
+        }
     }
 
     /// Create EventSourceConfig with database pool
-    pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceConfig {
-        { let mut config = EventSourceConfig { base: Default::default(), batch_size: 100, batch_timeout_secs: 1, source_config: Default::default() }; config.base.db_pool = Some(pool); config }
+    /// Note: SatelliteConfig uses database_url, not a pool - this is for test compatibility
+    pub fn test_context_with_db(config: Value, _pool: DbPool) -> EventSourceConfig {
+        let mut base_config = sinex_satellite_sdk::config::SatelliteConfig::load_from_env("test");
+        base_config.database_url = Some(std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql:///sinex_test".to_string()));
+        EventSourceConfig { base: base_config, batch_size: 100, batch_timeout_secs: 1, source_config: config.into() }
     }
 
     /// Standard filesystem event source config

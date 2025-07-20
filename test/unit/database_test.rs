@@ -251,15 +251,15 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     sinex_db::insert_event(ctx.pool(), &command_event).await?;
 
     // Query by event type
-    let create_events = EventQueries::get_by_event_type("file.created".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
+    let create_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("file.created".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!create_events.is_empty());
     assert!(create_events.iter().all(|e| e.event_type == "file.created"));
 
-    let delete_events = EventQueries::get_by_event_type("file.deleted".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
+    let delete_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("file.deleted".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!delete_events.is_empty());
     assert!(delete_events.iter().all(|e| e.event_type == "file.deleted"));
 
-    let command_events = EventQueries::get_by_event_type("command.executed".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
+    let command_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("command.executed".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!command_events.is_empty());
     assert!(command_events
         .iter()
@@ -724,8 +724,8 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
 
     // Verify all events are unique
     let mut ids = std::collections::HashSet::new();
-    for event in results {
-        assert!(ids.insert(event.id)); // Should be unique
+    for event_id in results {
+        assert!(ids.insert(event_id)); // Should be unique
     }
 
     Ok(())
@@ -734,26 +734,31 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
 /// Test ULID ordering in database queries
 #[sinex_test(timeout = 35)]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
-    let mut events = Vec::new();
+    let mut event_ids = Vec::new();
 
     // Insert events with small delays to ensure ULID ordering
     for i in 0..5 {
         let event = EventFactory::new("fs").create_event("file.created", json!({"sequence": i}));
 
-        let inserted = sinex_db::insert_event(ctx.pool(), &event).await?;
-        events.push(inserted);
+        let inserted_id = sinex_db::insert_event(ctx.pool(), &event).await?;
+        event_ids.push(inserted_id);
 
         // Small delay to ensure timestamp progression
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
     // Query events ordered by ID (ULID)
-    let _ordered_events = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
+    let ordered_events = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
 
     // Verify ULID ordering matches insertion order
-    for i in 1..events.len() {
-        assert!(events[i].id.to_string() > events[i - 1].id.to_string());
-        assert!(events[i].ts_ingest >= events[i - 1].ts_ingest);
+    for i in 1..event_ids.len() {
+        assert!(event_ids[i].to_string() > event_ids[i - 1].to_string());
+    }
+    
+    // Also verify the fetched events maintain order
+    for i in 1..ordered_events.len() {
+        assert!(ordered_events[i].id.to_string() > ordered_events[i - 1].id.to_string());
+        assert!(ordered_events[i].ts_ingest >= ordered_events[i - 1].ts_ingest);
     }
 
     Ok(())
@@ -859,8 +864,8 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
         serde_json::json!({"test": "crud_operations"}),
     );
 
-    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
-    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), inserted_event.id).await?;
+    let inserted_event_id = sinex_db::insert_event(ctx.pool(), &event).await?;
+    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), inserted_event_id).await?;
 
     assert_eq!(retrieved_event.source, "unit-test-crud");
     assert_eq!(retrieved_event.event_type, "test.crud_operations");
@@ -947,11 +952,11 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
         serde_json::json!({"test": "constraint"}),
     );
 
-    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
+    let inserted_event_id = sinex_db::insert_event(ctx.pool(), &event).await?;
 
     // Try to insert with same ID (should fail with constraint violation)
     let duplicate_event = RawEvent {
-        id: inserted_event.id, // Same ID
+        id: inserted_event_id, // Same ID
         source: "unit-test-error".to_string(),
         event_type: "test.error_handling".to_string(),
         ts_ingest: chrono::Utc::now(),
@@ -1170,11 +1175,11 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
             json!({"sequence": i, "satellite_test": true}),
         );
 
-        let inserted_event = insert_event(ctx.pool(), &event).await?;
-        processed_events.push(inserted_event.id);
+        let inserted_event_id = insert_event(ctx.pool(), &event).await?;
+        processed_events.push(inserted_event_id);
 
         // Update checkpoint with processed event
-        checkpoint_state.set_last_processed_id(Some(inserted_event.to_string()));
+        checkpoint_state.set_last_processed_id(Some(inserted_event_id.to_string()));
         checkpoint_state.processed_count += 1;
 
         checkpoint_manager

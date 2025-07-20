@@ -957,7 +957,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     let base_timestamp = Utc::now();
 
     for chain_id in 0..events_per_component {
-        let mut chain_events = Vec::new();
+        let mut chain_events: Vec<RawEvent> = Vec::new();
 
         for component_id in 0..component_count {
             let factory = EventFactory::new(&format!("consistency-component-{}", component_id));
@@ -1092,7 +1092,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
                 referential_violations += 1;
                 println!(
                     "Referential violation: event {} references non-existent {}",
-                    event.id, prev_id
+                    event.event_id, prev_id
                 );
             }
         }

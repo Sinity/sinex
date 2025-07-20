@@ -103,7 +103,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     ctx.insert_event(&heartbeat_event).await?;
 
     // Verify heartbeat event was created
-    let all_events = EventQueries::get_by_source(
+    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(10),
         None,
@@ -202,7 +202,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
     ctx.insert_event(&shutdown_event).await?;
 
     // Verify all events were created in correct order
-    let all_events = EventQueries::get_by_source(
+    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(10),
         None,
@@ -277,7 +277,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
     ctx.insert_event(&heartbeat_event).await?;
 
     // Verify custom metrics are included
-    let events = EventQueries::get_by_source(
+    let events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(10),
         None,
@@ -339,7 +339,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
     }
 
     // Verify multiple heartbeat events were emitted
-    let all_events = EventQueries::get_by_source(
+    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(100),
         None,
@@ -558,7 +558,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event_factory.create_event("process.shutdown", shutdown_payload)).await?;
 
     // Verify the failure progression is recorded
-    let events = EventQueries::get_by_source(
+    let events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(20),
         None,
@@ -690,7 +690,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat2_payload)).await?;
 
     // Verify restart is detectable by analyzing events
-    let all_events = EventQueries::get_by_source(
+    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(20),
         None,
@@ -774,7 +774,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     let duration = start_time.elapsed();
 
     // Verify all heartbeats were recorded
-    let all_events = EventQueries::get_by_source(
+    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
         "sinex.process".to_string(),
         Some(50),
         None,

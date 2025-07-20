@@ -22,20 +22,17 @@ use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 
 // Helper function to convert proto::RawEvent to RawEvent
+// Note: proto::RawEvent doesn't have id or ts_orig - those are assigned by the ingest service
 fn proto_to_raw_event(proto: sinex_ingestd::proto::RawEvent) -> AnyhowResult<RawEvent> {
     let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
     
-    let id = Ulid::from_str(&proto.event_id)?;
-    let ts_orig = if !proto.ts_orig.is_empty() {
-        Some(chrono::DateTime::parse_from_rfc3339(&proto.ts_orig)?
-            .with_timezone(&chrono::Utc))
-    } else {
-        None
-    };
+    // Generate ID and timestamp for testing
+    let id = Ulid::new();
+    let ts_orig = chrono::Utc::now();
     
     Ok(RawEvent {
         id,
-        ts_orig,
+        ts_orig: Some(ts_orig),
         ts_ingest: chrono::Utc::now(),
         source: proto.source,
         event_type: proto.event_type,
