@@ -6,6 +6,7 @@
 use crate::common::prelude::*;
 use redis::aio::MultiplexedConnection;
 use redis::AsyncCommands;
+use sinex_db::query_helpers::uuid_to_ulid;
 use std::str::FromStr;
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
@@ -204,15 +205,16 @@ impl TestAutomatonHandle {
                         .limit(10)
                 };
 
-                let rows = EventQueries::get_by_ids(&pool, &query, &["event_id::text as id", "source", "event_type", "payload"])
-                    .await;
-
-                if let Ok(rows) = rows {
-                    for row in rows {
-                        if let Ok(id) = Ulid::from_str(&row.id) {
-                            processed_events_clone.lock().await.push(row.id.clone());
+                match query.fetch_all(&pool).await {
+                    Ok(rows) => {
+                        for row in rows {
+                            let id = uuid_to_ulid(row.id);
+                            processed_events_clone.lock().await.push(id.to_string());
                             last_id = Some(id);
                         }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to query events: {}", e);
                     }
                 }
             }
@@ -224,276 +226,6 @@ impl TestAutomatonHandle {
             checkpoint_manager,
             processed_events,
         })
-    }
-}
-
-/// Extensions to TestContext for satellite architecture
-impl TestContext {
-    /// Start a test ingestd server
-    pub async fn start_test_ingestd(&self) -> AnyhowResult<TestIngestdHandle> {
-        start_test_ingestd_with_config(self, TestIngestdConfig::default()).await
-    }
-
-    /// Start a test satellite
-    pub async fn start_test_satellite(
-        &self,
-        config: SatelliteConfig,
-    ) -> AnyhowResult<TestSatelliteHandle> {
-        let satellite_id = format!("test-satellite-{}", Ulid::new());
-        let events_sent = Arc::new(Mutex::new(Vec::new()));
-        let events_sent_clone = events_sent.clone();
-
-        // Create a mock satellite that sends test events
-        let task_handle = tokio::spawn(async move {
-            // Simplified satellite behavior for testing
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(100));
-
-            loop {
-                interval.tick().await;
-
-                // Generate a test event
-                let factory = EventFactory::new("test.satellite");
-                let event = factory.create_event(
-                    "test.event",
-                    serde_json::json!({"satellite_id": satellite_id, "timestamp": chrono::Utc::now()})
-                );
-
-                events_sent_clone.lock().await.push(event);
-            }
-        });
-
-        Ok(TestSatelliteHandle {
-            satellite_id,
-            task_handle,
-            events_sent,
-        })
-    }
-
-    /// Start a test automaton
-    pub async fn start_test_automaton(
-        &self,
-        automaton_type: &str,
-    ) -> AnyhowResult<TestAutomatonHandle> {
-        let automaton_id = format!("test-{}-{}", automaton_type, Ulid::new());
-        let checkpoint_manager = CheckpointManager::new(
-            self.pool().clone(),
-            automaton_id.clone(),
-            format!("{}-group", automaton_type),
-            automaton_id.clone(),
-        );
-
-        let processed_events = Arc::new(Mutex::new(Vec::new()));
-        let processed_events_clone = processed_events.clone();
-        let pool = self.pool().clone();
-        let automaton_id_clone = automaton_id.clone();
-
-        let task_handle = tokio::spawn(async move {
-            // Simplified automaton that processes events from database
-            let mut last_id: Option<Ulid> = None;
-
-            loop {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-                // Query for new events using centralized query system
-                let query = if let Some(id) = last_id {
-                    QueryBuilder::select("core.events")
-                        .where_op("event_id", ">", QueryParam::Ulid(id))
-                        .order_by("event_id", "ASC")
-                        .limit(10)
-                } else {
-                    QueryBuilder::select("core.events")
-                        .order_by("event_id", "ASC")
-                        .limit(10)
-                };
-
-                let rows = EventQueries::get_by_ids(pool, &query, &["event_id::text as id", "source", "event_type", "payload"])
-                    .await;
-
-                if let Ok(rows) = rows {
-                    for row in rows {
-                        if let Ok(id) = Ulid::from_str(&row.id) {
-                            processed_events_clone.lock().await.push(row.id.clone());
-                            last_id = Some(id);
-                        }
-                    }
-                }
-            }
-        });
-
-        Ok(TestAutomatonHandle {
-            id: automaton_id,
-            task_handle,
-            checkpoint_manager,
-            processed_events,
-        })
-    }
-
-    /// Wait for events to appear in Redis stream
-    pub async fn wait_for_redis_stream_length(
-        &self,
-        redis: &mut MultiplexedConnection,
-        stream: &str,
-        expected: usize,
-    ) -> AnyhowResult<()> {
-        use redis::AsyncCommands;
-
-        let timeout = std::time::Duration::from_secs(5);
-        let start = std::time::Instant::now();
-
-        loop {
-            let len: usize = redis.xlen::<_, usize>(stream).await.unwrap_or(0);
-            if len >= expected {
-                return Ok(());
-            }
-
-            if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for {} events in stream {}, got {}",
-                    expected,
-                    stream,
-                    len
-                ));
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    }
-
-    /// Wait for automaton checkpoint to reach expected state
-    pub async fn wait_for_checkpoint_progress(
-        &self,
-        automaton: &TestAutomatonHandle,
-        expected_count: u64,
-    ) -> AnyhowResult<()> {
-        let timeout = std::time::Duration::from_secs(10);
-        let start = std::time::Instant::now();
-
-        loop {
-            let checkpoint = automaton.get_checkpoint().await?;
-            if checkpoint.processed_count >= expected_count {
-                return Ok(());
-            }
-
-            if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for checkpoint to reach {}, got {}",
-                    expected_count,
-                    checkpoint.processed_count
-                ));
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    }
-
-    /// Verify automaton checkpoint state
-    pub async fn verify_automaton_checkpoint(
-        &self,
-        automaton_id: &str,
-    ) -> AnyhowResult<CheckpointState> {
-        // For test simplification, return None
-        let checkpoint = None;
-
-        match checkpoint {
-            Some(row) => {
-                let checkpoint = if let Some(last_processed_id) = row.last_processed_id {
-                    // Try to parse the last_processed_id as a ULID
-                    match last_processed_id.parse::<Ulid>() {
-                        Ok(ulid) => Checkpoint::Internal {
-                            event_id: ulid,
-                            message_count: row.processed_count as u64,
-                        },
-                        Err(_) => Checkpoint::None, // Invalid ULID, fallback to None
-                    }
-                } else {
-                    Checkpoint::None
-                };
-                
-                Ok(CheckpointState {
-                    checkpoint,
-                    processed_count: row.processed_count as u64,
-                    last_activity: row.last_activity,
-                    data: row.data,
-                    version: row.version as u32,
-                })
-            }
-            None => Ok(CheckpointState::default()),
-        }
-    }
-
-    /// Create a test Redis connection
-    pub async fn create_redis_connection(&self) -> AnyhowResult<MultiplexedConnection> {
-        let client = redis::Client::open("redis://127.0.0.1/")?;
-        Ok(client.get_multiplexed_async_connection().await?)
-    }
-
-    /// Publish event to Redis stream
-    pub async fn publish_to_redis_stream(
-        &self,
-        redis: &mut MultiplexedConnection,
-        stream: &str,
-        event: &sinex_core_types::RawEvent,
-    ) -> AnyhowResult<String> {
-        use redis::AsyncCommands;
-
-        let event_json = serde_json::to_string(event)?;
-        let message_id: String = redis
-            .xadd(
-                stream,
-                "*",
-                &[
-                    ("event", event_json),
-                    ("source", event.source.clone()),
-                    ("event_type", event.event_type.clone()),
-                ],
-            )
-            .await?;
-
-        Ok(message_id)
-    }
-
-    /// Consume from Redis stream using consumer group
-    pub async fn consume_from_redis_stream(
-        &self,
-        redis: &mut MultiplexedConnection,
-        stream: &str,
-        group: &str,
-        consumer: &str,
-    ) -> AnyhowResult<Vec<StreamMessage>> {
-        use redis::cmd;
-
-        // Use Redis XREADGROUP command
-        let result: redis::streams::StreamReadReply = cmd("XREADGROUP")
-            .arg("GROUP")
-            .arg(group)
-            .arg(consumer)
-            .arg("COUNT")
-            .arg(10)
-            .arg("STREAMS")
-            .arg(stream)
-            .arg(">")
-            .query_async(redis)
-            .await?;
-
-        let mut messages = Vec::new();
-        for stream_key in result.keys {
-            for stream_id in stream_key.ids {
-                messages.push(StreamMessage { 
-                    id: stream_id.id, 
-                    fields: stream_id.map.into_iter()
-                        .filter_map(|(k, v)| {
-                            if let redis::Value::Data(data) = v {
-                                Some((k, String::from_utf8_lossy(&data).to_string()))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                });
-            }
-        }
-
-        Ok(messages)
     }
 }
 

@@ -1014,7 +1014,7 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
     let initial_count = ctx.event_count().await?;
 
     // Insert events in background
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     tokio::spawn(async move {
         for i in 0..3 {
             let event = EventBuilder::generic("test", "background")

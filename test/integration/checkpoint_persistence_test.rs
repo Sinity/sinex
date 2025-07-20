@@ -105,6 +105,15 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     let automaton = TestCheckpointAutomaton::new(service_name.clone());
     let processed_events_ref = automaton.processed_events.clone();
 
+    // Create dependencies
+    let ingest_client = IngestClient::new("/run/sinex/ingest.sock".into()).await?;
+    let checkpoint_manager = CheckpointManager::new(
+        pool.clone(),
+        service_name.clone(),
+        consumer_group.clone(),
+        consumer_name.clone(),
+    );
+
     // Create automaton runner
     let mut runner = HotlogAutomatonRunner::new(automaton);
 
@@ -124,13 +133,6 @@ async fn test_checkpoint_persistence_and_restart_recovery(
         .xgroup_destroy("sinex:streams:hotlog", &consumer_group)
         .await;
 
-    // Create checkpoint manager for verification
-    let checkpoint_manager = CheckpointManager::new(
-        pool.clone(),
-        service_name.clone(),
-        consumer_group.clone(),
-        consumer_name.clone(),
-    );
 
     // Step 1: Inject test events into the hotlog stream
     info!("Step 1: Injecting test events");

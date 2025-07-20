@@ -82,7 +82,7 @@ pub use sinex_db::{events, events::get_event_by_id, insert_event_with_validator}
 // Test helper functions from common/mod.rs
 pub use crate::common::{get_events_by_type, get_events_in_time_range, get_recent_events};
 // Satellite architecture testing utilities
-pub use crate::common::{count_events_from_source, start_test_ingestd, start_test_ingestd_at_path};
+pub use crate::common::count_events_from_source;
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
     assert_channel_send_success, assert_eq_with_context, assert_event_inserted_with_context,

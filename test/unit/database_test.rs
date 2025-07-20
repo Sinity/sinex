@@ -295,6 +295,11 @@ async fn test_event_validation_creation(_ctx: TestContext) -> TestResult {
         payload_schema_id: None,
         payload: json!({}),
         source_event_ids: None,
+        source_material_id: None,
+        source_material_offset_start: None,
+        source_material_offset_end: None,
+        anchor_byte: None,
+        associated_blob_ids: None,
     };
 
     // Use ValidationChain to test the events
@@ -337,6 +342,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
                 payload_schema_id: None,
                 payload: json!({}),
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             },
             "empty_source",
         ),
@@ -353,6 +363,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
                 payload_schema_id: None,
                 payload: json!({}),
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             },
             "invalid_event_type",
         ),
@@ -369,6 +384,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
                 payload_schema_id: None,
                 payload: json!({}),
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             },
             "empty_host",
         ),
@@ -694,12 +714,12 @@ async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
     use tokio::task::JoinSet;
 
-    let _pool = Arc::new(ctx.pool());
+    let pool = Arc::new(ctx.pool().clone());
     let mut join_set = JoinSet::new();
 
     // Spawn multiple concurrent insertions
     for i in 0..10 {
-        let pool_clone = Arc::new(ctx.pool());
+        let pool_clone = pool.clone();
         join_set.spawn(async move {
             let event = EventFactory::new("fs").create_event(
                 "file.created",
@@ -1163,6 +1183,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
         ctx.pool().clone(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
+        "test_consumer".to_string(),
     );
 
     let mut checkpoint_state = checkpoint_manager.load_checkpoint().await?;

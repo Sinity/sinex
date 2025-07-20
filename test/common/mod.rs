@@ -47,55 +47,6 @@ pub fn test_database_url() -> String {
 
 use tokio::net::UnixListener;
 
-/// Start a test ingestd server for integration tests
-pub async fn start_test_ingestd(
-    ctx: &crate::common::test_context::TestContext,
-) -> AnyhowResult<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
-    let socket_path = ctx
-        .work_dir()
-        .join("test-ingestd.sock")
-        .to_string_lossy()
-        .to_string();
-    start_test_ingestd_at_path(ctx, &socket_path).await
-}
-
-/// Start ingestd at specific socket path
-pub async fn start_test_ingestd_at_path(
-    ctx: &crate::common::test_context::TestContext,
-    socket_path: &str,
-) -> AnyhowResult<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
-    use std::time::Duration;
-
-    // Remove socket if it exists
-    let _ = std::fs::remove_file(socket_path);
-
-    // Create a simple test ingestd that accepts events and stores them
-    let pool = ctx.pool();
-    let socket_path_for_server = socket_path.to_string();
-
-    let handle = tokio::spawn(async move {
-        // This is a simplified ingestd for testing
-        // In real implementation, this would use sinex_ingestd::IngestServer
-        let listener = UnixListener::bind(&socket_path_for_server).unwrap();
-
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    // Handle gRPC connection
-                    // For now, just keep the connection alive
-                    let _ = stream;
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Wait for server to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    Ok((handle, socket_path.to_string()))
-}
 
 /// Count events from a specific satellite source
 pub async fn count_events_from_source(

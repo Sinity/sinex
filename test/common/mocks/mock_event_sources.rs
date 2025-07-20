@@ -9,14 +9,8 @@ use serde_json::Value;
 use sinex_db::RawEvent;
 use sinex_satellite_sdk::{
     EventSourceConfig, SatelliteResult, ScanArgs, StatefulStreamProcessor,
+    stream_processor::{Checkpoint, ProcessorType, StreamProcessorContext, ScanReport},
 };
-// Define ScanReport locally as it may not be exported from SDK
-pub struct ScanReport {
-    pub events_generated: u64,
-    pub duration: std::time::Duration,
-    pub source_stats: std::collections::HashMap<String, u64>,
-    pub time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-}
 use std::sync::Arc;
 use tokio::sync::{mpsc, Mutex};
 
@@ -126,12 +120,18 @@ impl FilesystemMonitor {
 
 #[async_trait]
 impl StatefulStreamProcessor for FilesystemMonitor {
+    async fn initialize(&mut self, _ctx: StreamProcessorContext) -> SatelliteResult<()> {
+        Ok(())
+    }
+
     async fn scan(
         &mut self,
-        _from: sinex_satellite_sdk::stream_processor::Checkpoint,
+        from: sinex_satellite_sdk::stream_processor::Checkpoint,
         _until: sinex_satellite_sdk::stream_processor::TimeHorizon,
         _args: ScanArgs,
-    ) -> SatelliteResult<()> {
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
         // Mock scanning - generate some test events
         let event = EventFactory::new("filesystem").create_event(
             "file.created",
@@ -143,7 +143,28 @@ impl StatefulStreamProcessor for FilesystemMonitor {
         );
 
         self.add_test_event(event).await;
-        Ok(())
+        
+        Ok(ScanReport {
+            events_processed: 1,
+            duration: start_time.elapsed(),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: std::collections::HashMap::new(),
+            successful_targets: vec!["/test/file.txt".to_string()],
+            failed_targets: Vec::new(),
+        })
+    }
+
+    fn processor_name(&self) -> &str {
+        "filesystem-monitor"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Ingestor
+    }
+
+    async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }
 
@@ -187,16 +208,43 @@ impl TerminalMonitor {
 
 #[async_trait]
 impl StatefulStreamProcessor for TerminalMonitor {
+    async fn initialize(&mut self, _ctx: StreamProcessorContext) -> SatelliteResult<()> {
+        Ok(())
+    }
+
     async fn scan(
         &mut self,
-        _from: sinex_satellite_sdk::stream_processor::Checkpoint,
+        from: sinex_satellite_sdk::stream_processor::Checkpoint,
         _until: sinex_satellite_sdk::stream_processor::TimeHorizon,
         _args: ScanArgs,
-    ) -> SatelliteResult<()> {
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
         // Mock terminal scanning
         self.add_command_event("ls -la").await;
         self.add_command_event("git status").await;
-        Ok(())
+        
+        Ok(ScanReport {
+            events_processed: 2,
+            duration: start_time.elapsed(),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: std::collections::HashMap::from([("commands".to_string(), 2)]),
+            successful_targets: vec!["ls -la".to_string(), "git status".to_string()],
+            failed_targets: Vec::new(),
+        })
+    }
+
+    fn processor_name(&self) -> &str {
+        "terminal-monitor"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Ingestor
+    }
+
+    async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }
 
@@ -278,10 +326,8 @@ impl ShellHistoryMonitor {
         tx: mpsc::Sender<RawEvent>,
         args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        let start_time = std::time::Instant::now();
-        
         // Call the scan method to populate internal events
-        self.scan(
+        let scan_report = self.scan(
             sinex_satellite_sdk::stream_processor::Checkpoint::None,
             sinex_satellite_sdk::stream_processor::TimeHorizon::Continuous,
             args,
@@ -289,36 +335,55 @@ impl ShellHistoryMonitor {
         
         // Send collected events through the channel
         let events = self.get_events().await;
-        let events_count = events.len();
         
         for event in events {
             let _ = tx.send(event).await;
         }
         
-        Ok(ScanReport {
-            events_generated: events_count as u64,
-            duration: start_time.elapsed(),
-            source_stats: std::collections::HashMap::from([
-                ("shell_history_entries".to_string(), events_count as u64),
-            ]),
-            time_range: None,
-        })
+        Ok(scan_report)
     }
 }
 
 #[async_trait]
 impl StatefulStreamProcessor for ShellHistoryMonitor {
+    async fn initialize(&mut self, _ctx: StreamProcessorContext) -> SatelliteResult<()> {
+        Ok(())
+    }
+
     async fn scan(
         &mut self,
-        _from: sinex_satellite_sdk::stream_processor::Checkpoint,
+        from: sinex_satellite_sdk::stream_processor::Checkpoint,
         _until: sinex_satellite_sdk::stream_processor::TimeHorizon,
         _args: ScanArgs,
-    ) -> SatelliteResult<()> {
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
         // Mock shell history scanning
         self.add_command_event("cd /home/user").await;
         self.add_command_event("ls -la").await;
         self.add_command_event("git status").await;
-        Ok(())
+        
+        Ok(ScanReport {
+            events_processed: 3,
+            duration: start_time.elapsed(),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: std::collections::HashMap::from([("history_entries".to_string(), 3)]),
+            successful_targets: vec!["cd /home/user".to_string(), "ls -la".to_string(), "git status".to_string()],
+            failed_targets: Vec::new(),
+        })
+    }
+
+    fn processor_name(&self) -> &str {
+        "shell-history-monitor"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Ingestor
+    }
+
+    async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }
 
@@ -405,17 +470,44 @@ impl AtuinHistoryImporter {
 
 #[async_trait]
 impl StatefulStreamProcessor for AtuinHistoryImporter {
+    async fn initialize(&mut self, _ctx: StreamProcessorContext) -> SatelliteResult<()> {
+        Ok(())
+    }
+
     async fn scan(
         &mut self,
-        _from: sinex_satellite_sdk::stream_processor::Checkpoint,
+        from: sinex_satellite_sdk::stream_processor::Checkpoint,
         _until: sinex_satellite_sdk::stream_processor::TimeHorizon,
         _args: ScanArgs,
-    ) -> SatelliteResult<()> {
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
         // Mock Atuin history scanning
         self.add_command_event("cargo build", 0).await;
         self.add_command_event("cargo test", 1).await;
         self.add_command_event("git commit -m 'fix'", 0).await;
-        Ok(())
+        
+        Ok(ScanReport {
+            events_processed: 3,
+            duration: start_time.elapsed(),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: std::collections::HashMap::from([("atuin_entries".to_string(), 3)]),
+            successful_targets: vec!["cargo build".to_string(), "cargo test".to_string(), "git commit -m 'fix'".to_string()],
+            failed_targets: Vec::new(),
+        })
+    }
+
+    fn processor_name(&self) -> &str {
+        "atuin-history-importer"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Ingestor
+    }
+
+    async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }
 
@@ -438,13 +530,40 @@ impl ClipboardMonitor {
 
 #[async_trait]
 impl StatefulStreamProcessor for ClipboardMonitor {
+    async fn initialize(&mut self, _ctx: StreamProcessorContext) -> SatelliteResult<()> {
+        Ok(())
+    }
+
     async fn scan(
         &mut self,
-        _from: sinex_satellite_sdk::stream_processor::Checkpoint,
+        from: sinex_satellite_sdk::stream_processor::Checkpoint,
         _until: sinex_satellite_sdk::stream_processor::TimeHorizon,
         _args: ScanArgs,
-    ) -> SatelliteResult<()> {
+    ) -> SatelliteResult<ScanReport> {
+        let start_time = std::time::Instant::now();
+        
         // Mock clipboard scanning - no events for now
-        Ok(())
+        
+        Ok(ScanReport {
+            events_processed: 0,
+            duration: start_time.elapsed(),
+            final_checkpoint: from,
+            time_range: None,
+            processor_stats: std::collections::HashMap::new(),
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+        })
+    }
+
+    fn processor_name(&self) -> &str {
+        "clipboard-monitor"
+    }
+
+    fn processor_type(&self) -> ProcessorType {
+        ProcessorType::Ingestor
+    }
+
+    async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
+        Ok(Checkpoint::None)
     }
 }

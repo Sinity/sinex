@@ -286,9 +286,9 @@ pub mod database {
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas 
             (id, event_source, event_type, schema_version, json_schema_definition)
-            VALUES ($1::ulid, $2, $3, $4, $5)
+            VALUES ($1::uuid, $2, $3, $4, $5)
             "#,
-            schema_id.to_string(),
+            schema_id.to_uuid(),
             event_source,
             event_type,
             schema_version,
@@ -303,8 +303,8 @@ pub mod database {
     /// Get a schema from the database
     pub async fn get_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<Option<Value>> {
         let result = sqlx::query!(
-            "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid",
-            schema_id.to_string()
+            "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id::uuid = $1::uuid",
+            schema_id.to_uuid()
         )
         .fetch_optional(pool)
         .await?;
@@ -333,8 +333,8 @@ pub mod database {
     /// Delete a schema from the database
     pub async fn delete_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<bool> {
         let result = sqlx::query!(
-            "DELETE FROM sinex_schemas.event_payload_schemas WHERE id = $1::ulid",
-            schema_id.to_string()
+            "DELETE FROM sinex_schemas.event_payload_schemas WHERE id::uuid = $1::uuid",
+            schema_id.to_uuid()
         )
         .execute(pool)
         .await?;

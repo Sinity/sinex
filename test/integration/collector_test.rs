@@ -611,7 +611,7 @@ impl EventSource for TestCoordinatedSource {
 
     async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> sinex_core_types::Result<()> {
         while !self.should_fail.load(Ordering::Relaxed) {
-            let count = self.events_generated.fetch_add(1, Ordering::Relaxed);
+            let count = self.events_processed.fetch_add(1, Ordering::Relaxed);
 
             let event = EventFactory::new(Self::SOURCE_NAME)
                 .create_event("coordination.test", json!({
@@ -646,7 +646,7 @@ async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> TestRes
         }));
 
         let mut source = TestCoordinatedSource::initialize(source_ctx).await?;
-        let events_generated = source.events_generated.clone();
+        let events_generated = source.events_processed.clone();
         let should_fail = source.should_fail.clone();
 
         source_controls.push((events_generated, should_fail));

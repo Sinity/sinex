@@ -541,11 +541,11 @@ impl TestContext {
     pub async fn assert_no_events(&self) -> TestResult {
         let count = self.event_count().await?;
         if count != 0 {
-            let error = sinex_core_types::CoreError::Validation("Expected no events but found some".to_string())
-                .with_context("actual_count", count)
-                .with_context("test_context", &self.config.test_name)
-                .build();
-            return Err(error.into());
+            return Err(anyhow::anyhow!(
+                "Expected no events but found some. Actual count: {}, Test context: {}",
+                count,
+                self.config.test_name
+            ));
         }
         Ok(())
     }
@@ -555,11 +555,11 @@ impl TestContext {
         match self.get_event_by_id(id).await? {
             Some(_) => Ok(()),
             None => {
-                let error = sinex_core_types::CoreError::validation("Event does not exist")
-                    .with_context("event_id", id)
-                    .with_context("test_context", &self.config.test_name)
-                    .build();
-                Err(error.into())
+                Err(anyhow::anyhow!(
+                    "Event does not exist. Event ID: {}, Test context: {}",
+                    id,
+                    self.config.test_name
+                ))
             }
         }
     }
@@ -568,12 +568,12 @@ impl TestContext {
     pub async fn assert_event_count(&self, expected: usize) -> TestResult {
         let actual = self.event_count().await?;
         if actual != expected as i64 {
-            let error = sinex_core_types::CoreError::validation("Event count mismatch")
-                .with_context("expected_count", expected)
-                .with_context("actual_count", actual)
-                .with_context("test_context", &self.config.test_name)
-                .build();
-            return Err(error.into());
+            return Err(anyhow::anyhow!(
+                "Event count mismatch. Expected: {}, Actual: {}, Test context: {}",
+                expected,
+                actual,
+                self.config.test_name
+            ));
         }
         Ok(())
     }
@@ -587,11 +587,11 @@ impl TestContext {
         let active_count = 0i64;
         
         if active_count > 0 {
-            let error = sinex_core_types::CoreError::validation("Automata still active")
-                .with_context("active_count", active_count)
-                .with_context("test_context", &self.config.test_name)
-                .build();
-            return Err(error.into());
+            return Err(anyhow::anyhow!(
+                "Automata still active. Active count: {}, Test context: {}",
+                active_count,
+                self.config.test_name
+            ));
         }
         
         Ok(())

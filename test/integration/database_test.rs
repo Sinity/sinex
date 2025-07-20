@@ -27,6 +27,16 @@ use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
 use uuid::Uuid;
 
+// Local type definition for checkpoint queries
+#[derive(sqlx::FromRow)]
+struct CheckpointRecord {
+    pub automaton_name: String,
+    pub consumer_group: String,
+    pub last_processed_id: Option<String>,
+    pub state_data: Option<serde_json::Value>,
+    pub processed_count: i64,
+}
+
 // =============================================================================
 // BASIC DATABASE OPERATIONS
 // =============================================================================
@@ -98,10 +108,11 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
 
     // Insert all events concurrently
     let events_to_insert = [&fs_event1, &fs_event2, &term_event];
+    let pool = ctx.pool().clone();
     let insert_tasks: Vec<_> = events_to_insert
         .iter()
         .map(|&event| {
-            let pool = ctx.pool();
+            let pool = pool.clone();
             let event = event.clone();
             tokio::spawn(async move { assertions::assert_event_inserted(&pool, &event).await })
         })
@@ -793,27 +804,27 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     let automaton_name = "test_update_automaton";
     let checkpoint_id = Ulid::new();
 
-    // Insert initial checkpoint
-    CheckpointQueries::upsert_checkpoint(
-        checkpoint_id,
-        automaton_name,
-        "default_group",
-        Some("initial_event"),
-        &json!({"processed_count": 10}),
-    )
-    .execute(pool)
-    .await?;
+    // Create CheckpointManager
+    use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
+    let checkpoint_manager = CheckpointManager::new(
+        pool.clone(),
+        automaton_name.clone(),
+        "default_group".to_string(),
+        "test_consumer".to_string(),
+    );
 
-    // Update checkpoint
-    CheckpointQueries::upsert_checkpoint(
-        checkpoint_id,
-        automaton_name,
-        "default_group",
-        Some("updated_event"),
-        &json!({"processed_count": 25, "status": "active"}),
-    )
-    .execute(pool)
-    .await?;
+    // Load and update checkpoint
+    let mut checkpoint = checkpoint_manager.load_checkpoint().await?;
+    checkpoint.processed_count = 10;
+    checkpoint.set_last_processed_id(Some("initial_event".to_string()));
+    checkpoint.data = Some(json!({"processed_count": 10}));
+    checkpoint_manager.save_checkpoint(&checkpoint).await?;
+
+    // Update checkpoint again
+    checkpoint.processed_count = 25;
+    checkpoint.set_last_processed_id(Some("updated_event".to_string()));
+    checkpoint.data = Some(json!({"processed_count": 25, "status": "active"}));
+    checkpoint_manager.save_checkpoint(&checkpoint).await?;
 
     // Verify update
     let checkpoint: CheckpointRecord = sqlx::query_as!(
