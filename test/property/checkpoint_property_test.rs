@@ -56,15 +56,9 @@ proptest! {
             checkpoint_manager.save_checkpoint(&initial_state).await.unwrap();
 
             // Verify state is consistent
-            let retrieved_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
-            match retrieved_state {
-                Some(state) => {
-                    assert_eq!(state.last_processed_id(), initial_state.last_processed_id());
-                    assert_eq!(state.processed_count, initial_state.processed_count);
-                    assert_eq!(state.data, initial_state.data);
-                }
-                None => panic!("Checkpoint should exist after save"),
-            }
+            let state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+            assert_eq!(state.max_processed, initial_state.processed_count);
+            assert!(state.last_update.is_some());
         });
     }
 }
@@ -111,10 +105,8 @@ proptest! {
             }
 
             // Verify final state
-            let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
-            assert!(final_state.is_some());
-            let state = final_state.unwrap();
-            assert_eq!(state.processed_count, expected_final_count);
+            let state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+            assert_eq!(state.max_processed, expected_final_count);
         });
     }
 }
@@ -129,10 +121,10 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = Arc::new(ctx.pool().clone());
+            let pool = ctx.pool().clone();
 
             let checkpoint_manager = Arc::new(CheckpointManager::new(
-                pool.as_ref().clone(),
+                pool.clone(),
                 automaton_name.clone(),
                 format!("{}-group", automaton_name),
                 format!("{}-consumer", automaton_name),
@@ -172,7 +164,7 @@ proptest! {
 
             // Verify final state is consistent
             let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
-            assert!(final_state.is_some());
+            assert!(final_state.last_update.is_some());
         });
     }
 }
@@ -223,11 +215,9 @@ proptest! {
                 checkpoint_manager.save_checkpoint(&state).await.unwrap();
 
                 // Verify the state was updated correctly
-                let retrieved = checkpoint_manager.get_checkpoint_stats().await.unwrap();
-                assert!(retrieved.is_some());
-                let retrieved_state = retrieved.unwrap();
-                assert_eq!(retrieved_state.processed_count, current_count);
-                assert_eq!(retrieved_state.last_processed_id(), Some(format!("step-{}", i)));
+                let retrieved_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+                assert_eq!(retrieved_state.max_processed, current_count);
+                assert!(retrieved_state.last_update.is_some());
             }
         });
     }
@@ -281,11 +271,9 @@ proptest! {
                         checkpoint_manager.save_checkpoint(&state).await.unwrap();
                     }
                     "load" => {
-                        let retrieved = checkpoint_manager.get_checkpoint_stats().await.unwrap();
-                        if let Some(state) = retrieved {
-                            assert_eq!(state.data, Some(expected_data.clone()));
-                            assert_eq!(state.processed_count, processed_count);
-                        }
+                        let stats = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+                        assert_eq!(stats.max_processed, processed_count);
+                        assert!(stats.last_update.is_some());
                     }
                     "update" => {
                         processed_count += 1;
@@ -310,10 +298,8 @@ proptest! {
 
             // Final verification
             let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
-            if let Some(state) = final_state {
-                assert_eq!(state.data, Some(expected_data));
-                assert_eq!(state.processed_count, processed_count);
-            }
+            assert_eq!(final_state.max_processed, processed_count);
+            assert!(final_state.last_update.is_some());
         });
     }
 }
@@ -358,10 +344,9 @@ proptest! {
 
             // Verify all checkpoints exist
             for manager in &managers {
-                let checkpoint = manager.get_checkpoint_stats().await.unwrap();
-                assert!(checkpoint.is_some());
-                let state = checkpoint.unwrap();
-                assert_eq!(state.processed_count, cleanup_threshold);
+                let stats = manager.get_checkpoint_stats().await.unwrap();
+                assert_eq!(stats.max_processed, cleanup_threshold);
+                assert!(stats.last_update.is_some());
             }
 
             // Test cleanup doesn't affect other automata
@@ -375,7 +360,7 @@ proptest! {
 
             // Verify cleanup maintains isolation
             let remaining_checkpoint = cleaned_manager.get_checkpoint_stats().await.unwrap();
-            assert!(remaining_checkpoint.is_some());
+            assert!(remaining_checkpoint.last_update.is_some());
         });
     }
 }

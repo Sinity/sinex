@@ -112,7 +112,7 @@ async fn test_atuin_import_overlap_detection(ctx: TestContext) -> TestResult {
     };
 
     let report1 = importer.run_scanner(tx1, scanner_args.clone()).await?;
-    assert_eq!(report1.events_generated, 3);
+    assert_eq!(report1.events_processed, 3);
 
     // Consume events from first import
     let mut events1 = Vec::new();
@@ -140,7 +140,7 @@ async fn test_atuin_import_overlap_detection(ctx: TestContext) -> TestResult {
     let report2 = importer2.run_scanner(tx2, scanner_args).await?;
 
     // Should detect new entries (overlapping ones should be filtered)
-    assert!(report2.events_generated >= 2); // At least the 2 new entries
+    assert!(report2.events_processed >= 2); // At least the 2 new entries
 
     // Verify no exact duplicates were imported by checking command uniqueness
     let mut events2 = Vec::new();
@@ -217,7 +217,7 @@ echo "recent command"
     };
 
     let report1 = monitor.run_scanner(tx1, scanner_args1).await?;
-    assert_eq!(report1.events_generated, 2); // middle commands only
+    assert_eq!(report1.events_processed, 2); // middle commands only
 
     // Verify time range in report
     assert!(report1.time_range.is_some());
@@ -250,7 +250,7 @@ echo "recent command"
     };
 
     let report2 = monitor2.run_scanner(tx2, scanner_args2).await?;
-    assert_eq!(report2.events_generated, 3); // middle command 2 + recent command + overlap
+    assert_eq!(report2.events_processed, 3); // middle command 2 + recent command + overlap
 
     let mut events2 = Vec::new();
     while let Ok(event) = rx2.try_recv() {
@@ -312,7 +312,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
     };
 
     let report1 = monitor.run_scanner(tx1, scanner_args.clone()).await?;
-    assert_eq!(report1.events_generated, 100);
+    assert_eq!(report1.events_processed, 100);
 
     // Consume all events
     let mut events_count = 0;
@@ -425,7 +425,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
     };
 
     let atuin_report = atuin_importer.run_scanner(atuin_tx, atuin_args).await?;
-    assert_eq!(atuin_report.events_generated, 1);
+    assert_eq!(atuin_report.events_processed, 1);
 
     // Consume Atuin event
     let atuin_event = atuin_rx.recv().await.unwrap();
@@ -456,7 +456,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
     };
 
     let shell_report = shell_monitor.run_scanner(shell_tx, shell_args).await?;
-    assert_eq!(shell_report.events_generated, 1);
+    assert_eq!(shell_report.events_processed, 1);
 
     // Consume shell event
     let shell_event = shell_rx.recv().await.unwrap();

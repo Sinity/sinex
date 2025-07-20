@@ -76,7 +76,13 @@ impl AnalyticsService {
 
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = EventQueries::count_by_type_in_range(start, end)
+                #[derive(sqlx::FromRow)]
+                struct CountRow {
+                    event_type: String,
+                    count: i64,
+                }
+                
+                let rows: Vec<CountRow> = EventQueries::count_by_type_in_range(start, end)
                     .fetch_all(&self.pool)
                     .await?;
 
@@ -85,7 +91,13 @@ impl AnalyticsService {
                 }
             }
             _ => {
-                let rows = EventQueries::count_by_type_all_time()
+                #[derive(sqlx::FromRow)]
+                struct CountRow {
+                    event_type: String,
+                    count: i64,
+                }
+                
+                let rows: Vec<CountRow> = EventQueries::count_by_type_all_time()
                     .fetch_all(&self.pool)
                     .await?;
 
@@ -146,14 +158,20 @@ impl AnalyticsService {
     ) -> ServiceResult<Vec<(String, i64)>> {
         let mut result = Vec::new();
 
-        let rows = match (start_time, end_time) {
+        #[derive(sqlx::FromRow)]
+        struct CommandRow {
+            command: String,
+            count: i64,
+        }
+
+        let rows: Vec<CommandRow> = match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                EventQueries::top_commands_in_range(start, end, limit)
+                EventQueries::top_commands_in_range(start, end, limit as i64)
                     .fetch_all(&self.pool)
                     .await?
             }
             _ => {
-                EventQueries::top_commands_all_time(limit)
+                EventQueries::top_commands_all_time(limit as i64)
                     .fetch_all(&self.pool)
                     .await?
             }

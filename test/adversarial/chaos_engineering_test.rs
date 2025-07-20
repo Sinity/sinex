@@ -29,7 +29,7 @@ use tokio::task::yield_now;
 /// Test multiple agent instances registering simultaneously
 #[sinex_test]
 async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let automaton_name = "chaos-agent";
     let successful_registrations = Arc::new(AtomicU64::new(0));
@@ -150,7 +150,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 /// Test agent heartbeat chaos with network failures
 #[sinex_test]
 async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let automaton_name = "heartbeat-chaos-agent";
     
     // Register initial agent
@@ -253,7 +253,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
 /// Test agent lifecycle during concurrent operations
 #[sinex_test]
 async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let base_automaton_name = "lifecycle-chaos";
     
     let registration_count = Arc::new(AtomicU64::new(0));
@@ -656,8 +656,8 @@ async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestRe
 /// Test shutdown signal during initialization
 #[sinex_test]
 async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
-    let pool_clone = ctx.pool().clone();
+    let pool = ctx.pool().clone();
+    let pool_clone = ctx.pool();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
     let init_completed = Arc::new(AtomicU64::new(0));
 
@@ -802,7 +802,7 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResu
 /// Test state machine corruption under load
 #[sinex_test]
 async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let state_transitions = Arc::new(AtomicU64::new(0));
     let invalid_transitions = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -896,7 +896,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
 /// Test system resilience under database connection failures
 #[sinex_test]
 async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let failure_count = Arc::new(AtomicU64::new(0));
     let recovery_count = Arc::new(AtomicU64::new(0));
     let event_count = Arc::new(AtomicU64::new(0));
@@ -1272,7 +1272,7 @@ async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
         cascade_delay: Duration::from_millis(500),
     });
     
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let total_operations = Arc::new(AtomicU64::new(0));
     let cascade_triggers = Arc::new(AtomicU64::new(0));
     let recovery_attempts = Arc::new(AtomicU64::new(0));
@@ -1415,7 +1415,7 @@ async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
 async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
     use crate::common::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
     
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     // Phase 1: Create chaos with multiple failure modes
     println!("Phase 1: Inducing chaos across multiple subsystems");

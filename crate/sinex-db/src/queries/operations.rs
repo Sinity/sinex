@@ -368,7 +368,7 @@ impl OperationQueries {
         }
 
         if let Some(lim) = limit {
-            builder = builder.limit(lim as usize);
+            builder = builder.limit(lim);
         } else {
             builder = builder.limit(1000);
         }

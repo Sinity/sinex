@@ -46,8 +46,19 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
     info!("✓ Event source configuration loads correctly");
 
     // Test 3: Verify database schema includes new tables
-    let table_exists = OperationQueries::check_table_exists(ctx.pool(), "core", "automaton_checkpoints").await?;
-    assert!(table_exists, "automaton_checkpoints table should exist");
+    let table_check = sqlx::query_scalar!(
+        r#"
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_schema = $1 AND table_name = $2
+        )
+        "#,
+        "core",
+        "automaton_checkpoints"
+    )
+    .fetch_one(ctx.pool())
+    .await?;
+    assert!(table_check.unwrap_or(false), "automaton_checkpoints table should exist");
     info!("✓ New database schema is in place");
 
     // Test 4: Test checkpoint functionality
@@ -120,7 +131,7 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     let raw_event = create_test_command_event("ls -la", "/home/user");
 
     // Step 2: Write to core.events (simulating what ingestd would do)
-    let event_id = EventQueries::insert_raw_event(ctx.pool(), &raw_event).await?;
+    let event_id = sinex_db::insert_event(ctx.pool(), &raw_event).await?;
 
     info!("✓ Raw event written to database");
 
@@ -137,14 +148,14 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     let factory = EventFactory::new("canonical.terminal");
     let mut canonical_event = factory.create_event("command.canonical", canonical_payload);
     canonical_event.id = canonical_event_id;
-    canonical_event.ts_orig = chrono::Utc::now();
+    canonical_event.ts_orig = Some(chrono::Utc::now());
     
-    EventQueries::insert_raw_event(ctx.pool(), &canonical_event).await?;
+    sinex_db::insert_event(ctx.pool(), &canonical_event).await?;
 
     info!("✓ Canonical event created from raw event");
 
     // Step 4: Verify the complete flow
-    let retrieved_canonical = EventQueries::get_event_by_id(ctx.pool(), canonical_event_id).await?;
+    let retrieved_canonical = sinex_db::get_event_by_id(ctx.pool(), canonical_event_id).await?;
 
     assert_eq!(retrieved_canonical.source, "canonical.terminal");
     assert_eq!(retrieved_canonical.event_type, "command.canonical");
@@ -226,7 +237,9 @@ async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> AnyhowResult<()> 
     assert_eq!(loaded.processed_count, checkpoint.processed_count);
 
     // Test checkpoint stats via centralized queries
-    let checkpoint_count = CheckpointQueries::count_checkpoints_for_automaton(pool, "test-checkpoint-automaton").await?;
+    let (checkpoint_count,): (i64,) = CheckpointQueries::count_checkpoints_by_processor("test-checkpoint-automaton".to_string())
+        .fetch_one(&pool)
+        .await?;
     assert!(checkpoint_count > 0, "Should have checkpoint records");
 
     info!("Checkpoint functionality test passed");

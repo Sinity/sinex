@@ -9,11 +9,8 @@
 // - Event constants and source identifiers
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
 use chrono::Utc;
-use sinex_core_types::{event_type_constants, CoreError};
-use sinex_core_types::Result as CoreResult;
+use sinex_error::{CoreError, Result as CoreResult, ResultExt};
 use sinex_events::{sources, EventFactory, event_types};
 use std::io;
 
@@ -34,15 +31,15 @@ use std::io;
 async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
     let events = vec![
         EventFactory::new(sources::FS).create_event(
-            event_type_constants::filesystem::FILE_CREATED,
+            event_types::filesystem::FILE_CREATED,
             json!({"path": "/test/file1.txt"}),
         ),
         EventFactory::new(sources::SHELL_KITTY).create_event(
-            event_type_constants::shell::COMMAND_EXECUTED,
+            event_types::shell::COMMAND_EXECUTED,
             json!({"command": "ls -la"}),
         ),
         EventFactory::new(sources::SINEX).create_event(
-            event_type_constants::sinex::AUTOMATON_HEARTBEAT,
+            event_types::sinex::AUTOMATON_HEARTBEAT,
             json!({"status": "running"}),
         ),
     ];
@@ -67,14 +64,14 @@ async fn test_multiple_event_creation(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_event_factory_complete_creation(_ctx: TestContext) -> TestResult {
     let event = EventFactory::new(sources::FS).create_event(
-        event_type_constants::filesystem::FILE_CREATED,
+        event_types::filesystem::FILE_CREATED,
         json!({"path": "/test/file.txt", "size": 1024}),
     );
 
     pretty_assertions::assert_eq!(event.source, sources::FS);
     pretty_assertions::assert_eq!(
         event.event_type,
-        event_type_constants::filesystem::FILE_CREATED
+        event_types::filesystem::FILE_CREATED
     );
     pretty_assertions::assert_eq!(event.payload["path"], "/test/file.txt");
     pretty_assertions::assert_eq!(event.payload["size"], 1024);
@@ -90,7 +87,7 @@ async fn test_event_factory_with_custom_fields(_ctx: TestContext) -> TestResult 
     let custom_timestamp = Utc::now();
 
     let mut event = EventFactory::new(sources::SHELL_KITTY).create_event(
-        event_type_constants::shell::COMMAND_EXECUTED,
+        event_types::shell::COMMAND_EXECUTED,
         json!({"command": "echo hello", "exit_code": 0}),
     );
     event.host = custom_host.to_string();
@@ -99,7 +96,7 @@ async fn test_event_factory_with_custom_fields(_ctx: TestContext) -> TestResult 
     pretty_assertions::assert_eq!(event.source, sources::SHELL_KITTY);
     pretty_assertions::assert_eq!(
         event.event_type,
-        event_type_constants::shell::COMMAND_EXECUTED
+        event_types::shell::COMMAND_EXECUTED
     );
     pretty_assertions::assert_eq!(event.host, custom_host);
     pretty_assertions::assert_eq!(event.payload["command"], "echo hello");
@@ -140,7 +137,7 @@ async fn test_event_factory_complex_payload(_ctx: TestContext) -> TestResult {
     });
 
     let event = EventFactory::new(sources::FS).create_event(
-        event_type_constants::filesystem::FILE_CREATED,
+        event_types::filesystem::FILE_CREATED,
         complex_payload.clone(),
     );
 
@@ -161,7 +158,7 @@ async fn test_event_factory_with_ingestor_version(_ctx: TestContext) -> TestResu
     let ingestor_version = "1.2.3";
 
     let mut event = EventFactory::new(sources::WM_HYPRLAND).create_event(
-        event_type_constants::window_manager::WINDOW_FOCUSED,
+        event_types::window_manager::WINDOW_FOCUSED,
         json!({"window_id": 42, "title": "Test Window"}),
     );
     event.ingestor_version = Some(ingestor_version.to_string());
@@ -169,7 +166,7 @@ async fn test_event_factory_with_ingestor_version(_ctx: TestContext) -> TestResu
     pretty_assertions::assert_eq!(event.source, sources::WM_HYPRLAND);
     pretty_assertions::assert_eq!(
         event.event_type,
-        event_type_constants::window_manager::WINDOW_FOCUSED
+        event_types::window_manager::WINDOW_FOCUSED
     );
     pretty_assertions::assert_eq!(event.ingestor_version, Some(ingestor_version.to_string()));
     pretty_assertions::assert_eq!(event.payload["window_id"], 42);
@@ -233,7 +230,7 @@ async fn test_core_error_from_sql_error(_ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_core_error_context_chaining(_ctx: TestContext) -> TestResult {
     let error_context =
-        CoreError::validation("Base validation error").with_context("field", "test_field");
+        sinex_error::CoreError::validation("Base validation error").with_context("field", "test_field");
 
     let built_error = error_context.build();
     match built_error {
@@ -252,7 +249,7 @@ async fn test_core_error_result_extensions(_ctx: TestContext) -> TestResult {
     let result: CoreResult<String> = Err(CoreError::validation("Test error").build());
 
     let extended_result = result.with_context(|| {
-        CoreError::validation("Test error").with_context("operation", "test_operation")
+        sinex_error::CoreError::validation("Test error").with_context("operation", "test_operation")
     });
 
     match extended_result {

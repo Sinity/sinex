@@ -210,7 +210,8 @@ async fn test_basic_operations(
     // Test transaction handling
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
-    OperationQueries::health_check()
+    // Direct query for transaction test
+    sqlx::query("SELECT 1 as test")
         .fetch_one(&mut *tx)
         .await
         .context("Failed to execute test query in transaction")?;

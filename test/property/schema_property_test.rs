@@ -434,14 +434,14 @@ fn test_validation_chain_numeric_properties() {
 
 #[sinex_test]
 async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
-    proptest!(|(
+    proptest::proptest!(|(
         schema_count in 1..=10usize,
         schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
         schema_versions in prop::collection::vec("[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}", 1..=10)
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             // Create test schemas
             let mut created_schemas = Vec::new();
@@ -481,7 +481,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
             }
 
             // Load validator from database
-            let validator = EventValidator::load_from_db(pool).await.expect("Should load validator");
+            let validator = EventValidator::load_from_db(&pool).await.expect("Should load validator");
 
             // Test that schemas are accessible
             for (name, version) in &created_schemas {
@@ -514,7 +514,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                 }
             }
 
-            Ok(())
+            Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
     Ok(())
@@ -576,10 +576,10 @@ async fn test_event_validator_edge_cases() -> AnyhowResult<(), anyhow::Error> {
 
 #[sinex_test]
 async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test loading validator from empty database
-    let validator = EventValidator::load_from_db(pool)
+    let validator = EventValidator::load_from_db(&pool)
         .await
         .expect("Should be able to load from empty database");
 

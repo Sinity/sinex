@@ -21,6 +21,7 @@ use crate::common::prelude::*;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use sinex_core_types::timeouts;
+use sinex_error::ErrorContext;
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -498,7 +499,7 @@ impl DatabasePool {
                         // Release the advisory lock
                         let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
                             .bind(lock_id)
-                            .execute(pool)
+                            .execute(&pool)
                             .await;
                         pool.close().await;
                         {
@@ -615,7 +616,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
     }
 
     // Handle core.events separately (hypertable cannot be truncated)
-    match sqlx::query("DELETE FROM core.events").execute(&pool).await {
+    match sqlx::query("DELETE FROM core.events").execute(pool).await {
         Ok(result) => {
             let rows = result.rows_affected();
             if rows > 0 {
@@ -712,7 +713,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
                 Err(_e) => {
                     // CASCADE might not be supported, try without
                     let non_cascade = query.replace(" CASCADE", "");
-                    let _ = sqlx::query(&non_cascade).execute(&pool).await;
+                    let _ = sqlx::query(&non_cascade).execute(pool).await;
                 }
             }
         }
@@ -794,7 +795,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
         let mut admin_conn =
             tokio::time::timeout(Duration::from_secs(5), PgConnection::connect(admin_url))
                 .await
-                .map_err(|_| CoreError::database("Admin connection timeout").build())??;
+                .map_err(|_| CoreError::Database("Admin connection timeout".to_string()))??;
 
         // Check if template already exists
         let exists: bool = sqlx::query_scalar(&format!(
@@ -844,7 +845,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
             sqlx::query(&create_query).execute(&mut admin_conn),
         )
         .await
-        .map_err(|_| CoreError::database("Create database timeout").build())??;
+        .map_err(|_| CoreError::Database("Create database timeout".to_string()))??;
 
         admin_conn.close().await?;
         Ok::<bool, anyhow::Error>(true) // true = needs migrations
@@ -853,7 +854,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
     // Execute admin operations with timeout
     let needs_migrations = tokio::time::timeout(Duration::from_secs(20), admin_conn_future)
         .await
-        .map_err(|_| CoreError::database("Admin operations timeout").build())??;
+        .map_err(|_| CoreError::Database("Admin operations timeout".to_string()))??;
 
     // If template already exists, we're done
     if !needs_migrations {
@@ -902,10 +903,9 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
         )
         .await
         .map_err(|_| {
-            CoreError::database(
-                "Migration timeout - check if all required extensions are installed",
+            CoreError::Database(
+                "Migration timeout - check if all required extensions are installed".to_string(),
             )
-            .build()
         })??;
 
         // Optimize template for faster copying
@@ -918,7 +918,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
     // Execute template setup with timeout
     tokio::time::timeout(Duration::from_secs(45), template_pool_future)
         .await
-        .map_err(|_| CoreError::database("Template setup timeout").build())??;
+        .map_err(|_| CoreError::Database("Template setup timeout".to_string()))??;
 
     let template_elapsed = template_start.elapsed();
     eprintln!("✅ Template database created in {:?}", template_elapsed);
@@ -955,7 +955,7 @@ async fn check_required_extensions(pool: &DbPool) -> AnyhowResult<()> {
     }
 
     if !missing.is_empty() {
-        return Err(CoreError::database(format!(
+        return Err(sinex_error::CoreError::database(format!(
             "Missing required PostgreSQL extensions: {}",
             missing.join(", ")
         ))
@@ -984,7 +984,7 @@ async fn apply_test_session_optimizations(pool: &DbPool) -> AnyhowResult<()> {
         ];
 
         for setting in optimizations {
-            if let Err(e) = sqlx::query(setting).execute(&pool).await {
+            if let Err(e) = sqlx::query(setting).execute(pool).await {
                 eprintln!("⚠️  Could not apply setting '{}': {}", setting, e);
             }
         }

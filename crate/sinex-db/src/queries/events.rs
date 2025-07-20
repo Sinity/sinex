@@ -31,7 +31,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
@@ -69,10 +69,7 @@ impl EventQueries {
                 QueryParam::OptionalTimestamp(ts_orig),
                 QueryParam::OptionalString(ingestor_version),
                 QueryParam::OptionalUlid(payload_schema_id),
-                match source_event_ids {
-                    Some(ids) => QueryParam::UlidArray(ids),
-                    None => QueryParam::OptionalUlid(None),
-                },
+                QueryParam::OptionalUlidArray(source_event_ids),
             ])
             .returning(&[
                 "event_id::uuid as \"id!\"",
@@ -84,7 +81,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
     }
 
@@ -119,10 +116,7 @@ impl EventQueries {
             QueryParam::OptionalString(ingestor_version),
             QueryParam::OptionalUlid(payload_schema_id),
             // Handle ULID array properly
-            match source_event_ids {
-                Some(ids) => QueryParam::UlidArray(ids),
-                None => QueryParam::OptionalUlid(None),
-            },
+            QueryParam::OptionalUlidArray(source_event_ids),
         ];
 
         builder = builder.values(&values);
@@ -137,7 +131,7 @@ impl EventQueries {
             "ingestor_version",
             "payload_schema_id::uuid as \"payload_schema_id\"",
             "payload as \"payload!\"",
-            "source_event_ids::uuid[] as \"source_event_ids\"",
+            "source_event_ids::ulid[] as \"source_event_ids\"",
         ])
     }
 
@@ -212,7 +206,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .order_by("ts_ingest", "DESC");
 
@@ -243,7 +237,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_eq("source", QueryParam::String(source))
             .order_by("ts_ingest", "DESC");
@@ -279,7 +273,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_eq("event_type", QueryParam::String(event_type))
             .order_by("ts_ingest", "DESC");
@@ -311,7 +305,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_in("event_id", QueryParam::UlidArray(event_ids))
             .order_by("ts_ingest", "DESC")
@@ -338,7 +332,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
@@ -420,7 +414,7 @@ impl EventQueries {
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
                 "associated_blob_ids::uuid[] as \"associated_blob_ids!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_op(
                 "associated_blob_ids",
@@ -496,10 +490,7 @@ impl EventQueries {
                 QueryParam::OptionalString(ingestor_version),
                 QueryParam::OptionalUlid(payload_schema_id),
                 QueryParam::UlidArray(vec![blob_id]),
-                match source_event_ids {
-                    Some(ids) => QueryParam::UlidArray(ids),
-                    None => QueryParam::OptionalUlid(None),
-                },
+                QueryParam::OptionalUlidArray(source_event_ids),
             ])
             .returning(&[
                 "event_id::uuid as \"id!\"",
@@ -516,7 +507,7 @@ impl EventQueries {
                 "source_material_offset_end",
                 "anchor_byte",
                 "associated_blob_ids::uuid[] as \"associated_blob_ids\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
     }
 
@@ -597,5 +588,107 @@ impl EventQueries {
         .map_err(|e| db_error(e, "update payload by event ID text"))?;
 
         Ok(result)
+    }
+
+    // ========================================================================
+    // Analytics queries
+    // ========================================================================
+
+    /// Count events by type within a time range
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_all::<(String, i64)>(pool)`
+    pub fn count_by_type_in_range(
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    ) -> QueryBuilder {
+        QueryBuilder::select("core.events")
+            .columns(&[
+                "event_type",
+                "COUNT(*) as count",
+            ])
+            .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
+            .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
+            .group_by("event_type")
+            .order_by("count", "DESC")
+    }
+
+    /// Count events by type for all time
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_all::<(String, i64)>(pool)`
+    pub fn count_by_type_all_time() -> QueryBuilder {
+        QueryBuilder::select("core.events")
+            .columns(&[
+                "event_type",
+                "COUNT(*) as count",
+            ])
+            .group_by("event_type")
+            .order_by("count", "DESC")
+    }
+
+    /// Get top commands within a time range
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_all::<CommandCountRecord>(pool)`
+    pub fn top_commands_in_range(
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        limit: i64,
+    ) -> QueryBuilder {
+        QueryBuilder::select("core.events")
+            .columns(&[
+                "payload->>'command' as command",
+                "COUNT(*) as count",
+            ])
+            .where_eq("source", QueryParam::String("canonical.terminal".to_string()))
+            .where_eq("event_type", QueryParam::String("command.canonical".to_string()))
+            .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
+            .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
+            .where_op("payload->>'command'", "IS NOT", QueryParam::String("NULL".to_string()))
+            .group_by("payload->>'command'")
+            .order_by("count", "DESC")
+            .limit(limit)
+    }
+
+    /// Get top commands for all time
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_all::<CommandCountRecord>(pool)`
+    pub fn top_commands_all_time(limit: i64) -> QueryBuilder {
+        QueryBuilder::select("core.events")
+            .columns(&[
+                "payload->>'command' as command",
+                "COUNT(*) as count",
+            ])
+            .where_eq("source", QueryParam::String("canonical.terminal".to_string()))
+            .where_eq("event_type", QueryParam::String("command.canonical".to_string()))
+            .where_op("payload->>'command'", "IS NOT", QueryParam::String("NULL".to_string()))
+            .group_by("payload->>'command'")
+            .order_by("count", "DESC")
+            .limit(limit)
+    }
+
+    /// Get process heartbeats within a time range
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_all::<HeartbeatRecord>(pool)`
+    pub fn get_process_heartbeats(
+        process_name: String,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+    ) -> QueryBuilder {
+        QueryBuilder::select("core.events")
+            .columns(&[
+                "event_id::uuid as \"id!\"",
+                "ts_ingest as \"timestamp!\"",
+                "payload as \"payload!\"",
+                "host as \"host!\"",
+            ])
+            .where_eq("source", QueryParam::String(process_name))
+            .where_eq("event_type", QueryParam::String("process.heartbeat".to_string()))
+            .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
+            .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
+            .order_by("ts_ingest", "DESC")
     }
 }

@@ -113,7 +113,7 @@ impl MockIngestd {
             };
 
             let uds = tokio::net::UnixListener::bind(&socket_path)
-                .map_err(|e| tonic::transport::Error::from_source(e))?;
+                .expect("Failed to bind Unix socket");
             let uds_stream = tokio_stream::wrappers::UnixListenerStream::new(uds);
 
             Server::builder()
@@ -254,7 +254,7 @@ impl tonic::codegen::Service<tonic::codegen::http::Request<tonic::transport::Bod
         Box::pin(async move {
             Ok(tonic::codegen::http::Response::builder()
                 .status(200)
-                .body(tonic::body::BoxBody::empty())
+                .body(Default::default())
                 .unwrap())
         })
     }
@@ -313,19 +313,21 @@ impl IngestServiceTrait for MockIngestService {
             if let Some(redis) = redis_guard.as_mut() {
                 use redis::AsyncCommands;
 
-                let event_json = serde_json::to_string(&event).unwrap_or_default();
-                let _: Result<String, redis::RedisError> = redis
-                    .xadd(
-                        &self.config.redis_stream_key,
-                        "*",
-                        &[
-                            ("event", event_json),
-                            ("source", &event.source),
-                            ("event_type", &event.event_type),
-                            ("id", &event.id.to_string()),
-                        ],
-                    )
-                    .await;
+                if let Ok(mut conn) = redis.get_connection().await {
+                    let event_json = serde_json::to_string(&event).unwrap_or_default();
+                    let _: Result<String, redis::RedisError> = conn
+                        .xadd(
+                            &self.config.redis_stream_key,
+                            "*",
+                            &[
+                                ("event", event_json),
+                                ("source", event.source.clone()),
+                                ("event_type", event.event_type.clone()),
+                                ("id", event.id.to_string()),
+                            ],
+                        )
+                        .await;
+                }
             }
         }
 

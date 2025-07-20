@@ -470,4 +470,135 @@ impl ArtifactQueries {
             )
             .order_by("created_at", "DESC")
     }
+
+    // ========================================================================
+    // Blob-specific queries
+    // ========================================================================
+
+    /// Find blob by blake3 hash
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_optional::<BlobRecord>(pool)`
+    pub fn find_blob_by_blake3(blake3_hash: String) -> QueryBuilder {
+        QueryBuilder::select("core.blobs")
+            .columns(&[
+                "id::uuid as \"id!\"",
+                "annex_key as \"annex_key!\"",
+                "original_filename as \"original_filename!\"",
+                "size_bytes as \"size_bytes!\"",
+                "mime_type",
+                "checksum_sha256 as \"checksum_sha256!\"",
+                "checksum_md5",
+                "storage_backend as \"storage_backend!\"",
+                "metadata as \"metadata!\"",
+                "created_at as \"created_at!\"",
+                "last_verified_at",
+                "verification_status",
+            ])
+            .where_eq("checksum_blake3", QueryParam::String(blake3_hash))
+    }
+
+    /// Insert new blob
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_one::<BlobRecord>(pool)`
+    pub fn insert_blob(blob: &crate::models::BlobRecord) -> QueryBuilder {
+        QueryBuilder::insert("core.blobs")
+            .columns(&[
+                "annex_key",
+                "original_filename",
+                "size_bytes",
+                "mime_type",
+                "checksum_sha256",
+                "checksum_blake3",
+                "storage_backend",
+                "metadata",
+                "verification_status",
+            ])
+            .values(&[
+                QueryParam::String(blob.annex_key.clone()),
+                QueryParam::String(blob.original_filename.clone()),
+                QueryParam::Integer(blob.size_bytes),
+                QueryParam::OptionalString(blob.mime_type.clone()),
+                QueryParam::String(blob.checksum_sha256.clone()),
+                QueryParam::OptionalString(blob.checksum_blake3.clone()),
+                QueryParam::String(blob.storage_backend.clone()),
+                QueryParam::Json(blob.metadata.clone()),
+                QueryParam::OptionalString(blob.verification_status.clone()),
+            ])
+            .returning(&[
+                "id::uuid as \"id!\"",
+                "annex_key as \"annex_key!\"",
+                "original_filename as \"original_filename!\"",
+                "size_bytes as \"size_bytes!\"",
+                "mime_type",
+                "checksum_sha256 as \"checksum_sha256!\"",
+                "checksum_blake3",
+                "storage_backend as \"storage_backend!\"",
+                "metadata as \"metadata!\"",
+                "created_at as \"created_at!\"",
+                "last_verified_at",
+                "verification_status",
+            ])
+    }
+
+    /// Get blob by ID
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_optional::<BlobRecord>(pool)`
+    pub fn get_blob_by_id(blob_id: Ulid) -> QueryBuilder {
+        QueryBuilder::select("core.blobs")
+            .columns(&[
+                "id::uuid as \"id!\"",
+                "annex_key as \"annex_key!\"",
+                "original_filename as \"original_filename!\"",
+                "size_bytes as \"size_bytes!\"",
+                "mime_type",
+                "checksum_sha256 as \"checksum_sha256!\"",
+                "checksum_blake3",
+                "storage_backend as \"storage_backend!\"",
+                "metadata as \"metadata!\"",
+                "created_at as \"created_at!\"",
+                "last_verified_at",
+                "verification_status",
+            ])
+            .where_eq("id", QueryParam::Ulid(blob_id))
+    }
+
+    /// Update blob verification status
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.execute(pool)`
+    pub fn update_verification_status(blob_id: Ulid, status: String) -> QueryBuilder {
+        QueryBuilder::update("core.blobs")
+            .set("verification_status", QueryParam::String(status))
+            .set("last_verified_at", QueryParam::Timestamp(Utc::now()))
+            .where_eq("id", QueryParam::Ulid(blob_id))
+    }
+
+    /// Update blob original filename
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.execute(pool)`
+    pub fn update_original_filename(blob_id: Ulid, filename: String) -> QueryBuilder {
+        QueryBuilder::update("core.blobs")
+            .set("original_filename", QueryParam::String(filename))
+            .where_eq("id", QueryParam::Ulid(blob_id))
+    }
+
+    /// Get storage statistics
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_one::<StorageStatsRecord>(pool)`
+    pub fn get_storage_stats() -> QueryBuilder {
+        QueryBuilder::select("core.blobs").columns(&[
+            "COUNT(*) as \"total_blobs!\"",
+            "SUM(size_bytes) as \"total_size_bytes!\"",
+            "COUNT(DISTINCT checksum_sha256) as \"unique_files!\"",
+            "AVG(size_bytes) as \"avg_file_size!\"",
+            "MAX(size_bytes) as \"max_file_size!\"",
+            "MIN(created_at) as \"oldest_blob!\"",
+            "MAX(created_at) as \"newest_blob!\"",
+        ])
+    }
 }

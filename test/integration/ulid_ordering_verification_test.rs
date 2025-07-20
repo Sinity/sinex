@@ -9,17 +9,15 @@
 
 use crate::common::prelude::*;
 use sinex_db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::UlidOrderingViolation;
-use sinex_db::queries::{EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::queries::EventQueries;
+use sinex_events::EventFactory;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 #[sinex_test]
 async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate a sequence of events with known ordering
     let mut event_ulids = Vec::new();
@@ -30,18 +28,11 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
             sleep(Duration::from_millis(10)).await;
         }
 
-        let event = {
-            let factory = EventFactory::new("test.ulid_ordering");
-            let event = factory.create_event("sequence_test", json!({"sequence": i}));
-            insert_event_with_validator(
-                pool,
-                &event,
-                None,
-            )
-        }
-        .await?;
+        let factory = EventFactory::new("test.ulid_ordering");
+        let event = factory.create_event("sequence_test", json!({"sequence": i}));
+        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
 
-        event_ulids.push(event.id);
+        event_ulids.push(inserted_event.id);
     }
 
     // Verify ordering using the utility function
@@ -64,8 +55,11 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
     let db_ordered_ulids: Vec<String> = sqlx::query_scalar!(
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_ordering' ORDER BY event_id"
     )
-    .fetch_all(pool)
-    .await?;
+    .fetch_all(&pool)
+    .await?
+    .into_iter()
+    .filter_map(|opt| opt)
+    .collect();
 
     let expected_order: Vec<String> = event_ulids.iter().map(|u| u.to_string()).collect();
     assert_eq!(
@@ -75,7 +69,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_ordering".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -83,7 +77,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_timestamp_progression_verification(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create events with specific timestamp patterns
     let base_time = Utc::now() - ChronoDuration::hours(1);
@@ -129,7 +123,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test concurrent event insertion
     let num_concurrent_tasks = 10;
@@ -152,14 +146,13 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
             for i in 0..events_per_task {
                 let event = {
                     let factory = EventFactory::new("test.concurrent_ulid");
-                    let event = factory.create_event("concurrent_test", json!({"task_id": task_id, "sequence": i}));
-                    sinex_db::insert_event_with_validator(
-                        &pool_clone,
-                        &event,
-                        None,
-                    )
-                    .await
-                    .expect("Event insertion should succeed")
+                    let event = factory.create_event(
+                        "concurrent_test",
+                        json!({"task_id": task_id, "sequence": i}),
+                    );
+                    sinex_db::insert_event_with_validator(&pool_clone, &event, None)
+                        .await
+                        .expect("Event insertion should succeed")
                 };
 
                 task_ulids.push(event.id);
@@ -218,7 +211,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
     // Cleanup
     EventQueries::delete_by_source("test.concurrent_ulid".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -226,7 +219,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
 #[sinex_test]
 async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Insert events in batches with different timing patterns
     let mut all_event_ulids = Vec::new();
@@ -236,12 +229,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.db_ordering");
             let event = factory.create_event("rapid_batch", json!({"batch": 1, "sequence": i}));
-            sinex_db::insert_event_with_validator(
-                pool,
-                &event,
-                None,
-            )
-            .await?
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?
         };
         all_event_ulids.push(event.id);
     }
@@ -254,12 +242,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.db_ordering");
             let event = factory.create_event("delayed_batch", json!({"batch": 2, "sequence": i}));
-            sinex_db::insert_event_with_validator(
-                pool,
-                &event,
-                None,
-            )
-            .await?
+            sinex_db::insert_event_with_validator(&pool, &event, None).await?
         };
         all_event_ulids.push(event.id);
 
@@ -277,7 +260,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
     let mut ordering_results = HashMap::new();
 
     for (name, query) in ordering_queries {
-        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(pool).await?;
+        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(&pool).await?;
         ordering_results.insert(name, result);
     }
 
@@ -344,7 +327,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.db_ordering".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -352,7 +335,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate test ULIDs with known ordering violations
     let violation_test_ulids = ulid_verification::generate_ordering_violation_test_ulids();
@@ -362,12 +345,13 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
         // Insert event with this ULID's timestamp
         let factory = EventFactory::new("test.clock_skew");
-        let mut event_with_timestamp = factory.create_event("clock_test", json!({"description": description.clone()}));
+        let mut event_with_timestamp =
+            factory.create_event("clock_test", json!({"description": description.clone()}));
         event_with_timestamp.id = ulid;
-        event_with_timestamp.ts_orig = ulid.timestamp();
+        event_with_timestamp.ts_orig = Some(ulid.timestamp());
 
         // Try to insert the event (some may fail due to constraints)
-        let insert_result = insert_test_event(pool, &event_with_timestamp).await;
+        let insert_result = insert_test_event(&pool, &event_with_timestamp).await;
 
         match description.as_str() {
             "Future timestamp" => {
@@ -396,7 +380,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity checks to detect any issues
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 1,
@@ -420,7 +404,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.clock_skew".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -428,7 +412,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate a large number of events to test ordering performance
     let num_events = 1000;
@@ -449,13 +433,9 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
         for i in 0..batch_size {
             let event = {
                 let factory = EventFactory::new("test.ulid_performance");
-                let event = factory.create_event("performance_test", json!({"batch": batch, "item": i}));
-                sinex_db::insert_event_with_validator(
-                    pool,
-                    &event,
-                    None,
-                )
-                .await?
+                let event =
+                    factory.create_event("performance_test", json!({"batch": batch, "item": i}));
+                sinex_db::insert_event_with_validator(&pool, &event, None).await?
             };
 
             batch_ulids.push(event.id);
@@ -481,8 +461,11 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
     let ordered_ids: Vec<String> = sqlx::query_scalar!(
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_performance' ORDER BY event_id"
     )
-    .fetch_all(pool)
-    .await?;
+    .fetch_all(&pool)
+    .await?
+    .into_iter()
+    .filter_map(|opt| opt)
+    .collect();
 
     let query_time = query_start.elapsed();
     let query_rate = num_events as f64 / query_time.as_secs_f64();
@@ -495,7 +478,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
     );
 
     // Verify ordering correctness
-    let expected_order: Vec<String> = all_ulids.iter().map(|u| u.to_string()).collect();
+    let expected_order: Vec<String> = all_ulids.iter().map(|u: &Ulid| u.to_string()).collect();
     assert_eq!(
         ordered_ids.len(),
         expected_order.len(),
@@ -537,7 +520,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_performance".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -545,6 +528,17 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
 
 // Helper function to insert test events with error handling
 async fn insert_test_event(pool: &DbPool, event: &RawEvent) -> AnyhowResult<RawEvent> {
+    // Convert ULIDs to UUIDs before the query to avoid temporary value issues
+    let source_event_uuids = event
+        .source_event_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>());
+
+    let associated_blob_uuids = event
+        .associated_blob_ids
+        .as_ref()
+        .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>());
+
     sqlx::query!(
         r#"
         INSERT INTO core.events (
@@ -563,17 +557,9 @@ async fn insert_test_event(pool: &DbPool, event: &RawEvent) -> AnyhowResult<RawE
         event.ts_orig,
         event.host,
         event.payload,
-        event
-            .source_event_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>())
-            .as_deref(),
+        source_event_uuids.as_deref(),
         event.source_material_id.map(|u| u.to_uuid()),
-        event
-            .associated_blob_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(|u| u.to_uuid()).collect::<Vec<_>>())
-            .as_deref(),
+        associated_blob_uuids.as_deref(),
         event.ingestor_version,
         event.payload_schema_id.map(|u| u.to_uuid()),
     )

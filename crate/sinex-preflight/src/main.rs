@@ -414,9 +414,19 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         "custom_metrics": serde_json::to_value(report)?,
     });
 
-    EventQueries::insert_event(&pool, "sinex.process", "process.heartbeat", &report.system_info.hostname, payload)
-        .await
-        .context("Failed to record verification result")?;
+    EventQueries::insert_event(
+        "sinex.process".to_string(),
+        "process.heartbeat".to_string(),
+        report.system_info.hostname.clone(),
+        payload,
+        Some(chrono::Utc::now()),
+        None,
+        None,
+        None,
+    )
+    .fetch_one(&pool)
+    .await
+    .context("Failed to record verification result")?;
 
     Ok(())
 }
@@ -511,20 +521,36 @@ async fn generate_verification_report(
         .await
         .context("Failed to connect to database")?;
 
-    let recent_verifications = EventQueries::get_process_heartbeats(&pool, "sinex-preflight", 10)
-        .await
-        .context("Failed to fetch verification history")?;
+    let end_time = chrono::Utc::now();
+    let start_time = end_time - chrono::Duration::hours(24);
+    
+    #[derive(sqlx::FromRow)]
+    struct HeartbeatRow {
+        id: sinex_ulid::Ulid,
+        timestamp: chrono::DateTime<chrono::Utc>,
+        payload: serde_json::Value,
+        host: String,
+    }
+    
+    let recent_verifications: Vec<HeartbeatRow> = EventQueries::get_process_heartbeats(
+        "sinex-preflight".to_string(),
+        start_time,
+        end_time,
+    )
+    .fetch_all(&pool)
+    .await
+    .context("Failed to fetch verification history")?;
 
     let report = if detailed {
         serde_json::json!({
             "verification_count": recent_verifications.len(),
-            "latest_status": recent_verifications.first().map(|v| &v.status),
+            "latest_status": recent_verifications.first().map(|v| v.payload.get("health_status")),
             "system_info": collect_system_info().await?
         })
     } else {
         serde_json::json!({
             "verification_count": recent_verifications.len(),
-            "latest_status": recent_verifications.first().map(|v| &v.status)
+            "latest_status": recent_verifications.first().map(|v| v.payload.get("health_status"))
         })
     };
 
@@ -536,8 +562,10 @@ async fn generate_verification_report(
                 println!(
                     "  {} - {} ({})",
                     verification.timestamp.to_string(),
-                    verification.status.as_deref().unwrap_or("UNKNOWN"),
-                    verification.id.as_deref().unwrap_or("N/A")
+                    verification.payload.get("health_status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("UNKNOWN"),
+                    verification.id.to_string()
                 );
             }
         }

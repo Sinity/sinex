@@ -93,6 +93,23 @@ impl From<String> for DlqErrorCategory {
     }
 }
 
+/// Blob record for Git-annex managed large files
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct BlobRecord {
+    pub id: Ulid,
+    pub annex_key: String,
+    pub original_filename: String,
+    pub size_bytes: i64,
+    pub mime_type: Option<String>,
+    pub checksum_sha256: String,
+    pub checksum_blake3: Option<String>,
+    pub storage_backend: String,
+    pub metadata: JsonValue,
+    pub created_at: Timestamp,
+    pub last_verified_at: OptionalTimestamp,
+    pub verification_status: Option<String>,
+}
+
 impl From<&str> for DlqErrorCategory {
     fn from(s: &str) -> Self {
         match s {

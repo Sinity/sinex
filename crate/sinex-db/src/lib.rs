@@ -37,6 +37,7 @@ pub use artifacts::{create_artifact, get_artifact_by_id, get_recent_artifacts};
 pub use events::{
     attach_blob_to_event, count_events, detach_blob_from_event, get_event_by_id,
     get_events_with_blobs, insert_event, insert_event_with_blob, insert_event_with_validator,
+    EventRecord,
 };
 pub use knowledge_graph::{
     create_entity, create_relation, get_entities_by_type, get_entity_by_id, get_entity_relations,

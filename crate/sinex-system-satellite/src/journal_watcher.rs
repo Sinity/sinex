@@ -88,7 +88,7 @@ impl JournalWatcher {
                 });
 
                 Some({
-                    let factory = EventFactory::new(sinex_core_types::sources::JOURNALD);
+                    let factory = EventFactory::new(sinex_events::sources::JOURNALD);
                     factory.create_event(
                         "entry.written",
                         payload,

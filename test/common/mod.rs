@@ -33,7 +33,6 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core_types::event_type_constants;
 use sinex_db::events as db_events;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
@@ -48,66 +47,17 @@ pub fn test_database_url() -> String {
 
 use tokio::net::UnixListener;
 
-/// Start a test ingestd server for integration tests
-pub async fn start_test_ingestd(
-    ctx: &crate::common::test_context::TestContext,
-) -> AnyhowResult<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
-    let socket_path = ctx
-        .work_dir()
-        .join("test-ingestd.sock")
-        .to_string_lossy()
-        .to_string();
-    start_test_ingestd_at_path(ctx, &socket_path).await
-}
-
-/// Start ingestd at specific socket path
-pub async fn start_test_ingestd_at_path(
-    ctx: &crate::common::test_context::TestContext,
-    socket_path: &str,
-) -> AnyhowResult<(tokio::task::JoinHandle<()>, String), Box<dyn std::error::Error>> {
-    use std::time::Duration;
-
-    // Remove socket if it exists
-    let _ = std::fs::remove_file(socket_path);
-
-    // Create a simple test ingestd that accepts events and stores them
-    let pool = ctx.pool().clone();
-    let socket_path_for_server = socket_path.to_string();
-
-    let handle = tokio::spawn(async move {
-        // This is a simplified ingestd for testing
-        // In real implementation, this would use sinex_ingestd::IngestServer
-        let listener = UnixListener::bind(&socket_path_for_server).unwrap();
-
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    // Handle gRPC connection
-                    // For now, just keep the connection alive
-                    let _ = stream;
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
-    // Wait for server to start
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    Ok((handle, socket_path.to_string()))
-}
 
 /// Count events from a specific satellite source
 pub async fn count_events_from_source(
     pool: &DbPool,
     source: &str,
-) -> AnyhowResult<u64, Box<dyn std::error::Error>> {
-    let count = EventQueries::count_by_source(source).fetch_one(pool)
-        .fetch_one(pool)
+) -> AnyhowResult<u64> {
+    let (count,) = EventQueries::count_by_source(source.to_string())
+        .fetch_one::<(i64,)>(pool)
         .await?;
 
-    Ok(count.unwrap_or(0) as u64)
+    Ok(count as u64)
 }
 
 /// Create a test database pool with high concurrency settings
@@ -143,7 +93,7 @@ pub mod events {
     /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         EventFactory::new(sources::SHELL_KITTY).create_event(
-            event_type_constants::shell::COMMAND_EXECUTED,
+            event_types::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
                 "exit_code": 0,
@@ -197,17 +147,17 @@ pub mod events {
 
     /// Create a test file created event
     pub fn file_created_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
+        filesystem_event(event_types::filesystem::FILE_CREATED, path)
     }
 
     /// Create a test file modified event
     pub fn file_modified_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(event_type_constants::filesystem::FILE_MODIFIED, path)
+        filesystem_event(event_types::filesystem::FILE_MODIFIED, path)
     }
 
     /// Create a test agent heartbeat event
     pub fn agent_heartbeat_event(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(event_type_constants::sinex::AUTOMATON_HEARTBEAT, agent_name)
+        agent_event(event_types::sinex::AUTOMATON_HEARTBEAT, agent_name)
     }
 
     /// Create a test event for race condition testing
@@ -242,12 +192,12 @@ pub mod events {
 
     /// Create a quick filesystem event with default payload
     pub fn quick_filesystem_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
+        filesystem_event(event_types::filesystem::FILE_CREATED, path)
     }
 
     /// Create a quick agent heartbeat with default payload
     pub fn quick_agent_heartbeat(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(event_type_constants::sinex::AUTOMATON_HEARTBEAT, agent_name)
+        agent_event(event_types::sinex::AUTOMATON_HEARTBEAT, agent_name)
     }
 
     /// Create test events for timing and ordering tests
@@ -451,7 +401,7 @@ pub mod generators {
     pub fn indexed_event(index: usize) -> sinex_db::RawEvent {
         match index % 3 {
             0 => events::filesystem_event(
-                event_type_constants::filesystem::FILE_CREATED,
+                event_types::filesystem::FILE_CREATED,
                 &file_path(&format!("file_{}", index)),
             ),
             1 => events::kitty_event(common_commands()[index % common_commands().len()]),
@@ -476,9 +426,9 @@ pub mod generators {
         ];
 
         let event_types = [
-            event_type_constants::filesystem::FILE_CREATED,
-            event_type_constants::filesystem::FILE_MODIFIED,
-            event_type_constants::filesystem::FILE_DELETED,
+            sinex_events::event_types::filesystem::FILE_CREATED,
+            sinex_events::event_types::filesystem::FILE_MODIFIED,
+            sinex_events::event_types::filesystem::FILE_DELETED,
         ];
 
         (0..count)
@@ -558,7 +508,7 @@ pub mod generators {
             };
             test_event_with_payload(
                 sources::FS,
-                event_type_constants::filesystem::FILE_MODIFIED,
+                sinex_events::event_types::filesystem::FILE_MODIFIED,
                 payload
             )
         }).collect()
@@ -593,25 +543,21 @@ pub mod generators {
 
 /// Helper for getting event count from database
 pub async fn get_event_count(pool: &DbPool) -> AnyhowResult<i64> {
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool)
-        .fetch_one(pool)
-        .await?;
-    Ok(count.unwrap_or(0i64))
+    sinex_db::count_events(pool).await
 }
 
 /// Helper for checking if an event exists by ULID
 pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> AnyhowResult<bool> {
-    let exists = EventQueries::exists(event_id).fetch_one(pool)
-        .fetch_one(pool)
+    let result: Option<RawEvent> = EventQueries::get_by_id(event_id)
+        .fetch_optional(pool)
         .await?;
 
-    Ok(exists)
+    Ok(result.is_some())
 }
 
 /// Helper for getting recent events
 pub async fn get_recent_events(pool: &DbPool, limit: i64) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_recent(limit).fetch_all(pool)
-        .fetch_all(pool)
+    let events = EventQueries::get_recent(Some(limit), None).fetch_all(pool)
         .await?;
     Ok(events)
 }
@@ -622,7 +568,7 @@ pub async fn get_events_by_type(
     event_type: &str,
     limit: i64,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_type(event_type, limit)
+    let events = EventQueries::get_by_event_type(event_type.to_string(), Some(limit), None)
         .fetch_all(pool)
         .await?;
     Ok(events)
@@ -642,7 +588,7 @@ pub async fn get_events_by_source(
     source: &str,
     limit: i64,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_source(source, limit).fetch_all(pool)
+    let events = EventQueries::get_by_source(source.to_string(), Some(limit), None)
         .fetch_all(pool)
         .await?;
     Ok(events)
@@ -654,7 +600,7 @@ pub async fn get_events_in_time_range(
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_time_range(start_time, end_time).fetch_all(pool)
+    let events = EventQueries::get_by_time_range(start_time, end_time, None, None)
         .fetch_all(pool)
         .await?;
     Ok(events)
@@ -926,11 +872,18 @@ pub mod automaton_testing {
         last_processed_id: Option<&str>,
     ) -> AnyhowResult<()> {
         CheckpointQueries::upsert_checkpoint(
-            automaton_name,
-            &format!("{}-group", automaton_name),
-            &format!("{}-consumer", automaton_name),
-            processed_count,
-            last_processed_id,
+            sinex_ulid::Ulid::new(),
+            automaton_name.to_string(),
+            format!("{}-group", automaton_name),
+            format!("{}-consumer", automaton_name),
+            last_processed_id.map(|s| s.to_string()),
+            processed_count as i64,
+            chrono::Utc::now(),
+            None,
+            1,
+            None,
+            chrono::Utc::now(),
+            chrono::Utc::now(),
         )
         .execute(pool)
         .await?;
@@ -943,11 +896,27 @@ pub mod automaton_testing {
         pool: &DbPool,
         automaton_name: &str,
     ) -> AnyhowResult<Option<CheckpointState>> {
-        let checkpoint = CheckpointQueries::get_by_automaton(automaton_name)
-            .fetch_optional(pool)
+        #[derive(sqlx::FromRow)]
+        struct CheckpointRow {
+            id: sqlx::types::Uuid,
+            automaton_name: String,
+            consumer_group: String,
+            consumer_name: String,
+            last_processed_id: Option<String>,
+            processed_count: i64,
+            last_activity: chrono::DateTime<chrono::Utc>,
+            state_data: Option<serde_json::Value>,
+            checkpoint_version: i32,
+            checkpoint_data: Option<serde_json::Value>,
+            created_at: chrono::DateTime<chrono::Utc>,
+            updated_at: chrono::DateTime<chrono::Utc>,
+        }
+        
+        let checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name.to_string())
+            .fetch_optional::<CheckpointRow>(pool)
             .await?;
 
-        Ok(checkpoint.map(|row| {
+        Ok(checkpoint.map(|row: CheckpointRow| {
             // Use the unified checkpoint format if available (version 2+)
             if row.checkpoint_version >= 2 && row.checkpoint_data.is_some() {
                 let checkpoint_data = row.checkpoint_data.unwrap();
@@ -984,34 +953,6 @@ pub mod automaton_testing {
         }))
     }
 
-    /// Wait for checkpoint to reach expected state with timeout
-    pub async fn wait_for_checkpoint_progress(
-        pool: &DbPool,
-        automaton_name: &str,
-        expected_count: u64,
-        timeout_secs: u64,
-    ) -> AnyhowResult<CheckpointState> {
-        let timeout = std::time::Duration::from_secs(timeout_secs);
-        let start = std::time::Instant::now();
-
-        loop {
-            if let Some(checkpoint) = get_checkpoint_state(pool, automaton_name).await? {
-                if checkpoint.processed_count >= expected_count {
-                    return Ok(checkpoint);
-                }
-            }
-
-            if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
-                    "Timeout waiting for automaton {} to reach count {}",
-                    automaton_name,
-                    expected_count
-                ));
-            }
-
-            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-        }
-    }
 
     /// Verify automaton processed events in order
     pub async fn verify_processing_order(
@@ -1136,14 +1077,17 @@ pub mod cleanup {
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
         // Clean up test data manually
-        EventQueries::delete_by_source_pattern("test_%")
+        EventQueries::delete_by_source("test_%".to_string())
             .execute(pool)
             .await?;
 
         // Clean up test checkpoints
-        CheckpointQueries::delete_by_automaton_pattern("test_%")
-            .execute(pool)
-            .await?;
+        sqlx::query!(
+            "DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE $1",
+            "test_%"
+        )
+        .execute(pool)
+        .await?;
 
         Ok(())
     }
@@ -1358,12 +1302,28 @@ pub mod event_sources {
 
     /// Create EventSourceConfig with test configuration
     pub fn test_context(config: Value) -> EventSourceConfig {
-        EventSourceConfig::new(config)
+        let source_config = match config {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => HashMap::new(),
+        };
+        EventSourceConfig { 
+            base: sinex_satellite_sdk::config::SatelliteConfig::load_from_env("test"), 
+            batch_size: 100, 
+            batch_timeout_secs: 1, 
+            source_config,
+        }
     }
 
     /// Create EventSourceConfig with database pool
-    pub fn test_context_with_db(config: Value, pool: DbPool) -> EventSourceConfig {
-        EventSourceConfig::new(config).with_db_pool(pool)
+    /// Note: SatelliteConfig uses database_url, not a pool - this is for test compatibility
+    pub fn test_context_with_db(config: Value, _pool: DbPool) -> EventSourceConfig {
+        let mut base_config = sinex_satellite_sdk::config::SatelliteConfig::load_from_env("test");
+        base_config.database_url = Some(std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql:///sinex_test".to_string()));
+        let source_config = match config {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => HashMap::new(),
+        };
+        EventSourceConfig { base: base_config, batch_size: 100, batch_timeout_secs: 1, source_config }
     }
 
     /// Standard filesystem event source config
@@ -1394,7 +1354,7 @@ pub mod event_sources {
     }
 
     /// Test event source until it produces events or times out
-    pub async fn test_event_production<T: EventSource>(
+    pub async fn test_event_production<T: EventSource + 'static>(
         mut source: T,
         timeout_secs: u64,
         min_events: usize,
@@ -1446,7 +1406,7 @@ pub mod parallelization {
         where
             F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
             Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
-                + Send,
+                + Send + 'static,
             T: Send + 'static,
         {
             let mut join_set = JoinSet::new();
@@ -1490,7 +1450,7 @@ pub mod parallelization {
     where
         F: FnOnce(Arc<DbPool>) -> Fut + Send + 'static,
         Fut: std::future::Future<Output = Result<T, Box<dyn std::error::Error + Send + Sync>>>
-            + Send,
+            + Send + 'static,
         T: Send + 'static,
     {
         ParallelTestExecutor::new(max_concurrent)

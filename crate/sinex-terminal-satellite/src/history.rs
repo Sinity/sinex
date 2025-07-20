@@ -156,11 +156,11 @@ impl HistoryWatcher {
     /// Convert command to RawEvent
     fn command_to_event(&self, command: String, source_file: &PathBuf) -> RawEvent {
         let (shell_type, source_name) = if source_file.to_string_lossy().contains("fish") {
-            ("fish", sinex_core_types::sources::SHELL_FISH_HISTORY)
+            ("fish", sinex_events::sources::SHELL_FISH_HISTORY)
         } else if source_file.to_string_lossy().contains("zsh") {
-            ("zsh", sinex_core_types::sources::SHELL_ZSH_HISTFILE)
+            ("zsh", sinex_events::sources::SHELL_ZSH_HISTFILE)
         } else {
-            ("bash", sinex_core_types::sources::SHELL_BASH_HISTFILE)
+            ("bash", sinex_events::sources::SHELL_BASH_HISTFILE)
         };
 
         let payload = json!({

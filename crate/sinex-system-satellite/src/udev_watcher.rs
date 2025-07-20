@@ -70,7 +70,7 @@ impl UdevWatcher {
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::UDEV);
+        let factory = EventFactory::new(sinex_events::sources::UDEV);
         factory.create_event(event_type, payload)
     }
 

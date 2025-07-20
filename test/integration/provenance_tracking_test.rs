@@ -13,7 +13,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     info!("Testing provenance tracking with raw and synthesis events");
 
@@ -27,7 +27,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         })
     );
     raw_event.host = "test-host".to_string();
-    raw_event.ts_orig = chrono::Utc::now();
+    raw_event.ts_orig = Some(chrono::Utc::now());
 
     assert!(
         raw_event.is_raw_event(),
@@ -43,7 +43,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     );
 
     // Insert the raw event
-    let event_id = insert_event(pool, &raw_event).await?;
+    let event_id = insert_event(&pool, &raw_event).await?;
     info!("Inserted raw event with ID: {}", event_id);
 
     // Step 2: Create a synthesis event that depends on the raw event
@@ -57,8 +57,8 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         })
     );
     synthesis_event.host = "test-host".to_string();
-    synthesis_event.ts_orig = chrono::Utc::now();
-    synthesis_event.source_event_ids = vec![event_id]; // This sets source_event_ids to [event_id]
+    synthesis_event.ts_orig = Some(chrono::Utc::now());
+    synthesis_event.source_event_ids = Some(vec![event_id]); // This sets source_event_ids to [event_id]
 
     assert!(
         !synthesis_event.is_raw_event(),
@@ -75,7 +75,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     );
 
     // Insert the synthesis event
-    let synthesis_event_id = insert_event(pool, &synthesis_event).await?;
+    let synthesis_event_id = insert_event(&pool, &synthesis_event).await?;
     info!("Inserted synthesis event with ID: {}", synthesis_event_id);
 
     // Step 3: Create another synthesis event that depends on both previous events
@@ -89,8 +89,8 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         })
     );
     meta_synthesis_event.host = "test-host".to_string();
-    meta_synthesis_event.ts_orig = chrono::Utc::now();
-    meta_synthesis_event.source_event_ids = vec![event_id, synthesis_event_id]; // Multiple source events
+    meta_synthesis_event.ts_orig = Some(chrono::Utc::now());
+    meta_synthesis_event.source_event_ids = Some(vec![event_id, synthesis_event_id]); // Multiple source events
 
     assert!(
         meta_synthesis_event.is_synthesis_event(),
@@ -112,7 +112,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     );
 
     // Insert the meta synthesis event
-    let meta_synthesis_event_id = insert_event(pool, &meta_synthesis_event).await?;
+    let meta_synthesis_event_id = insert_event(&pool, &meta_synthesis_event).await?;
     info!(
         "Inserted meta synthesis event with ID: {}",
         meta_synthesis_event_id
@@ -122,7 +122,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     info!("Verifying provenance persistence in database");
 
     // Read back the raw event
-    let retrieved_raw = get_event_by_id(pool, event_id).await?;
+    let retrieved_raw = get_event_by_id(&pool, event_id).await?;
     assert!(
         retrieved_raw.is_raw_event(),
         "Retrieved raw event should be identified as raw"
@@ -137,7 +137,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     );
 
     // Read back the synthesis event
-    let retrieved_synthesis = get_event_by_id(pool, synthesis_event_id).await?;
+    let retrieved_synthesis = get_event_by_id(&pool, synthesis_event_id).await?;
     assert!(
         retrieved_synthesis.is_synthesis_event(),
         "Retrieved synthesis event should be synthesis"
@@ -157,7 +157,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     );
 
     // Read back the meta synthesis event
-    let retrieved_meta = get_event_by_id(pool, meta_synthesis_event_id).await?;
+    let retrieved_meta = get_event_by_id(&pool, meta_synthesis_event_id).await?;
     assert!(
         retrieved_meta.is_synthesis_event(),
         "Retrieved meta synthesis should be synthesis"
@@ -185,7 +185,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM core.find_dependent_events($1::uuid) ORDER BY dependency_depth, event_id",
         event_id.to_uuid()
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     info!(
@@ -213,7 +213,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM core.find_root_events($1::uuid) ORDER BY dependency_depth DESC, event_id",
         meta_synthesis_event_id.to_uuid()
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     info!("Found {} root events for meta synthesis", root_events.len());

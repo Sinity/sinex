@@ -93,7 +93,7 @@ impl SystemdWatcher {
                 });
 
                 return Some({
-                    let factory = EventFactory::new(sinex_core_types::sources::SYSTEMD);
+                    let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
                     factory.create_event(
                         "unit.status",
                         payload,
@@ -124,7 +124,7 @@ impl SystemdWatcher {
 
             return Some(
                 {
-                    let factory = EventFactory::new(sinex_core_types::sources::SYSTEMD);
+                    let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
                     factory.create_event(event_type, payload)
                 }
             );
@@ -308,7 +308,7 @@ impl SystemdWatcher {
 
                 Some(
                     {
-                        let factory = EventFactory::new(sinex_core_types::sources::SYSTEMD);
+                        let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
                         factory.create_event(event_type, payload)
                     }
                 )

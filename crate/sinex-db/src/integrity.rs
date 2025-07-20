@@ -23,8 +23,8 @@ use crate::RawEvent;
 use sinex_ulid::Ulid;
 
 /// High-level integrity testing orchestrator
-pub struct IntegrityTester {
-    validator: DataIntegrityValidator,
+pub struct IntegrityTester<'a> {
+    validator: DataIntegrityValidator<'a>,
 }
 
 /// Configuration for integrity testing runs
@@ -114,9 +114,9 @@ impl Default for IntegrityTestConfig {
     }
 }
 
-impl IntegrityTester {
+impl<'a> IntegrityTester<'a> {
     /// Create a new integrity tester
-    pub async fn new(pool: &'static crate::DbPool) -> Result<Self> {
+    pub async fn new(pool: &'a crate::DbPool) -> Result<Self> {
         let validator = DataIntegrityValidator::new(pool).await?;
         Ok(Self { validator })
     }

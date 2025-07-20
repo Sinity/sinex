@@ -530,7 +530,7 @@ impl EnhancedJournalWatcher {
 
     /// Create event using standard pattern
     fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
-        let factory = EventFactory::new(sinex_core_types::sources::JOURNALD);
+        let factory = EventFactory::new(sinex_events::sources::JOURNALD);
         factory.create_event(event_type, payload)
     }
 

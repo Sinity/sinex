@@ -5,7 +5,38 @@
 use crate::common::prelude::*;
 
 // Re-export production wait helpers for backwards compatibility
-pub use sinex_core_types::wait_helpers::wait_for_event_count;
+// Note: wait_for_event_count is now implemented in test context only
+
+/// Wait for a specific number of events to exist in the database
+pub async fn wait_for_event_count(
+    pool: &DbPool,
+    expected_count: usize,
+    timeout_secs: u64,
+) -> anyhow::Result<usize> {
+    let start = Instant::now();
+    let timeout_duration = Duration::from_secs(timeout_secs);
+    
+    while start.elapsed() < timeout_duration {
+        let count = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+            .fetch_one(pool)
+            .await?
+            .unwrap_or(0) as usize;
+        
+        if count >= expected_count {
+            return Ok(count);
+        }
+        
+        let elapsed = start.elapsed();
+        let backoff = Duration::from_millis(50.min(elapsed.as_millis() as u64 / 10));
+        tokio::time::sleep(backoff).await;
+    }
+    
+    anyhow::bail!(
+        "Expected event count {} not reached within {} seconds",
+        expected_count,
+        timeout_secs
+    )
+}
 
 /// Wait for satellite to establish connection with ingestd.
 ///
@@ -34,25 +65,28 @@ pub async fn wait_for_satellite_events_ingested(
 }
 
 /// Test-compatible wait_for_condition that accepts anyhow::Result closures
-pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> anyhow::Result<()>
+pub async fn wait_for_condition<F, Fut>(mut condition: F, timeout_secs: u64) -> anyhow::Result<()>
 where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<bool>>,
 {
-    // Wrap the condition to convert anyhow::Error to CoreError
-    let mut condition = condition;
-    let wrapped_condition = move || {
-        let fut = condition();
-        async move {
-            fut.await
-                .map_err(|e| sinex_core_types::CoreError::Unknown(e.to_string()))
+    // Create a custom wait loop instead of wrapping
+    use tokio::time::{timeout, Duration};
+    
+    let duration = Duration::from_secs(timeout_secs);
+    timeout(duration, async {
+        loop {
+            match condition().await {
+                Ok(true) => return Ok(()),
+                Ok(false) => {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+                Err(e) => return Err(e),
+            }
         }
-    };
-
-    sinex_core_utils::wait_for_condition_or_timeout(wrapped_condition, timeout_secs)
-        .await
-        .map(|_| ())
-        .map_err(anyhow::Error::new)
+    })
+    .await
+    .map_err(|_| anyhow::anyhow!("Timeout waiting for test condition after {} seconds", timeout_secs))?
 }
 
 /// Test-compatible wait_for_condition_or_timeout that accepts anyhow::Result closures
@@ -68,7 +102,6 @@ where
 }
 
 // Additional test-specific helpers that extend the production ones
-use crate::common::prelude::*;
 
 /// Wait for worker to process expected number of events (test-specific)
 pub async fn wait_for_worker_processed_events(
