@@ -463,7 +463,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
                     .create_event("ordering_test", json!({"sequence": i}));
                 
                 let event = sinex_db::insert_event_with_validator(
-                    pool,
+                    &pool,
                     &raw_event,
                     None,
                 ).await.expect("DB insert failed");
@@ -504,7 +504,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
             prop_assert_eq!(db_ordered_ids, ts_ordered_ids,
                 "Ordering by ULID should match ordering by extracted timestamp");
 
-            Ok(())
+            Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
     Ok(())
@@ -530,7 +530,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
                     .create_event("batch1_event", json!({"batch": 1, "sequence": i}));
                 
                 let event = sinex_db::insert_event_with_validator(
-                    pool,
+                    &pool,
                     &raw_event,
                     None,
                 ).await.expect("DB insert failed");
@@ -557,7 +557,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
                     .create_event("batch2_event", json!({"batch": 2, "sequence": i}));
                 
                 let event = sinex_db::insert_event_with_validator(
-                    pool,
+                    &pool,
                     &raw_event,
                     None,
                 ).await.expect("DB insert failed");
@@ -621,7 +621,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             prop_assert_eq!(total_count as usize, batch1_size + batch2_size,
                 "Total count should equal sum of batch sizes");
 
-            Ok(())
+            Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
     Ok(())
@@ -751,7 +751,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                     .create_event("foreign_key_test", json!({"relationship": i}));
                 
                 let event = sinex_db::insert_event_with_validator(
-                    pool,
+                    &pool,
                     &raw_event,
                     None,
                 ).await.expect("Event insert failed");
@@ -822,7 +822,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
             prop_assert_eq!(join_count as usize, num_relationships,
                 "Join count should match number of created relationships");
 
-            Ok(())
+            Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
     Ok(())

@@ -361,13 +361,10 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     // Insert events for cross-validation
     let mut shared_events = Vec::new();
     for i in 0..15 {
-        let event = {
-            let factory = EventFactory::new("test.cross_validation");
-            let event = factory.create_event("shared_event", json!({"sequence": i}));
-            insert_event_with_validator(&pool, &event, None)
-        }
-        .await?;
-        shared_events.push(event.id);
+        let factory = EventFactory::new("test.cross_validation");
+        let event = factory.create_event("shared_event", json!({"sequence": i}));
+        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
+        shared_events.push(inserted_event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
@@ -639,13 +636,9 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     );
 
     // Test Scenario 4: Checkpoint ahead of events (impossible scenario but test data corruption)
-    let future_event = {
-        let factory = EventFactory::new("test.recovery");
-        let event =
-            factory.create_event("future_reference", json!({"scenario": "future_reference"}));
-        insert_event_with_validator(&pool, &event, None)
-    }
-    .await?;
+    let factory = EventFactory::new("test.recovery");
+    let event = factory.create_event("future_reference", json!({"scenario": "future_reference"}));
+    let future_event = insert_event_with_validator(&pool, &event, None).await?;
 
     // Create a fake "future" ULID by modifying timestamp
     let future_timestamp = Utc::now() + ChronoDuration::hours(1);

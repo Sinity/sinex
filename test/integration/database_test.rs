@@ -899,12 +899,17 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
 
     // Get the most recent checkpoint
-    let latest_checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name.to_string())
-        .fetch_one(&pool)
-        .await?;
+    let latest_checkpoint: (Uuid, Option<String>) = sqlx::query_as(
+        r#"SELECT id, last_processed_id FROM core.automaton_checkpoints 
+           WHERE automaton_name = $1 
+           ORDER BY updated_at DESC LIMIT 1"#
+    )
+    .bind(automaton_name)
+    .fetch_one(&pool)
+    .await?;
 
     assert_eq!(
-        latest_checkpoint.last_processed_id.as_deref(),
+        latest_checkpoint.1.as_deref(),
         Some("event_0")
     );
 
@@ -915,12 +920,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
          AND id != $2::uuid 
          RETURNING id::text",
         automaton_name,
-        latest_checkpoint
-            .id
-            .unwrap()
-            .parse::<Ulid>()
-            .unwrap()
-            .to_uuid()
+        latest_checkpoint.0
     )
     .fetch_all(&pool)
     .await?;

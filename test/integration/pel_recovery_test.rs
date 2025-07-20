@@ -316,7 +316,7 @@ async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
 
     // Verify message is in DLQ
     let dlq_messages: redis::streams::StreamReadReply = redis_client
-        .xread(&[(dlq_stream, "0")], &[])
+        .xread(&[dlq_stream], &["0"])
         .await?;
 
     assert_eq!(dlq_messages.keys.len(), 1);

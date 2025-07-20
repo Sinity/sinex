@@ -51,7 +51,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
         let event = events::large_payload_test_event(1024);
 
         let start = Instant::now();
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 let elapsed = start.elapsed();
                 println!("    SUCCESS: Inserted in {:?}", elapsed);
@@ -196,7 +196,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
             json!({"operation_id": i}),
         );
 
-        match sinex_db::insert_event_with_validator(pool, &event, None).await {
+        match sinex_db::insert_event_with_validator(&pool, &event, None).await {
             Ok(_) => {}
             Err(e) => {
                 println!("Transaction failed at operation {}: {}", i, e);
@@ -228,7 +228,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
             json!({"value": i, "category": i % 10}),
         );
 
-        insert_event(pool, &event).await?;
+        insert_event(&pool, &event).await?;
     }
 
     // Test increasingly complex queries
@@ -329,7 +329,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
         None,
     );
 
-    insert_event(pool, &test_event).await?;
+    insert_event(&pool, &test_event).await?;
 
     let partition_events = Arc::new(AtomicU64::new(0));
     let successful_operations = Arc::new(AtomicU64::new(0));
@@ -600,7 +600,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
             }),
         );
 
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
 
@@ -670,7 +670,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
             }),
         );
 
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
 

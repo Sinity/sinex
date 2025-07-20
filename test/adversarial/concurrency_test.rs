@@ -29,7 +29,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     // Insert event to be claimed
     let event = events::race_test_event("race");
 
-    let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
+    let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
     let event_id = inserted.id;
 
     // Create high-precision synchronization
@@ -125,7 +125,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
             None,
         );
 
-        insert_event(pool, &parent_event).await?;
+        insert_event(&pool, &parent_event).await?;
 
         // Create dependent events
         let mut child_events = Vec::new();
@@ -284,7 +284,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
         None,
     );
 
-    insert_event(pool, &base_event).await?;
+    insert_event(&pool, &base_event).await?;
     let event_id = base_event.id;
 
     let successful_updates = Arc::new(AtomicU64::new(0));
@@ -389,7 +389,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
             None,
         );
 
-        sinex_db::insert_event_with_validator(pool, &event, None)
+        sinex_db::insert_event_with_validator(&pool, &event, None)
             .await
             .unwrap();
         event_ids.push(event.id);
@@ -510,8 +510,8 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
         None,
     );
 
-    insert_event(pool, &event1).await?;
-    insert_event(pool, &event2).await?;
+    insert_event(&pool, &event1).await?;
+    insert_event(&pool, &event2).await?;
 
     let successful_operations = Arc::new(AtomicU64::new(0));
     let failed_operations = Arc::new(AtomicU64::new(0));
@@ -626,7 +626,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
             None,
         );
 
-        insert_event(pool, &event).await?;
+        insert_event(&pool, &event).await?;
         work_items.push(event.id);
     }
 
@@ -747,7 +747,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
         None,
     );
 
-    insert_event(pool, &test_event).await?;
+    insert_event(&pool, &test_event).await?;
     let event_id = test_event.id;
 
     let isolation_violations = Arc::new(AtomicU64::new(0));
@@ -865,7 +865,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
         None,
     );
 
-    insert_event(pool, &shared_event).await?;
+    insert_event(&pool, &shared_event).await?;
     let event_id = shared_event.id;
 
     let lock_contentions = Arc::new(AtomicU64::new(0));

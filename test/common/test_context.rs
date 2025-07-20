@@ -500,7 +500,14 @@ impl TestContext {
                     for redis::streams::StreamId { id, map } in ids {
                         let mut fields = Vec::new();
                         for (k, v) in map {
-                            fields.push((k, v));
+                            let v_str = match v {
+                                redis::Value::Data(data) => String::from_utf8_lossy(&data).to_string(),
+                                redis::Value::Okay => "OK".to_string(),
+                                redis::Value::Status(s) => s,
+                                redis::Value::Int(i) => i.to_string(),
+                                _ => format!("{:?}", v),
+                            };
+                            fields.push((k, v_str));
                         }
                         messages.push(StreamMessage { id, fields });
                     }

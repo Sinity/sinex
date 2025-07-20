@@ -499,7 +499,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                     "worker_test": worker_count,
                 }),
             );
-            insert_event(pool, &event).await?;
+            insert_event(&pool, &event).await?;
         }
 
         // Run workers
@@ -683,7 +683,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
                 }),
             );
 
-            insert_event(pool, &event).await?;
+            insert_event(&pool, &event).await?;
         }
 
         let elapsed = start.elapsed();

@@ -35,7 +35,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
         let factory = EventFactory::new("test.corruption");
         let raw_event = factory.create_event(scenario, payload);
         let event = sinex_db::insert_event_with_validator(
-            pool,
+            &pool,
             &raw_event,
             None,
         )
@@ -265,16 +265,9 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
     .await?;
 
     // Insert valid event
-    let valid_event = {
-            let factory = EventFactory::new("test.fk_integrity");
-            let event = factory.create_event("valid_event", json!({"data": "valid"}));
-            insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-        }
-    .await?;
+    let factory = EventFactory::new("test.fk_integrity");
+    let event = factory.create_event("valid_event", json!({"data": "valid"}));
+    let valid_event = insert_event_with_validator(&pool, &event, None).await?;
 
     // Note: Work queue integrity tests removed - work_queue table deprecated in satellite architecture
 
@@ -360,9 +353,9 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
             Utc::now(),
             "localhost",
             json!({"path": corrupt_string, "test": test_name}),
-            None,
+            None::<&[Uuid]>,
             None::<Uuid>,
-            None,
+            None::<&[Uuid]>,
             Some("1.0.0"),
             None::<Uuid>,
         )
@@ -390,7 +383,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
         let factory = EventFactory::new("test.encoding_corruption");
         let raw_event = factory.create_event(&format!("payload_corruption_{}", i), corrupt_payload.clone());
         let result = sinex_db::insert_event_with_validator(
-            pool,
+            &pool,
             &raw_event,
             None,
         )
@@ -573,7 +566,7 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
         let factory = EventFactory::new("test.large_scale");
         let raw_event = factory.create_event(event_type, payload);
         let result = sinex_db::insert_event_with_validator(
-            pool,
+            &pool,
             &raw_event,
             None,
         )

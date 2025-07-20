@@ -514,7 +514,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                 }
             }
 
-            Ok(())
+            Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
     Ok(())
