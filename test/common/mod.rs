@@ -896,11 +896,27 @@ pub mod automaton_testing {
         pool: &DbPool,
         automaton_name: &str,
     ) -> AnyhowResult<Option<CheckpointState>> {
+        #[derive(sqlx::FromRow)]
+        struct CheckpointRow {
+            id: sqlx::types::Uuid,
+            automaton_name: String,
+            consumer_group: String,
+            consumer_name: String,
+            last_processed_id: Option<String>,
+            processed_count: i64,
+            last_activity: chrono::DateTime<chrono::Utc>,
+            state_data: Option<serde_json::Value>,
+            checkpoint_version: i32,
+            checkpoint_data: Option<serde_json::Value>,
+            created_at: chrono::DateTime<chrono::Utc>,
+            updated_at: chrono::DateTime<chrono::Utc>,
+        }
+        
         let checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name.to_string())
-            .fetch_optional(pool)
+            .fetch_optional::<CheckpointRow>(pool)
             .await?;
 
-        Ok(checkpoint.map(|row| {
+        Ok(checkpoint.map(|row: CheckpointRow| {
             // Use the unified checkpoint format if available (version 2+)
             if row.checkpoint_version >= 2 && row.checkpoint_data.is_some() {
                 let checkpoint_data = row.checkpoint_data.unwrap();
@@ -1314,11 +1330,15 @@ pub mod event_sources {
 
     /// Create EventSourceConfig with test configuration
     pub fn test_context(config: Value) -> EventSourceConfig {
+        let source_config = match config {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => HashMap::new(),
+        };
         EventSourceConfig { 
             base: sinex_satellite_sdk::config::SatelliteConfig::load_from_env("test"), 
             batch_size: 100, 
             batch_timeout_secs: 1, 
-            source_config: config.into() 
+            source_config,
         }
     }
 
@@ -1327,7 +1347,11 @@ pub mod event_sources {
     pub fn test_context_with_db(config: Value, _pool: DbPool) -> EventSourceConfig {
         let mut base_config = sinex_satellite_sdk::config::SatelliteConfig::load_from_env("test");
         base_config.database_url = Some(std::env::var("DATABASE_URL").unwrap_or_else(|_| "postgresql:///sinex_test".to_string()));
-        EventSourceConfig { base: base_config, batch_size: 100, batch_timeout_secs: 1, source_config: config.into() }
+        let source_config = match config {
+            Value::Object(map) => map.into_iter().collect(),
+            _ => HashMap::new(),
+        };
+        EventSourceConfig { base: base_config, batch_size: 100, batch_timeout_secs: 1, source_config }
     }
 
     /// Standard filesystem event source config

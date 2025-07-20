@@ -35,7 +35,7 @@ use sinex_events::{EventFactory, services, event_types};
 
 #[sinex_test(timeout = 30)]
 async fn test_concurrent_ulid_generation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let num_tasks = 10;
     let events_per_task = 100;
     let barrier = Arc::new(tokio::sync::Barrier::new(num_tasks));
@@ -93,7 +93,7 @@ async fn test_concurrent_ulid_generation(ctx: TestContext) -> TestResult {
 
 #[sinex_test(timeout = 30)]
 async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Insert a test event
     let event = crate::common::events::generic_adversarial_event(
@@ -144,7 +144,7 @@ async fn test_worker_double_processing(ctx: TestContext) -> TestResult {
 
 #[sinex_test(timeout = 30)]
 async fn test_concurrent_database_connection_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let num_connections = 50; // More than typical pool size
 
     let mut handles = Vec::new();
@@ -606,7 +606,7 @@ async fn test_ulid_timestamp_boundaries(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
     // Test that ULIDs are correctly stored and retrieved from database
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let test_ulid = Ulid::new();
 
     // Insert event with specific ULID

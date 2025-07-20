@@ -119,7 +119,7 @@ async fn setup_test_data(pool: &DbPool) -> AnyhowResult<Vec<Ulid>, Box<dyn std::
 
 #[sinex_test]
 async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     // Setup test data
@@ -178,7 +178,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_sql_injection_in_filters(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -219,7 +219,7 @@ async fn test_search_sql_injection_in_filters(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_basic_text_search(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -260,7 +260,7 @@ async fn test_search_basic_text_search(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_source_filtering(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -302,7 +302,7 @@ async fn test_search_source_filtering(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_event_type_filtering(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -327,7 +327,7 @@ async fn test_search_event_type_filtering(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_time_range_filtering(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -353,7 +353,7 @@ async fn test_search_time_range_filtering(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_pagination(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     // Create more events for pagination testing
@@ -391,7 +391,7 @@ async fn test_search_pagination(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_limit_bounds(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -429,7 +429,7 @@ async fn test_search_limit_bounds(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_combined_filters(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -453,7 +453,7 @@ async fn test_search_combined_filters(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_ordering(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -484,7 +484,7 @@ async fn test_search_ordering(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_snippet_extraction(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     // Create event with long content
@@ -523,7 +523,7 @@ async fn test_search_snippet_extraction(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_special_characters_in_text(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     // Create events with special characters
@@ -584,7 +584,7 @@ async fn test_search_special_characters_in_text(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_search_empty_results(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;
@@ -622,7 +622,7 @@ async fn test_search_empty_results(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_search_result_format(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     let event_id = create_test_event(
@@ -665,7 +665,7 @@ async fn test_search_result_format(ctx: TestContext) -> TestResult {
 /// This test documents the current vulnerability
 #[sinex_test]
 async fn test_search_sql_injection_limit_offset_vulnerability(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
     setup_test_data(pool).await?;

@@ -18,7 +18,7 @@ use uuid::Uuid;
 
 #[sinex_test]
 async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Insert events with various payload corruption scenarios
     let corruption_scenarios = vec![
@@ -56,7 +56,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect corruption
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -114,7 +114,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.corruption".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -122,7 +122,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test ULID validation with various invalid scenarios
     let invalid_ulid_tests = vec![
@@ -159,13 +159,13 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
             test_ulid.timestamp(),
             "localhost",
             json!({"test": test_name}),
-            None,
-            None::<Uuid>,
-            None,
-            Some("1.0.0"),
-            None::<Uuid>,
+            None::<Vec<Uuid>>,  // source_event_ids
+            None::<Uuid>,      // source_material_id
+            None::<Vec<Uuid>>, // associated_blob_ids
+            Some("1.0.0"),     // ingestor_version
+            None::<Uuid>,      // payload_schema_id
         )
-        .execute(pool)
+        .execute(&pool)
         .await;
 
         match result {
@@ -183,7 +183,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
     let nil_ulid_count: i64 = sqlx::query_scalar!(
         "SELECT COUNT(*) FROM core.events WHERE event_id::uuid = '00000000-0000-0000-0000-000000000000'::uuid"
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?
     .unwrap_or(0);
 
@@ -192,7 +192,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect invalid ULIDs
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 24, // Look back far to catch ancient timestamps
@@ -246,7 +246,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.invalid_ulid".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -254,7 +254,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton for foreign key testing
     let automaton_name = format!("fk_test_automaton_{}", Ulid::new());
@@ -264,7 +264,7 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'Foreign key integrity test automaton')",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Insert valid event
@@ -282,7 +282,7 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
     // Note: Work queue integrity tests removed - work_queue table deprecated in satellite architecture
 
     // Run integrity check to detect foreign key issues
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -322,7 +322,7 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
 
     // Cleanup test events
     EventQueries::delete_by_source("test.fk_integrity".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -330,7 +330,7 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test various encoding corruption scenarios
     let encoding_tests = vec![
@@ -369,7 +369,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
             Some("1.0.0"),
             None::<Uuid>,
         )
-        .execute(pool)
+        .execute(&pool)
         .await;
 
         match result {
@@ -417,7 +417,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect encoding issues
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -491,7 +491,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
         )
         "#
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     println!(
@@ -511,11 +511,11 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.encoding_corruption".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
     // Also cleanup test% sources
     sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test%'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -523,7 +523,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate a large dataset with some corrupted entries
     let total_events = 500;
@@ -609,7 +609,7 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
     // Run large-scale integrity scan
     let scan_start = std::time::Instant::now();
 
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: total_events as u64,
         check_window_hours: 1,
@@ -714,7 +714,7 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.large_scale".to_string())
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())

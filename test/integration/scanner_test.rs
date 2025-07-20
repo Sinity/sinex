@@ -63,7 +63,7 @@ async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> TestRe
     // Verify scan report
     assert!(report.events_processed >= 3); // At least 3 files
     assert!(report.duration.as_millis() > 0);
-    assert!(report.source_stats.contains_key("files_scanned"));
+    assert!(report.processor_stats.contains_key("files_scanned"));
 
     // Verify events were generated
     let mut events_received = 0;
@@ -180,8 +180,8 @@ sudo apt update
     // Verify results (should ignore 'ls' command)
     assert!(report.events_processed >= 3); // cd, git, echo, sudo (minus ignored ls)
     assert!(
-        report.source_stats.contains_key("shell_bash_entries")
-            || report.source_stats.contains_key("shell_unknown_entries")
+        report.processor_stats.contains_key("shell_bash_entries")
+            || report.processor_stats.contains_key("shell_unknown_entries")
     );
 
     // Verify events

@@ -441,7 +441,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             // Create test schemas
             let mut created_schemas = Vec::new();
@@ -473,7 +473,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                     name,
                     version,
                     schema_def
-                ).execute(pool).await;
+                ).execute(&pool).await;
 
                 if result.is_ok() {
                     created_schemas.push((name.clone(), version.clone()));
@@ -576,7 +576,7 @@ async fn test_event_validator_edge_cases() -> AnyhowResult<(), anyhow::Error> {
 
 #[sinex_test]
 async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test loading validator from empty database
     let validator = EventValidator::load_from_db(pool)

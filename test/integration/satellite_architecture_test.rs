@@ -237,8 +237,8 @@ async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> AnyhowResult<()> 
     assert_eq!(loaded.processed_count, checkpoint.processed_count);
 
     // Test checkpoint stats via centralized queries
-    let checkpoint_count: i64 = CheckpointQueries::count_checkpoints_by_processor("test-checkpoint-automaton".to_string())
-        .fetch_one(pool)
+    let (checkpoint_count,): (i64,) = CheckpointQueries::count_checkpoints_by_processor("test-checkpoint-automaton".to_string())
+        .fetch_one(&pool)
         .await?;
     assert!(checkpoint_count > 0, "Should have checkpoint records");
 

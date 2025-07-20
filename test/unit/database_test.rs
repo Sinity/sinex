@@ -159,7 +159,7 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event).await?;
 
     // Verify it exists
-    let count: i64 = EventQueries::count_all()
+    let (count,): (i64,) = EventQueries::count_all()
         .fetch_one(ctx.pool())
         .await?;
     assert!(count >= 1);
@@ -215,13 +215,13 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     sinex_db::insert_event(ctx.pool(), &wm_event).await?;
 
     // Verify events were inserted by checking each one by ID
-    let retrieved_fs = EventQueries::get_by_id(fs_event.id).fetch_one(ctx.pool()).await?;
+    let retrieved_fs: RawEvent = EventQueries::get_by_id(fs_event.id).fetch_one(ctx.pool()).await?;
     assert_eq!(retrieved_fs.source, sources::FS);
 
-    let retrieved_terminal = EventQueries::get_by_id(terminal_event.id).fetch_one(ctx.pool()).await?;
+    let retrieved_terminal: RawEvent = EventQueries::get_by_id(terminal_event.id).fetch_one(ctx.pool()).await?;
     assert_eq!(retrieved_terminal.source, sources::SHELL_KITTY);
 
-    let retrieved_wm = EventQueries::get_by_id(wm_event.id).fetch_one(ctx.pool()).await?;
+    let retrieved_wm: RawEvent = EventQueries::get_by_id(wm_event.id).fetch_one(ctx.pool()).await?;
     assert_eq!(retrieved_wm.source, sources::WM_HYPRLAND);
 
     Ok(())
@@ -552,6 +552,11 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
             "missing_required_path": "path field is missing"
         }),
         source_event_ids: None,
+        source_material_id: None,
+        source_material_offset_start: None,
+        source_material_offset_end: None,
+        anchor_byte: None,
+        associated_blob_ids: None,
     };
 
     let result = validator.validate(&invalid_event);
@@ -768,7 +773,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     }
 
     // Query events ordered by ID (ULID)
-    let ordered_events = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
+    let ordered_events: Vec<RawEvent> = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
 
     // Verify ULID ordering matches insertion order
     for i in 1..event_ids.len() {
@@ -921,7 +926,7 @@ async fn test_database_transaction_handling(ctx: TestContext) -> TestResult {
 /// Test database connection pool health
 #[sinex_test]
 async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test multiple connections from the pool
     let mut connections = Vec::new();
@@ -947,7 +952,7 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
     drop(connections);
 
     // Verify pool is still functional
-    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(pool).await?;
+    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(&pool).await?;
 
     assert_eq!(final_test.test, Some(1));
 
@@ -957,11 +962,11 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
 /// Test database error handling
 #[sinex_test]
 async fn test_database_error_handling(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test handling of SQL syntax errors
     let syntax_error = sqlx::query("SELECT * FROM nonexistent_table_12345")
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await;
 
     assert!(syntax_error.is_err(), "Should fail with syntax/table error");
@@ -975,18 +980,13 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
     let inserted_event_id = sinex_db::insert_event(ctx.pool(), &event).await?;
 
     // Try to insert with same ID (should fail with constraint violation)
-    let duplicate_event = RawEvent {
-        id: inserted_event_id, // Same ID
-        source: "unit-test-error".to_string(),
-        event_type: "test.error_handling".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test_host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({"test": "duplicate"}),
-        source_event_ids: None,
-    };
+    let factory = EventFactory::new("unit-test-error");
+    let mut duplicate_event = factory.create_event(
+        "test.error_handling",
+        serde_json::json!({"test": "duplicate"}),
+    );
+    duplicate_event.id = inserted_event_id; // Same ID
+    duplicate_event.host = "test_host".to_string();
 
     let constraint_error = sinex_db::insert_event(ctx.pool(), &duplicate_event).await;
     assert!(
@@ -1209,7 +1209,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
     }
 
     // Verify events were stored with proper satellite tracking
-    let count: i64 = EventQueries::count_by_event_type(unique_event_type.clone())
+    let (count,): (i64,) = EventQueries::count_by_event_type(unique_event_type.clone())
         .fetch_one(ctx.pool())
         .await?;
 

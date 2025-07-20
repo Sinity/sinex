@@ -56,7 +56,7 @@
 //
 // #[sinex_test]
 // async fn my_test(ctx: TestContext) -> TestResult {
-//     let pool = ctx.pool();
+//     let pool = ctx.pool().clone();
 //     // Test implementation
 //     Ok(())
 // }

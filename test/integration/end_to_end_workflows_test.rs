@@ -45,7 +45,7 @@ use tokio::sync::{Mutex, RwLock};
 /// Test complete event ingestion workflow from satellite to database
 #[sinex_test]
 async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Simulate satellite event generation
     let satellite_events = generators::test_events(50);
@@ -114,7 +114,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
 /// Test event ingestion with concurrent satellites
 #[sinex_test]
 async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Simulate multiple satellites ingesting events concurrently
     let satellite_count = 5;
@@ -223,7 +223,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
 /// Test complete stream processing workflow from Redis to automaton
 #[sinex_test]
 async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton for stream processing
     let automaton_name = "test-stream-processor";
@@ -245,7 +245,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 
     // Phase 2: Add events to stream
     let test_events = generators::test_events(30);
-    let mut stream_event_ids = Vec::new();
+    let mut stream_event_ids: Vec<String> = Vec::new();
 
     for event in &test_events {
         let stream_data = serde_json::json!({
@@ -398,7 +398,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 /// Test checkpoint persistence and recovery workflow
 #[sinex_test]
 async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let automaton_name = "checkpoint-test-automaton";
 
     // Phase 1: Initialize checkpoint manager
@@ -530,7 +530,7 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
 /// Test coordination between multiple system components
 #[sinex_test]
 async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Set up multiple components
     let components = vec![
@@ -652,7 +652,7 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 /// Test error detection and recovery workflow
 #[sinex_test]
 async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Simulate system with intermittent errors
     let error_simulation = Arc::new(Mutex::new(0));
@@ -770,7 +770,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
         component_name,
         "recovery.attempt%"
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?
     .unwrap_or(0);
 
@@ -783,7 +783,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
         component_name,
         "normal.operation"
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?
     .unwrap_or(0);
 
@@ -815,7 +815,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
 /// Test system performance under concurrent load
 #[sinex_test]
 async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Configure load test parameters
     let concurrent_workers = 10;
@@ -940,7 +940,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
 /// Test data consistency across component boundaries
 #[sinex_test]
 async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Set up consistency test scenario
     let consistency_scenario = "cross-component-consistency";
@@ -1037,7 +1037,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         ORDER BY payload->>'chain_id', payload->>'sequence_number'
         "#
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     // Group by chain and verify sequence
@@ -1078,7 +1078,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         AND payload->>'previous_event_id' IS NOT NULL
         "#
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     let mut referential_violations = 0;

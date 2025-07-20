@@ -19,7 +19,7 @@ use tokio::time::sleep;
 
 #[sinex_test]
 async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate a sequence of events with known ordering
     let mut event_ulids = Vec::new();
@@ -86,7 +86,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_timestamp_progression_verification(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create events with specific timestamp patterns
     let base_time = Utc::now() - ChronoDuration::hours(1);
@@ -132,7 +132,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> TestResult
 
 #[sinex_test]
 async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test concurrent event insertion
     let num_concurrent_tasks = 10;
@@ -229,7 +229,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
 #[sinex_test]
 async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Insert events in batches with different timing patterns
     let mut all_event_ulids = Vec::new();
@@ -244,7 +244,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
                 &event,
                 None,
             )
-            .await?.unwrap_or_default()
+            .await?
         };
         all_event_ulids.push(event.id);
     }
@@ -262,7 +262,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
                 &event,
                 None,
             )
-            .await?.unwrap_or_default()
+            .await?
         };
         all_event_ulids.push(event.id);
 
@@ -355,7 +355,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate test ULIDs with known ordering violations
     let violation_test_ulids = ulid_verification::generate_ordering_violation_test_ulids();
@@ -399,7 +399,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity checks to detect any issues
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 1,
@@ -431,7 +431,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Generate a large number of events to test ordering performance
     let num_events = 1000;
@@ -458,7 +458,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
                     &event,
                     None,
                 )
-                .await?.unwrap_or_default()
+                .await?
             };
 
             batch_ulids.push(event.id);
@@ -501,7 +501,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
     );
 
     // Verify ordering correctness
-    let expected_order: Vec<String> = all_ulids.iter().map(|u| u.to_string()).collect();
+    let expected_order: Vec<String> = all_ulids.iter().map(|u: &Ulid| u.to_string()).collect();
     assert_eq!(
         ordered_ids.len(),
         expected_order.len(),

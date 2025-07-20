@@ -145,7 +145,7 @@ impl ResourceExhaustionMetrics {
 /// Test behavior when database connection pool is exhausted
 #[sinex_test]
 async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = ResourceExhaustionMetrics::new();
     
     println!("🏊 Testing connection pool exhaustion");
@@ -211,7 +211,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         // Try a simple query with timeout
         let query_result = tokio::time::timeout(
             StdDuration::from_millis(50),
-            sqlx::query("SELECT 1 as test").fetch_one(pool)
+            sqlx::query("SELECT 1 as test").fetch_one(&pool)
         ).await;
         
         let operation_duration = operation_start.elapsed();
@@ -258,7 +258,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         
         match tokio::time::timeout(
             StdDuration::from_millis(100),
-            sqlx::query("SELECT 2 as test").fetch_one(pool)
+            sqlx::query("SELECT 2 as test").fetch_one(&pool)
         ).await {
             Ok(Ok(_)) => {
                 let operation_duration = operation_start.elapsed();
@@ -307,7 +307,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 /// Test memory pressure scenarios
 #[sinex_test]
 async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = ResourceExhaustionMetrics::new();
     
     println!("🧠 Testing memory pressure scenarios");
@@ -396,7 +396,7 @@ async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
         
         let operation_result = sqlx::query!(
             "SELECT COUNT(*) as count FROM core.events WHERE source = 'memory-pressure-test'"
-        ).fetch_one(pool).await;
+        ).fetch_one(&pool).await;
         
         let operation_duration = operation_start.elapsed();
         
@@ -438,7 +438,7 @@ async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
         
         let operation_result = sqlx::query!(
             "SELECT COUNT(*) as count FROM core.events WHERE source = 'memory-pressure-test'"
-        ).fetch_one(pool).await;
+        ).fetch_one(&pool).await;
         
         let operation_duration = operation_start.elapsed();
         
@@ -648,7 +648,7 @@ async fn test_redis_stream_exhaustion(ctx: TestContext) -> TestResult {
 /// Test concurrent resource exhaustion
 #[sinex_test]
 async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(ResourceExhaustionMetrics::new()));
     
     println!("🔥 Testing concurrent resource exhaustion");
@@ -808,7 +808,7 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
     // Test database recovery
     let db_recovery_result = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-stress-db-%'"
-    ).fetch_one(pool).await;
+    ).fetch_one(&pool).await;
     
     // Test Redis recovery
     let redis_recovery_result = if let Ok(redis_client) = RedisStreamClient::new("redis://localhost:6379")?.await {

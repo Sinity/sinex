@@ -194,18 +194,25 @@ impl TestAutomatonHandle {
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
                 // Query for new events using centralized query system
+                #[derive(sqlx::FromRow)]
+                struct EventRow {
+                    id: sqlx::types::Uuid,
+                }
+                
                 let query = if let Some(id) = last_id {
                     QueryBuilder::select("core.events")
-                        .where_op("event_id", ">", QueryParam::Ulid(id))
-                        .order_by("event_id", "ASC")
+                        .columns(&["id::uuid as \"id!\""])
+                        .where_op("id", ">", QueryParam::Ulid(id))
+                        .order_by("id", "ASC")
                         .limit(10)
                 } else {
                     QueryBuilder::select("core.events")
-                        .order_by("event_id", "ASC")
+                        .columns(&["id::uuid as \"id!\""])
+                        .order_by("id", "ASC")
                         .limit(10)
                 };
 
-                match query.fetch_all(&pool).await {
+                match query.fetch_all::<EventRow>(&pool).await {
                     Ok(rows) => {
                         for row in rows {
                             let id = uuid_to_ulid(row.id);
@@ -267,7 +274,7 @@ pub async fn start_test_ingestd_with_config(
 
     let events_received = Arc::new(Mutex::new(Vec::new()));
     let events_received_clone = events_received.clone();
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create a minimal gRPC server that accepts events
     let server_handle = tokio::spawn(async move {

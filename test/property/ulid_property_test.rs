@@ -448,7 +448,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             // Insert events with time delays and collect their generated ULIDs
             let mut generated_ulids = Vec::new();
@@ -483,7 +483,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY event_id"
             )
-            .fetch_all(pool)
+            .fetch_all(&pool)
             .await
             .expect("Query failed");
 
@@ -497,7 +497,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
                  WHERE source = 'property.ulid_ordering'
                  ORDER BY ts_ingest"
             )
-           .fetch_all(pool)
+           .fetch_all(&pool)
             .await
             .expect("Query failed");
 
@@ -519,7 +519,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
             let source_name = format!("property.range_test_{}", Ulid::new());
 
             // Create first batch of events with time gap
@@ -575,7 +575,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             )
             .bind(&source_name)
             .bind(cutoff_ulid.to_uuid())
-          .fetch_one(pool)
+          .fetch_one(&pool)
             .await
             .expect("Query failed");
 
@@ -585,7 +585,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             )
             .bind(&source_name)
             .bind(cutoff_ulid.to_uuid())
-         .fetch_one(pool)
+         .fetch_one(&pool)
             .await
             .expect("Query failed");
 
@@ -612,7 +612,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
                 "SELECT COUNT(*) FROM core.events WHERE source = $1"
             )
             .bind(&source_name)
-        .fetch_one(pool)
+        .fetch_one(&pool)
             .await
             .expect("Query failed");
 
@@ -726,7 +726,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
             let agent_name = format!("property_fk_test_{}", Ulid::new());
 
             // Create test agent
@@ -737,7 +737,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
             .bind(&agent_name)
             .bind("1.0.0")
             .bind("Property test agent")
-       .execute(pool)
+       .execute(&pool)
             .await
             .expect("Agent creation failed");
 
@@ -768,7 +768,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                 .bind(queue_ulid.to_uuid())
                 .bind(event.id.to_uuid())
                 .bind(&agent_name)
-          .execute(pool)(pool)
+          .execute(&pool)(pool)
                 .await
                 .expect("Queue insert failed");
 
@@ -784,7 +784,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                      WHERE q.queue_id = $1::ulid"
                 )
                 .bind(queue_ulids[i].to_string())
-         .fetch_one(pool)
+         .fetch_one(&pool)
                 .await
                 .expect("FK query failed");
 
@@ -800,7 +800,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                      WHERE q.event_id = $1::ulid"
                 )
                 .bind(event_ulids[i].to_string())
-        .fetch_one(pool)
+        .fetch_one(&pool)
                 .await
                 .expect("Reverse FK query failed");
 
@@ -815,7 +815,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                  JOIN sinex_schemas.work_queue q ON e.id = q.event_id
                  WHERE e.source = 'property.fk_test'"
             )
-   .fetch_one(pool)
+   .fetch_one(&pool)
             .await
             .expect("Join count query failed");
 

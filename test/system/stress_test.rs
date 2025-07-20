@@ -448,7 +448,7 @@ impl DeadlockStressWorker {
 #[sinex_test(timeout = 300)]
 async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
     println!("Testing coordinated deadlock scenario...");
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
@@ -922,7 +922,7 @@ impl RaceConditionWorker {
 #[sinex_test(timeout = 300)]
 async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     println!("Testing race condition detection...");
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let agent_name = format!("race_condition_{}", Ulid::new());
 
@@ -1454,7 +1454,7 @@ impl StressTestWorker {
 #[sinex_test(timeout = 600)]
 async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     println!("Testing extreme concurrency stress...");
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     run_migrations(pool).await?;
 
     let agent_name = format!("extreme_stress_{}", Ulid::new());

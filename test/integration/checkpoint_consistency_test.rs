@@ -15,7 +15,7 @@ use std::collections::HashMap;
 
 #[sinex_test]
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton
     let automaton_name = format!("test_automaton_{}", Ulid::new());
@@ -25,7 +25,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
          VALUES ($1, 'automaton', '1.0.0', 'Test automaton for checkpoint validation')",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Insert some test events
@@ -58,7 +58,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
         automaton_name,
         checkpoint_ulid.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Test checkpoint consistency verification
@@ -89,16 +89,16 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.checkpoint'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -106,7 +106,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton
     let automaton_name = format!("gap_test_automaton_{}", Ulid::new());
@@ -116,7 +116,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'Gap detection test automaton')",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Insert events in two batches with a gap
@@ -147,7 +147,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         automaton_name,
         last_batch1_ulid.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Wait a bit and insert batch2 (simulating gap)
@@ -170,7 +170,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run integrity check to detect gap
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 1,
@@ -248,16 +248,16 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.gap_detection'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -265,7 +265,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton
     let automaton_name = format!("stale_test_automaton_{}", Ulid::new());
@@ -275,7 +275,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'Stale checkpoint test automaton')",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Insert a single event
@@ -293,11 +293,11 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
         automaton_name,
         event.id.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Run integrity check to detect stale checkpoint
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 24, // Look back 24 hours to catch the stale checkpoint
@@ -341,16 +341,16 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.stale_checkpoint'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -358,7 +358,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create multiple test automatons
     let automaton_names: Vec<String> = (0..3)
@@ -371,7 +371,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
              VALUES ($1, 'automaton', '1.0.0', 'Cross-validation test automaton')",
             name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -413,7 +413,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
         .bind(name)
         .bind(checkpoint_ulid.to_string())
         .bind(processed_count as i64)
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -467,7 +467,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     );
 
     // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 24,
@@ -510,17 +510,17 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         sqlx::query!(
             "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
             name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.cross_validation'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -528,7 +528,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton for recovery scenarios
     let automaton_name = format!("recovery_test_automaton_{}", Ulid::new());
@@ -538,7 +538,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'Recovery scenario test automaton')",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Test Scenario 1: Checkpoint references non-existent event
@@ -553,7 +553,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         automaton_name,
         non_existent_ulid.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Verify this scenario is detected
@@ -574,7 +574,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Test Scenario 2: Checkpoint with invalid ULID format
@@ -586,11 +586,11 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         "#,
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Run integrity check for invalid ULID
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 100,
         check_window_hours: 1,
@@ -634,7 +634,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Test Scenario 3: Missing checkpoint (automaton exists but no checkpoint)
@@ -684,7 +684,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         automaton_name,
         future_ulid.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // This scenario should be detected as checkpoint ahead of events
@@ -706,16 +706,16 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.recovery'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -723,7 +723,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton
     let automaton_name = format!("data_loss_test_automaton_{}", Ulid::new());
@@ -733,7 +733,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'Data loss detection test automaton')",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Create a sequence of events
@@ -766,7 +766,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
         automaton_name,
         checkpoint_ulid.to_string()
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     // Now add more events after the checkpoint
@@ -786,7 +786,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     }
 
     // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(pool).await?;
+    let integrity_tester = IntegrityTester::new(pool.clone()).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
         check_window_hours: 1,
@@ -865,16 +865,16 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!(
         "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.data_loss'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())

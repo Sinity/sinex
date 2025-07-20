@@ -225,12 +225,12 @@ pub mod validation {
                 .get("database")
                 .and_then(|db| db.get("url"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| anyhow::anyhow!("database.url is required"))?;
+                .ok_or_else(|| CoreError::Configuration("database.url is required".to_string()))?;
 
             ValidationChain::validate(url.to_string(), "database.url")
                 .is_valid_url()
                 .into_result()
-                .map_err(|e| anyhow::anyhow!("URL validation failed: {}", e))?;
+                .map_err(|e| CoreError::Validation(format!("URL validation failed: {}", e)))?;
 
             // Validate pool size range if present
             if let Some(pool_size) = config
@@ -242,7 +242,7 @@ pub mod validation {
                     .min(1)
                     .max(100)
                     .into_result()
-                    .map_err(|e| anyhow::anyhow!("Pool size validation failed: {}", e))?;
+                    .map_err(|e| CoreError::Validation(format!("Pool size validation failed: {}", e)))?;
             }
 
             Ok(())
@@ -262,7 +262,7 @@ pub mod validation {
                     .min(1)
                     .max(10000)
                     .into_result()
-                    .map_err(|e| anyhow::anyhow!("Buffer size validation failed: {}", e))?;
+                    .map_err(|e| CoreError::Validation(format!("Buffer size validation failed: {}", e)))?;
             }
 
             // Validate batch size range
@@ -275,7 +275,7 @@ pub mod validation {
                     .min(1)
                     .max(1000)
                     .into_result()
-                    .map_err(|e| anyhow::anyhow!("Batch size validation failed: {}", e))?;
+                    .map_err(|e| CoreError::Validation(format!("Batch size validation failed: {}", e)))?;
             }
 
             // Validate flush interval format
@@ -285,7 +285,7 @@ pub mod validation {
                 .and_then(|v| v.as_str())
             {
                 parse_duration(interval)
-                    .map_err(|e| anyhow::anyhow!("Invalid flush interval: {}", e))?;
+                    .map_err(|e| CoreError::Configuration(format!("Invalid flush interval: {}", e)))?;
             }
             
             Ok(())
@@ -306,7 +306,7 @@ pub mod validation {
                     .min(1024)
                     .max(65535)
                     .into_result()
-                    .map_err(|e| anyhow::anyhow!("Metrics port validation failed: {}", e))?;
+                    .map_err(|e| CoreError::Validation(format!("Metrics port validation failed: {}", e)))?;
             }
 
             // Validate log level
@@ -317,7 +317,7 @@ pub mod validation {
             {
                 let valid_levels = ["trace", "debug", "info", "warn", "error"];
                 if !valid_levels.contains(&log_level) {
-                    return Err(anyhow::anyhow!("Invalid log level '{}', must be one of: {:?}", log_level, valid_levels));
+                    return Err(CoreError::Configuration(format!("Invalid log level '{}', must be one of: {:?}", log_level, valid_levels)));
                 }
             }
 
@@ -328,7 +328,7 @@ pub mod validation {
                 .and_then(|v| v.as_str())
             {
                 parse_duration(interval)
-                    .map_err(|e| anyhow::anyhow!("Invalid health check interval: {}", e))?;
+                    .map_err(|e| CoreError::Configuration(format!("Invalid health check interval: {}", e)))?;
             }
             
             Ok(())
@@ -343,12 +343,12 @@ pub mod validation {
 
             // Validate database section
             if let Err(e) = validate_database_config()(config) {
-                return Err(anyhow::anyhow!("Database configuration invalid: {}", e));
+                return Err(CoreError::Configuration(format!("Database configuration invalid: {}", e)));
             }
 
             // Validate collector section
             if let Err(e) = validate_collector_config()(config) {
-                return Err(anyhow::anyhow!("Collector configuration invalid: {}", e));
+                return Err(CoreError::Configuration(format!("Collector configuration invalid: {}", e)));
             }
 
             // Validate observability section if present
@@ -358,7 +358,7 @@ pub mod validation {
                 .is_some()
             {
                 if let Err(e) = validate_observability_config()(config) {
-                    return Err(anyhow::anyhow!("Observability configuration invalid: {}", e));
+                    return Err(CoreError::Configuration(format!("Observability configuration invalid: {}", e)));
                 }
             }
 
@@ -382,13 +382,13 @@ pub mod extraction {
             .not_empty()
             .is_valid_url()
             .into_result()
-            .map_err(|e| anyhow::anyhow!("URL validation failed: {}", e))?;
+            .map_err(|e| CoreError::Validation(format!("URL validation failed: {}", e)))?;
 
         ValidationChain::validate(pool_size, "database.pool_size")
             .min(1)
             .max(100)
             .into_result()
-            .map_err(|e| anyhow::anyhow!("Pool size validation failed: {}", e))?;
+            .map_err(|e| CoreError::Validation(format!("Pool size validation failed: {}", e)))?;
 
         Ok(DatabaseTestConfig {
             url: url.to_string(),
@@ -405,20 +405,20 @@ pub mod extraction {
 
         // Parse and validate duration
         let flush_interval_seconds = parse_duration(flush_interval_str)
-            .map_err(|e| anyhow::anyhow!("Invalid flush interval: {}", e))?;
+            .map_err(|e| CoreError::Configuration(format!("Invalid flush interval: {}", e)))?;
 
         // Validate ranges using ValidationChain
         ValidationChain::validate(buffer_size, "collector.buffer_size")
             .min(1)
             .max(10000)
             .into_result()
-            .map_err(|e| anyhow::anyhow!("Buffer size validation failed: {}", e))?;
+            .map_err(|e| CoreError::Validation(format!("Buffer size validation failed: {}", e)))?;
 
         ValidationChain::validate(batch_size, "collector.batch_size")
             .min(1)
             .max(1000)
             .into_result()
-            .map_err(|e| anyhow::anyhow!("Batch size validation failed: {}", e))?;
+            .map_err(|e| CoreError::Validation(format!("Batch size validation failed: {}", e)))?;
 
         Ok(CollectorTestConfig {
             buffer_size,

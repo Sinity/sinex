@@ -1090,7 +1090,7 @@ impl Clone for SystemHealthMonitor {
 
 #[sinex_test]
 async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
 
@@ -1778,7 +1778,7 @@ impl GitAnnexTestRepo {
 
 #[sinex_test]
 async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let annex_repo = GitAnnexTestRepo::new().await?;
 
@@ -1979,7 +1979,7 @@ async fn test_event_processing_with_annex_blobs(
 
 #[sinex_test]
 async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     test_annex_unavailable_fallback(pool).await?;
     test_annex_operation_failure_handling(pool).await?;

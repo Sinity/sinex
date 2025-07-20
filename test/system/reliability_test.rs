@@ -65,7 +65,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?
         .unwrap_or(0);
 
@@ -73,7 +73,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?
         .unwrap_or(0);
 
@@ -117,7 +117,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             "startup_event_123",
             json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         // Insert some events
@@ -138,7 +138,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         // Verify data integrity after restart - use timing utilities for better reliability
         let checkpoint_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await?
                 .unwrap_or(0);
 
@@ -193,7 +193,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
                 vec![0u8; 32], // Invalid checksum
                 0
             )
-            .execute(pool)
+            .execute(&pool)
             .await
             .ok(); // Ignore errors if table doesn't exist
 
@@ -241,7 +241,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 /// Test shutdown sequence and graceful termination
 #[sinex_test]
 async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing shutdown sequence and graceful termination...");
 
@@ -386,7 +386,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
     let interrupted_shutdown_test = timeout(Duration::from_secs(5), async {
         // Get pool outside of spawn to avoid Send issues
-        let pool = ctx.pool();
+        let pool = ctx.pool().clone();
 
         // Create long-running operation
         let long_operation = tokio::spawn(async move {
@@ -418,10 +418,10 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
         // Verify system remains stable after interrupt
         let stability_check = timeout(Duration::from_secs(2), async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             // Database should still be responsive
-            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
+            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events =
@@ -478,7 +478,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     sqlx::query!(
         "DELETE FROM core.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
     )
-    .execute(pool)
+    .execute(&pool)
     .await
     .ok();
 
@@ -817,7 +817,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT schema_name FROM information_schema.schemata
                  WHERE schema_name IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(pool)
+        .fetch_all(&pool)
         .await?
         .into_iter()
         .flatten()
@@ -827,7 +827,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT table_name FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_all(pool)
+        .fetch_all(&pool)
         .await?
         .into_iter()
         .flatten()
@@ -836,7 +836,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let extensions: Vec<String> = sqlx::query_scalar!(
             "SELECT extname FROM pg_extension WHERE extname IN ('timescaledb', 'uuid-ossp')"
         )
-        .fetch_all(pool)
+        .fetch_all(&pool)
         .await
         .unwrap_or_default();
 
@@ -890,12 +890,12 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT COUNT(*) FROM information_schema.tables
                  WHERE table_schema IN ('raw', 'sinex_schemas')"
         )
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?
         .unwrap_or(0);
 
         let migration_count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _sqlx_migrations")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?
             .unwrap_or(0);
 
@@ -937,7 +937,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "migration_event_456",
             json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         // Insert test events
@@ -956,7 +956,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Record initial state - use timing utilities for consistency
         let initial_checkpoint_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await?
                 .unwrap_or(0);
 
@@ -982,7 +982,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         // Verify data preservation - use timing utilities for reliability
         let final_checkpoint_count: i64 =
             sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await?
                 .unwrap_or(0);
 
@@ -1002,14 +1002,14 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             "SELECT state_data FROM core.automaton_checkpoints
                  WHERE automaton_name = 'migration_test_agent'"
         )
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await?
         .flatten();
 
         let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
             "SELECT payload FROM core.events WHERE source = 'migration.safety' LIMIT 1"
         )
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await?;
 
         Ok::<
@@ -1101,7 +1101,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let invalid_migration_result = sqlx::query!(
             "CREATE TABLE core.events (id UUID PRIMARY KEY)" // This should fail - table exists
         )
-        .execute(pool)
+        .execute(&pool)
         .await;
 
         // Migration should fail gracefully
@@ -1151,7 +1151,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
 async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test checkpoint for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
@@ -1164,7 +1164,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         "degradation_test_event",
         json!({"version": "1.0.0", "description": "Graceful degradation test"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
@@ -1332,14 +1332,14 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'degradation.test'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         agent_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     Ok(())
@@ -1348,7 +1348,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 /// Test resource limits and monitoring under load
 #[sinex_test]
 async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing resource limits and monitoring under load...");
 
@@ -1598,7 +1598,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'resource.monitoring'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
 
@@ -1608,7 +1608,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 /// Test system behavior under resource exhaustion scenarios
 #[sinex_test]
 async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing resource exhaustion scenarios...");
 
@@ -1765,7 +1765,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM core.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
     )
-    .execute(pool)
+    .execute(&pool)
     .await
     .ok();
 

@@ -24,7 +24,7 @@ use std::time::Instant;
 /// Test worker claim race conditions at microsecond precision
 #[sinex_test]
 async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Insert event to be claimed
     let event = events::race_test_event("race");
@@ -99,7 +99,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
         "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     println!("Final payload: {}", final_state.payload);
@@ -113,7 +113,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
 /// Test event causality violation under concurrent processing
 #[sinex_test]
 async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let order_violations = Arc::new(AtomicU64::new(0));
 
     // Simulate dependent events processed out of order
@@ -176,7 +176,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
             "UPDATE core.events SET payload = payload || '{\"processed\": \"true\"}'::jsonb WHERE event_id::uuid = $1::uuid",
             parent_event.id.to_uuid()
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         // Wait for children to complete
@@ -199,7 +199,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
 /// Test concurrent event insertion race conditions
 #[sinex_test]
 async fn test_concurrent_event_insertion_race(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let successful_insertions = Arc::new(AtomicU64::new(0));
     let failed_insertions = Arc::new(AtomicU64::new(0));
     let duplicate_ids = Arc::new(AtomicU64::new(0));
@@ -274,7 +274,7 @@ async fn test_concurrent_event_insertion_race(ctx: TestContext) -> TestResult {
 /// Test data consistency under concurrent updates
 #[sinex_test]
 async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create base event
     let base_event = events::generic_adversarial_event(
@@ -344,7 +344,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
         "SELECT payload->>'counter' as counter FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     let final_counter: i32 = final_state
@@ -375,7 +375,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
 /// Test worker coordination with microsecond synchronization
 #[sinex_test]
 async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing microsecond-level worker claim races:");
 
@@ -494,7 +494,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
 /// Test worker deadlock prevention
 #[sinex_test]
 async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create two events that workers will try to claim in different orders
     let event1 = events::generic_adversarial_event(
@@ -612,7 +612,7 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
 /// Test worker load balancing under concurrent load
 #[sinex_test]
 async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create many work items
     let work_item_count = 50;
@@ -737,7 +737,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
 /// Test database transaction isolation levels
 #[sinex_test]
 async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test event
     let test_event = events::generic_adversarial_event(
@@ -838,7 +838,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
         "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     println!(
@@ -855,7 +855,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
 /// Test database lock contention
 #[sinex_test]
 async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create shared resource
     let shared_event = events::generic_adversarial_event(
@@ -949,7 +949,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
         "SELECT payload->>'lock_count' as lock_count FROM core.events WHERE event_id::uuid = $1::uuid",
         event_id.to_uuid()
     )
-    .fetch_one(pool)
+    .fetch_one(&pool)
     .await?;
 
     let final_lock_count: i32 = final_state

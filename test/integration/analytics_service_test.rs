@@ -124,7 +124,7 @@ async fn setup_analytics_test_data(pool: &DbPool) -> TestResult {
 
 #[sinex_test]
 async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -159,7 +159,7 @@ async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> Test
 
 #[sinex_test]
 async fn test_get_event_count_by_source_with_time_filter(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -197,7 +197,7 @@ async fn test_get_event_count_by_source_with_time_filter(ctx: TestContext) -> Te
 
 #[sinex_test]
 async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -232,7 +232,7 @@ async fn test_get_event_count_by_type_no_time_filter(ctx: TestContext) -> TestRe
 
 #[sinex_test]
 async fn test_get_event_count_by_type_with_time_filter(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -266,7 +266,7 @@ async fn test_get_event_count_by_type_with_time_filter(ctx: TestContext) -> Test
 
 #[sinex_test]
 async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -302,7 +302,7 @@ async fn test_get_events_over_time_hourly_intervals(ctx: TestContext) -> TestRes
 
 #[sinex_test]
 async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -337,7 +337,7 @@ async fn test_get_events_over_time_different_intervals(ctx: TestContext) -> Test
 
 #[sinex_test]
 async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -377,7 +377,7 @@ async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -395,7 +395,7 @@ async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -428,7 +428,7 @@ async fn test_get_top_commands_with_time_filter(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_analytics_with_empty_database(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     // Test all methods with empty database
@@ -451,7 +451,7 @@ async fn test_analytics_with_empty_database(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_analytics_with_single_event(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     // Create single test event
@@ -485,7 +485,7 @@ async fn test_analytics_with_single_event(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     let now = Utc::now();
@@ -531,7 +531,7 @@ async fn test_analytics_time_range_edge_cases(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     // Create mixed events - only command.executed should be included
@@ -581,7 +581,7 @@ async fn test_get_top_commands_only_command_events(ctx: TestContext) -> TestResu
 
 #[sinex_test]
 async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     // Create precisely controlled test data
@@ -645,7 +645,7 @@ async fn test_analytics_aggregation_accuracy(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_activity_heatmap_legacy_method(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     setup_analytics_test_data(pool).await?;
@@ -679,7 +679,7 @@ async fn test_activity_heatmap_legacy_method(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
     // Create a larger dataset to test performance

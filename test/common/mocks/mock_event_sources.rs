@@ -108,12 +108,16 @@ impl FilesystemMonitor {
         }
         
         Ok(ScanReport {
-            events_generated: events_count as u64,
+            events_processed: events_count as u64,
             duration: start_time.elapsed(),
-            source_stats: std::collections::HashMap::from([
+            final_checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint::None,
+            time_range: None,
+            processor_stats: std::collections::HashMap::from([
                 ("files_scanned".to_string(), events_count as u64),
             ]),
-            time_range: None,
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 }
@@ -152,6 +156,7 @@ impl StatefulStreamProcessor for FilesystemMonitor {
             processor_stats: std::collections::HashMap::new(),
             successful_targets: vec!["/test/file.txt".to_string()],
             failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
@@ -232,6 +237,7 @@ impl StatefulStreamProcessor for TerminalMonitor {
             processor_stats: std::collections::HashMap::from([("commands".to_string(), 2)]),
             successful_targets: vec!["ls -la".to_string(), "git status".to_string()],
             failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
@@ -371,6 +377,7 @@ impl StatefulStreamProcessor for ShellHistoryMonitor {
             processor_stats: std::collections::HashMap::from([("history_entries".to_string(), 3)]),
             successful_targets: vec!["cd /home/user".to_string(), "ls -la".to_string(), "git status".to_string()],
             failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
@@ -458,12 +465,16 @@ impl AtuinHistoryImporter {
         }
         
         Ok(ScanReport {
-            events_generated: events_count as u64,
+            events_processed: events_count as u64,
             duration: start_time.elapsed(),
-            source_stats: std::collections::HashMap::from([
+            final_checkpoint: sinex_satellite_sdk::stream_processor::Checkpoint::None,
+            time_range: None,
+            processor_stats: std::collections::HashMap::from([
                 ("atuin_entries".to_string(), events_count as u64),
             ]),
-            time_range: None,
+            successful_targets: Vec::new(),
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 }
@@ -495,6 +506,7 @@ impl StatefulStreamProcessor for AtuinHistoryImporter {
             processor_stats: std::collections::HashMap::from([("atuin_entries".to_string(), 3)]),
             successful_targets: vec!["cargo build".to_string(), "cargo test".to_string(), "git commit -m 'fix'".to_string()],
             failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 
@@ -552,6 +564,7 @@ impl StatefulStreamProcessor for ClipboardMonitor {
             processor_stats: std::collections::HashMap::new(),
             successful_targets: Vec::new(),
             failed_targets: Vec::new(),
+            warnings: Vec::new(),
         })
     }
 

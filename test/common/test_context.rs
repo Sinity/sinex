@@ -759,7 +759,16 @@ impl TestContext {
         automaton_name: &str,
     ) -> AnyhowResult<CheckpointState> {
         // For test simplification, return None 
-        let checkpoint = None;
+        let checkpoint: Option<CheckpointRow> = None;
+        
+        struct CheckpointRow {
+            checkpoint_version: i32,
+            checkpoint_data: Option<serde_json::Value>,
+            processed_count: i64,
+            last_activity: chrono::DateTime<chrono::Utc>,
+            state_data: Option<serde_json::Value>,
+            last_processed_id: Option<String>,
+        }
 
         match checkpoint {
             Some(row) => {

@@ -135,7 +135,7 @@ impl DatabaseMetrics {
 /// Test performance of different query patterns
 #[sinex_test]
 async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
     
     // Pre-populate with test data
@@ -181,29 +181,29 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
             let result = match test_name {
                 "Primary Key Lookup" => {
                     let test_id = test_events[iteration % test_events.len()].id.to_uuid();
-                    sqlx::query(query).bind(test_id).fetch_all(pool).await
+                    sqlx::query(query).bind(test_id).fetch_all(&pool).await
                 }
                 "Source Index Scan" => {
                     let test_source = &test_events[iteration % test_events.len()].source;
-                    sqlx::query(query).bind(test_source).fetch_all(pool).await
+                    sqlx::query(query).bind(test_source).fetch_all(&pool).await
                 }
                 "Event Type Filter" => {
                     let test_type = &test_events[iteration % test_events.len()].event_type;
-                    sqlx::query(query).bind(test_type).fetch_all(pool).await
+                    sqlx::query(query).bind(test_type).fetch_all(&pool).await
                 }
                 "Time Range Query" => {
                     let end_time = Utc::now();
                     let start_time = end_time - Duration::hours(1);
-                    sqlx::query(query).bind(start_time).bind(end_time).fetch_all(pool).await
+                    sqlx::query(query).bind(start_time).bind(end_time).fetch_all(&pool).await
                 }
                 "JSON Payload Contains" => {
-                    sqlx::query(query).bind(json!({"test": "value"})).fetch_all(pool).await
+                    sqlx::query(query).bind(json!({"test": "value"})).fetch_all(&pool).await
                 }
                 "JSON Payload Key Exists" => {
-                    sqlx::query(query).bind("test").fetch_all(pool).await
+                    sqlx::query(query).bind("test").fetch_all(&pool).await
                 }
                 "JSON Path Query" => {
-                    sqlx::query(query).fetch_all(pool).await
+                    sqlx::query(query).fetch_all(&pool).await
                 }
                 "Complex Filter" => {
                     let test_event = &test_events[iteration % test_events.len()];
@@ -212,23 +212,23 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
                         .bind(&test_event.source)
                         .bind(&test_event.event_type)
                         .bind(time_threshold)
-                        .fetch_all(pool).await
+                        .fetch_all(&pool).await
                 }
                 "Count Aggregation" => {
-                    sqlx::query(query).fetch_all(pool).await
+                    sqlx::query(query).fetch_all(&pool).await
                 }
                 "Time Series Aggregation" => {
-                    sqlx::query(query).fetch_all(pool).await
+                    sqlx::query(query).fetch_all(&pool).await
                 }
                 "Recent Events" => {
-                    sqlx::query(query).fetch_all(pool).await
+                    sqlx::query(query).fetch_all(&pool).await
                 }
                 "Full Text Search" => {
-                    sqlx::query(query).bind("%test%").fetch_all(pool).await
+                    sqlx::query(query).bind("%test%").fetch_all(&pool).await
                 }
                 "Multi-Join Query" => {
                     let test_type = &test_events[iteration % test_events.len()].event_type;
-                    sqlx::query(query).bind(test_type).fetch_all(pool).await
+                    sqlx::query(query).bind(test_type).fetch_all(&pool).await
                 }
                 _ => unreachable!(),
             };
@@ -274,7 +274,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
 /// Test database performance under concurrent load
 #[sinex_test]
 async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     let concurrent_workers = 15;
     let operations_per_worker = 100;
@@ -353,7 +353,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
     // Verify database consistency
     let total_inserted = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-db-worker-%'"
-    ).fetch_one(pool).await?;
+    ).fetch_one(&pool).await?;
     
     println!("🔍 Database consistency check: {} events inserted", 
              total_inserted.count.unwrap_or(0));
@@ -375,7 +375,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
 /// Test database connection pool performance
 #[sinex_test]
 async fn test_connection_pool_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
     
     println!("🏊 Testing connection pool performance");
@@ -499,7 +499,7 @@ async fn test_connection_pool_performance(ctx: TestContext) -> TestResult {
 /// Test transaction performance and isolation
 #[sinex_test]
 async fn test_transaction_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
     
     println!("💳 Testing transaction performance");
@@ -608,7 +608,7 @@ async fn test_transaction_performance(ctx: TestContext) -> TestResult {
     // Verify database consistency
     let tx_event_count = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-tx-%' OR source = 'transaction-test'"
-    ).fetch_one(pool).await?;
+    ).fetch_one(&pool).await?;
     
     println!("🔍 Transaction consistency check: {} events inserted", 
              tx_event_count.count.unwrap_or(0));

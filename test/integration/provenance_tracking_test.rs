@@ -13,7 +13,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     info!("Testing provenance tracking with raw and synthesis events");
 
@@ -185,7 +185,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM core.find_dependent_events($1::uuid) ORDER BY dependency_depth, event_id",
         event_id.to_uuid()
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     info!(
@@ -213,7 +213,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         "SELECT event_id::uuid as \"event_id!\", dependency_depth FROM core.find_root_events($1::uuid) ORDER BY dependency_depth DESC, event_id",
         meta_synthesis_event_id.to_uuid()
     )
-    .fetch_all(pool)
+    .fetch_all(&pool)
     .await?;
 
     info!("Found {} root events for meta synthesis", root_events.len());

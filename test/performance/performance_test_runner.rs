@@ -349,7 +349,7 @@ impl PerformanceTestRunner {
 /// Run complete performance test suite
 #[sinex_test]
 async fn test_comprehensive_performance_suite(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     println!("🚀 Running comprehensive performance test suite");
     
@@ -389,7 +389,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> TestResult {
             // Keep as raw SQL for timing measurement
             let query_result = sqlx::query!(
                 "SELECT COUNT(*) as count FROM core.events WHERE source = 'comprehensive-test'"
-            ).fetch_one(pool).await;
+            ).fetch_one(&pool).await;
             let query_duration = query_start.elapsed();
             
             runner.record_operation("database_query", query_duration, query_result.is_ok());
@@ -571,7 +571,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> TestResult {
 /// Run focused performance regression test
 #[sinex_test]
 async fn test_focused_performance_regression_suite(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     println!("🎯 Running focused performance regression test suite");
     

@@ -540,7 +540,7 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
         rt.block_on(async {
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
             let automaton_name = format!("test_automaton_{}", Ulid::new());
             let group_name = "test_group";
             let consumer_name = "test_consumer";

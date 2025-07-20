@@ -24,7 +24,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
@@ -76,7 +76,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
@@ -121,7 +121,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             let checkpoint_manager = Arc::new(CheckpointManager::new(
                 pool.clone(),
@@ -180,7 +180,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
@@ -241,7 +241,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
@@ -314,7 +314,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = ctx.pool();
+            let pool = ctx.pool().clone();
 
             // Create multiple automata with checkpoints
             let mut managers = Vec::new();

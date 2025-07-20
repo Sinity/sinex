@@ -90,7 +90,7 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
 async fn test_checkpoint_persistence_and_restart_recovery(
     ctx: crate::TestContext,
 ) -> crate::TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut redis_client = ctx.redis().await?;
     // Start ingestd for this test
     let _ingestd = ctx.start_test_ingestd().await?;
@@ -98,8 +98,6 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     // Test configuration
     let service_name = "test-checkpoint-automaton".to_string();
     let consumer_group = "test-checkpoint-group".to_string();
-    let consumer_name = "test-checkpoint-consumer".to_string();
-    let work_dir = std::path::PathBuf::from("/tmp");
 
     // Create test automaton
     let automaton = TestCheckpointAutomaton::new(service_name.clone());
@@ -107,25 +105,24 @@ async fn test_checkpoint_persistence_and_restart_recovery(
 
     // Create dependencies
     let ingest_client = IngestClient::new("/run/sinex/ingest.sock".into()).await?;
-    let checkpoint_manager = CheckpointManager::new(
-        pool.clone(),
-        service_name.clone(),
-        consumer_group.clone(),
-        consumer_name.clone(),
-    );
 
     // Create automaton runner
     let mut runner = HotlogAutomatonRunner::new(automaton);
 
     // Initialize runner
     runner
-            .initialize(
-                ctx.pool().clone(),
-                ingest_client.clone(),
-                checkpoint_manager.clone(),
-                redis_client.clone(),
-                "test".to_string(),
-            )
+        .initialize(
+            service_name.clone(),
+            consumer_group.clone(),
+            "test-consumer".to_string(),
+            vec![],
+            HashMap::new(),
+            ctx.pool().clone(),
+            redis_client.clone(),
+            ingest_client.clone(),
+            std::path::PathBuf::from("/tmp"),
+            false,
+        )
         .await?;
 
     // Clear any existing consumer group state
@@ -133,38 +130,22 @@ async fn test_checkpoint_persistence_and_restart_recovery(
         .xgroup_destroy("sinex:streams:hotlog", &consumer_group)
         .await;
 
+    // Create checkpoint manager for verification
+    let checkpoint_manager = CheckpointManager::new(
+        ctx.pool().clone(),
+        service_name.clone(),
+        consumer_group.clone(),
+        "test-consumer".to_string(),
+    );
 
     // Step 1: Inject test events into the hotlog stream
     info!("Step 1: Injecting test events");
 
+    let factory = EventFactory::new("test");
     let test_events = vec![
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
-            ts_orig: Some(chrono::Utc::now()),
-            ts_ingest: chrono::Utc::now(),
-            host: "test-host".to_string(),
-            payload: json!({"test": "event1"}),
-        },
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
-            ts_orig: Some(chrono::Utc::now()),
-            ts_ingest: chrono::Utc::now(),
-            host: "test-host".to_string(),
-            payload: json!({"test": "event2"}),
-        },
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
-            ts_orig: Some(chrono::Utc::now()),
-            ts_ingest: chrono::Utc::now(),
-            host: "test-host".to_string(),
-            payload: json!({"test": "event3"}),
-        },
+        factory.create_event("test.event", json!({"test": "event1"})),
+        factory.create_event("test.event", json!({"test": "event2"})),
+        factory.create_event("test.event", json!({"test": "event3"})),
     ];
 
     // Add events to hotlog stream (simulating ingestd)
@@ -188,11 +169,16 @@ async fn test_checkpoint_persistence_and_restart_recovery(
             HotlogAutomatonRunner::new(TestCheckpointAutomaton::new(service_name.clone()));
         runner_clone
             .initialize(
+                service_name.clone(),
+                consumer_group.clone(),
+                "test-consumer".to_string(),
+                vec![],
+                HashMap::new(),
                 ctx.pool().clone(),
-                ingest_client.clone(),
-                checkpoint_manager.clone(),
                 redis_client.clone(),
-                "test".to_string(),
+                ingest_client.clone(),
+                std::path::PathBuf::from("/tmp"),
+                false,
             )
             .await?;
 
@@ -235,13 +221,18 @@ async fn test_checkpoint_persistence_and_restart_recovery(
 
     let mut new_runner = HotlogAutomatonRunner::new(new_automaton);
     new_runner
-            .initialize(
-                ctx.pool().clone(),
-                ingest_client.clone(),
-                checkpoint_manager.clone(),
-                redis_client.clone(),
-                "test".to_string(),
-            )
+        .initialize(
+            format!("{}-restarted", service_name),
+            consumer_group.clone(),
+            "test-consumer".to_string(),
+            vec![],
+            HashMap::new(),
+            ctx.pool().clone(),
+            redis_client.clone(),
+            ingest_client.clone(),
+            std::path::PathBuf::from("/tmp"),
+            false,
+        )
         .await?;
 
     // Run the restarted automaton

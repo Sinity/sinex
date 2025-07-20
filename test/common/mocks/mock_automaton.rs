@@ -159,60 +159,67 @@ impl MockAutomaton {
         let checkpoint_manager = self.checkpoint_manager.clone();
 
         let task_handle = tokio::spawn(async move {
-            use redis::AsyncCommands;
+            let result: Result<(), anyhow::Error> = async {
+                use redis::AsyncCommands;
 
-            let mut processed_count = 0usize;
+                let mut processed_count = 0usize;
 
-            // Create consumer group if it doesn't exist
-            let mut conn = redis.get_connection().await
-                .map_err(|e| anyhow::anyhow!("Failed to get Redis connection: {}", e))?;
-            let _: Result<String, redis::RedisError> = conn
-                .xgroup_create(&config.stream_key, &config.consumer_group, "$")
-                .await;
+                // Create consumer group if it doesn't exist
+                let mut conn = redis.get_connection().await
+                    .map_err(|e| anyhow::anyhow!("Failed to get Redis connection: {}", e))?;
+                let _: Result<String, redis::RedisError> = conn
+                    .xgroup_create(&config.stream_key, &config.consumer_group, "$")
+                    .await;
 
-            let interval = std::time::Duration::from_millis(config.processing_interval_ms);
-            let mut ticker = tokio::time::interval(interval);
+                let interval = std::time::Duration::from_millis(config.processing_interval_ms);
+                let mut ticker = tokio::time::interval(interval);
 
-            while *is_running.lock().await {
-                ticker.tick().await;
+                while *is_running.lock().await {
+                    ticker.tick().await;
 
-                // Check if we've reached the maximum
-                if let Some(max) = config.max_events {
-                    if processed_count >= max {
-                        break;
-                    }
-                }
-
-                // Process batch of events
-                match process_event_batch(
-                    &mut redis,
-                    &config,
-                    &events_processed,
-                    &processing_results,
-                )
-                .await
-                {
-                    Ok(batch_count) => {
-                        if batch_count > 0 {
-                            processed_count += batch_count;
-
-                            // Save checkpoint if configured
-                            if config.save_checkpoints {
-                                let state = CheckpointState {
-                                    checkpoint: Checkpoint::None, // No specific event processed yet
-                                    processed_count: processed_count as u64,
-                                    last_activity: chrono::Utc::now(),
-                                    data: None,
-                                    version: 2,
-                                };
-                                let _ = checkpoint_manager.save_checkpoint(&state).await;
-                            }
+                    // Check if we've reached the maximum
+                    if let Some(max) = config.max_events {
+                        if processed_count >= max {
+                            break;
                         }
                     }
-                    Err(e) => {
-                        eprintln!("Error processing events: {}", e);
+
+                    // Process batch of events
+                    match process_event_batch(
+                        &mut redis,
+                        &config,
+                        &events_processed,
+                        &processing_results,
+                    )
+                    .await
+                    {
+                        Ok(batch_count) => {
+                            if batch_count > 0 {
+                                processed_count += batch_count;
+
+                                // Save checkpoint if configured
+                                if config.save_checkpoints {
+                                    let state = CheckpointState {
+                                        checkpoint: Checkpoint::None, // No specific event processed yet
+                                        processed_count: processed_count as u64,
+                                        last_activity: chrono::Utc::now(),
+                                        data: None,
+                                        version: 2,
+                                    };
+                                    let _ = checkpoint_manager.save_checkpoint(&state).await;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("Error processing events: {}", e);
+                        }
                     }
                 }
+                Ok(())
+            }.await;
+            
+            if let Err(e) = result {
+                eprintln!("Mock automaton error: {}", e);
             }
         });
 
