@@ -326,7 +326,7 @@ impl KittyWatcher {
                     "working_directory": window.cwd.clone(),
                 });
 
-                let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+                let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
                 let process_event = factory.create_event(
                     "process.changed",
                     process_payload,
@@ -375,7 +375,7 @@ impl KittyWatcher {
                         "completion_timestamp": chrono::Utc::now().to_rfc3339(),
                     });
 
-                    let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+                    let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
                     let completion_event = factory.create_event(
                         "command.completed",
                         completion_payload,
@@ -440,7 +440,7 @@ impl KittyWatcher {
                     "focus_timestamp": timestamp,
                 });
 
-                let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+                let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
                 let tab_focused_event = factory.create_event(
                     "tab.focused",
                     tab_focused_payload,
@@ -493,7 +493,7 @@ impl KittyWatcher {
                 "capture_timestamp": chrono::Utc::now().to_rfc3339(),
             });
 
-            let factory = EventFactory::new(sinex_core_types::sources::SHELL_KITTY);
+            let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
             let scrollback_event = factory.create_event(
                 "content.streamed",
                 incremental_payload,

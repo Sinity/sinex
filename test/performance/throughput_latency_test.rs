@@ -92,7 +92,7 @@ impl PerformanceMetrics {
 /// Test maximum event ingestion throughput
 #[sinex_test]
 async fn test_event_ingestion_throughput(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = PerformanceMetrics::new();
     
     // Test configuration
@@ -153,7 +153,7 @@ async fn test_event_ingestion_throughput(ctx: TestContext) -> TestResult {
 /// Test event ingestion latency under various loads
 #[sinex_test]
 async fn test_event_ingestion_latency_scaling(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let load_levels = vec![1, 10, 50, 100, 200];
     let mut results = HashMap::new();
     
@@ -211,7 +211,7 @@ async fn test_event_ingestion_latency_scaling(ctx: TestContext) -> TestResult {
 /// Test database query performance across different query patterns
 #[sinex_test]
 async fn test_database_query_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     // Pre-populate database with test data
     let event_count = 1000;
@@ -324,7 +324,7 @@ async fn test_database_query_performance(ctx: TestContext) -> TestResult {
 /// Test system performance under concurrent access
 #[sinex_test]
 async fn test_concurrent_access_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     let concurrent_workers = 20;
     let operations_per_worker = 50;
@@ -567,7 +567,7 @@ async fn test_stream_processing_performance(ctx: TestContext) -> TestResult {
 /// Test end-to-end performance across the entire system
 #[sinex_test]
 async fn test_end_to_end_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     // Simulate complete workflow: generation -> ingestion -> processing
     let workflow_count = 200;

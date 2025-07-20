@@ -740,7 +740,7 @@ impl EnhancedDbusWatcher {
 
     /// Create event using standard pattern
     fn create_event(event_type: &str, payload: serde_json::Value) -> RawEvent {
-        let factory = EventFactory::new(sinex_core_types::sources::DBUS);
+        let factory = EventFactory::new(sinex_events::sources::DBUS);
         factory.create_event(event_type, payload)
     }
 

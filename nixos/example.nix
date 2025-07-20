@@ -499,7 +499,9 @@
     # Required extensions for Sinex
     extraPlugins = with pkgs.postgresql16Packages; [
       timescaledb
-      # Note: pgx_ulid and pg_jsonschema need to be built/installed separately
+      pgx_ulid        # For ULID type support (available in nixpkgs)
+      pgvector        # For vector embeddings support
+      # Note: pg_jsonschema is provided by the sinex overlay
     ];
     
     settings = {

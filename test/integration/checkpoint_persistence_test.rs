@@ -1,5 +1,6 @@
 use crate::common::prelude::*;
 use async_trait::async_trait;
+use redis::AsyncCommands;
 use serde_json::json;
 use sinex_db::SqlxPgPool;
 use sinex_events::RawEvent;
@@ -89,19 +90,24 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
 async fn test_checkpoint_persistence_and_restart_recovery(
     ctx: crate::TestContext,
 ) -> crate::TestResult {
-    let pool = ctx.pool();
-    let mut redis_client = ctx.redis().await?;
-    let ingest_client = ctx.ingest_client().await?;
+    let pool = ctx.pool().clone();
+    let mut redis_conn = ctx.redis().await?;
+    // Start ingestd for this test
+    let _ingestd = ctx.start_test_ingestd().await?;
+    
+    // Create RedisStreamClient for the automaton
+    let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
 
     // Test configuration
     let service_name = "test-checkpoint-automaton".to_string();
     let consumer_group = "test-checkpoint-group".to_string();
-    let consumer_name = "test-checkpoint-consumer".to_string();
-    let work_dir = std::path::PathBuf::from("/tmp");
 
     // Create test automaton
     let automaton = TestCheckpointAutomaton::new(service_name.clone());
     let processed_events_ref = automaton.processed_events.clone();
+
+    // Create dependencies
+    let ingest_client = IngestClient::new("/run/sinex/ingest.sock".into()).await?;
 
     // Create automaton runner
     let mut runner = HotlogAutomatonRunner::new(automaton);
@@ -111,68 +117,45 @@ async fn test_checkpoint_persistence_and_restart_recovery(
         .initialize(
             service_name.clone(),
             consumer_group.clone(),
-            consumer_name.clone(),
-            vec![EventFilter::new(Some("test".to_string()), None)],
+            "test-consumer".to_string(),
+            vec![],
             HashMap::new(),
-            pool.clone(),
+            ctx.pool().clone(),
             redis_client.clone(),
             ingest_client.clone(),
-            work_dir.clone(),
+            std::path::PathBuf::from("/tmp"),
             false,
         )
         .await?;
 
     // Clear any existing consumer group state
-    let _ = redis_client
-        .delete_consumer_group("sinex:streams:hotlog", &consumer_group)
+    let _: Result<(), _> = redis_conn
+        .xgroup_destroy("sinex:streams:hotlog", &consumer_group)
         .await;
 
     // Create checkpoint manager for verification
     let checkpoint_manager = CheckpointManager::new(
-        pool.clone(),
+        ctx.pool().clone(),
         service_name.clone(),
         consumer_group.clone(),
-        consumer_name.clone(),
+        "test-consumer".to_string(),
     );
 
     // Step 1: Inject test events into the hotlog stream
     info!("Step 1: Injecting test events");
 
+    let factory = EventFactory::new("test");
     let test_events = vec![
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
-            ts_orig: chrono::Utc::now(),
-            ts_ingest: chrono::Utc::now(),
-            host: "test-host".to_string(),
-            payload: json!({"test": "event1"}),
-        },
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
-            ts_orig: chrono::Utc::now(),
-            ts_ingest: chrono::Utc::now(),
-            host: "test-host".to_string(),
-            payload: json!({"test": "event2"}),
-        },
-        RawEvent {
-            id: sinex_ulid::Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test.event".to_string(),
-            ts_orig: chrono::Utc::now(),
-            ts_ingest: chrono::Utc::now(),
-            host: "test-host".to_string(),
-            payload: json!({"test": "event3"}),
-        },
+        factory.create_event("test.event", json!({"test": "event1"})),
+        factory.create_event("test.event", json!({"test": "event2"})),
+        factory.create_event("test.event", json!({"test": "event3"})),
     ];
 
     // Add events to hotlog stream (simulating ingestd)
     for event in &test_events {
         let serialized = serde_json::to_string(event)?;
-        redis_client
-            .add_to_stream("sinex:streams:hotlog", &[("data".to_string(), serialized)])
+        let _: String = redis_conn
+            .xadd("sinex:streams:hotlog", "*", &[("data", serialized)])
             .await?;
     }
 
@@ -191,13 +174,13 @@ async fn test_checkpoint_persistence_and_restart_recovery(
             .initialize(
                 service_name.clone(),
                 consumer_group.clone(),
-                consumer_name.clone(),
-                vec![EventFilter::new(Some("test".to_string()), None)],
+                "test-consumer".to_string(),
+                vec![],
                 HashMap::new(),
-                pool.clone(),
+                ctx.pool().clone(),
                 redis_client.clone(),
                 ingest_client.clone(),
-                work_dir.clone(),
+                std::path::PathBuf::from("/tmp"),
                 false,
             )
             .await?;
@@ -242,15 +225,15 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     let mut new_runner = HotlogAutomatonRunner::new(new_automaton);
     new_runner
         .initialize(
-            service_name.clone(),
+            format!("{}-restarted", service_name),
             consumer_group.clone(),
-            format!("{}-restarted", consumer_name), // Different consumer name
-            vec![EventFilter::new(Some("test".to_string()), None)],
+            "test-consumer".to_string(),
+            vec![],
             HashMap::new(),
-            pool.clone(),
+            ctx.pool().clone(),
             redis_client.clone(),
             ingest_client.clone(),
-            work_dir.clone(),
+            std::path::PathBuf::from("/tmp"),
             false,
         )
         .await?;
@@ -292,19 +275,13 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     info!("Step 6: Verifying no duplicate processing occurred");
 
     // Check Redis consumer group info to verify messages were ACKed properly
-    let pending_messages = redis_client
-        .pending_messages(
-            "sinex:streams:hotlog",
-            &consumer_group,
-            None,
-            None,
-            Some(100),
-        )
+    let pending_result: Result<redis::streams::StreamPendingReply, _> = redis_conn
+        .xpending("sinex:streams:hotlog", &consumer_group)
         .await;
 
-    match pending_messages {
+    match pending_result {
         Ok(pending) => {
-            info!("Pending messages in consumer group: {}", pending.len());
+            info!("Pending messages in consumer group: {}", pending.count());
             // All messages should have been ACKed if checkpoints work correctly
         }
         Err(_) => {

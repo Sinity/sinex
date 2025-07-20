@@ -287,7 +287,9 @@ in
       package = pkgs.postgresql_16;
       extensions = with pkgs.postgresql16Packages; [
         timescaledb
-        # TODO: Add pg_jsonschema when available in nixpkgs
+        pg_jsonschema
+        pgx_ulid
+        pgvector
       ];
       ensureDatabases = [ cfg.database.name ];
       ensureUsers = [

@@ -4,8 +4,7 @@
 // across different components, environments, and deployment scenarios.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
+use sinex_error::ErrorContext;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -210,8 +209,8 @@ impl ConfigCompatibilityTester {
     /// Create a new configuration compatibility tester
     pub async fn new() -> AnyhowResult<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
-            CoreError::io_error("temp_directory")
-                .with_source(e)
+            sinex_error::CoreError::io_error("temp_directory")
+                .with_context("source", e.to_string())
                 .build()
         })?;
 
@@ -845,8 +844,8 @@ impl ConfigCompatibilityTester {
             fs::write(&config_path, &component.config_file_content)
                 .await
                 .map_err(|e| {
-                    CoreError::io_error(&config_path)
-                        .with_source(e)
+                    sinex_error::CoreError::io_error(&config_path)
+                        .with_context("source", e.to_string())
                         .build()
                 })?;
         }

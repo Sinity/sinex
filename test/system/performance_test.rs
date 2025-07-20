@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 #[sinex_test(timeout = 60)]
 async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
     // Test: Basic database insertion performance
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let target_events = 1000; // Reduced from 10k for stability
     let start_time = Instant::now();
@@ -48,7 +48,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
             }),
         );
 
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 events_inserted.fetch_add(1, Ordering::Relaxed);
             }
@@ -74,7 +74,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Verify events in database using timing utility
     let db_count = wait_for_filtered_event_count(
-        pool,
+        &pool,
         "source = $1",
         &["load_test"],
         target_events as i64,
@@ -100,7 +100,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'load_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -109,7 +109,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 #[sinex_test(timeout = 60)]
 async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
     // Test: Concurrent database insertion
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let events_per_worker = 100;
     let num_workers = 5;
@@ -164,7 +164,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Verify events in database using timing utility
     let db_count = wait_for_filtered_event_count(
-        pool,
+        &pool,
         "source = $1",
         &["concurrent_load_test"],
         (num_workers * events_per_worker) as i64,
@@ -192,7 +192,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'concurrent_load_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -399,7 +399,7 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     // Test memory usage during high-volume operations
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let initial_memory = get_memory_usage();
 
     // Insert many events to test memory usage
@@ -428,7 +428,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     let batch_size = 100;
     for chunk in events.chunks(batch_size) {
         for event in chunk {
-            insert_event(pool, event).await?;
+            insert_event(&pool, event).await?;
         }
         tokio::task::yield_now().await;
     }
@@ -449,7 +449,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'memory_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -480,7 +480,7 @@ fn get_memory_usage() -> usize {
 #[sinex_test]
 async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
     // Test how performance scales with worker count
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let events_per_test = 500;
 
     // Test different worker counts
@@ -499,7 +499,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
                     "worker_test": worker_count,
                 }),
             );
-            insert_event(pool, &event).await?;
+            insert_event(&pool, &event).await?;
         }
 
         // Run workers
@@ -578,7 +578,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
 
         // Cleanup for next test
         sqlx::query!("DELETE FROM core.events WHERE source = 'scaling_test'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
     }
 
@@ -602,7 +602,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
     // Test database connection pool performance
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let concurrent_connections = 20;
     let queries_per_connection = 50;
 
@@ -662,7 +662,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
     // Test performance with large event payloads
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let payload_sizes = vec![1024, 10240, 102400]; // 1KB, 10KB, 100KB
 
     for payload_size in payload_sizes {
@@ -683,7 +683,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
                 }),
             );
 
-            insert_event(pool, &event).await?;
+            insert_event(&pool, &event).await?;
         }
 
         let elapsed = start.elapsed();
@@ -697,7 +697,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
 
         // Cleanup
         sqlx::query!("DELETE FROM core.events WHERE source = 'large_payload_test'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
     }
 
@@ -707,7 +707,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
     // Test how system handles burst loads
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let burst_size = 1000;
     let burst_duration = Duration::from_millis(100);
 
@@ -761,7 +761,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'burst_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())

@@ -288,14 +288,16 @@ impl BlobManager {
 
     /// Find blob by BLAKE3 hash for deduplication
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> Result<Option<BlobMetadata>> {
-        let row = ArtifactQueries::find_blob_by_blake3(blake3_hash)
+        use sinex_db::models::BlobRecord;
+        
+        let row: Option<BlobRecord> = ArtifactQueries::find_blob_by_blake3(blake3_hash.to_string())
             .fetch_optional(&self.db_pool)
             .await
             .context("Failed to query blob by BLAKE3 hash")?;
 
         if let Some(row) = row {
             Ok(Some(BlobMetadata {
-                blob_id: row.blob_id,
+                blob_id: row.id,
                 annex_key: row.annex_key,
                 original_filename: row.original_filename,
                 size_bytes: row.size_bytes,
@@ -312,7 +314,24 @@ impl BlobManager {
 
     /// Insert new blob metadata into database
     pub async fn insert_blob(&self, blob: &BlobMetadata) -> Result<()> {
-        ArtifactQueries::insert_blob(blob)
+        use sinex_db::models::BlobRecord;
+        
+        let blob_record = BlobRecord {
+            id: blob.blob_id,
+            annex_key: blob.annex_key.clone(),
+            original_filename: blob.original_filename.clone(),
+            size_bytes: blob.size_bytes,
+            mime_type: blob.mime_type.clone(),
+            checksum_sha256: blob.checksum_sha256.clone(),
+            checksum_blake3: blob.checksum_blake3.clone(),
+            storage_backend: blob.storage_backend.clone(),
+            metadata: serde_json::json!({}),
+            created_at: Utc::now(),
+            last_verified_at: None,
+            verification_status: blob.verification_status.clone(),
+        };
+        
+        ArtifactQueries::insert_blob(&blob_record)
             .execute(&self.db_pool)
             .await
             .context("Failed to insert blob metadata")?;
@@ -322,13 +341,15 @@ impl BlobManager {
 
     /// Get blob metadata by ID
     pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
-        let row = ArtifactQueries::get_blob_by_id(blob_id)
+        use sinex_db::models::BlobRecord;
+        
+        let row: BlobRecord = ArtifactQueries::get_blob_by_id(*blob_id)
             .fetch_one(&self.db_pool)
             .await
             .context("Failed to get blob metadata")?;
 
         Ok(BlobMetadata {
-            blob_id: row.blob_id,
+            blob_id: row.id,
             annex_key: row.annex_key,
             original_filename: row.original_filename,
             size_bytes: row.size_bytes,
@@ -342,7 +363,7 @@ impl BlobManager {
 
     /// Update verification status
     async fn update_verification_status(&self, blob_id: &Ulid, status: &str) -> Result<()> {
-        ArtifactQueries::update_verification_status(blob_id, status)
+        ArtifactQueries::update_verification_status(*blob_id, status.to_string())
             .execute(&self.db_pool)
             .await
             .context("Failed to update verification status")?;
@@ -354,7 +375,7 @@ impl BlobManager {
     async fn add_original_filename(&self, blob_id: &Ulid, filename: &str) -> Result<()> {
         // For now, just update the original_filename field
         // In the future, this should handle an array of filenames
-        ArtifactQueries::update_original_filename(blob_id, filename)
+        ArtifactQueries::update_original_filename(*blob_id, filename.to_string())
             .execute(&self.db_pool)
             .await
             .context("Failed to add original filename")?;
@@ -421,38 +442,24 @@ impl BlobManager {
         size_bytes: i64,
         duration_ms: i64,
     ) -> Result<()> {
-        let event = json!({
-            "id": Ulid::new().to_string(),
-            "source": sources::BLOB_STORAGE,
-            "event_type": event_types::metrics::BLOB_STORAGE_OPERATION,
-            "ts_ingest": Utc::now(),
-            "ts_orig": Utc::now(),
-            "host": gethostname::gethostname().to_string_lossy().to_string(),
-            "payload": {
-                "operation": operation,
-                "result": result,
-                "size_bytes": size_bytes,
-                "duration_ms": duration_ms,
-            }
+        let host = gethostname::gethostname().to_string_lossy().to_string();
+        let payload = json!({
+            "operation": operation,
+            "result": result,
+            "size_bytes": size_bytes,
+            "duration_ms": duration_ms,
         });
 
         // Insert metric event into core.events using EventQueries
         EventQueries::insert_event(
-            event["id"].as_str().unwrap(),
-            event["source"].as_str().unwrap(),
-            event["event_type"].as_str().unwrap(),
-            event["ts_ingest"]
-                .as_str()
-                .unwrap()
-                .parse::<Timestamp>()
-                .unwrap(),
-            event["ts_orig"]
-                .as_str()
-                .unwrap()
-                .parse::<Timestamp>()
-                .unwrap(),
-            event["host"].as_str().unwrap(),
-            &event["payload"],
+            sources::BLOB_STORAGE.to_string(),
+            event_types::metrics::BLOB_STORAGE_OPERATION.to_string(),
+            host,
+            payload,
+            Some(Utc::now()),
+            None,
+            None,
+            None,
         )
         .execute(&self.db_pool)
         .await
@@ -464,46 +471,43 @@ impl BlobManager {
     /// Emit storage statistics (called periodically by background task)
     pub async fn emit_storage_stats(&self) -> Result<()> {
         // Query aggregate statistics using ArtifactQueries
-        let stats = ArtifactQueries::get_storage_stats()
+        #[derive(sqlx::FromRow)]
+        struct StorageStats {
+            total_blobs: i64,
+            total_size_bytes: Option<i64>,
+            unique_files: i64,
+            avg_file_size: Option<f64>,
+            max_file_size: Option<i64>,
+            oldest_blob: chrono::DateTime<chrono::Utc>,
+            newest_blob: chrono::DateTime<chrono::Utc>,
+        }
+        
+        let stats: StorageStats = ArtifactQueries::get_storage_stats()
             .fetch_one(&self.db_pool)
             .await?;
 
-        let blob_count = stats.blob_count;
-        let total_size = Some(stats.total_size);
-        let failed_count = stats.failed_count;
+        let blob_count = stats.total_blobs;
+        let total_size = stats.total_size_bytes;
+        let failed_count = 0i64; // TODO: Implement failed verification tracking
 
-        let event = json!({
-            "id": Ulid::new().to_string(),
-            "source": sources::BLOB_STORAGE,
-            "event_type": event_types::metrics::BLOB_STORAGE_STATISTICS,
-            "ts_ingest": Utc::now(),
-            "ts_orig": Utc::now(),
-            "host": gethostname::gethostname().to_string_lossy().to_string(),
-            "payload": {
-                "total_blobs": blob_count,
-                "total_size_bytes": total_size.unwrap_or(0),
-                "failed_verifications": failed_count,
-                "storage_backend": "git-annex",
-            }
+        let host = gethostname::gethostname().to_string_lossy().to_string();
+        let payload = json!({
+            "total_blobs": blob_count,
+            "total_size_bytes": total_size.unwrap_or(0),
+            "failed_verifications": failed_count,
+            "storage_backend": "git-annex",
         });
 
         // Insert metric event using EventQueries
         EventQueries::insert_event(
-            event["id"].as_str().unwrap(),
-            event["source"].as_str().unwrap(),
-            event["event_type"].as_str().unwrap(),
-            event["ts_ingest"]
-                .as_str()
-                .unwrap()
-                .parse::<Timestamp>()
-                .unwrap(),
-            event["ts_orig"]
-                .as_str()
-                .unwrap()
-                .parse::<Timestamp>()
-                .unwrap(),
-            event["host"].as_str().unwrap(),
-            &event["payload"],
+            sources::BLOB_STORAGE.to_string(),
+            event_types::metrics::BLOB_STORAGE_STATISTICS.to_string(),
+            host,
+            payload,
+            Some(Utc::now()),
+            None,
+            None,
+            None,
         )
         .execute(&self.db_pool)
         .await

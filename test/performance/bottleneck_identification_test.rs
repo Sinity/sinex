@@ -505,7 +505,7 @@ impl BottleneckDetector {
 /// Test database connection bottleneck identification
 #[sinex_test]
 async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
     
     println!("🔍 Testing database bottleneck identification");
@@ -626,7 +626,7 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult
 /// Test memory bottleneck identification
 #[sinex_test]
 async fn test_memory_bottleneck_identification(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
     
     println!("🔍 Testing memory bottleneck identification");
@@ -791,7 +791,7 @@ async fn test_redis_bottleneck_identification(ctx: TestContext) -> TestResult {
 /// Test concurrent bottleneck identification
 #[sinex_test]
 async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let shared_detector = Arc::new(Mutex::new(BottleneckDetector::new()));
     
     println!("🔍 Testing concurrent bottleneck identification");
@@ -888,7 +888,7 @@ async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResu
     // Verify database consistency
     let concurrent_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-bottleneck-worker-%'"
-    ).fetch_one(pool).await?;
+    ).fetch_one(&pool).await?;
     
     println!("    📊 Concurrent events stored: {}", concurrent_events.count.unwrap_or(0));
     

@@ -28,7 +28,7 @@ use tokio::time::{timeout, Duration};
 /// Test event payload approaching 1GB PostgreSQL JSONB limit
 #[sinex_test]
 async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing JSONB 1GB limit:");
 
@@ -51,7 +51,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
         let event = events::large_payload_test_event(1024);
 
         let start = Instant::now();
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 let elapsed = start.elapsed();
                 println!("    SUCCESS: Inserted in {:?}", elapsed);
@@ -89,7 +89,7 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
 /// Test connection pool exhaustion
 #[sinex_test]
 async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing connection pool exhaustion:");
 
@@ -181,7 +181,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 /// Test database transaction boundary limits
 #[sinex_test]
 async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing database transaction limits:");
 
@@ -196,7 +196,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
             json!({"operation_id": i}),
         );
 
-        match sinex_db::insert_event_with_validator(pool, &event, None).await {
+        match sinex_db::insert_event_with_validator(&pool, &event, None).await {
             Ok(_) => {}
             Err(e) => {
                 println!("Transaction failed at operation {}: {}", i, e);
@@ -218,7 +218,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
 /// Test database query complexity limits
 #[sinex_test]
 async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Insert test data
     for i in 0..100 {
@@ -228,7 +228,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
             json!({"value": i, "category": i % 10}),
         );
 
-        insert_event(pool, &event).await?;
+        insert_event(&pool, &event).await?;
     }
 
     // Test increasingly complex queries
@@ -319,7 +319,7 @@ async fn test_database_dns_timeout(ctx: TestContext) -> TestResult {
 async fn test_network_partition_during_processing(ctx: TestContext) -> TestResult {
     // Simulate network partition by creating workers that lose connectivity
 
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test event to be processed
     let test_event = events::generic_adversarial_event(
@@ -329,7 +329,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
         None,
     );
 
-    insert_event(pool, &test_event).await?;
+    insert_event(&pool, &test_event).await?;
 
     let partition_events = Arc::new(AtomicU64::new(0));
     let successful_operations = Arc::new(AtomicU64::new(0));
@@ -422,7 +422,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
 /// Test connection limit exhaustion
 #[sinex_test]
 async fn test_connection_limit_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing connection limit exhaustion:");
 
@@ -578,7 +578,7 @@ async fn test_ulid_high_frequency_ordering_limitation(ctx: TestContext) -> TestR
 /// Test numeric overflow in event counters
 #[sinex_test]
 async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test with values near integer limits
     let test_values = vec![
@@ -600,7 +600,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
             }),
         );
 
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
 
@@ -640,7 +640,7 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
 /// Test floating point precision boundaries
 #[sinex_test]
 async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test floating point values at precision boundaries
     let test_values = vec![
@@ -670,7 +670,7 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
             }),
         );
 
-        match insert_event(pool, &event).await {
+        match insert_event(&pool, &event).await {
             Ok(_) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
 
@@ -765,7 +765,7 @@ async fn test_memory_allocation_boundaries(ctx: TestContext) -> TestResult {
 /// Test concurrent resource exhaustion
 #[sinex_test]
 async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     println!("Testing concurrent resource exhaustion:");
 

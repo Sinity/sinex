@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc b567a176da9371dd88ad1441a83042467eff8baa40e3c34093d3d326696d40c8 # shrinks to automaton_names = ["command-canonicalizer"], cleanup_threshold = 1
+cc 25516ddf86b24a4f93a3b49312e64b693d63bbda68164682c91d5b7aa1649421 # shrinks to automaton_name = "command-canonicalizer", initial_count = 0, increments = [1]
+cc eee62460c636af5c81b0ea3e7c3c8d3ca895dce45ff42ec5f0dc4b87d81c6ab9 # shrinks to automaton_name = "command-canonicalizer", checkpoints = [(0, Null)]
+cc 23f10108b802cadcc867007e730534f9ec8cc3a54acab522d0e1c7719161cbbb # shrinks to automaton_name = "command-canonicalizer", test_data = Null, operations = ["save"]
+cc ffc1bfe176993a22a47af00056d5f46777b0b702878d828b6ef5d30d1ee03abe # shrinks to automaton_name = "command-canonicalizer", processed_count = 0, last_processed_id = None, checkpoint_data = Null

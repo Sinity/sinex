@@ -546,7 +546,7 @@ impl ClipboardWatcher {
             "timestamp": content.timestamp.to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::CLIPBOARD);
+        let factory = EventFactory::new(sinex_events::sources::CLIPBOARD);
         factory.create_event("copied", payload)
     }
 
@@ -602,7 +602,7 @@ impl ClipboardWatcher {
             "timestamp": content.timestamp.to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::CLIPBOARD);
+        let factory = EventFactory::new(sinex_events::sources::CLIPBOARD);
         factory.create_event("selected", payload)
     }
 

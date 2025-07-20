@@ -129,7 +129,8 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_core_types::{ErrorContext, ValidationChain};
+pub use sinex_error::ErrorContext;
+pub use sinex_core_types::ValidationChain;
 pub use sinex_db::DbError; // Import DbError for conversion
 pub use sinex_events::RawEvent;
 pub use sinex_ulid::Ulid;
@@ -246,38 +247,39 @@ pub enum SatelliteError {
     Lifecycle(String),
 }
 
-impl From<SatelliteError> for sinex_core_types::CoreError {
+impl From<SatelliteError> for sinex_error::CoreError {
     fn from(e: SatelliteError) -> Self {
         match e {
-            SatelliteError::Config(_) => sinex_core_types::CoreError::Configuration(e.to_string()),
-            SatelliteError::Grpc(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
-            SatelliteError::GrpcTransport(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
-            SatelliteError::Redis(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
-            SatelliteError::Database(_) => sinex_core_types::CoreError::Database(e.to_string()),
-            SatelliteError::DbError(_) => sinex_core_types::CoreError::Database(e.to_string()),
+            SatelliteError::Config(_) => sinex_error::CoreError::Configuration(e.to_string()),
+            SatelliteError::Grpc(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::GrpcTransport(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::Redis(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::Database(_) => sinex_error::CoreError::Database(e.to_string()),
+            SatelliteError::DbError(_) => sinex_error::CoreError::Database(e.to_string()),
             SatelliteError::Serialization(_) => {
-                sinex_core_types::CoreError::Serialization(e.to_string())
+                sinex_error::CoreError::Serialization(e.to_string())
             }
-            SatelliteError::Io(_) => sinex_core_types::CoreError::Io(e.to_string()),
-            SatelliteError::General(_) => sinex_core_types::CoreError::General(e.to_string()),
-            SatelliteError::Processing(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
-            SatelliteError::Automaton(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
-            SatelliteError::Checkpoint(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
-            SatelliteError::Lifecycle(_) => sinex_core_types::CoreError::Unknown(e.to_string()),
+            SatelliteError::Io(_) => sinex_error::CoreError::Io(e.to_string()),
+            SatelliteError::General(_) => sinex_error::CoreError::General(e.to_string()),
+            SatelliteError::Processing(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::Automaton(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::Checkpoint(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::Lifecycle(_) => sinex_error::CoreError::Unknown(e.to_string()),
         }
     }
 }
 
-impl From<sinex_core_types::CoreError> for SatelliteError {
-    fn from(e: sinex_core_types::CoreError) -> Self {
+impl From<sinex_error::CoreError> for SatelliteError {
+    fn from(e: sinex_error::CoreError) -> Self {
         match e {
-            sinex_core_types::CoreError::Configuration(msg) => SatelliteError::Processing(msg),
-            sinex_core_types::CoreError::Database(msg) => SatelliteError::Processing(msg),
-            sinex_core_types::CoreError::Serialization(msg) => SatelliteError::Processing(msg),
-            sinex_core_types::CoreError::Io(msg) => SatelliteError::Processing(msg),
-            sinex_core_types::CoreError::Unknown(msg) => SatelliteError::Processing(msg),
-            sinex_core_types::CoreError::General(msg) => SatelliteError::Processing(msg),
-            sinex_core_types::CoreError::Validation(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::Configuration(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::Database(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::Serialization(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::Io(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::Unknown(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::General(msg) => SatelliteError::Processing(msg),
+            sinex_error::CoreError::Validation(msg) => SatelliteError::Processing(msg),
+            _ => SatelliteError::Processing(e.to_string()),
         }
     }
 }

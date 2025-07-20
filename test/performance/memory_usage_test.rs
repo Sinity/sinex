@@ -153,7 +153,7 @@ impl MemoryMetrics {
 /// Test memory usage during event processing
 #[sinex_test]
 async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
     
     println!("🧠 Testing memory usage during event processing");
@@ -209,7 +209,7 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult {
 /// Test memory usage under concurrent processing
 #[sinex_test]
 async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(MemoryMetrics::new()));
     
     println!("🔄 Testing memory usage under concurrent processing");
@@ -321,7 +321,7 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult {
 /// Test memory usage with large payloads
 #[sinex_test]
 async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
     
     println!("📦 Testing memory usage with large payloads");
@@ -388,7 +388,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult {
         "Memory leak detected with large payloads");
     
     // Verify events were stored using centralized query system
-    let stored_events = EventQueries::count_by_source(&pool, "large-payload-test").fetch_one(pool).await?;
+    let stored_events = EventQueries::count_by_source(&pool, "large-payload-test").fetch_one(&pool).await?;
     
     println!("📊 Large payload events stored: {}", stored_events);
     assert!(stored_events > 0,
@@ -401,7 +401,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult {
 /// Test memory usage during stress conditions
 #[sinex_test]
 async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
     
     println!("🔥 Testing memory usage under stress conditions");
@@ -504,8 +504,8 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult {
         "Memory should recover to reasonable levels after stress test");
     
     // Verify database consistency using centralized query system
-    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(pool).await?;
-    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(pool).await?;
+    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(&pool).await?;
+    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(&pool).await?;
     let total_stress_events = stress_test_count + sustained_test_count;
     
     println!("📊 Stress test events stored: {}", total_stress_events);
@@ -519,7 +519,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult {
 /// Test memory usage with database connection pools
 #[sinex_test]
 async fn test_connection_pool_memory_usage(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
     
     println!("🏊 Testing memory usage with connection pools");

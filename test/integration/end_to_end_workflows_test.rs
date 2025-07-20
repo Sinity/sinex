@@ -15,14 +15,14 @@
 // - **Data Consistency Workflows**: Cross-component data integrity verification
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
 use crate::common::{events, generators, satellite_test_utils};
-use redis::cmd;
 use chrono::{Duration, Utc};
 use futures::future::join_all;
-use sinex_core_types::{CoreError};
-use sinex_events::{EventFactory, services, event_types};
+use redis::{cmd, AsyncCommands};
+use sinex_core_types::CoreError;
+use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_events::{event_types, services, EventFactory};
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::EventSourceConfig,
@@ -30,8 +30,6 @@ use sinex_satellite_sdk::{
     stream_processor::Checkpoint,
     StatefulStreamProcessor,
 };
-use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -45,7 +43,7 @@ use tokio::sync::{Mutex, RwLock};
 /// Test complete event ingestion workflow from satellite to database
 #[sinex_test]
 async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Simulate satellite event generation
     let satellite_events = generators::test_events(50);
@@ -56,7 +54,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     let mut ingested_event_ids = Vec::new();
 
     for event in &satellite_events {
-        match sinex_db::insert_event_with_validator(pool, event, None).await {
+        match sinex_db::insert_event_with_validator(&pool, event, None).await {
             Ok(stored_event) => {
                 ingested_event_ids.push(stored_event.id);
                 println!("Ingested event: {}", stored_event.id);
@@ -74,7 +72,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     // Phase 3: Verify all events are in database with correct structure
     let mut stored_events = Vec::new();
     for event_id in &ingested_event_ids {
-        let event = EventQueries::get_event_by_id(pool, *event_id).await?;
+        let event = sinex_db::get_event_by_id(&pool, *event_id).await?;
         stored_events.push(event);
     }
 
@@ -86,7 +84,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
 
     // Phase 4: Verify event data integrity
     for (original, stored) in satellite_events.iter().zip(stored_events.iter()) {
-        assert_eq!(original.id.to_uuid(), stored.id, "Event ID should match");
+        assert_eq!(original.id, stored.id, "Event ID should match");
         assert_eq!(original.source, stored.source, "Source should match");
         assert_eq!(
             original.event_type, stored.event_type,
@@ -97,11 +95,10 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     }
 
     // Phase 5: Verify timeseries properties (TimescaleDB)
-    let time_range_events = EventQueries::count_events_in_time_range(
-        pool,
-        Utc::now() - Duration::hours(1),
-        Utc::now()
-    ).await?;
+    let (time_range_events,) =
+        EventQueries::count_by_time_range(Utc::now() - Duration::hours(1), Utc::now())
+            .fetch_one::<(i64,)>(&pool)
+            .await?;
 
     assert!(
         time_range_events >= satellite_events.len() as i64,
@@ -115,7 +112,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
 /// Test event ingestion with concurrent satellites
 #[sinex_test]
 async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Simulate multiple satellites ingesting events concurrently
     let satellite_count = 5;
@@ -141,7 +138,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
                         "satellite_id": satellite_id,
                         "event_id": event_id,
                         "data": format!("concurrent-test-data-{}-{}", satellite_id, event_id)
-                    })
+                    }),
                 );
                 event.host = format!("host-{}", satellite_id);
 
@@ -189,7 +186,16 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     );
 
     // Verify database state
-    let total_events = EventQueries::count_events_by_source_pattern(pool, "satellite-%").await?;
+    // Count events by pattern using LIKE
+    let (total_events,) = QueryBuilder::select("core.events")
+        .columns(&["COUNT(*) as count"])
+        .where_op(
+            "source",
+            "LIKE",
+            QueryParam::String("satellite-%".to_string()),
+        )
+        .fetch_one::<(i64,)>(&pool)
+        .await?;
 
     assert_eq!(
         total_events,
@@ -198,7 +204,15 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     );
 
     // Verify no data corruption with concurrent writes
-    let distinct_event_ids = EventQueries::count_distinct_events_by_source_pattern(pool, "satellite-%").await?;
+    let (distinct_event_ids,) = QueryBuilder::select("core.events")
+        .columns(&["COUNT(DISTINCT event_id) as count"])
+        .where_op(
+            "source",
+            "LIKE",
+            QueryParam::String("satellite-%".to_string()),
+        )
+        .fetch_one::<(i64,)>(&pool)
+        .await?;
 
     assert_eq!(
         distinct_event_ids,
@@ -217,7 +231,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
 /// Test complete stream processing workflow from Redis to automaton
 #[sinex_test]
 async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Create test automaton for stream processing
     let automaton_name = "test-stream-processor";
@@ -232,12 +246,15 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 1: Set up Redis stream
-    let redis_client = RedisClient::new().await?;
+    let redis_url =
+        std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let redis_conn = redis::Client::open(redis_url)?;
+    let mut redis_conn = redis_conn.get_multiplexed_async_connection().await?;
     let stream_key = "sinex:test:stream";
 
     // Phase 2: Add events to stream
     let test_events = generators::test_events(30);
-    let mut stream_event_ids = Vec::new();
+    let mut stream_event_ids: Vec<String> = Vec::new();
 
     for event in &test_events {
         let stream_data = serde_json::json!({
@@ -248,13 +265,20 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
             "timestamp": event.ts_orig
         });
 
-        match redis_client.xadd(stream_key, "*", &stream_data).await {
+        match redis_conn
+            .xadd(
+                stream_key,
+                "*",
+                &[("event", serde_json::to_string(&event).unwrap())],
+            )
+            .await
+        {
             Ok(id) => {
                 stream_event_ids.push(id);
                 println!("Added event {} to stream", event.id);
             }
             Err(e) => {
-                return Err(CoreError::External(format!("Redis XADD failed: {}", e)).into());
+                return Err(CoreError::Service(format!("Redis XADD failed: {}", e)).into());
             }
         }
     }
@@ -266,8 +290,8 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     let processing_errors = Arc::new(Mutex::new(Vec::new()));
 
     // Create consumer group
-    match redis_client
-        .xgroup_create(stream_key, &consumer_group, "0", true)
+    match redis_conn
+        .xgroup_create_mkstream::<_, _, _, ()>(stream_key, &consumer_group, "0")
         .await
     {
         Ok(_) => println!("Created consumer group: {}", consumer_group),
@@ -292,34 +316,37 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
             .arg("STREAMS")
             .arg(stream_key)
             .arg(">")
-            .query_async::<_, redis::streams::StreamReadReply>(&mut redis_client)
+            .query_async(&mut redis_conn)
             .await
         {
             Ok(messages) => {
+                let messages: redis::streams::StreamReadReply = messages;
                 if messages.keys.is_empty() {
                     println!("No more messages in stream");
                     break;
                 }
 
-                for message in messages {
-                    processed_count += 1;
+                for key in messages.keys {
+                    for message in key.ids {
+                        processed_count += 1;
 
-                    // Simulate processing
-                    let event_data = message.get("payload").unwrap_or(&serde_json::Value::Null);
+                        // Simulate processing
+                        let event_data = message.map.get("payload").unwrap_or(&redis::Value::Nil);
 
-                    // Store processing result
-                    let mut processed = processed_events.lock().await;
-                    processed.push(message.clone());
+                        // Store processing result
+                        let mut processed = processed_events.lock().await;
+                        processed.push(message.id.clone());
 
-                    // Acknowledge message
-                    match redis_client
-                        .xack(stream_key, &consumer_group, &message.id)
-                        .await
-                    {
-                        Ok(_) => println!("Acknowledged message: {}", message.id),
-                        Err(e) => {
-                            let mut errors = processing_errors.lock().await;
-                            errors.push(format!("ACK failed for {}: {}", message.id, e));
+                        // Acknowledge message
+                        match redis_conn
+                            .xack::<_, _, _, ()>(stream_key, &consumer_group, &[&message.id])
+                            .await
+                        {
+                            Ok(_) => println!("Acknowledged message: {}", message.id),
+                            Err(e) => {
+                                let mut errors = processing_errors.lock().await;
+                                errors.push(format!("ACK failed for {}: {}", message.id, e));
+                            }
                         }
                     }
                 }
@@ -387,7 +414,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 /// Test checkpoint persistence and recovery workflow
 #[sinex_test]
 async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let automaton_name = "checkpoint-test-automaton";
 
     // Phase 1: Initialize checkpoint manager
@@ -460,7 +487,8 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
         "Retrieved checkpoint should match final state"
     );
     assert_eq!(
-        retrieved_checkpoint.last_processed_id(), final_state.last_processed_id(),
+        retrieved_checkpoint.last_processed_id(),
+        final_state.last_processed_id(),
         "Last processed ID should match"
     );
 
@@ -519,7 +547,7 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
 /// Test coordination between multiple system components
 #[sinex_test]
 async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Set up multiple components
     let components = vec![
@@ -563,7 +591,7 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
                         "component": component_name,
                         "heartbeat_id": i,
                         "timestamp": Utc::now()
-                    })
+                    }),
                 );
                 event.host = "coordination-test".to_string();
 
@@ -617,15 +645,13 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 
     // Phase 5: Verify component heartbeats in database
     for component in &components {
-        let heartbeat_count = EventQueries::count_events_by_source_and_type(
-            pool,
-            component,
-            &format!("{}.heartbeat", component)
-        ).await?;
+        let heartbeat_source = format!("{}.heartbeat", component);
+        let (heartbeat_count,): (i64,) = EventQueries::count_by_source(heartbeat_source)
+            .fetch_one(&pool)
+            .await?;
 
         assert_eq!(
-            heartbeat_count,
-            10,
+            heartbeat_count, 10,
             "Each component should have sent 10 heartbeats"
         );
     }
@@ -641,7 +667,7 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 /// Test error detection and recovery workflow
 #[sinex_test]
 async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Simulate system with intermittent errors
     let error_simulation = Arc::new(Mutex::new(0));
@@ -683,7 +709,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
                         "operation_id": operation_id,
                         "retry_attempt": retry,
                         "error_type": "simulated_failure"
-                    })
+                    }),
                 );
                 event.host = "error-recovery-test".to_string();
 
@@ -722,7 +748,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
                 serde_json::json!({
                     "operation_id": operation_id,
                     "status": "success"
-                })
+                }),
             );
             event.host = "error-recovery-test".to_string();
 
@@ -750,29 +776,40 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
     println!("- Successful operations: {}", successes.len());
 
     // Phase 4: Verify database state reflects recovery
-    let recovery_events = EventQueries::count_events_by_source_and_type_pattern(
-        pool,
+    let recovery_events: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)
+        FROM core.events
+        WHERE source = $1 AND event_type LIKE $2
+        "#,
         component_name,
         "recovery.attempt%"
-    ).await?;
+    )
+    .fetch_one(&pool)
+    .await?
+    .unwrap_or(0);
 
-    let normal_events = EventQueries::count_events_by_source_and_type(
-        pool,
+    let normal_events: i64 = sqlx::query_scalar!(
+        r#"
+        SELECT COUNT(*)
+        FROM core.events
+        WHERE source = $1 AND event_type = $2
+        "#,
         component_name,
         "normal.operation"
-    ).await?;
+    )
+    .fetch_one(&pool)
+    .await?
+    .unwrap_or(0);
 
-    assert!(
-        recovery_events > 0,
-        "Recovery events should be recorded"
-    );
-    assert!(
-        normal_events > 0,
-        "Normal operations should be recorded"
-    );
+    assert!(recovery_events > 0, "Recovery events should be recorded");
+    assert!(normal_events > 0, "Normal operations should be recorded");
 
     // Phase 5: Verify system resilience
-    let total_events = EventQueries::count_events_by_source(pool, component_name).await?;
+    let total_events = EventQueries::count_by_source(component_name.to_string())
+        .fetch_one::<(i64,)>(&pool)
+        .await
+        .map(|r| r.0)?;
 
     assert!(
         total_events > operation_count as i64 / 2,
@@ -790,7 +827,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
 /// Test system performance under concurrent load
 #[sinex_test]
 async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Configure load test parameters
     let concurrent_workers = 10;
@@ -830,7 +867,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
                             "event_id": event_id,
                             "timestamp": Utc::now(),
                             "data": format!("load-test-data-{}-{}", worker_id, event_id)
-                        })
+                        }),
                     );
                     event.host = "performance-test".to_string();
 
@@ -872,8 +909,9 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
     // Phase 5: Calculate performance metrics
     let throughput = successes as f64 / total_duration.as_secs_f64();
     let average_latency = times.iter().sum::<StdDuration>() / times.len() as u32;
-    let min_latency = times.iter().min().unwrap_or(&StdDuration::from_millis(0));
-    let max_latency = times.iter().max().unwrap_or(&StdDuration::from_millis(0));
+    let default_duration = StdDuration::from_millis(0);
+    let min_latency = times.iter().min().unwrap_or(&default_duration);
+    let max_latency = times.iter().max().unwrap_or(&default_duration);
 
     println!("Performance load test results:");
     println!("- Total duration: {:?}", total_duration);
@@ -896,11 +934,13 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 7: Verify database consistency under load
-    let total_db_events = EventQueries::count_events_by_source_pattern(pool, "load-worker-%").await?;
+    let total_db_events = EventQueries::count_by_source("load-worker-%".to_string())
+        .fetch_one::<(i64,)>(&pool)
+        .await
+        .map(|r| r.0)?;
 
     assert_eq!(
-        total_db_events,
-        successes as i64,
+        total_db_events, successes as i64,
         "Database should contain all successful events"
     );
 
@@ -915,7 +955,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
 /// Test data consistency across component boundaries
 #[sinex_test]
 async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Phase 1: Set up consistency test scenario
     let consistency_scenario = "cross-component-consistency";
@@ -932,7 +972,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     let base_timestamp = Utc::now();
 
     for chain_id in 0..events_per_component {
-        let mut chain_events = Vec::new();
+        let mut chain_events: Vec<RawEvent> = Vec::new();
 
         for component_id in 0..component_count {
             let factory = EventFactory::new(&format!("consistency-component-{}", component_id));
@@ -948,10 +988,12 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
                         None
                     },
                     "consistency_check": format!("chain-{}-step-{}", chain_id, component_id)
-                })
+                }),
             );
             event.host = "consistency-test".to_string();
-            event.ts_orig = base_timestamp + Duration::seconds(chain_id as i64 * 10 + component_id as i64);
+            event.ts_orig = Some(
+                base_timestamp + Duration::seconds(chain_id as i64 * 10 + component_id as i64),
+            );
 
             chain_events.push(event);
         }
@@ -967,7 +1009,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         let mut chain_success = true;
 
         for event in chain_events {
-            match sinex_db::insert_event_with_validator(pool, event, None).await {
+            match sinex_db::insert_event_with_validator(&pool, event, None).await {
                 Ok(_) => {
                     println!(
                         "Inserted event for chain {} from component {}",
@@ -1018,7 +1060,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     // Group by chain and verify sequence
     let mut chain_groups: HashMap<String, Vec<_>> = HashMap::new();
     for event in temporal_check {
-        let chain_id = event.chain_id.unwrap_or_default();
+        let chain_id = event.chain_id.clone().unwrap_or_default();
         chain_groups
             .entry(chain_id)
             .or_insert_with(Vec::new)
@@ -1060,14 +1102,14 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     for event in referential_check {
         if let Some(prev_id) = event.previous_event_id {
             let event_id = prev_id.parse::<sinex_ulid::Ulid>().unwrap_or_default();
-            let prev_exists_result = EventQueries::get_event_by_id(&pool, event_id).await;
+            let prev_exists_result = sinex_db::get_event_by_id(&pool, event_id).await;
             let prev_exists = if prev_exists_result.is_ok() { 1 } else { 0 };
 
             if prev_exists == 0 {
                 referential_violations += 1;
                 println!(
                     "Referential violation: event {} references non-existent {}",
-                    event.id, prev_id
+                    event.event_id, prev_id
                 );
             }
         }

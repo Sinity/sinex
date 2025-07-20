@@ -61,9 +61,9 @@ async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> TestRe
     let report = fs_monitor.run_scanner(tx, scanner_args).await?;
 
     // Verify scan report
-    assert!(report.events_generated >= 3); // At least 3 files
+    assert!(report.events_processed >= 3); // At least 3 files
     assert!(report.duration.as_millis() > 0);
-    assert!(report.source_stats.contains_key("files_scanned"));
+    assert!(report.processor_stats.contains_key("files_scanned"));
 
     // Verify events were generated
     let mut events_received = 0;
@@ -178,10 +178,10 @@ sudo apt update
     let report = monitor.run_scanner(tx, scanner_args).await?;
 
     // Verify results (should ignore 'ls' command)
-    assert!(report.events_generated >= 3); // cd, git, echo, sudo (minus ignored ls)
+    assert!(report.events_processed >= 3); // cd, git, echo, sudo (minus ignored ls)
     assert!(
-        report.source_stats.contains_key("shell_bash_entries")
-            || report.source_stats.contains_key("shell_unknown_entries")
+        report.processor_stats.contains_key("shell_bash_entries")
+            || report.processor_stats.contains_key("shell_unknown_entries")
     );
 
     // Verify events
@@ -243,7 +243,7 @@ async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> TestResult {
 
     let report = monitor.run_scanner(tx, scanner_args).await?;
 
-    assert!(report.events_generated >= 4);
+    assert!(report.events_processed >= 4);
 
     // Verify timestamp parsing
     let mut timestamp_found = false;
@@ -311,7 +311,7 @@ command_after_range
     let report = monitor.run_scanner(tx, scanner_args).await?;
 
     // Should only find 2 commands in the time range
-    assert_eq!(report.events_generated, 2);
+    assert_eq!(report.events_processed, 2);
 
     // Verify time range in report
     if let Some((report_start, report_end)) = report.time_range {
@@ -359,7 +359,7 @@ async fn test_scanner_dry_run_mode(ctx: TestContext) -> TestResult {
     let report = fs_monitor.run_scanner(tx, scanner_args).await?;
 
     // In dry run mode, events should be generated but not sent through channel
-    assert!(report.events_generated >= 2);
+    assert!(report.events_processed >= 2);
 
     // Channel should be empty since dry_run = true
     assert!(
@@ -398,7 +398,7 @@ async fn test_scanner_handles_missing_files(ctx: TestContext) -> TestResult {
 
     // Should handle missing files gracefully
     let report = fs_monitor.run_scanner(tx, scanner_args).await?;
-    assert_eq!(report.events_generated, 0);
+    assert_eq!(report.events_processed, 0);
 
     Ok(())
 }
@@ -476,7 +476,7 @@ async fn test_scanner_performance_large_directory(ctx: TestContext) -> TestResul
     let elapsed = start_time.elapsed();
 
     // Should process 100 files efficiently
-    assert_eq!(report.events_generated, 100);
+    assert_eq!(report.events_processed, 100);
     assert!(
         elapsed.as_secs() < 5,
         "Scanner should complete within 5 seconds"

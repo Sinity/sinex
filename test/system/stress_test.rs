@@ -199,13 +199,13 @@ impl StressTestUtils {
             "DELETE FROM core.events WHERE source LIKE $1",
             format!("{}%", source_prefix)
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         sqlx::query!(
             "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             agent_name
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
         Ok(())
@@ -238,7 +238,7 @@ impl StressTestUtils {
                 payload,
                 "test-host"
             )
-            .execute(pool)
+            .execute(&pool)
             .await?;
 
             event_ids.push(event_id.to_string());
@@ -448,7 +448,7 @@ impl DeadlockStressWorker {
 #[sinex_test(timeout = 300)]
 async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
     println!("Testing coordinated deadlock scenario...");
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
@@ -467,7 +467,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             "status": "running"
         })
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -486,7 +486,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             json!({"deadlock_item": i}),
             "test-host"
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         
         // Create checkpoint entry for satellite architecture
@@ -502,7 +502,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             format!("deadlock_event_{}", i),
             json!({"deadlock_items": i + 1, "status": "active"})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -922,7 +922,7 @@ impl RaceConditionWorker {
 #[sinex_test(timeout = 300)]
 async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     println!("Testing race condition detection...");
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     let agent_name = format!("race_condition_{}", Ulid::new());
 
@@ -941,7 +941,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             "status": "running"
         })
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
@@ -961,7 +961,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             json!({"race_item": i}),
             "test-host"
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
         
         // Create checkpoint entry for satellite architecture
@@ -977,7 +977,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
             format!("race_event_{}", i),
             json!({"race_items": i + 1, "status": "active"})
         )
-        .execute(pool)
+        .execute(&pool)
         .await?;
     }
 
@@ -1454,7 +1454,7 @@ impl StressTestWorker {
 #[sinex_test(timeout = 600)]
 async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     println!("Testing extreme concurrency stress...");
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     run_migrations(pool).await?;
 
     let agent_name = format!("extreme_stress_{}", Ulid::new());
@@ -1477,12 +1477,12 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             "status": "running"
         })
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
-    let create_pool = ctx.pool().clone();
+    let create_pool = ctx.pool();
     let create_agent = agent_name.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items {
@@ -1529,7 +1529,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
 
         let worker = StressTestWorker::new(
             format!("extreme_worker_{}", i),
-            ctx.pool().clone(),
+            ctx.pool(),
             metrics.clone(),
             agent_name.clone(),
             Duration::from_millis(200),
@@ -1541,7 +1541,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
         worker_handles.push(handle);
     }
 
-    let monitor_pool = ctx.pool().clone();
+    let monitor_pool = ctx.pool();
     let monitor_agent = agent_name.clone();
     let monitor_metrics = metrics.clone();
     let deadlock_monitor = tokio::spawn(async move {

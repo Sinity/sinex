@@ -46,7 +46,7 @@ impl DbusWatcher {
 
             Some(
                 {
-                    let factory = EventFactory::new(sinex_core_types::sources::DBUS);
+                    let factory = EventFactory::new(sinex_events::sources::DBUS);
                     factory.create_event(event_type, payload)
                 }
             )

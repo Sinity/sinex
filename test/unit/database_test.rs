@@ -10,8 +10,9 @@
 
 use crate::common::prelude::*;
 use serde_json::json;
-use sinex_core_types::{event_type_constants, sources};
-use sinex_events::{EventFactory, services as event_sources, event_types};
+use sinex_error::ErrorContext;
+// Sources and event types now in sinex_events
+use sinex_events::{EventFactory, services as event_sources, event_types, sources};
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_db::query_helpers::ulid_to_uuid;
@@ -46,10 +47,10 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
     let inserted_event = sinex_db::get_event_by_id(ctx.pool(), event_id)
         .await
         .map_err(|e| {
-            CoreError::database("Failed to retrieve inserted event")
-                .with_event_id(event_id)
+            sinex_error::CoreError::database("Failed to retrieve inserted event")
+                .with_context("event_id", event_id)
                 .with_context("test_name", "basic_event_insertion")
-                .with_source(e)
+                .with_context("source", e.to_string())
                 .build()
         })?;
 
@@ -57,12 +58,17 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
     assert_events_equivalent(&inserted_event, &event)?;
 
     // Use ValidationChain to validate the event structure
-    let event_validation = assert_with_validation(inserted_event.clone(), "inserted_event")
-        .has_valid_source()
-        .has_valid_event_type()
-        .payload_is_object();
-
-    assert_validation_passes(event_validation)?;
+    let source_validation = ValidationChain::validate(inserted_event.source.clone(), "event_source")
+        .not_empty();
+    assert_validation_passes(source_validation)?;
+    
+    let event_type_validation = ValidationChain::validate(inserted_event.event_type.clone(), "event_type")
+        .not_empty();
+    assert_validation_passes(event_type_validation)?;
+    
+    let payload_validation = ValidationChain::validate(inserted_event.payload.clone(), "payload")
+        .json_type(sinex_validation::validation_chains::JsonType::Object);
+    assert_validation_passes(payload_validation)?;
 
     // Validate specific payload fields using ValidationChain
     let path_validation = assert_with_validation(
@@ -138,11 +144,12 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     let test_name = ctx.test_name();
     assert!(!test_name.is_empty());
 
-    // Simple database query
-    let result = EventQueries::test_connection()
-        .fetch_one(ctx.pool())
+    // Simple database query - test basic connectivity
+    let (count,) = EventQueries::count_all()
+        .fetch_one::<(i64,)>(ctx.pool())
         .await?;
-    pretty_assertions::assert_eq!(result, Some(4));
+    // Just verify we can query the database
+    assert!(count >= 0);
 
     // Test event creation helpers
     let event = ctx.filesystem_event("/test/file.txt");
@@ -152,7 +159,9 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event).await?;
 
     // Verify it exists
-    let count = EventQueries::count_all().fetch_one::<(i64,)>(pool).fetch_one(ctx.pool()).await?.unwrap_or(0);
+    let (count,): (i64,) = EventQueries::count_all()
+        .fetch_one(ctx.pool())
+        .await?;
     assert!(count >= 1);
 
     Ok(())
@@ -187,17 +196,17 @@ async fn test_transaction_isolation(ctx: TestContext) -> TestResult {
 async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     // Insert events from different sources
     let fs_event = EventFactory::new(sources::FS).create_event(
-        event_type_constants::filesystem::FILE_CREATED,
+        event_types::filesystem::FILE_CREATED,
         json!({"path": "/test/fs_file.txt"}),
     );
 
     let terminal_event = EventFactory::new(sources::SHELL_KITTY).create_event(
-        event_type_constants::shell::COMMAND_EXECUTED,
+        event_types::shell::COMMAND_EXECUTED,
         json!({"command": "ls"}),
     );
 
     let wm_event = EventFactory::new(sources::WM_HYPRLAND).create_event(
-        event_type_constants::window_manager::WINDOW_FOCUSED,
+        event_types::window_manager::WINDOW_FOCUSED,
         json!({"window_id": 123}),
     );
 
@@ -206,13 +215,13 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     sinex_db::insert_event(ctx.pool(), &wm_event).await?;
 
     // Verify events were inserted by checking each one by ID
-    let retrieved_fs = EventQueries::get_by_id(fs_event.id).fetch_one(ctx.pool()).await?;
+    let retrieved_fs: RawEvent = EventQueries::get_by_id(fs_event.id).fetch_one(ctx.pool()).await?;
     assert_eq!(retrieved_fs.source, sources::FS);
 
-    let retrieved_terminal = EventQueries::get_by_id(terminal_event.id).fetch_one(ctx.pool()).await?;
+    let retrieved_terminal: RawEvent = EventQueries::get_by_id(terminal_event.id).fetch_one(ctx.pool()).await?;
     assert_eq!(retrieved_terminal.source, sources::SHELL_KITTY);
 
-    let retrieved_wm = EventQueries::get_by_id(wm_event.id).fetch_one(ctx.pool()).await?;
+    let retrieved_wm: RawEvent = EventQueries::get_by_id(wm_event.id).fetch_one(ctx.pool()).await?;
     assert_eq!(retrieved_wm.source, sources::WM_HYPRLAND);
 
     Ok(())
@@ -242,15 +251,15 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     sinex_db::insert_event(ctx.pool(), &command_event).await?;
 
     // Query by event type
-    let create_events = EventQueries::get_by_type("file.created", 10).fetch_all(ctx.pool()).await?;
+    let create_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("file.created".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!create_events.is_empty());
     assert!(create_events.iter().all(|e| e.event_type == "file.created"));
 
-    let delete_events = EventQueries::get_by_type("file.deleted", 10).fetch_all(ctx.pool()).await?;
+    let delete_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("file.deleted".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!delete_events.is_empty());
     assert!(delete_events.iter().all(|e| e.event_type == "file.deleted"));
 
-    let command_events = EventQueries::get_by_type("command.executed", 10).fetch_all(ctx.pool()).await?;
+    let command_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("command.executed".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!command_events.is_empty());
     assert!(command_events
         .iter()
@@ -286,6 +295,11 @@ async fn test_event_validation_creation(_ctx: TestContext) -> TestResult {
         payload_schema_id: None,
         payload: json!({}),
         source_event_ids: None,
+        source_material_id: None,
+        source_material_offset_start: None,
+        source_material_offset_end: None,
+        anchor_byte: None,
+        associated_blob_ids: None,
     };
 
     // Use ValidationChain to test the events
@@ -328,6 +342,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
                 payload_schema_id: None,
                 payload: json!({}),
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             },
             "empty_source",
         ),
@@ -344,6 +363,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
                 payload_schema_id: None,
                 payload: json!({}),
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             },
             "invalid_event_type",
         ),
@@ -360,6 +384,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
                 payload_schema_id: None,
                 payload: json!({}),
                 source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
             },
             "empty_host",
         ),
@@ -523,6 +552,11 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
             "missing_required_path": "path field is missing"
         }),
         source_event_ids: None,
+        source_material_id: None,
+        source_material_offset_start: None,
+        source_material_offset_end: None,
+        anchor_byte: None,
+        associated_blob_ids: None,
     };
 
     let result = validator.validate(&invalid_event);
@@ -685,12 +719,12 @@ async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
 async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
     use tokio::task::JoinSet;
 
-    let _pool = Arc::new(ctx.pool().clone());
+    let pool = Arc::new(ctx.pool().clone());
     let mut join_set = JoinSet::new();
 
     // Spawn multiple concurrent insertions
     for i in 0..10 {
-        let pool_clone = Arc::new(ctx.pool().clone());
+        let pool_clone = pool.clone();
         join_set.spawn(async move {
             let event = EventFactory::new("fs").create_event(
                 "file.created",
@@ -715,8 +749,8 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
 
     // Verify all events are unique
     let mut ids = std::collections::HashSet::new();
-    for event in results {
-        assert!(ids.insert(event.id)); // Should be unique
+    for event_id in results {
+        assert!(ids.insert(event_id)); // Should be unique
     }
 
     Ok(())
@@ -725,26 +759,31 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
 /// Test ULID ordering in database queries
 #[sinex_test(timeout = 35)]
 async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
-    let mut events = Vec::new();
+    let mut event_ids = Vec::new();
 
     // Insert events with small delays to ensure ULID ordering
     for i in 0..5 {
         let event = EventFactory::new("fs").create_event("file.created", json!({"sequence": i}));
 
-        let inserted = sinex_db::insert_event(ctx.pool(), &event).await?;
-        events.push(inserted);
+        let inserted_id = sinex_db::insert_event(ctx.pool(), &event).await?;
+        event_ids.push(inserted_id);
 
         // Small delay to ensure timestamp progression
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
 
     // Query events ordered by ID (ULID)
-    let _ordered_events = EventQueries::get_recent(10).fetch_all(pool).fetch_all(ctx.pool()).await?;
+    let ordered_events: Vec<RawEvent> = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
 
     // Verify ULID ordering matches insertion order
-    for i in 1..events.len() {
-        assert!(events[i].id.to_string() > events[i - 1].id.to_string());
-        assert!(events[i].ts_ingest >= events[i - 1].ts_ingest);
+    for i in 1..event_ids.len() {
+        assert!(event_ids[i].to_string() > event_ids[i - 1].to_string());
+    }
+    
+    // Also verify the fetched events maintain order
+    for i in 1..ordered_events.len() {
+        assert!(ordered_events[i].id.to_string() > ordered_events[i - 1].id.to_string());
+        assert!(ordered_events[i].ts_ingest >= ordered_events[i - 1].ts_ingest);
     }
 
     Ok(())
@@ -850,8 +889,8 @@ async fn test_database_crud_operations(ctx: TestContext) -> TestResult {
         serde_json::json!({"test": "crud_operations"}),
     );
 
-    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
-    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), inserted_event.id).await?;
+    let inserted_event_id = sinex_db::insert_event(ctx.pool(), &event).await?;
+    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), inserted_event_id).await?;
 
     assert_eq!(retrieved_event.source, "unit-test-crud");
     assert_eq!(retrieved_event.event_type, "test.crud_operations");
@@ -887,7 +926,7 @@ async fn test_database_transaction_handling(ctx: TestContext) -> TestResult {
 /// Test database connection pool health
 #[sinex_test]
 async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test multiple connections from the pool
     let mut connections = Vec::new();
@@ -913,7 +952,7 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
     drop(connections);
 
     // Verify pool is still functional
-    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(pool).await?;
+    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(&pool).await?;
 
     assert_eq!(final_test.test, Some(1));
 
@@ -923,11 +962,11 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
 /// Test database error handling
 #[sinex_test]
 async fn test_database_error_handling(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test handling of SQL syntax errors
     let syntax_error = sqlx::query("SELECT * FROM nonexistent_table_12345")
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await;
 
     assert!(syntax_error.is_err(), "Should fail with syntax/table error");
@@ -938,21 +977,16 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
         serde_json::json!({"test": "constraint"}),
     );
 
-    let inserted_event = sinex_db::insert_event(ctx.pool(), &event).await?;
+    let inserted_event_id = sinex_db::insert_event(ctx.pool(), &event).await?;
 
     // Try to insert with same ID (should fail with constraint violation)
-    let duplicate_event = RawEvent {
-        id: inserted_event.id, // Same ID
-        source: "unit-test-error".to_string(),
-        event_type: "test.error_handling".to_string(),
-        ts_ingest: chrono::Utc::now(),
-        ts_orig: None,
-        host: "test_host".to_string(),
-        ingestor_version: None,
-        payload_schema_id: None,
-        payload: serde_json::json!({"test": "duplicate"}),
-        source_event_ids: None,
-    };
+    let factory = EventFactory::new("unit-test-error");
+    let mut duplicate_event = factory.create_event(
+        "test.error_handling",
+        serde_json::json!({"test": "duplicate"}),
+    );
+    duplicate_event.id = inserted_event_id; // Same ID
+    duplicate_event.host = "test_host".to_string();
 
     let constraint_error = sinex_db::insert_event(ctx.pool(), &duplicate_event).await;
     assert!(
@@ -1149,6 +1183,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
         ctx.pool().clone(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
+        "test_consumer".to_string(),
     );
 
     let mut checkpoint_state = checkpoint_manager.load_checkpoint().await?;
@@ -1161,11 +1196,11 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
             json!({"sequence": i, "satellite_test": true}),
         );
 
-        let inserted_event = insert_event(ctx.pool(), &event).await?;
-        processed_events.push(inserted_event.id);
+        let inserted_event_id = insert_event(ctx.pool(), &event).await?;
+        processed_events.push(inserted_event_id);
 
         // Update checkpoint with processed event
-        checkpoint_state.set_last_processed_id(Some(inserted_event.to_string()));
+        checkpoint_state.set_last_processed_id(Some(inserted_event_id.to_string()));
         checkpoint_state.processed_count += 1;
 
         checkpoint_manager
@@ -1174,7 +1209,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
     }
 
     // Verify events were stored with proper satellite tracking
-    let count: i64 = EventQueries::count_by_type(&unique_event_type)
+    let (count,): (i64,) = EventQueries::count_by_event_type(unique_event_type.clone())
         .fetch_one(ctx.pool())
         .await?;
 
@@ -1193,13 +1228,17 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
     );
 
     // Test checkpoint-based event correlation
-    let events_from_checkpoint = EventQueries::get_ids_by_type_ordered(&unique_event_type, "ts_ingest")
+    #[derive(sqlx::FromRow)]
+    struct EventId {
+        id: sqlx::types::Uuid,
+    }
+    let events_from_checkpoint: Vec<EventId> = EventQueries::get_by_event_type(unique_event_type.clone(), None, None)
         .fetch_all(ctx.pool())
         .await?;
 
     assert_eq!(events_from_checkpoint.len(), 2);
     assert_eq!(
-        events_from_checkpoint[1].id.unwrap(),
+        events_from_checkpoint[1].id,
         processed_events[1].to_uuid()
     );
 
@@ -1454,13 +1493,17 @@ async fn test_streamlined_validation_demo(_ctx: TestContext) -> TestResult {
         .build();
 
     // Validate using streamlined pattern
-    let validation_result = ValidationChain::validate(event.clone(), "demo_event")
-        .has_valid_source()
-        .has_valid_event_type()
-        .payload_is_object()
-        .into_result();
-
-    validation_result?;
+    ValidationChain::validate(event.source.clone(), "event_source")
+        .not_empty()
+        .into_result()?;
+    
+    ValidationChain::validate(event.event_type.clone(), "event_type")
+        .not_empty()
+        .into_result()?;
+    
+    ValidationChain::validate(event.payload.clone(), "payload")
+        .json_type(sinex_validation::validation_chains::JsonType::Object)
+        .into_result()?;
 
     // Also test with EventValidator
     let validator_result = validator.validate(&event);

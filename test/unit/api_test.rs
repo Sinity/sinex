@@ -953,7 +953,7 @@ async fn test_test_context_basic_functionality(ctx: TestContext) -> TestResult {
     assert!(!test_name.is_empty(), "Test name should not be empty");
 
     // Test database pool access
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     assert!(pool.is_closed() == false, "Database pool should be open");
 
     // Test event count functionality

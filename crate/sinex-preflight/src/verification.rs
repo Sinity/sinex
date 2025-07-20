@@ -692,7 +692,12 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
     }
 
     // Verify all events were inserted using centralized query
-    let count_result = EventQueries::count_by_source("sinex-preflight-pipeline-test")
+    #[derive(sqlx::FromRow)]
+    struct CountResult {
+        count: Option<i64>,
+    }
+    
+    let count_result: CountResult = EventQueries::count_by_source("sinex-preflight-pipeline-test".to_string())
         .fetch_one(pool)
         .await
         .context("Failed to count inserted events")?;

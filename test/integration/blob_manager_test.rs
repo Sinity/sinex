@@ -33,7 +33,7 @@ struct BlobManagerTest {
 
 impl BlobManagerTest {
     /// Create a new test fixture with BlobManager and temporary git-annex repo
-    async fn new(pool: &DbPool) -> AnyhowResult<Self, Box<dyn std::error::Error>> {
+    async fn new(pool: &DbPool) -> AnyhowResult<Self> {
         let temp_dir = temp_dir()?;
         let annex_path = temp_dir.path().join("test-annex");
 
@@ -56,7 +56,7 @@ impl BlobManagerTest {
     }
 
     /// Initialize a test git-annex repository with proper setup
-    async fn init_test_annex(path: &Path) -> AnyhowResult<(), Box<dyn std::error::Error>> {
+    async fn init_test_annex(path: &Path) -> AnyhowResult<()> {
         fs::create_dir_all(path).await?;
 
         // Check if git-annex is available

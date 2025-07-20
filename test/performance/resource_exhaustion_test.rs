@@ -145,7 +145,7 @@ impl ResourceExhaustionMetrics {
 /// Test behavior when database connection pool is exhausted
 #[sinex_test]
 async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = ResourceExhaustionMetrics::new();
     
     println!("🏊 Testing connection pool exhaustion");
@@ -307,7 +307,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 /// Test memory pressure scenarios
 #[sinex_test]
 async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut metrics = ResourceExhaustionMetrics::new();
     
     println!("🧠 Testing memory pressure scenarios");
@@ -648,7 +648,7 @@ async fn test_redis_stream_exhaustion(ctx: TestContext) -> TestResult {
 /// Test concurrent resource exhaustion
 #[sinex_test]
 async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(ResourceExhaustionMetrics::new()));
     
     println!("🔥 Testing concurrent resource exhaustion");

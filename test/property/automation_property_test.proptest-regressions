@@ -1,0 +1,13 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 7288f5002f6caf6d415ab60324ba3b12cebbcede10ed79c93f7cae9136fda1d2 # shrinks to automaton_name = "command-canonicalizer", concurrent_operations = ["insert_event"], events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})]
+cc 37f3ec7cc6f5ff0c68c58ee40e72519ea4e6f40a80159a3e7488fae0fcb178a3 # shrinks to automaton_name = "command-canonicalizer", valid_events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})], invalid_events = [Object {}]
+cc da1e94b02616097e6d7340e99b84fea43552fd00a4b4e1ff664dbcc884fec591 # shrinks to automaton_names = ["command-canonicalizer", "command-canonicalizer"], events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})]
+cc 178692433193781a57404050934e6bd0a8669311ebcae434e70f41f449e2f91f # shrinks to automaton_name = "command-canonicalizer", events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})]
+cc 5b9dcac681afc6678e04dfff7bfa34226ccfe8dd85a2b12924673b89b8944d26 # shrinks to automaton_name = "command-canonicalizer", initial_events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})], recovery_events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})]
+cc 3a5a5170e07f9c3ba43a25e0151de4d1b1d7e17cde8a4db41f566bb47ae628e3 # shrinks to automaton_name = "command-canonicalizer", large_events = [("fs", "file.created", Object {})], processing_interval = 1
+cc 0cc43e3f070f3a0aa16b8eab55f384ee10f01ab00fe3762fcd8070ed56e25a9c # shrinks to automaton_name = "command-canonicalizer", batch_size = 1, events = [("fs", "file.created", Object {"data": String("test"), "type": String("simple")})]

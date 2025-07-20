@@ -3,11 +3,8 @@
 //! This module provides database persistence for metrics data using the sinex.* namespace.
 
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use sinex_core_types::{MetricsEntry, MetricsAggregation};
-use sinex_ulid::Ulid;
 use sqlx::PgPool;
-use std::collections::HashMap;
 
 /// Simple error type for metrics operations
 #[derive(Debug, thiserror::Error)]

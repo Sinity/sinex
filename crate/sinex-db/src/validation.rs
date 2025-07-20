@@ -214,8 +214,8 @@ pub struct EventValidator {
 /// - ULID ordering verification  
 /// - Checkpoint consistency checks
 /// - Data corruption detection
-pub struct DataIntegrityValidator {
-    pool: &'static DbPool,
+pub struct DataIntegrityValidator<'a> {
+    pool: &'a DbPool,
     event_validator: EventValidator,
 }
 
@@ -304,13 +304,25 @@ pub enum CheckpointInconsistencyType {
 }
 
 /// Types of data corruption indicators
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum DataCorruptionType {
     InvalidUlid,
     NullPayload,
     TruncatedData,
     EncodingError,
     ForeignKeyViolation,
+}
+
+impl std::fmt::Display for DataCorruptionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::InvalidUlid => write!(f, "Invalid ULID"),
+            Self::NullPayload => write!(f, "Null Payload"),
+            Self::TruncatedData => write!(f, "Truncated Data"),
+            Self::EncodingError => write!(f, "Encoding Error"),
+            Self::ForeignKeyViolation => write!(f, "Foreign Key Violation"),
+        }
+    }
 }
 
 /// Overall severity of integrity check results
@@ -714,9 +726,9 @@ impl Default for EventValidator {
 // Data Integrity Validator Implementation
 // =============================================================================
 
-impl DataIntegrityValidator {
+impl<'a> DataIntegrityValidator<'a> {
     /// Create a new data integrity validator
-    pub async fn new(pool: &'static DbPool) -> Result<Self> {
+    pub async fn new(pool: &'a DbPool) -> Result<Self> {
         let event_validator = EventValidator::load_from_db(pool).await?;
         Ok(Self {
             pool,
@@ -725,7 +737,7 @@ impl DataIntegrityValidator {
     }
 
     /// Get the database pool
-    pub fn pool(&self) -> &'static DbPool {
+    pub fn pool(&self) -> &'a DbPool {
         self.pool
     }
 

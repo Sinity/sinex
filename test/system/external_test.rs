@@ -29,7 +29,7 @@ use tokio::fs;
 // ==================== GIT ANNEX INTEGRATION TESTS ====================
 
 async fn setup_test_annex(
-) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error>> {
+) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>> {
     let temp_dir = resources::temp_dir()?;
     let repo_path = temp_dir.path().to_path_buf();
 
@@ -416,11 +416,11 @@ async fn test_external_command_stdin_interaction(ctx: TestContext) -> TestResult
 #[sinex_test]
 async fn test_external_database_connection(ctx: TestContext) -> TestResult {
     // Test that we can connect to external PostgreSQL database
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test basic connection
     let result = sqlx::query("SELECT 1 as test_value")
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await?;
 
     assert!(result.get::<i32, _>("test_value") == 1);
@@ -431,11 +431,11 @@ async fn test_external_database_connection(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestResult {
     // Test TimescaleDB specific functions
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Test time_bucket function (TimescaleDB specific)
     let result = sqlx::query("SELECT time_bucket('1 minute', NOW()) as bucket")
-        .fetch_one(pool)
+        .fetch_one(&pool)
         .await;
 
     // Should either succeed (TimescaleDB installed) or fail gracefully
@@ -454,11 +454,11 @@ async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestR
 #[sinex_test]
 async fn test_external_database_extensions(ctx: TestContext) -> TestResult {
     // Test that required database extensions are available
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Check for uuid-ossp extension
     let uuid_result = sqlx::query("SELECT extname FROM pg_extension WHERE extname = 'uuid-ossp'")
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await?;
 
     if uuid_result.is_some() {
@@ -466,7 +466,7 @@ async fn test_external_database_extensions(ctx: TestContext) -> TestResult {
 
         // Test UUID generation
         let uuid_test = sqlx::query("SELECT uuid_generate_v4() as test_uuid")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await?;
 
         let uuid_str = uuid_test.get::<String, _>("test_uuid");
@@ -481,7 +481,7 @@ async fn test_external_database_extensions(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_external_database_concurrent_connections(ctx: TestContext) -> TestResult {
     // Test concurrent database connections
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut handles = vec![];
 
     for i in 0..5 {
@@ -509,7 +509,7 @@ async fn test_external_database_concurrent_connections(ctx: TestContext) -> Test
 #[sinex_test]
 async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestResult {
     // Test database transaction isolation
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
 
     // Start a transaction
     let mut tx = pool.begin().await?;
@@ -535,7 +535,7 @@ async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestR
 
     // Test that temporary table is gone after transaction
     let table_check = sqlx::query("SELECT 1 FROM test_isolation LIMIT 1")
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await;
 
     assert!(

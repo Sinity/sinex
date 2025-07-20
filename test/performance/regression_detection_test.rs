@@ -354,7 +354,7 @@ impl RegressionDetector {
 /// Test regression detection for database operations
 #[sinex_test]
 async fn test_database_operation_regression_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut detector = RegressionDetector::new();
     
     println!("🔍 Testing database operation regression detection");
@@ -509,7 +509,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> TestR
 /// Test regression detection with multiple operations
 #[sinex_test]
 async fn test_multi_operation_regression_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     let mut detector = RegressionDetector::new();
     
     println!("🔍 Testing multi-operation regression detection");
@@ -643,7 +643,7 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> TestResu
 /// Test regression detection with custom thresholds
 #[sinex_test]
 async fn test_custom_threshold_regression_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool();
+    let pool = ctx.pool().clone();
     
     println!("🔍 Testing custom threshold regression detection");
     

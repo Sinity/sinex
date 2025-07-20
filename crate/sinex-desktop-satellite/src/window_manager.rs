@@ -448,7 +448,7 @@ impl WindowManagerWatcher {
                 "focused_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
             let event = factory.create_event(
                 "window.focused",
                 payload,
@@ -486,7 +486,7 @@ impl WindowManagerWatcher {
                 "opened_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
             let event = factory.create_event(
                 "window.opened",
                 payload,
@@ -528,7 +528,7 @@ impl WindowManagerWatcher {
             "closed_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+        let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
         let event = factory.create_event(
             "window.closed",
             payload,
@@ -558,7 +558,7 @@ impl WindowManagerWatcher {
                 "moved_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
             let event = factory.create_event(
                 "window.moved",
                 payload,
@@ -591,7 +591,7 @@ impl WindowManagerWatcher {
             "switched_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+        let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
         let event = factory.create_event(
             "workspace.switched",
             payload,
@@ -621,7 +621,7 @@ impl WindowManagerWatcher {
                 "focused_at": chrono::Utc::now().to_rfc3339(),
             });
 
-            let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+            let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
             let event = factory.create_event(
                 "monitor.focused",
                 payload,
@@ -664,7 +664,7 @@ impl WindowManagerWatcher {
             "captured_at": chrono::Utc::now().to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::WM_HYPRLAND);
+        let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
         let event = factory.create_event(
             "state.captured",
             payload,

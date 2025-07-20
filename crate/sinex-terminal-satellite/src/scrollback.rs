@@ -422,7 +422,7 @@ impl ScrollbackWatcher {
             "timestamp": chrono::Utc::now().to_rfc3339(),
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::SHELL_SCROLLBACK);
+        let factory = EventFactory::new(sinex_events::sources::SHELL_SCROLLBACK);
         let event = factory.create_event(
             "output.captured",
             payload,

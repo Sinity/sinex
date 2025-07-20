@@ -211,7 +211,7 @@ pub async fn get_events_with_blobs(
                         source_material_offset_start: record.source_material_offset_start,
                         source_material_offset_end: record.source_material_offset_end,
                         anchor_byte: record.anchor_byte,
-                        associated_blob_ids: record.associated_blob_ids.map(|ids| ids.into_iter().map(uuid_to_ulid).collect()),
+                        associated_blob_ids: Some(blob_ids.iter().map(|id| uuid_to_ulid(*id)).collect()),
                     };
                     let blob_id = uuid_to_ulid(*first_blob_uuid);
                     return Some((event, blob_id));
