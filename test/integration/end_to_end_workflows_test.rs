@@ -86,7 +86,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
 
     // Phase 4: Verify event data integrity
     for (original, stored) in satellite_events.iter().zip(stored_events.iter()) {
-        assert_eq!(original.id.to_uuid(), stored.id, "Event ID should match");
+        assert_eq!(original.id, stored.id, "Event ID should match");
         assert_eq!(original.source, stored.source, "Source should match");
         assert_eq!(
             original.event_type, stored.event_type,

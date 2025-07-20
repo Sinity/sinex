@@ -35,7 +35,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
             let factory = EventFactory::new("test.checkpoint");
             let event = factory.create_event("consistency_test", json!({"sequence": i}));
             insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -126,7 +126,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.gap_detection");
             let event = factory.create_event("batch1", json!({"batch": 1, "sequence": i}));
             sinex_db::insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -159,7 +159,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.gap_detection");
             let event = factory.create_event("batch2", json!({"batch": 2, "sequence": i}));
             sinex_db::insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -382,7 +382,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
             let factory = EventFactory::new("test.cross_validation");
             let event = factory.create_event("shared_event", json!({"sequence": i}));
             insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -664,7 +664,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.recovery");
             let event = factory.create_event("future_reference", json!({"scenario": "future_reference"}));
             insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -743,7 +743,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.data_loss");
             let event = factory.create_event("sequence_event", json!({"sequence": i}));
             sinex_db::insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
@@ -775,7 +775,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.data_loss");
             let event = factory.create_event("post_checkpoint_event", json!({"sequence": i}));
             sinex_db::insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )

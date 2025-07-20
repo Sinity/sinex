@@ -204,7 +204,7 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
                 consumer_group,
                 checkpoint_state.last_processed_id(),
                 checkpoint_state.data
-            ).execute(&pool).await;
+            ).execute(pool).await;
             
             let save_duration = save_start.elapsed();
             let operation_key = format!("save_{}", size_label);
@@ -332,7 +332,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
             consumer_group,
             format!("event-id-{}", i * 100),
             checkpoint_data
-        ).execute(&pool).await?;
+        ).execute(pool).await?;
     }
     
     println!("  Testing individual checkpoint recovery");

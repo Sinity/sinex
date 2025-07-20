@@ -78,7 +78,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_ordering".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -221,7 +221,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
     // Cleanup
     EventQueries::delete_by_source("test.concurrent_ulid".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -347,7 +347,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.db_ordering".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -423,7 +423,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.clock_skew".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -543,7 +543,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_performance".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -586,7 +586,7 @@ async fn insert_test_event(pool: &DbPool, event: &RawEvent) -> AnyhowResult<RawE
         event.ingestor_version,
         event.payload_schema_id.map(|u| u.to_uuid()),
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(event.clone())

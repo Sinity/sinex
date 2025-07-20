@@ -269,7 +269,7 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
             let factory = EventFactory::new("test.fk_integrity");
             let event = factory.create_event("valid_event", json!({"data": "valid"}));
             insert_event_with_validator(
-                pool,
+                &pool,
                 &event,
                 None,
             )
