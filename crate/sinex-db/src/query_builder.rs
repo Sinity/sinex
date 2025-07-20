@@ -423,8 +423,23 @@ impl QueryBuilder {
                     sql.push_str(&self.columns.join(", "));
                     sql.push_str(") VALUES (");
 
-                    let placeholders: Vec<String> =
-                        (1..=self.values.len()).map(|i| format!("${}", i)).collect();
+                    let placeholders: Vec<String> = self.values
+                        .iter()
+                        .enumerate()
+                        .map(|(i, param)| {
+                            let param_index = i + 1;
+                            // Special handling for source_event_ids ULID array
+                            if self.columns.get(i).map(|c| c == "source_event_ids").unwrap_or(false) {
+                                match param {
+                                    QueryParam::UlidArray(_) => format!("${}::ulid[]", param_index),
+                                    QueryParam::OptionalUlid(_) => format!("${}", param_index),
+                                    _ => format!("${}", param_index),
+                                }
+                            } else {
+                                format!("${}", param_index)
+                            }
+                        })
+                        .collect();
                     sql.push_str(&placeholders.join(", "));
                     sql.push_str(")");
 
@@ -442,7 +457,19 @@ impl QueryBuilder {
                     let mut set_parts = Vec::new();
                     for (column, param) in self.set_clauses.iter() {
                         let param_index = params.len() + 1;
-                        set_parts.push(format!("{} = ${}", column, param_index));
+                        // Special handling for source_event_ids ULID array
+                        if column == "source_event_ids" {
+                            match param {
+                                QueryParam::UlidArray(_) => {
+                                    set_parts.push(format!("{} = ${}::ulid[]", column, param_index));
+                                }
+                                _ => {
+                                    set_parts.push(format!("{} = ${}", column, param_index));
+                                }
+                            }
+                        } else {
+                            set_parts.push(format!("{} = ${}", column, param_index));
+                        }
                         params.push(param.to_raw_value());
                     }
                     sql.push_str(&set_parts.join(", "));

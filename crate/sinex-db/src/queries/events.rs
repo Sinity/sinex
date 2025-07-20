@@ -31,7 +31,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
@@ -84,7 +84,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
     }
 
@@ -212,7 +212,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .order_by("ts_ingest", "DESC");
 
@@ -243,7 +243,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_eq("source", QueryParam::String(source))
             .order_by("ts_ingest", "DESC");
@@ -279,7 +279,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_eq("event_type", QueryParam::String(event_type))
             .order_by("ts_ingest", "DESC");
@@ -311,7 +311,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_in("event_id", QueryParam::UlidArray(event_ids))
             .order_by("ts_ingest", "DESC")
@@ -338,7 +338,7 @@ impl EventQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
@@ -420,7 +420,7 @@ impl EventQueries {
                 "payload_schema_id::uuid as \"payload_schema_id\"",
                 "payload as \"payload!\"",
                 "associated_blob_ids::uuid[] as \"associated_blob_ids!\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
             .where_op(
                 "associated_blob_ids",
@@ -516,7 +516,7 @@ impl EventQueries {
                 "source_material_offset_end",
                 "anchor_byte",
                 "associated_blob_ids::uuid[] as \"associated_blob_ids\"",
-                "source_event_ids::uuid[] as \"source_event_ids\"",
+                "source_event_ids::ulid[] as \"source_event_ids\"",
             ])
     }
 

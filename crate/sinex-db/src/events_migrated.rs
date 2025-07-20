@@ -64,7 +64,7 @@ pub async fn get_event_by_id_old(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            source_event_ids::uuid[] as "source_event_ids"
+            source_event_ids::ulid[] as "source_event_ids"
         FROM core.events 
         WHERE event_id::uuid = $1
         "#,
@@ -120,7 +120,7 @@ pub async fn insert_event_old(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<R
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            source_event_ids::uuid[] as "source_event_ids"
+            source_event_ids::ulid[] as "source_event_ids"
         "#,
         event.source,
         event.event_type,
@@ -202,7 +202,7 @@ pub async fn get_events_by_source_old(pool: DbPoolRef<'_>, source: &str, limit: 
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            source_event_ids::uuid[] as "source_event_ids"
+            source_event_ids::ulid[] as "source_event_ids"
         FROM core.events 
         WHERE source = $1
         ORDER BY ts_ingest DESC
@@ -269,7 +269,7 @@ pub async fn get_events_by_time_range_old(
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            source_event_ids::uuid[] as "source_event_ids"
+            source_event_ids::ulid[] as "source_event_ids"
         FROM core.events 
         WHERE ts_ingest >= $1 AND ts_ingest <= $2
         ORDER BY ts_ingest DESC
@@ -342,7 +342,7 @@ pub async fn get_events_by_ids_old(pool: DbPoolRef<'_>, event_ids: &[Ulid]) -> R
             ingestor_version, 
             payload_schema_id::uuid as "payload_schema_id", 
             payload as "payload!",
-            source_event_ids::uuid[] as "source_event_ids"
+            source_event_ids::ulid[] as "source_event_ids"
         FROM core.events 
         WHERE event_id::uuid = ANY($1::uuid[])
         ORDER BY ts_ingest DESC
