@@ -225,12 +225,12 @@ pub mod validation {
                 .get("database")
                 .and_then(|db| db.get("url"))
                 .and_then(|v| v.as_str())
-                .ok_or_else(|| sinex_error::CoreError::configuration("database.url is required").build())?;
+                .ok_or_else(|| sinex_core_types::CoreError::configuration("database.url is required").build())?;
 
             ValidationChain::validate(url.to_string(), "database.url")
                 .is_valid_url()
                 .into_result()
-                .map_err(|e| sinex_error::CoreError::validation("URL validation failed").with_context("source", e.to_string()).build())?;
+                .map_err(|e| sinex_core_types::CoreError::validation("URL validation failed").with_context("source", e.to_string()).build())?;
 
             // Validate pool size range if present
             if let Some(pool_size) = config
@@ -242,7 +242,7 @@ pub mod validation {
                     .min(1)
                     .max(100)
                     .into_result()
-                    .map_err(|e| sinex_error::CoreError::validation("Pool size validation failed").with_context("source", e.to_string()).build())?;
+                    .map_err(|e| sinex_core_types::CoreError::validation("Pool size validation failed").with_context("source", e.to_string()).build())?;
             }
 
             Ok(())
@@ -262,7 +262,7 @@ pub mod validation {
                     .min(1)
                     .max(10000)
                     .into_result()
-                    .map_err(|e| sinex_error::CoreError::validation("Buffer size validation failed").with_context("source", e.to_string()).build())?;
+                    .map_err(|e| sinex_core_types::CoreError::validation("Buffer size validation failed").with_context("source", e.to_string()).build())?;
             }
 
             // Validate batch size range
@@ -275,7 +275,7 @@ pub mod validation {
                     .min(1)
                     .max(1000)
                     .into_result()
-                    .map_err(|e| sinex_error::CoreError::validation("Batch size validation failed").with_context("source", e.to_string()).build())?;
+                    .map_err(|e| sinex_core_types::CoreError::validation("Batch size validation failed").with_context("source", e.to_string()).build())?;
             }
 
             // Validate flush interval format
@@ -285,7 +285,7 @@ pub mod validation {
                 .and_then(|v| v.as_str())
             {
                 parse_duration(interval)
-                    .map_err(|e| sinex_error::CoreError::configuration(format!("Invalid flush interval: {}", e)).build())?;
+                    .map_err(|e| sinex_core_types::CoreError::configuration(format!("Invalid flush interval: {}", e)).build())?;
             }
             
             Ok(())
@@ -306,7 +306,7 @@ pub mod validation {
                     .min(1024)
                     .max(65535)
                     .into_result()
-                    .map_err(|e| sinex_error::CoreError::validation("Metrics port validation failed").with_context("source", e.to_string()).build())?;
+                    .map_err(|e| sinex_core_types::CoreError::validation("Metrics port validation failed").with_context("source", e.to_string()).build())?;
             }
 
             // Validate log level
@@ -317,7 +317,7 @@ pub mod validation {
             {
                 let valid_levels = ["trace", "debug", "info", "warn", "error"];
                 if !valid_levels.contains(&log_level) {
-                    return Err(sinex_error::CoreError::configuration(
+                    return Err(sinex_core_types::CoreError::configuration(
                         format!("Invalid log level '{}', must be one of: {:?}", log_level, valid_levels)
                     ).build());
                 }
@@ -330,7 +330,7 @@ pub mod validation {
                 .and_then(|v| v.as_str())
             {
                 parse_duration(interval)
-                    .map_err(|e| sinex_error::CoreError::configuration(format!("Invalid health check interval: {}", e)).build())?;
+                    .map_err(|e| sinex_core_types::CoreError::configuration(format!("Invalid health check interval: {}", e)).build())?;
             }
             
             Ok(())
@@ -345,14 +345,14 @@ pub mod validation {
 
             // Validate database section
             if let Err(e) = validate_database_config()(config) {
-                return Err(sinex_error::CoreError::configuration("Database configuration invalid")
+                return Err(sinex_core_types::CoreError::configuration("Database configuration invalid")
                     .with_context("source", e.to_string())
                     .build());
             }
 
             // Validate collector section
             if let Err(e) = validate_collector_config()(config) {
-                return Err(sinex_error::CoreError::configuration("Collector configuration invalid")
+                return Err(sinex_core_types::CoreError::configuration("Collector configuration invalid")
                     .with_context("source", e.to_string())
                     .build());
             }
@@ -365,7 +365,7 @@ pub mod validation {
             {
                 if let Err(e) = validate_observability_config()(config) {
                     return Err(
-                        sinex_error::CoreError::configuration("Observability configuration invalid")
+                        sinex_core_types::CoreError::configuration("Observability configuration invalid")
                             .with_context("source", e.to_string())
                             .build(),
                     );
@@ -433,7 +433,7 @@ pub mod extraction {
         Ok(CollectorTestConfig {
             buffer_size,
             batch_size,
-            flush_interval_seconds,
+            flush_interval_seconds.as_secs(),
         })
     }
 

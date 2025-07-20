@@ -40,7 +40,7 @@ async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> TestRe
         "recursive": true
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut fs_monitor = FilesystemMonitor::initialize(source_ctx).await?;
 
@@ -94,7 +94,7 @@ async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> TestR
         "recursive": false
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut fs_monitor = FilesystemMonitor::initialize(source_ctx).await?;
 
@@ -160,7 +160,7 @@ sudo apt update
         "max_execution_time_ms": 3600000
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut monitor = ShellHistoryMonitor::initialize(source_ctx).await?;
 
@@ -227,7 +227,7 @@ async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> TestResult {
         "max_execution_time_ms": 3600000
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut monitor = ShellHistoryMonitor::initialize(source_ctx).await?;
 
@@ -290,7 +290,7 @@ command_after_range
         "ignore_commands": ["ls", "cd", "pwd"],
         "max_execution_time_ms": 3600000
     });
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut monitor = ShellHistoryMonitor::initialize(source_ctx).await?;
 
@@ -341,7 +341,7 @@ async fn test_scanner_dry_run_mode(ctx: TestContext) -> TestResult {
         "recursive": false
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut fs_monitor = FilesystemMonitor::initialize(source_ctx).await?;
 
@@ -382,7 +382,7 @@ async fn test_scanner_handles_missing_files(ctx: TestContext) -> TestResult {
         "recursive": false
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut fs_monitor = FilesystemMonitor::initialize(source_ctx).await?;
 
@@ -411,7 +411,7 @@ async fn test_scanner_handles_empty_paths(ctx: TestContext) -> TestResult {
         "recursive": false
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut fs_monitor = FilesystemMonitor::initialize(source_ctx).await?;
 
@@ -457,7 +457,7 @@ async fn test_scanner_performance_large_directory(ctx: TestContext) -> TestResul
         "recursive": false
     });
 
-    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut fs_monitor = FilesystemMonitor::initialize(source_ctx).await?;
 

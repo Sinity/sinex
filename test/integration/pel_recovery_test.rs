@@ -97,7 +97,7 @@ async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
         .xpending(stream_key, group_name)
         .await?;
 
-    assert_eq!(final_pel.count, 0, "PEL should be empty after recovery");
+    assert_eq!(final_pel.count(), 0, "PEL should be empty after recovery");
 
     Ok(())
 }
@@ -194,7 +194,7 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(
-        final_pel.count,
+        final_pel.count(),
         0,
         "PEL should be empty after full recovery"
     );
@@ -289,10 +289,10 @@ async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
             "*",
             &[
                 ("original_id", &message_id),
-                ("original_stream", stream_key),
+                ("original_stream", stream_key.as_ref()),
                 ("retry_count", &retry_count.to_string()),
-                ("type", "retry.test"),
-                ("data", "failing-message"),
+                ("type", &"retry.test".to_string()),
+                ("data", &"failing-message".to_string()),
             ],
         )
         .await?;
@@ -309,20 +309,17 @@ async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(
-        final_pel.count,
+        final_pel.count(),
         0,
         "PEL should be empty after DLQ processing"
     );
 
     // Verify message is in DLQ
-    let dlq_messages: Vec<redis::streams::StreamReadReply> = redis_client
-        .xread(
-            Some(redis::streams::StreamReadOptions::default().count(1)),
-            &[(dlq_stream, "0")],
-        )
+    let dlq_messages: redis::streams::StreamReadReply = redis_client
+        .xread(&[(dlq_stream, "0")], &[])
         .await?;
 
-    assert_eq!(dlq_messages.len(), 1);
+    assert_eq!(dlq_messages.keys.len(), 1);
     assert_eq!(dlq_messages.keys[0].ids.len(), 1);
     assert_eq!(dlq_messages.keys[0].ids[0].id, dlq_id);
 
@@ -389,7 +386,7 @@ async fn test_concurrent_pel_recovery(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(
-        pel_info.count,
+        pel_info.count(),
         message_count,
         "All messages should be in PEL"
     );
@@ -585,7 +582,7 @@ async fn test_pel_recovery_message_ordering(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(
-        final_pel.count,
+        final_pel.count(),
         0,
         "PEL should be empty after ordered recovery"
     );
@@ -702,7 +699,7 @@ async fn test_pel_recovery_idle_thresholds(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(
-        final_pel.count,
+        final_pel.count(),
         0,
         "PEL should be empty after threshold-based recovery"
     );
@@ -845,7 +842,7 @@ async fn test_pel_recovery_malformed_messages(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(
-        final_pel.count,
+        final_pel.count(),
         0,
         "PEL should be empty after processing malformed messages"
     );

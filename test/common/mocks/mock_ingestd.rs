@@ -321,9 +321,9 @@ impl IngestServiceTrait for MockIngestService {
                             "*",
                             &[
                                 ("event", event_json),
-                                ("source", &event.source),
-                                ("event_type", &event.event_type),
-                                ("id", &event.id.to_string()),
+                                ("source", event.source.clone()),
+                                ("event_type", event.event_type.clone()),
+                                ("id", event.id.to_string()),
                             ],
                         )
                         .await;

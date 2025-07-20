@@ -96,7 +96,7 @@ async fn test_filesystem_monitor_initialization(_ctx: TestContext) -> TestResult
 
     // Test that we can create a filesystem monitor
     // (This tests the basic initialization without complex scanning)
-    let ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
     let _monitor = FilesystemMonitor::initialize(ctx).await?;
 
     Ok(())
@@ -156,7 +156,7 @@ async fn test_filesystem_monitor_large_directory(_ctx: TestContext) -> TestResul
 
     // Should handle large directories without excessive memory usage
     let start_memory = get_current_memory_usage();
-    let ctx = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let ctx = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
     let _monitor = FilesystemMonitor::initialize(ctx).await?;
     let end_memory = get_current_memory_usage();
 

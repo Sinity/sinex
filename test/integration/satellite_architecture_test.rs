@@ -81,7 +81,7 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
     use sinex_satellite_sdk::stream_processor::Checkpoint;
 
     let checkpoint_manager = CheckpointManager::new(
-        ctx.pool(),
+        ctx.pool().clone(),
         "test-automaton".to_string(),
         "test-group".to_string(),
         "test-consumer".to_string(),
@@ -148,7 +148,7 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     let factory = EventFactory::new("canonical.terminal");
     let mut canonical_event = factory.create_event("command.canonical", canonical_payload);
     canonical_event.id = canonical_event_id;
-    canonical_event.ts_orig = chrono::Utc::now();
+    canonical_event.ts_orig = Some(chrono::Utc::now());
     
     sinex_db::insert_event(ctx.pool(), &canonical_event).await?;
 

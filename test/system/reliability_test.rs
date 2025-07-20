@@ -127,7 +127,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
                 json!({"sequence": i, "startup_test": true})
             );
             event.host = "localhost".to_string();
-            event.ingestor_version = "1.0.0".to_string();
+            event.ingestor_version = Some("1.0.0".to_string());
             
             sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
@@ -397,7 +397,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
                     json!({"batch_item": i, "operation": "long_running"})
                 );
                 event.host = "localhost".to_string();
-                event.ingestor_version = "1.0.0".to_string();
+                event.ingestor_version = Some("1.0.0".to_string());
                 
                 sinex_db::insert_event_with_validator(&pool, &event, None).await?;
 
@@ -948,7 +948,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
                 json!({"sequence": i, "migration_test": true})
             );
             event.host = "localhost".to_string();
-            event.ingestor_version = "1.0.0".to_string();
+            event.ingestor_version = Some("1.0.0".to_string());
             
             sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
@@ -1003,7 +1003,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
                  WHERE automaton_name = 'migration_test_agent'"
         )
         .fetch_optional(pool)
-        .await?;
+        .await?
+        .flatten();
 
         let sample_event: Option<serde_json::Value> = sqlx::query_scalar!(
             "SELECT payload FROM core.events WHERE source = 'migration.safety' LIMIT 1"
@@ -1204,7 +1205,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
             json!({"test": "degraded_mode"})
         );
         event.host = "localhost".to_string();
-        event.ingestor_version = "1.0.0".to_string();
+        event.ingestor_version = Some("1.0.0".to_string());
         
         let _event = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         Ok(())
@@ -1289,7 +1290,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         json!({"recovered": true})
     );
     event.host = "localhost".to_string();
-    event.ingestor_version = "1.0.0".to_string();
+    event.ingestor_version = Some("1.0.0".to_string());
     
     let recovery_test = timeout(
         Duration::from_secs(5),
@@ -1417,7 +1418,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                     event_data
                 );
                 event.host = "localhost".to_string();
-                event.ingestor_version = "1.0.0".to_string();
+                event.ingestor_version = Some("1.0.0".to_string());
                 
                 let result = sinex_db::insert_event_with_validator(&pool, &event, None).await;
 

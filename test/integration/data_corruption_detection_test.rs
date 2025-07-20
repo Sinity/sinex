@@ -159,9 +159,9 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
             test_ulid.timestamp(),
             "localhost",
             json!({"test": test_name}),
-            None::<Vec<Uuid>>,
+            None,
             None::<Uuid>,
-            None::<Vec<Uuid>>,
+            None,
             Some("1.0.0"),
             None::<Uuid>,
         )
@@ -184,7 +184,8 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
         "SELECT COUNT(*) FROM core.events WHERE event_id::uuid = '00000000-0000-0000-0000-000000000000'::uuid"
     )
     .fetch_one(pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     if nil_ulid_count > 0 {
         println!("Found {} nil ULIDs in database", nil_ulid_count);
@@ -362,9 +363,9 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
             Utc::now(),
             "localhost",
             json!({"path": corrupt_string, "test": test_name}),
-            None::<Vec<Uuid>>,
+            None,
             None::<Uuid>,
-            None::<Vec<Uuid>>,
+            None,
             Some("1.0.0"),
             None::<Uuid>,
         )
@@ -542,12 +543,13 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
         let event = {
             let factory = EventFactory::new("test.large_scale");
             let event = factory.create_event("valid_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(
+            let event_id = sinex_db::insert_event_with_validator(
                 pool,
                 &event,
                 None,
             )
-            .await?
+            .await?;
+            event
         };
         all_event_ids.push(event.id);
 

@@ -27,7 +27,7 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         })
     );
     raw_event.host = "test-host".to_string();
-    raw_event.ts_orig = chrono::Utc::now();
+    raw_event.ts_orig = Some(chrono::Utc::now());
 
     assert!(
         raw_event.is_raw_event(),
@@ -57,8 +57,8 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         })
     );
     synthesis_event.host = "test-host".to_string();
-    synthesis_event.ts_orig = chrono::Utc::now();
-    synthesis_event.source_event_ids = vec![event_id]; // This sets source_event_ids to [event_id]
+    synthesis_event.ts_orig = Some(chrono::Utc::now());
+    synthesis_event.source_event_ids = Some(vec![event_id]); // This sets source_event_ids to [event_id]
 
     assert!(
         !synthesis_event.is_raw_event(),
@@ -89,8 +89,8 @@ async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::
         })
     );
     meta_synthesis_event.host = "test-host".to_string();
-    meta_synthesis_event.ts_orig = chrono::Utc::now();
-    meta_synthesis_event.source_event_ids = vec![event_id, synthesis_event_id]; // Multiple source events
+    meta_synthesis_event.ts_orig = Some(chrono::Utc::now());
+    meta_synthesis_event.source_event_ids = Some(vec![event_id, synthesis_event_id]); // Multiple source events
 
     assert!(
         meta_synthesis_event.is_synthesis_event(),

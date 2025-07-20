@@ -25,7 +25,7 @@ use sinex_db::query_builder::{QueryBuilder, QueryParam};
 fn proto_to_raw_event(proto: sinex_ingestd::proto::RawEvent) -> AnyhowResult<RawEvent> {
     let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
     
-    let id = Ulid::from_str(&proto.id)?;
+    let id = Ulid::from_str(&proto.event_id)?;
     let ts_orig = if !proto.ts_orig.is_empty() {
         Some(chrono::DateTime::parse_from_rfc3339(&proto.ts_orig)?
             .with_timezone(&chrono::Utc))
@@ -446,8 +446,8 @@ impl TestContext {
                 "*",
                 &[
                     ("event", event_json),
-                    ("source", &event.source),
-                    ("event_type", &event.event_type),
+                    ("source", event.source.clone()),
+                    ("event_type", event.event_type.clone()),
                 ],
             )
             .await?;
@@ -628,7 +628,7 @@ pub async fn start_test_ingestd_with_config(
         let service = TestIngestService {
             events: events_received_clone,
             pool: if config.store_events {
-                Some(pool)
+                Some(pool.clone())
             } else {
                 None
             },

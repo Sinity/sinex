@@ -255,7 +255,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Clean up any previous test data
-    let _ = EventQueries::delete_by_source("chunk_test").execute(pool).await;
+    let _ = EventQueries::delete_by_source("chunk_test".to_string()).execute(pool).await;
 
     // Get initial chunk count
     let initial_chunks: i64 = sqlx::query_scalar(
@@ -283,11 +283,14 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
         // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
         EventQueries::insert_event(
-            event_id,
-            &event.source,
-            &event.event_type,
-            &event.host,
-            &event.payload,
+            event.source.clone(),
+            event.event_type.clone(),
+            event.host.clone(),
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.clone(),
+            event.payload_schema_id,
+            event.source_event_ids.clone(),
         )
         .execute(pool)
         .await?;
@@ -363,11 +366,14 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
     for i in 0..10 {
         let event_id = Ulid::new();
         EventQueries::insert_event(
-            event_id,
-            "compression_test",
-            "old_event",
-            "test_host",
-            &json!({"seq": i}),
+            "compression_test".to_string(),
+            "old_event".to_string(),
+            "test_host".to_string(),
+            json!({"seq": i}),
+            None,
+            None,
+            None,
+            None,
         )
         .execute(pool)
         .await?;
@@ -723,10 +729,17 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     // Insert checkpoint
     CheckpointQueries::upsert_checkpoint(
         checkpoint_id,
-        automaton_name,
-        consumer_group,
-        Some("test_event_id"),
-        &json!({"processed_count": 42, "test_data": true}),
+        automaton_name.to_string(),
+        consumer_group.to_string(),
+        "consumer_test".to_string(),
+        Some("test_event_id".to_string()),
+        42,
+        chrono::Utc::now(),
+        Some(json!({"processed_count": 42, "test_data": true})),
+        1,
+        None,
+        chrono::Utc::now(),
+        chrono::Utc::now(),
     )
     .execute(pool)
     .await?;
@@ -869,7 +882,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
 
     // Get the most recent checkpoint
-    let latest_checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name)
+    let latest_checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name.to_string())
         .fetch_one(pool)
         .await?;
 

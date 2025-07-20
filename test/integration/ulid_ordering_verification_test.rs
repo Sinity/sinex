@@ -65,7 +65,10 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_ordering' ORDER BY event_id"
     )
     .fetch_all(pool)
-    .await?;
+    .await?
+    .into_iter()
+    .filter_map(|opt| opt)
+    .collect();
 
     let expected_order: Vec<String> = event_ulids.iter().map(|u| u.to_string()).collect();
     assert_eq!(
@@ -241,7 +244,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
                 &event,
                 None,
             )
-            .await?
+            .await?.unwrap_or_default()
         };
         all_event_ulids.push(event.id);
     }
@@ -259,7 +262,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
                 &event,
                 None,
             )
-            .await?
+            .await?.unwrap_or_default()
         };
         all_event_ulids.push(event.id);
 
@@ -364,7 +367,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
         let factory = EventFactory::new("test.clock_skew");
         let mut event_with_timestamp = factory.create_event("clock_test", json!({"description": description.clone()}));
         event_with_timestamp.id = ulid;
-        event_with_timestamp.ts_orig = ulid.timestamp();
+        event_with_timestamp.ts_orig = Some(ulid.timestamp());
 
         // Try to insert the event (some may fail due to constraints)
         let insert_result = insert_test_event(pool, &event_with_timestamp).await;
@@ -455,7 +458,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
                     &event,
                     None,
                 )
-                .await?
+                .await?.unwrap_or_default()
             };
 
             batch_ulids.push(event.id);
@@ -482,7 +485,10 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_performance' ORDER BY event_id"
     )
     .fetch_all(pool)
-    .await?;
+    .await?
+    .into_iter()
+    .filter_map(|opt| opt)
+    .collect();
 
     let query_time = query_start.elapsed();
     let query_rate = num_events as f64 / query_time.as_secs_f64();

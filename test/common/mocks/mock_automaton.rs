@@ -242,7 +242,7 @@ impl MockAutomaton {
 
     /// Get current checkpoint state
     pub async fn get_checkpoint(&self) -> AnyhowResult<CheckpointState> {
-        self.checkpoint_manager.load_checkpoint().await
+        self.checkpoint_manager.load_checkpoint().await.map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Get events processed by this automaton

@@ -318,7 +318,7 @@ impl TestContext {
         wait_for_event_count(
             self.pool(),
             expected,
-            self.config.default_timeout,
+            self.config.default_timeout.as_secs(),
         )
         .await
         .map_err(|e| anyhow::anyhow!(e))?;
@@ -394,7 +394,7 @@ impl TestContext {
             let checkpoint = Some(0i64);
             
             if let Some(count) = checkpoint {
-                if count >= expected_count {
+                if count >= expected_count as i64 {
                     return Ok(());
                 }
             }
@@ -404,7 +404,7 @@ impl TestContext {
                     std::io::ErrorKind::TimedOut,
                     format!(
                         "Timeout waiting for automaton {} to reach count {}",
-                        automaton_name, expected_count
+                        automaton_name, expected_count as i64
                     ),
                 ).into());
             }
@@ -496,7 +496,7 @@ impl TestContext {
         let mut messages = Vec::new();
         for (_stream, stream_messages) in result {
             for (id, fields) in stream_messages {
-                messages.push(StreamMessage { id, fields });
+                messages.push(StreamMessage { id, fields: vec![("field".to_string(), fields)] });
             }
         }
         
@@ -541,7 +541,7 @@ impl TestContext {
     pub async fn assert_no_events(&self) -> TestResult {
         let count = self.event_count().await?;
         if count != 0 {
-            let error = sinex_error::CoreError::validation("Expected no events but found some")
+            let error = sinex_core_types::CoreError::Validation("Expected no events but found some".to_string())
                 .with_context("actual_count", count)
                 .with_context("test_context", &self.config.test_name)
                 .build();
@@ -555,7 +555,7 @@ impl TestContext {
         match self.get_event_by_id(id).await? {
             Some(_) => Ok(()),
             None => {
-                let error = sinex_error::CoreError::validation("Event does not exist")
+                let error = sinex_core_types::CoreError::validation("Event does not exist")
                     .with_context("event_id", id)
                     .with_context("test_context", &self.config.test_name)
                     .build();
@@ -568,7 +568,7 @@ impl TestContext {
     pub async fn assert_event_count(&self, expected: usize) -> TestResult {
         let actual = self.event_count().await?;
         if actual != expected as i64 {
-            let error = sinex_error::CoreError::validation("Event count mismatch")
+            let error = sinex_core_types::CoreError::validation("Event count mismatch")
                 .with_context("expected_count", expected)
                 .with_context("actual_count", actual)
                 .with_context("test_context", &self.config.test_name)
@@ -587,7 +587,7 @@ impl TestContext {
         let active_count = 0i64;
         
         if active_count > 0 {
-            let error = sinex_error::CoreError::validation("Automata still active")
+            let error = sinex_core_types::CoreError::validation("Automata still active")
                 .with_context("active_count", active_count)
                 .with_context("test_context", &self.config.test_name)
                 .build();
@@ -734,7 +734,7 @@ impl TestContext {
             let checkpoint = Some(0i64);
             
             if let Some(count) = checkpoint {
-                if count >= expected_count {
+                if count >= expected_count as i64 {
                     return Ok(());
                 }
             }
@@ -744,7 +744,7 @@ impl TestContext {
                     std::io::ErrorKind::TimedOut,
                     format!(
                         "Timeout waiting for automaton {} to reach count {}",
-                        automaton_name, expected_count
+                        automaton_name, expected_count as i64
                     ),
                 ).into());
             }

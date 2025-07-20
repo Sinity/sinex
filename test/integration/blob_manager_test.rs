@@ -443,7 +443,7 @@ async fn test_invalid_repository_path(ctx: TestContext) -> TestResult {
     };
 
     // Should fail when repository path doesn't exist
-    let result = BlobManager::new(annex_config, ctx.pool());
+    let result = BlobManager::new(annex_config, ctx.pool().clone());
     assert!(result.is_err());
 
     let error_msg = result.unwrap_err().to_string();

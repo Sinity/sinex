@@ -39,7 +39,7 @@ async fn test_git_annex_hash_deduplication(ctx: TestContext) -> TestResult {
         large_files: None,
     };
 
-    let blob_manager = BlobManager::new(annex_config, ctx.pool())?;
+    let blob_manager = BlobManager::new(annex_config, ctx.pool().clone())?;
 
     // Create test file with specific content
     let test_file = temp_dir.path().join("test_content.txt");
@@ -97,7 +97,7 @@ async fn test_atuin_import_overlap_detection(ctx: TestContext) -> TestResult {
         "use_file_watch": false
     });
 
-    let source_ctx = EventSourceContext::new(config.clone()).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config.clone()).with_db_pool(ctx.pool().clone());
 
     let mut importer = AtuinHistoryImporter::initialize(source_ctx).await?;
 
@@ -132,7 +132,7 @@ async fn test_atuin_import_overlap_detection(ctx: TestContext) -> TestResult {
     )?;
 
     // Second import should detect overlap
-    let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut importer2 = AtuinHistoryImporter::initialize(source_ctx2).await?;
     let (tx2, mut rx2) = tokio::sync::mpsc::channel(100);
@@ -198,7 +198,7 @@ echo "recent command"
         "max_execution_time_ms": 3600000
     });
 
-    let source_ctx = EventSourceContext::new(config.clone()).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config.clone()).with_db_pool(ctx.pool().clone());
 
     let mut monitor = ShellHistoryMonitor::initialize(source_ctx).await?;
 
@@ -235,7 +235,7 @@ echo "recent command"
     let start_time2 = Utc.timestamp_opt(1641001000, 0).unwrap(); // Overlaps with first range
     let end_time2 = Utc.timestamp_opt(1641006000, 0).unwrap(); // Extends beyond first range
 
-    let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut monitor2 = ShellHistoryMonitor::initialize(source_ctx2).await?;
     let (tx2, mut rx2) = tokio::sync::mpsc::channel(100);
@@ -297,7 +297,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
         "max_execution_time_ms": 3600000
     });
 
-    let source_ctx = EventSourceContext::new(config.clone()).with_db_pool(ctx.pool());
+    let source_ctx = EventSourceContext::new(config.clone()).with_db_pool(ctx.pool().clone());
 
     let mut monitor = ShellHistoryMonitor::initialize(source_ctx).await?;
 
@@ -337,7 +337,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
     )?;
 
     // Create new monitor instance for fresh analysis
-    let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool());
+    let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
     let mut monitor2 = ShellHistoryMonitor::initialize(source_ctx2).await?;
 
@@ -410,7 +410,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
         "use_file_watch": false
     });
 
-    let atuin_ctx = EventSourceContext::new(atuin_config).with_db_pool(ctx.pool());
+    let atuin_ctx = EventSourceContext::new(atuin_config).with_db_pool(ctx.pool().clone());
 
     let mut atuin_importer = AtuinHistoryImporter::initialize(atuin_ctx).await?;
     let (atuin_tx, mut atuin_rx) = tokio::sync::mpsc::channel(100);
@@ -441,7 +441,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
         "max_execution_time_ms": 3600000
     });
 
-    let shell_ctx = EventSourceContext::new(shell_config).with_db_pool(ctx.pool());
+    let shell_ctx = EventSourceContext::new(shell_config).with_db_pool(ctx.pool().clone());
 
     let mut shell_monitor = ShellHistoryMonitor::initialize(shell_ctx).await?;
     let (shell_tx, mut shell_rx) = tokio::sync::mpsc::channel(100);

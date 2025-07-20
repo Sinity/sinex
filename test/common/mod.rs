@@ -921,11 +921,18 @@ pub mod automaton_testing {
         last_processed_id: Option<&str>,
     ) -> AnyhowResult<()> {
         CheckpointQueries::upsert_checkpoint(
-            automaton_name,
-            &format!("{}-group", automaton_name),
-            &format!("{}-consumer", automaton_name),
-            processed_count,
-            last_processed_id,
+            sinex_ulid::Ulid::new(),
+            automaton_name.to_string(),
+            format!("{}-group", automaton_name),
+            format!("{}-consumer", automaton_name),
+            last_processed_id.map(|s| s.to_string()),
+            processed_count as i64,
+            chrono::Utc::now(),
+            None,
+            1,
+            None,
+            chrono::Utc::now(),
+            chrono::Utc::now(),
         )
         .execute(pool)
         .await?;
@@ -938,7 +945,7 @@ pub mod automaton_testing {
         pool: &DbPool,
         automaton_name: &str,
     ) -> AnyhowResult<Option<CheckpointState>> {
-        let checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name)
+        let checkpoint = CheckpointQueries::get_all_checkpoints_for_processor(automaton_name.to_string())
             .fetch_optional(pool)
             .await?;
 
@@ -1131,7 +1138,7 @@ pub mod cleanup {
     /// Truncate all test tables
     pub async fn truncate_all_tables(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
         // Clean up test data manually
-        EventQueries::delete_by_source("test_%")
+        EventQueries::delete_by_source("test_%".to_string())
             .execute(pool)
             .await?;
 

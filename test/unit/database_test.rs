@@ -251,15 +251,15 @@ async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
     sinex_db::insert_event(ctx.pool(), &command_event).await?;
 
     // Query by event type
-    let create_events = EventQueries::get_by_event_type("file.created", 10).fetch_all(ctx.pool()).await?;
+    let create_events = EventQueries::get_by_event_type("file.created".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!create_events.is_empty());
     assert!(create_events.iter().all(|e| e.event_type == "file.created"));
 
-    let delete_events = EventQueries::get_by_event_type("file.deleted", 10).fetch_all(ctx.pool()).await?;
+    let delete_events = EventQueries::get_by_event_type("file.deleted".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!delete_events.is_empty());
     assert!(delete_events.iter().all(|e| e.event_type == "file.deleted"));
 
-    let command_events = EventQueries::get_by_event_type("command.executed", 10).fetch_all(ctx.pool()).await?;
+    let command_events = EventQueries::get_by_event_type("command.executed".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
     assert!(!command_events.is_empty());
     assert!(command_events
         .iter()
@@ -564,7 +564,7 @@ async fn test_redis_streams_event_processing(ctx: TestContext) -> TestResult {
 
     // Initialize checkpoint
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool(),
+        ctx.pool().clone(),
         automaton_name.to_string(),
         consumer_group.to_string(),
         "test_consumer".to_string(),
@@ -626,7 +626,7 @@ async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
     let consumer_group = "test_consumer_group";
 
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool(),
+        ctx.pool().clone(),
         automaton_name.to_string(),
         consumer_group.to_string(),
         "test_consumer".to_string(),
@@ -748,7 +748,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     }
 
     // Query events ordered by ID (ULID)
-    let _ordered_events = EventQueries::get_recent(10).fetch_all(ctx.pool()).await?;
+    let _ordered_events = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
 
     // Verify ULID ordering matches insertion order
     for i in 1..events.len() {
@@ -1007,7 +1007,7 @@ async fn test_satellite_processor_initialization(ctx: TestContext) -> TestResult
 
     // Test checkpoint initialization for satellite
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool(),
+        ctx.pool().clone(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
         "test_consumer".to_string(),
@@ -1084,7 +1084,7 @@ async fn test_satellite_event_streaming(ctx: TestContext) -> TestResult {
 async fn test_satellite_error_handling(ctx: TestContext) -> TestResult {
     // Test satellite error handling via checkpoint management
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool(),
+        ctx.pool().clone(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
         "test_consumer".to_string(),
@@ -1155,7 +1155,7 @@ async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
 
     // Test satellite database integration via checkpoint and event storage
     let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool(),
+        ctx.pool().clone(),
         "test_satellite".to_string(),
         "test_consumer_group".to_string(),
     );

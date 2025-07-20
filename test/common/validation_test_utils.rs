@@ -66,12 +66,12 @@ pub fn create_test_validator_with_rules(_rules: Vec<ValidationRule>) -> EventVal
 pub async fn create_test_integrity_validator(
     pool: &DbPool,
 ) -> AnyhowResult<DataIntegrityValidator> {
-    DataIntegrityValidator::new(pool.clone()).await
+    DataIntegrityValidator::new(&pool).await
 }
 
 /// Create an integrity tester for comprehensive validation
 pub async fn create_test_integrity_tester(pool: &DbPool) -> AnyhowResult<IntegrityTester> {
-    IntegrityTester::new(pool.clone()).await
+    IntegrityTester::new(&pool).await
 }
 
 /// Validation rule for testing purposes

@@ -33,7 +33,7 @@ use std::collections::{HashMap, HashSet};
 /// Test creating a note annotation on an event
 #[sinex_test(timeout = 30)]
 async fn test_create_note_annotation(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create a test event first
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -70,7 +70,7 @@ async fn test_create_note_annotation(ctx: TestContext) -> TestResult {
 /// Test creating multiple notes on the same event
 #[sinex_test(timeout = 30)]
 async fn test_multiple_note_annotations(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create a test event
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -113,7 +113,7 @@ async fn test_multiple_note_annotations(ctx: TestContext) -> TestResult {
 /// Test creating entities from a list
 #[sinex_test(timeout = 30)]
 async fn test_create_entities_from_list(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create a test event
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -157,7 +157,7 @@ async fn test_create_entities_from_list(ctx: TestContext) -> TestResult {
 /// Test entity constraint validation - valid entity types
 #[sinex_test(timeout = 30)]
 async fn test_entity_type_constraints_valid(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
     let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
@@ -192,7 +192,7 @@ async fn test_entity_type_constraints_valid(ctx: TestContext) -> TestResult {
 /// Test entity constraint validation - invalid entity types
 #[sinex_test(timeout = 30)]
 async fn test_entity_type_constraints_invalid(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
     let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
@@ -339,7 +339,7 @@ async fn test_get_entities_by_type(ctx: TestContext) -> TestResult {
 /// Test creating relationships between entities
 #[sinex_test(timeout = 30)]
 async fn test_link_entities(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create two test entities
     let person_input = CreateEntityInput {
@@ -397,7 +397,7 @@ async fn test_link_entities(ctx: TestContext) -> TestResult {
 /// Test bidirectional relationship queries
 #[sinex_test(timeout = 30)]
 async fn test_bidirectional_relationships(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create entities
     let entity1 = knowledge_graph::create_entity(
@@ -515,7 +515,7 @@ async fn test_relationship_with_strength_and_validity(ctx: TestContext) -> TestR
 /// Test getting relationship by ID
 #[sinex_test(timeout = 30)]
 async fn test_get_relationship_by_id(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create entities and relationship
     let entity1 = knowledge_graph::create_entity(
@@ -725,7 +725,7 @@ async fn test_get_recent_artifacts(ctx: TestContext) -> TestResult {
 /// Test complete PKM workflow: event → annotation → entities → relationships → artifacts
 #[sinex_test(timeout = 60)]
 async fn test_complete_pkm_workflow(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Step 1: Create an event
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -850,7 +850,7 @@ async fn test_complete_pkm_workflow(ctx: TestContext) -> TestResult {
 /// Test transaction rollback on entity creation failure
 #[sinex_test(timeout = 30)]
 async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
     let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
@@ -881,7 +881,7 @@ async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> TestRe
 /// Test handling non-existent entity IDs in relationships
 #[sinex_test(timeout = 30)]
 async fn test_relationship_with_nonexistent_entities(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     // Create one valid entity
     let entity = knowledge_graph::create_entity(
@@ -953,7 +953,7 @@ async fn test_duplicate_entity_names_allowed(ctx: TestContext) -> TestResult {
 /// Test empty entity list handling
 #[sinex_test(timeout = 30)]
 async fn test_empty_entity_list(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
     let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
@@ -970,7 +970,7 @@ async fn test_empty_entity_list(ctx: TestContext) -> TestResult {
 /// Test annotation with empty content (should be allowed)
 #[sinex_test(timeout = 30)]
 async fn test_annotation_with_empty_content(ctx: TestContext) -> TestResult {
-    let service = PkmService::new(ctx.pool());
+    let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
     let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;

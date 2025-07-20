@@ -121,10 +121,10 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let pool = Arc::new(ctx.pool());
+            let pool = ctx.pool();
 
             let checkpoint_manager = Arc::new(CheckpointManager::new(
-                pool.as_ref().clone(),
+                pool.clone(),
                 automaton_name.clone(),
                 format!("{}-group", automaton_name),
                 format!("{}-consumer", automaton_name),

@@ -110,18 +110,13 @@ async fn test_checkpoint_persistence_and_restart_recovery(
 
     // Initialize runner
     runner
-        .initialize(
-            service_name.clone(),
-            consumer_group.clone(),
-            consumer_name.clone(),
-            vec![EventFilter::new(Some("test".to_string()), None)],
-            HashMap::new(),
-            pool.clone(),
-            redis_client.clone(),
-            ingest_client.clone(),
-            work_dir.clone(),
-            false,
-        )
+            .initialize(
+                ctx.pool().clone(),
+                ingest_client.clone(),
+                checkpoint_manager.clone(),
+                redis_client.clone(),
+                "test".to_string(),
+            )
         .await?;
 
     // Clear any existing consumer group state
@@ -145,7 +140,7 @@ async fn test_checkpoint_persistence_and_restart_recovery(
             id: sinex_ulid::Ulid::new(),
             source: "test".to_string(),
             event_type: "test.event".to_string(),
-            ts_orig: chrono::Utc::now(),
+            ts_orig: Some(chrono::Utc::now()),
             ts_ingest: chrono::Utc::now(),
             host: "test-host".to_string(),
             payload: json!({"test": "event1"}),
@@ -154,7 +149,7 @@ async fn test_checkpoint_persistence_and_restart_recovery(
             id: sinex_ulid::Ulid::new(),
             source: "test".to_string(),
             event_type: "test.event".to_string(),
-            ts_orig: chrono::Utc::now(),
+            ts_orig: Some(chrono::Utc::now()),
             ts_ingest: chrono::Utc::now(),
             host: "test-host".to_string(),
             payload: json!({"test": "event2"}),
@@ -163,7 +158,7 @@ async fn test_checkpoint_persistence_and_restart_recovery(
             id: sinex_ulid::Ulid::new(),
             source: "test".to_string(),
             event_type: "test.event".to_string(),
-            ts_orig: chrono::Utc::now(),
+            ts_orig: Some(chrono::Utc::now()),
             ts_ingest: chrono::Utc::now(),
             host: "test-host".to_string(),
             payload: json!({"test": "event3"}),
@@ -191,16 +186,11 @@ async fn test_checkpoint_persistence_and_restart_recovery(
             HotlogAutomatonRunner::new(TestCheckpointAutomaton::new(service_name.clone()));
         runner_clone
             .initialize(
-                service_name.clone(),
-                consumer_group.clone(),
-                consumer_name.clone(),
-                vec![EventFilter::new(Some("test".to_string()), None)],
-                HashMap::new(),
-                pool.clone(),
-                redis_client.clone(),
+                ctx.pool().clone(),
                 ingest_client.clone(),
-                work_dir.clone(),
-                false,
+                checkpoint_manager.clone(),
+                redis_client.clone(),
+                "test".to_string(),
             )
             .await?;
 
@@ -243,18 +233,13 @@ async fn test_checkpoint_persistence_and_restart_recovery(
 
     let mut new_runner = HotlogAutomatonRunner::new(new_automaton);
     new_runner
-        .initialize(
-            service_name.clone(),
-            consumer_group.clone(),
-            format!("{}-restarted", consumer_name), // Different consumer name
-            vec![EventFilter::new(Some("test".to_string()), None)],
-            HashMap::new(),
-            pool.clone(),
-            redis_client.clone(),
-            ingest_client.clone(),
-            work_dir.clone(),
-            false,
-        )
+            .initialize(
+                ctx.pool().clone(),
+                ingest_client.clone(),
+                checkpoint_manager.clone(),
+                redis_client.clone(),
+                "test".to_string(),
+            )
         .await?;
 
     // Run the restarted automaton

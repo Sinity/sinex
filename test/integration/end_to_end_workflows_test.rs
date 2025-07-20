@@ -256,7 +256,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
             "timestamp": event.ts_orig
         });
 
-        match redis_conn.xadd(stream_key, "*", &stream_data).await {
+        match redis_conn.xadd(stream_key, "*", &[("event", serde_json::to_string(&event).unwrap())]).await {
             Ok(id) => {
                 stream_event_ids.push(id);
                 println!("Added event {} to stream", event.id);
@@ -771,7 +771,8 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
         "recovery.attempt%"
     )
     .fetch_one(pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     let normal_events: i64 = sqlx::query_scalar!(
         r#"
@@ -783,7 +784,8 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
         "normal.operation"
     )
     .fetch_one(pool)
-    .await?;
+    .await?
+    .unwrap_or(0);
 
     assert!(
         recovery_events > 0,
@@ -974,7 +976,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
                 })
             );
             event.host = "consistency-test".to_string();
-            event.ts_orig = base_timestamp + Duration::seconds(chain_id as i64 * 10 + component_id as i64);
+            event.ts_orig = Some(base_timestamp + Duration::seconds(chain_id as i64 * 10 + component_id as i64));
 
             chain_events.push(event);
         }
