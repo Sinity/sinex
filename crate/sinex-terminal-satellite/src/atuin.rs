@@ -287,7 +287,7 @@ impl AtuinWatcher {
             "terminal_session_ulid": None::<String>, // Could be enhanced later
         });
 
-        let factory = EventFactory::new(sinex_core_types::sources::SHELL_ATUIN);
+        let factory = EventFactory::new(sinex_events::sources::SHELL_ATUIN);
         let event = factory.create_event(
             event_types::shell::COMMAND_EXECUTED,
             payload,

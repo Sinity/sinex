@@ -48,7 +48,8 @@ pub use sinex_channel::{
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt,
 };
 pub use sinex_config::{parse_duration, ConfigValue};
-pub use sinex_core_types::{event_type_constants, MultiValidator, ResultExt, ValidationChain};
+pub use sinex_core_types::{MultiValidator, ValidationChain};
+pub use sinex_error::ResultExt;
 pub use sinex_db::{run_migrations, DbPool, RawEvent};
 pub use sinex_ulid::Ulid;
 // ===== Async Runtime =====

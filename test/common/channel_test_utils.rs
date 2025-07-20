@@ -4,7 +4,7 @@
 // channel extension traits, backpressure management, and monitoring capabilities.
 
 use crate::common::prelude::*;
-use sinex_core_types::ErrorContext;
+use sinex_error::ErrorContext;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 

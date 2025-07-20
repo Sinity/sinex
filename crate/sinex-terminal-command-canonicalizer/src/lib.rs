@@ -76,7 +76,7 @@ impl TerminalCommandCanonicalizer {
         let context = self
             .context
             .as_ref()
-            .ok_or_else(|| SatelliteError::Automaton("Context not initialized".to_string()))?;
+            .ok_or_else(|| CoreError::Service("Context not initialized".to_string()))?;
 
         let payload = json!({
             "command": command_data.command,
@@ -101,7 +101,8 @@ impl TerminalCommandCanonicalizer {
         synthesis_event.source_event_ids = Some(command_data.source_events.clone());
 
         // Submit synthesis event via ingest client
-        let event_id = context.emit_synthesis_event(synthesis_event).await?;
+        let event_id = context.emit_synthesis_event(synthesis_event).await
+            .map_err(|e| CoreError::Service(e.to_string()))?;
 
         info!(
             event_id = %event_id,
@@ -304,13 +305,15 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
                     command_data.timestamp,
                     30, // 30 second window
                 )
-                .await?
+                .await
+                .map_err(|e| SatelliteError::Processing(e.to_string()))?
             {
                 Some(event_id) => {
                     // Existing command found - enrich it
                     if let Some(enrichment_data) = self.extract_enrichment_data(&event)? {
                         self.enrich_canonical_command(pool, &event_id, &enrichment_data)
-                            .await?;
+                            .await
+                            .map_err(|e| SatelliteError::Processing(e.to_string()))?;
 
                         return Ok(ProcessingResult::Success {
                             checkpoint_data: Some(json!({
@@ -323,7 +326,8 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
                 }
                 None => {
                     // No existing command - create new canonical event (synthesis)
-                    let event_id = self.create_canonical_command(&command_data).await?;
+                    let event_id = self.create_canonical_command(&command_data).await
+                        .map_err(|e| SatelliteError::Processing(e.to_string()))?;
 
                     return Ok(ProcessingResult::Success {
                         checkpoint_data: Some(json!({
@@ -347,10 +351,12 @@ impl HotlogAutomaton for TerminalCommandCanonicalizer {
                         enrichment_data.timestamp,
                         60, // Larger window for enrichment
                     )
-                    .await?
+                    .await
+                    .map_err(|e| SatelliteError::Processing(e.to_string()))?
                 {
                     self.enrich_canonical_command(pool, &event_id, &enrichment_data)
-                        .await?;
+                        .await
+                        .map_err(|e| SatelliteError::Processing(e.to_string()))?;
 
                     return Ok(ProcessingResult::Success {
                         checkpoint_data: Some(json!({

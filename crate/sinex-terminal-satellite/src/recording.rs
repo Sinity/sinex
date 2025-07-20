@@ -374,7 +374,7 @@ end
                     "recording_file": path.clone(),
                 });
 
-                let factory = EventFactory::new(sinex_core_types::sources::SHELL_ASCIINEMA);
+                let factory = EventFactory::new(sinex_events::sources::SHELL_ASCIINEMA);
                 let event = factory.create_event(
                     "session.started",
                     payload,
@@ -419,7 +419,7 @@ end
                             "git_annex_key": null,
                         });
 
-                        let factory = EventFactory::new(sinex_core_types::sources::SHELL_ASCIINEMA);
+                        let factory = EventFactory::new(sinex_events::sources::SHELL_ASCIINEMA);
                         let event = factory.create_event(
                             "session.ended",
                             payload,

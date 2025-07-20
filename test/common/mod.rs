@@ -33,7 +33,6 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_core_types::event_type_constants;
 use sinex_db::events as db_events;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
@@ -103,11 +102,11 @@ pub async fn count_events_from_source(
     pool: &DbPool,
     source: &str,
 ) -> AnyhowResult<u64, Box<dyn std::error::Error>> {
-    let count = EventQueries::count_by_source(source).fetch_one(pool)
-        .fetch_one(pool)
+    let (count,) = EventQueries::count_by_source(source.to_string())
+        .fetch_one::<(i64,)>(pool)
         .await?;
 
-    Ok(count.unwrap_or(0) as u64)
+    Ok(count as u64)
 }
 
 /// Create a test database pool with high concurrency settings
@@ -143,7 +142,7 @@ pub mod events {
     /// Create a test kitty terminal event
     pub fn kitty_event(command: &str) -> sinex_db::RawEvent {
         EventFactory::new(sources::SHELL_KITTY).create_event(
-            event_type_constants::shell::COMMAND_EXECUTED,
+            event_types::shell::COMMAND_EXECUTED,
             json!({
                 "command": command,
                 "exit_code": 0,
@@ -197,17 +196,17 @@ pub mod events {
 
     /// Create a test file created event
     pub fn file_created_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
+        filesystem_event(event_types::filesystem::FILE_CREATED, path)
     }
 
     /// Create a test file modified event
     pub fn file_modified_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(event_type_constants::filesystem::FILE_MODIFIED, path)
+        filesystem_event(event_types::filesystem::FILE_MODIFIED, path)
     }
 
     /// Create a test agent heartbeat event
     pub fn agent_heartbeat_event(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(event_type_constants::sinex::AUTOMATON_HEARTBEAT, agent_name)
+        agent_event(event_types::sinex::AUTOMATON_HEARTBEAT, agent_name)
     }
 
     /// Create a test event for race condition testing
@@ -242,12 +241,12 @@ pub mod events {
 
     /// Create a quick filesystem event with default payload
     pub fn quick_filesystem_event(path: &str) -> sinex_db::RawEvent {
-        filesystem_event(event_type_constants::filesystem::FILE_CREATED, path)
+        filesystem_event(event_types::filesystem::FILE_CREATED, path)
     }
 
     /// Create a quick agent heartbeat with default payload
     pub fn quick_agent_heartbeat(agent_name: &str) -> sinex_db::RawEvent {
-        agent_event(event_type_constants::sinex::AUTOMATON_HEARTBEAT, agent_name)
+        agent_event(event_types::sinex::AUTOMATON_HEARTBEAT, agent_name)
     }
 
     /// Create test events for timing and ordering tests
@@ -451,7 +450,7 @@ pub mod generators {
     pub fn indexed_event(index: usize) -> sinex_db::RawEvent {
         match index % 3 {
             0 => events::filesystem_event(
-                event_type_constants::filesystem::FILE_CREATED,
+                event_types::filesystem::FILE_CREATED,
                 &file_path(&format!("file_{}", index)),
             ),
             1 => events::kitty_event(common_commands()[index % common_commands().len()]),
@@ -601,11 +600,11 @@ pub async fn get_event_count(pool: &DbPool) -> AnyhowResult<i64> {
 
 /// Helper for checking if an event exists by ULID
 pub async fn event_exists(pool: &DbPool, event_id: Ulid) -> AnyhowResult<bool> {
-    let exists = EventQueries::exists(event_id).fetch_one(pool)
-        .fetch_one(pool)
+    let result = EventQueries::get_by_id(event_id)
+        .fetch_optional(pool)
         .await?;
 
-    Ok(exists)
+    Ok(result.is_some())
 }
 
 /// Helper for getting recent events
@@ -622,7 +621,7 @@ pub async fn get_events_by_type(
     event_type: &str,
     limit: i64,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_type(event_type, limit)
+    let events = EventQueries::get_by_event_type(event_type.to_string(), Some(limit), None)
         .fetch_all(pool)
         .await?;
     Ok(events)
@@ -642,7 +641,7 @@ pub async fn get_events_by_source(
     source: &str,
     limit: i64,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_source(source, limit).fetch_all(pool)
+    let events = EventQueries::get_by_source(source.to_string(), Some(limit), None)
         .fetch_all(pool)
         .await?;
     Ok(events)
@@ -654,7 +653,7 @@ pub async fn get_events_in_time_range(
     start_time: chrono::DateTime<chrono::Utc>,
     end_time: chrono::DateTime<chrono::Utc>,
 ) -> AnyhowResult<Vec<RawEvent>> {
-    let events = EventQueries::get_by_time_range(start_time, end_time).fetch_all(pool)
+    let events = EventQueries::get_by_time_range(start_time, end_time, None)
         .fetch_all(pool)
         .await?;
     Ok(events)

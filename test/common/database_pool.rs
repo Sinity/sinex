@@ -794,7 +794,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
         let mut admin_conn =
             tokio::time::timeout(Duration::from_secs(5), PgConnection::connect(admin_url))
                 .await
-                .map_err(|_| CoreError::database("Admin connection timeout").build())??;
+                .map_err(|_| CoreError::Database("Admin connection timeout".to_string()))??;
 
         // Check if template already exists
         let exists: bool = sqlx::query_scalar(&format!(
@@ -844,7 +844,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
             sqlx::query(&create_query).execute(&mut admin_conn),
         )
         .await
-        .map_err(|_| CoreError::database("Create database timeout").build())??;
+        .map_err(|_| CoreError::Database("Create database timeout".to_string()))??;
 
         admin_conn.close().await?;
         Ok::<bool, anyhow::Error>(true) // true = needs migrations
@@ -853,7 +853,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
     // Execute admin operations with timeout
     let needs_migrations = tokio::time::timeout(Duration::from_secs(20), admin_conn_future)
         .await
-        .map_err(|_| CoreError::database("Admin operations timeout").build())??;
+        .map_err(|_| CoreError::Database("Admin operations timeout".to_string()))??;
 
     // If template already exists, we're done
     if !needs_migrations {
@@ -918,7 +918,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
     // Execute template setup with timeout
     tokio::time::timeout(Duration::from_secs(45), template_pool_future)
         .await
-        .map_err(|_| CoreError::database("Template setup timeout").build())??;
+        .map_err(|_| CoreError::Database("Template setup timeout".to_string()))??;
 
     let template_elapsed = template_start.elapsed();
     eprintln!("✅ Template database created in {:?}", template_elapsed);
