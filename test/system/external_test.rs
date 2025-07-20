@@ -29,7 +29,7 @@ use tokio::fs;
 // ==================== GIT ANNEX INTEGRATION TESTS ====================
 
 async fn setup_test_annex(
-) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error>> {
+) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>> {
     let temp_dir = resources::temp_dir()?;
     let repo_path = temp_dir.path().to_path_buf();
 

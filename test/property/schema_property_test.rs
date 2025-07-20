@@ -434,7 +434,7 @@ fn test_validation_chain_numeric_properties() {
 
 #[sinex_test]
 async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
-    proptest!(|(
+    proptest::proptest!(|(
         schema_count in 1..=10usize,
         schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
         schema_versions in prop::collection::vec("[0-9]{1,2}\\.[0-9]{1,2}\\.[0-9]{1,2}", 1..=10)

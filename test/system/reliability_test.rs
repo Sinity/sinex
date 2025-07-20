@@ -77,7 +77,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         .await?
         .unwrap_or(0);
 
-        Ok::<(i64, i64), Box<dyn std::error::Error>>((schema_count, table_count))
+        Ok::<(i64, i64), Box<dyn std::error::Error + Send + Sync>>((schema_count, table_count))
     })
     .await;
 

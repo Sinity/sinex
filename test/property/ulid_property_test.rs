@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 /// Test that ULIDs generated from chronologically ordered timestamps maintain order
 #[test]
 fn test_ulid_chronological_ordering() {
-    proptest!(|(
+    proptest::proptest!(|(
         count in 2usize..10,
         delay_micros in 100u64..1000
     )| {
@@ -55,7 +55,7 @@ fn test_ulid_chronological_ordering() {
 
 #[test]
 fn test_ulid_uniqueness_under_rapid_generation() {
-    proptest!(|(count in 2usize..1000)| {
+    proptest::proptest!(|(count in 2usize..1000)| {
         let base_time = Utc::now();
         let mut ulids = Vec::new();
 
@@ -82,7 +82,7 @@ fn test_ulid_uniqueness_under_rapid_generation() {
 
 #[test]
 fn test_ulid_timestamp_extraction() {
-    proptest!(|(timestamp in 1577836800u64..1893456000u64)| { // 2020-2030 range
+    proptest::proptest!(|(timestamp in 1577836800u64..1893456000u64)| { // 2020-2030 range
         let dt = DateTime::from_timestamp(timestamp as i64, 0).unwrap_or(Utc::now());
         let ulid = Ulid::from_datetime(dt);
         let extracted_timestamp = ulid.timestamp();
@@ -101,7 +101,7 @@ fn test_ulid_timestamp_extraction() {
 
 #[test]
 fn test_event_ulids_maintain_ingestion_order() {
-    proptest!(|(event_count in 5usize..50)| {
+    proptest::proptest!(|(event_count in 5usize..50)| {
         let events = crate::common::generators::time_distributed_events(
             event_count,
             Utc::now() - ChronoDuration::hours(1),
@@ -123,7 +123,7 @@ fn test_event_ulids_maintain_ingestion_order() {
 
 #[test]
 fn test_burst_events_maintain_order() {
-    proptest!(|(burst_size in 10usize..100)| {
+    proptest::proptest!(|(burst_size in 10usize..100)| {
         let burst_events = crate::common::generators::burst_pattern_events(3, burst_size);
 
         // Group events by burst (every burst_size events)
@@ -202,7 +202,7 @@ fn generate_ulids_concurrently(
 
 #[test]
 fn test_concurrent_ulid_uniqueness() {
-    proptest!(|(
+    proptest::proptest!(|(
         (num_threads, ulids_per_thread, max_delay_ms) in arb_concurrent_params()
     )| {
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
@@ -220,7 +220,7 @@ fn test_concurrent_ulid_uniqueness() {
 
 #[test]
 fn test_concurrent_ulid_time_ordering() {
-    proptest!(|(
+    proptest::proptest!(|(
         (num_threads, ulids_per_thread, max_delay_ms) in arb_concurrent_params()
     )| {
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
@@ -251,7 +251,7 @@ fn test_concurrent_ulid_time_ordering() {
 
 #[test]
 fn test_concurrent_ulid_timestamp_correlation() {
-    proptest!(|(
+    proptest::proptest!(|(
         (num_threads, ulids_per_thread, _) in arb_concurrent_params()
     )| {
         // Use no delay for this test to minimize timing variance
@@ -273,7 +273,7 @@ fn test_concurrent_ulid_timestamp_correlation() {
 
 #[test]
 fn test_concurrent_ulid_thread_distribution() {
-    proptest!(|(
+    proptest::proptest!(|(
         (num_threads, ulids_per_thread, max_delay_ms) in arb_concurrent_params()
     )| {
         let ulids = generate_ulids_concurrently(num_threads, ulids_per_thread, max_delay_ms);
@@ -299,7 +299,7 @@ fn test_concurrent_ulid_thread_distribution() {
 
 #[test]
 fn test_high_contention_ulid_generation() {
-    proptest!(|(
+    proptest::proptest!(|(
         burst_size in 50usize..=200,
         num_bursts in 2usize..=5
     )| {
@@ -341,7 +341,7 @@ fn test_high_contention_ulid_generation() {
 
 #[test]
 fn test_ulid_ordering_with_timing_patterns() {
-    proptest!(|(
+    proptest::proptest!(|(
         pattern_delays in prop::collection::vec(0u64..=50, 5..=20)
     )| {
         let mut ulids_with_delays = Vec::new();
@@ -415,7 +415,7 @@ fn arb_ulid_from_time_range(
 
 #[test]
 fn test_ulid_ordering_property_in_memory() {
-    proptest!(|(
+    proptest::proptest!(|(
         ulids in arb_ulid_sequence(2, 20)
     )| {
         // Property: ULIDs generated with increasing timestamps should be ordered
@@ -442,7 +442,7 @@ fn test_ulid_ordering_property_in_memory() {
 
 #[sinex_test]
 async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
-    proptest!(|(
+    proptest::proptest!(|(
         ulid_count in 3..15usize,
         time_gap_seconds in 1..10u64,
     )| {
@@ -512,7 +512,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
-    proptest!(|(
+    proptest::proptest!(|(
         batch1_size in 2..8usize,
         batch2_size in 2..8usize,
         gap_minutes in 1..30i64,
@@ -629,7 +629,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
 
 #[test]
 fn test_ulid_timestamp_extraction_property() {
-    proptest!(|(
+    proptest::proptest!(|(
         time_offset_hours in -24..24i64,
         time_offset_minutes in 0..60i64,
         time_offset_seconds in 0..60i64,
@@ -668,7 +668,7 @@ fn test_ulid_timestamp_extraction_property() {
 
 #[test]
 fn test_ulid_monotonic_property_with_rapid_generation() {
-    proptest!(|(
+    proptest::proptest!(|(
         generation_count in 5..50usize,
         delay_microseconds in 0..1000u64,
     )| {
@@ -721,7 +721,7 @@ fn test_ulid_monotonic_property_with_rapid_generation() {
 
 #[sinex_test]
 async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestResult {
-    proptest!(|(
+    proptest::proptest!(|(
         num_relationships in 1..10usize,
     )| {
         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");

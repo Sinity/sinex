@@ -148,7 +148,7 @@ async fn invoke_rpc_method(
                 .await
                 .map_err(|e| {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                        as Box<dyn std::error::Error>
+                        as Box<dyn std::error::Error + Send + Sync>
                 })
         }
         "analytics.activity_heatmap" => {
@@ -156,44 +156,44 @@ async fn invoke_rpc_method(
                 .await
                 .map_err(|e| {
                     Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                        as Box<dyn std::error::Error>
+                        as Box<dyn std::error::Error + Send + Sync>
                 })
         }
         "search.search_events" => handle_search_events(services.search.as_ref(), params)
             .await
             .map_err(|e| {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
+                    as Box<dyn std::error::Error + Send + Sync>
             }),
         "pkm.create_note" => handle_create_note(services.pkm.as_ref(), params)
             .await
             .map_err(|e| {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
+                    as Box<dyn std::error::Error + Send + Sync>
             }),
         "pkm.create_entities_from_list" => handle_create_entities(services.pkm.as_ref(), params)
             .await
             .map_err(|e| {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
+                    as Box<dyn std::error::Error + Send + Sync>
             }),
         "pkm.link_entities" => handle_link_entities(services.pkm.as_ref(), params)
             .await
             .map_err(|e| {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
+                    as Box<dyn std::error::Error + Send + Sync>
             }),
         "content.store_blob" => handle_store_blob(services.content.as_ref(), params)
             .await
             .map_err(|e| {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
+                    as Box<dyn std::error::Error + Send + Sync>
             }),
         "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params)
             .await
             .map_err(|e| {
                 Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
+                    as Box<dyn std::error::Error + Send + Sync>
             }),
         _ => Err(Box::new(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -211,7 +211,7 @@ async fn create_test_services() -> AnyhowResult<ServiceContainer> {
         .await
         .map_err(|e| {
             Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                as Box<dyn std::error::Error>
+                as Box<dyn std::error::Error + Send + Sync>
         })
 }
 

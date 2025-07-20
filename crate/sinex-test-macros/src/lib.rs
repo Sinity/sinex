@@ -152,7 +152,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             // Database test with proptest support
             quote! {
                 #[tokio::test]
-                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
+                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     use crate::common::test_context::{TestContext, TestConfig};
                     use crate::common::database_pool;
 
@@ -173,7 +173,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         }).await?;
 
                         // Run the proptest with progress tracking
-                        let result: Result<(), Box<dyn std::error::Error>> = {
+                        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = {
                             // For proptest, spawn a progress indicator
                             let progress_task = tokio::spawn(async {
                                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -205,7 +205,16 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 tokio::time::sleep(std::time::Duration::from_millis(50)).await;
                             }
 
-                            proptest_result.map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?
+                            match proptest_result {
+                                Ok(result) => match result {
+                                    Ok(()) => Ok(()),
+                                    Err(e) => {
+                                        // Convert the non-Send error to a Send-able String error
+                                        Err(format!("Proptest failed: {}", e).into())
+                                    }
+                                },
+                                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+                            }?
                         };
 
                         // Show result (always visible)
@@ -231,7 +240,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             // Regular database test using universal pool system with proper cleanup
             quote! {
                 #[tokio::test]
-                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
+                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
                     use crate::common::test_context::{TestContext, TestConfig};
                     use crate::common::database_pool;
 
@@ -252,7 +261,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         }).await?;
 
                         // Run the test with progress tracking for long tests
-                        let result: Result<(), Box<dyn std::error::Error>> = if #timeout_secs > 10 {
+                        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if #timeout_secs > 10 {
                             // For long tests, spawn a progress indicator
                             let progress_task = tokio::spawn(async {
                                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -304,7 +313,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Simple test - just timeout wrapper
         quote! {
             #[tokio::test]
-            #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error>> {
+            #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
