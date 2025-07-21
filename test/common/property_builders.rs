@@ -552,6 +552,191 @@ fn create_nested_json(depth: usize) -> Value {
     current
 }
 
+// ===== Enhanced Property Builders =====
+
+/// Strategy for generating events with complex relationships
+pub fn correlated_event_sequence() -> impl Strategy<Value = Vec<RawEvent>> {
+    (1usize..=10, arbitrary_ulid()).prop_flat_map(|(count, parent_id)| {
+        proptest::collection::vec(
+            (Just(parent_id), 0usize..count, event_payloads()).prop_map(
+                move |(parent, index, mut payload)| {
+                    // Add correlation data
+                    if let Value::Object(ref mut map) = payload {
+                        map.insert("parent_id".to_string(), json!(parent.to_string()));
+                        map.insert("sequence_index".to_string(), json!(index));
+                        map.insert("correlation_id".to_string(), json!(format!("{}-{}", parent, index)));
+                    }
+                    
+                    let mut event = EventFactory::new("correlated").create_event(
+                        "sequence.event",
+                        payload
+                    );
+                    
+                    // Set source event IDs to show relationship
+                    event.source_event_ids = Some(vec![parent.to_uuid()]);
+                    event
+                }
+            ),
+            count
+        )
+    })
+}
+
+/// Strategy for generating events with realistic error scenarios
+pub fn error_scenario_events() -> impl Strategy<Value = RawEvent> {
+    prop_oneof![
+        // Network timeout scenario
+        Just(json!({
+            "error": "NetworkTimeout",
+            "details": {
+                "host": "api.example.com",
+                "timeout_ms": 30000,
+                "retry_count": 3
+            }
+        })),
+        // Permission denied scenario
+        Just(json!({
+            "error": "PermissionDenied",
+            "details": {
+                "path": "/etc/sensitive/config",
+                "operation": "read",
+                "user": "test_user"
+            }
+        })),
+        // Resource exhausted scenario
+        Just(json!({
+            "error": "ResourceExhausted",
+            "details": {
+                "resource": "memory",
+                "limit": "4GB",
+                "requested": "8GB"
+            }
+        })),
+        // Invalid input scenario
+        Just(json!({
+            "error": "InvalidInput",
+            "details": {
+                "field": "email",
+                "value": "not-an-email",
+                "expected": "valid email format"
+            }
+        }))
+    ].prop_flat_map(|error_payload| {
+        (event_sources(), Just(error_payload)).prop_map(|(source, payload)| {
+            EventFactory::new(source).create_event("error.occurred", payload)
+        })
+    })
+}
+
+/// Strategy for generating events with realistic metadata patterns
+pub fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
+    (
+        event_sources(),
+        event_types(),
+        event_payloads(),
+        prop::option::of(arbitrary_ulid()),
+        prop::option::of(0u64..1_000_000u64),
+        prop::option::of(0u64..1_000_000u64),
+    ).prop_map(|(source, event_type, mut payload, material_id, offset_start, offset_end)| {
+        // Enrich payload with metadata
+        if let Value::Object(ref mut map) = payload {
+            map.insert("_metadata".to_string(), json!({
+                "version": "1.0",
+                "processor": "property_test",
+                "environment": "test",
+                "tags": ["test", "property", "automated"]
+            }));
+        }
+        
+        let mut event = EventFactory::new(source).create_event(&event_type, payload);
+        
+        // Add source material references
+        if let Some(id) = material_id {
+            event.source_material_id = Some(id);
+            event.source_material_offset_start = offset_start;
+            event.source_material_offset_end = offset_end;
+        }
+        
+        event
+    })
+}
+
+/// Strategy for generating events that test boundary conditions
+pub fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
+    prop_oneof![
+        // Empty payload
+        Just((json!({}), "boundary.empty")),
+        // Single field payload
+        Just((json!({"field": "value"}), "boundary.single")),
+        // Maximum safe integer
+        Just((json!({"number": i64::MAX}), "boundary.max_int")),
+        // Minimum safe integer
+        Just((json!({"number": i64::MIN}), "boundary.min_int")),
+        // Unicode boundaries
+        Just((json!({"text": "\u{0000}\u{10FFFF}"}), "boundary.unicode")),
+        // Array boundaries
+        Just((json!({"array": vec![0; 1000]}), "boundary.large_array")),
+        // Nested object limit
+        Just((create_nested_json(50), "boundary.deep_nesting"))
+    ].prop_flat_map(|(payload, event_type)| {
+        event_sources().prop_map(move |source| {
+            EventFactory::new(source).create_event(event_type, payload.clone())
+        })
+    })
+}
+
+/// Strategy for generating concurrent operation scenarios
+pub fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
+    (2usize..=10, arbitrary_ulid()).prop_flat_map(|(worker_count, shared_resource)| {
+        proptest::collection::vec(
+            (0usize..worker_count, 0u64..1000u64).prop_map(move |(worker_id, operation_id)| {
+                let payload = json!({
+                    "worker_id": worker_id,
+                    "operation_id": operation_id,
+                    "resource_id": shared_resource.to_string(),
+                    "operation": if operation_id % 2 == 0 { "read" } else { "write" },
+                    "timestamp": Utc::now().timestamp_millis()
+                });
+                
+                EventFactory::new("concurrent_test").create_event(
+                    "operation.performed",
+                    payload
+                )
+            }),
+            worker_count * 10 // Multiple operations per worker
+        )
+    })
+}
+
+/// Strategy for generating events with realistic performance characteristics
+pub fn performance_characteristic_events() -> impl Strategy<Value = RawEvent> {
+    (
+        event_sources(),
+        prop_oneof![
+            Just((1, "small")),        // 1KB
+            Just((10, "medium")),      // 10KB
+            Just((100, "large")),      // 100KB
+            Just((1000, "xlarge"))     // 1MB
+        ],
+        0u64..10000u64, // Processing time in microseconds
+        0u64..100u64,   // Queue depth
+    ).prop_map(|(source, (size_kb, size_class), processing_time, queue_depth)| {
+        let data_size = size_kb * 1024;
+        let payload = json!({
+            "performance_test": true,
+            "size_class": size_class,
+            "data": "x".repeat(data_size),
+            "metrics": {
+                "processing_time_us": processing_time,
+                "queue_depth": queue_depth,
+                "payload_size_bytes": data_size
+            }
+        });
+        
+        EventFactory::new(source).create_event("performance.test", payload)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

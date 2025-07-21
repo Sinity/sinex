@@ -188,3 +188,9 @@ pub mod pkm_service_test_optimized;
 
 /// Comprehensive scenario DSL examples
 pub mod scenario_dsl_examples;
+
+/// Test factories demonstration
+pub mod test_factories_demo;
+
+/// Error handling patterns demonstration
+pub mod error_handling_patterns_test;

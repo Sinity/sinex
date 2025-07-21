@@ -5,12 +5,12 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Notify;
 
 /// Deterministic wait utilities for database conditions
-pub mod wait_helpers;
+// pub mod wait_helpers;
 
 // Compatibility re-export for old import paths
-pub mod replacements {
-    pub use super::wait_helpers::*;
-}
+// pub mod replacements {
+//     pub use super::wait_helpers::*;
+// }
 
 // Re-export everything for convenience
 /// Deterministic synchronization primitive to replace arbitrary sleeps

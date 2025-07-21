@@ -11,3 +11,7 @@ mod snapshot_demo_simple;
 // Basic snapshot test
 #[cfg(test)]
 mod test_snapshot_simple;
+
+// Property test examples demonstrating best practices
+#[cfg(test)]
+mod property_test_examples;

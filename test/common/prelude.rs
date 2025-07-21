@@ -36,7 +36,7 @@ pub use std::time::{Duration, Instant};
 pub use anyhow::Result as AnyhowResult;
 /// Standard error type for test functions
 pub type TestResult = AnyhowResult<()>;
-pub use sinex_core_types::CoreError;
+pub use sinex_error::{CoreError, ValidationError};
 // ===== Serialization =====
 pub use serde_json::{json, Value};
 // ===== Time and Date =====
@@ -126,4 +126,20 @@ pub use crate::{
 pub use crate::common::snapshot_testing::{
     assert_snapshot, assert_inline_snapshot, snapshot, 
     Redaction, SnapshotValue, clear_redaction_cache,
+};
+
+// Error testing utilities and patterns
+pub use crate::common::error_test_utils::{
+    ErrorAssert, CoreErrorVariant, ErrorScenarioBuilder, 
+    CommonErrorScenarios, ErrorRecovery, ErrorPropagation
+};
+
+// Error testing macros - import specific macros as needed
+pub use crate::{
+    assert_error_type, assert_error_contains, assert_error_context,
+    test_error_case, test_error_propagation, test_recovery,
+    test_validation_error, test_concurrent_errors, test_error_context,
+    test_constraint_violation, test_timeout_error, test_error_transformation,
+    test_error_idempotency, test_error_with_rollback, test_event_processing_error,
+    test_cascading_errors, test_partial_failure,
 };
