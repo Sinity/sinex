@@ -314,3 +314,107 @@ macro_rules! test_event_flow {
         }
     };
 }
+
+/// Test EventFactory creation patterns
+#[macro_export]
+macro_rules! test_event_factory {
+    ($test_name:ident, $source:expr, $event_type:expr, $payload:expr, $verification:expr) => {
+        #[sinex_test]
+        async fn $test_name(_ctx: TestContext) -> TestResult {
+            use sinex_events::EventFactory;
+            use pretty_assertions::assert_eq;
+            
+            let event = EventFactory::new($source).create_event(
+                $event_type,
+                $payload,
+            );
+            
+            // Basic assertions
+            assert_eq!(event.source, $source);
+            assert_eq!(event.event_type, $event_type);
+            assert_eq!(event.payload, $payload);
+            assert!(event.id.to_string().len() == 26); // ULID length
+            
+            // Custom verification
+            $verification(event);
+            
+            Ok(())
+        }
+    };
+}
+
+/// Test data setup and verification pattern
+#[macro_export]
+macro_rules! test_with_data {
+    ($test_name:ident, $test_data:expr, $test_body:expr) => {
+        #[sinex_test]
+        async fn $test_name(ctx: TestContext) -> TestResult {
+            let pool = ctx.pool();
+            let test_data = $test_data;
+            
+            $test_body(&pool, test_data).await
+        }
+    };
+}
+
+/// Test insert and query pattern
+#[macro_export]
+macro_rules! test_insert_and_query {
+    ($test_name:ident, $source:expr, $event_type:expr, $payload:expr, $query:expr, $verification:expr) => {
+        #[sinex_test]
+        async fn $test_name(ctx: TestContext) -> TestResult {
+            use crate::common::builders::TestEventBuilder;
+            
+            let pool = ctx.pool();
+            
+            // Insert event
+            let event = TestEventBuilder::new($source, $event_type)
+                .with_payload($payload)
+                .insert(&pool)
+                .await?;
+            
+            // Query
+            let result = $query(&pool, &event).await?;
+            
+            // Verify
+            $verification(&event, result)?;
+            
+            Ok(())
+        }
+    };
+}
+
+/// Test security validation patterns
+#[macro_export]
+macro_rules! test_security_validation {
+    ($test_name:ident, $malicious_inputs:expr) => {
+        #[sinex_test]
+        async fn $test_name(ctx: TestContext) -> TestResult {
+            use crate::common::builders::TestEventBuilder;
+            
+            let pool = ctx.pool();
+            
+            for (name, payload) in $malicious_inputs {
+                println!("Testing malicious input: {}", name);
+                
+                let result = TestEventBuilder::new("security.test", name)
+                    .with_payload(payload)
+                    .insert(&pool)
+                    .await;
+                
+                // Most security tests should fail validation
+                if name.contains("injection") || name.contains("xss") || name.contains("path_traversal") {
+                    assert!(result.is_err(), "Malicious input '{}' should be rejected", name);
+                } else {
+                    // Some inputs might be valid JSON but still suspicious
+                    if let Ok(event) = result {
+                        // Verify it was stored correctly
+                        assert_eq!(event.source, "security.test");
+                    }
+                }
+            }
+            
+            Ok(())
+        }
+    };
+}

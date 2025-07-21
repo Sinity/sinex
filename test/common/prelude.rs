@@ -121,3 +121,9 @@ pub use crate::{
     test_checkpoint_flow, test_concurrent_operations, test_time_range_query,
     test_event_filter, test_with_scenario, parameterized_test, test_event_flow,
 };
+
+// Snapshot testing utilities
+pub use crate::common::snapshot_testing::{
+    assert_snapshot, assert_inline_snapshot, snapshot, 
+    Redaction, SnapshotValue, clear_redaction_cache,
+};

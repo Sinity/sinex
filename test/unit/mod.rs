@@ -102,4 +102,10 @@ pub mod ulid_comprehensive_test;
 /// Tests for typed clipboard events
 pub mod typed_clipboard_test;
 
+/// Demonstration of snapshot testing with ULID tests
+pub mod ulid_snapshot_demo;
+
+/// Demonstration of snapshot testing functionality
+pub mod snapshot_test_demo;
+
 // Infrastructure tests are in test/common/ directory
