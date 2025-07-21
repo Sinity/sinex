@@ -79,20 +79,14 @@ pub use sinex_db::{events::get_event_by_id, insert_event_with_validator};
 // Test helper functions from common/mod.rs
 // Satellite architecture testing utilities
 // ===== Enhanced Assertions =====
-pub use crate::common::enhanced_assertions::{
-    assert_channel_send_success, assert_eq_with_context, assert_event_inserted_with_context,
-    assert_events_equivalent, assert_validation_passes, assert_with_context,
-    assert_with_validation, TestAssertionBatch,
-};
+// Enhanced assertions module is not available
 // ===== Mock Types for Testing =====
 pub use crate::common::mocks::{
     AtuinHistoryImporter, EventSourceContext, FilesystemMonitor,
     ShellHistoryMonitor,
 };
 // ===== Worker Test Utilities =====
-pub use crate::common::worker_test_utils::{
-    claim_work_queue_items, complete_work_queue_item,
-};
+// Worker test utilities module is not available
 // ===== Constants =====
 
 // ===== Test Query Helpers and Builders =====
@@ -123,10 +117,7 @@ pub use crate::{
 };
 
 // Snapshot testing utilities
-pub use crate::common::snapshot_testing::{
-    assert_snapshot, assert_inline_snapshot, snapshot, 
-    Redaction, SnapshotValue, clear_redaction_cache,
-};
+// Snapshot testing module is not available
 
 // Error testing utilities and patterns
 pub use crate::common::error_test_utils::{

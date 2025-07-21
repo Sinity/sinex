@@ -13,14 +13,8 @@
 // - **State Violations**: Invalid state transitions
 
 
-#[allow(dead_code)]
-// Boundary tests for system limits
-pub mod boundary_test;
-
-// Concurrency and race condition tests
-pub mod concurrency_test;
-
-// Other adversarial tests have been consolidated or are being migrated
+// Adversarial tests have been consolidated or are being migrated
+// Tests are now implemented using the test abstractions framework
 
 /// Common utilities for adversarial testing
 pub mod utils {

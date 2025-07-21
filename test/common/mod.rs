@@ -21,9 +21,6 @@
 // Test prelude for standardized imports
 pub mod prelude;
 
-// Pre-initialized database pool with clean-before-use
-// pub mod database_pool;
-
 // Unified test context for all tests
 pub mod test_context;
 
@@ -1144,34 +1141,14 @@ pub use sinex_db::models::AutomatonManifest;
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
 
-/// Validation test utilities
-// pub mod validation_test_utils;
-
-// Re-export the final pool as the default - used directly from database_pool module
-
-/// Schema test utilities
-// pub mod schema_test_utils;
-
-/// Worker test utilities
-// pub mod worker_test_utils;
-
-/// Coverage assurance utilities
-// pub mod coverage_assurance;
-
-// Satellite architecture test utilities
-// pub mod satellite_test_utils;
-
 /// Mock implementations for testing
 pub mod mocks;
 
-/// Configuration compatibility testing utilities
-// pub mod config_compatibility_tester;
-
 /// Test-specific query helpers using centralized query builders
-// pub mod query_helpers;
+pub mod query_helpers;
 
 /// Enhanced test data builders with fluent interfaces
-// pub mod builders;
+pub mod builders;
 
 /// Property test builders that integrate proptest with test framework
 pub mod property_builders;
@@ -1188,20 +1165,8 @@ pub mod error_test_utils;
 /// Error testing macros for comprehensive error scenario testing
 pub mod error_test_macros;
 
-/// Performance measurement and optimization utilities
-// pub mod performance_utils;
-
 /// Test fixture management system
 pub mod fixtures;
-
-/// Declarative test scenario DSL
-// pub mod scenario_dsl;
-
-/// High-level test data factories for common testing scenarios
-// pub mod test_factories;
-
-/// Snapshot testing utilities for complex test outputs
-// pub mod snapshot_testing;
 
 /// Integration testing patterns for satellite architecture
 pub mod satellite_integration {

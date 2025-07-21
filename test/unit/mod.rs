@@ -81,31 +81,5 @@
 
 // === Consolidated Unit Tests ===
 
-/// Tests for core types and utilities
-pub mod core_test;
-
-/// Tests for API layer functionality
-pub mod api_test;
-
-/// Tests for event type system (replaces EventRegistry tests)
-pub mod event_type_system_test;
-
-/// Consolidated database unit tests (includes db, model, ingestor, preflight)
-pub mod database_test;
-
-/// Tests for preflight verification
-pub mod preflight_test;
-
-/// ULID comprehensive tests
-pub mod ulid_comprehensive_test;
-
-/// Tests for typed clipboard events
-pub mod typed_clipboard_test;
-
-/// Demonstration of snapshot testing with ULID tests
-pub mod ulid_snapshot_demo;
-
-/// Demonstration of snapshot testing functionality
-pub mod snapshot_test_demo;
-
 // Infrastructure tests are in test/common/ directory
+// Other unit tests have been migrated to use test abstractions

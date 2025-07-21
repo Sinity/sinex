@@ -22,17 +22,20 @@
 
 use crate::common::test_macros::*;
 use crate::common::prelude::*;
-use crate::common::database_pool::TestDatabase;
+// Database pool module is not available
+// use crate::common::database_pool::TestDatabase;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
 use sinex_core_types::DbPoolRef;
-use crate::common::timing_optimization::wait_helpers::{
-    wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
-};
+// Timing optimization wait_helpers module is not available
+// use crate::common::timing_optimization::wait_helpers::{
+//     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
+// };
 use sinex_events::EventFactory;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use redis::aio::MultiplexedConnection;
-use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle, StreamMessage};
+// Satellite test utils module is not available
+// use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle, StreamMessage};
 use sinex_satellite_sdk::checkpoint::CheckpointState;
 use sinex_db::queries::EventQueries;
 
