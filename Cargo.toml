@@ -33,6 +33,9 @@ members = [
     "crate/sinex-core-runtime",
     "crate/sinex-core-fs",
     "crate/sinex-metrics-lib",
+    # Abstraction enforcement
+    "crate/sinex-test-abstractions",
+    "sinex-codegen",
 ]
 resolver = "2"
 
@@ -102,11 +105,16 @@ default = []
 arbitrary = ["sinex-ulid/arbitrary"]
 metrics = []
 
+[[bench]]
+name = "abstraction_benchmarks"
+harness = false
+
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
 rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-test-macros = { path = "crate/sinex-test-macros" }
+sinex-test-abstractions = { path = "crate/sinex-test-abstractions" }
 criterion.workspace = true
 pretty_assertions = "1.4"
 serial_test = "3.0"

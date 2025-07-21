@@ -1,0 +1,3 @@
+-- Down migration for 00000000000002_create_core_tables.sql
+-- This would drop all objects created in the up migration
+-- Skipped to prevent accidental data loss

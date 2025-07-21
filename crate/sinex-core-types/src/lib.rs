@@ -10,7 +10,6 @@ pub use sinex_ulid::Ulid;
 pub use sinex_validation::*;
 use std::collections::HashMap;
 use std::fmt::Display;
-use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;
 
@@ -433,7 +432,7 @@ pub trait MetricsEmitter {
 
 /// Utility functions for working with paths
 pub mod path_utils {
-    use super::*;
+    
     use std::path::{Path, PathBuf};
 
     /// Normalize a path by resolving . and .. components

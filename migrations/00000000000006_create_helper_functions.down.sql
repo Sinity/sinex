@@ -1,0 +1,3 @@
+-- Down migration for 00000000000006_create_helper_functions.sql
+-- This would drop all objects created in the up migration
+-- Skipped to prevent accidental data loss
