@@ -22,7 +22,7 @@ pub struct AnnotationRecord {
 }
 
 /// Create a new event annotation following the exact same pattern as add_to_work_queue
-#[sinex_macros::auto_db_metrics(operation = "create_annotation")]
+// #[sinex_macros::auto_db_metrics(operation = "create_annotation")]
 pub async fn create_annotation(
     pool: DbPoolRef<'_>,
     input: CreateAnnotationInput,
@@ -53,7 +53,7 @@ pub async fn create_annotation(
 }
 
 /// Get annotations for a specific event
-#[sinex_macros::auto_db_metrics(operation = "get_annotations_for_event")]
+// #[sinex_macros::auto_db_metrics(operation = "get_annotations_for_event")]
 pub async fn get_annotations_for_event(
     pool: DbPoolRef<'_>,
     event_id: Ulid,

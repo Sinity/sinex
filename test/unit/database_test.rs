@@ -9,18 +9,13 @@
 // - Complex query operations
 
 use crate::common::prelude::*;
+use crate::common::event_builders::EventBuilder;
 use serde_json::json;
-use sinex_error::ErrorContext;
 // Sources and event types now in sinex_events
-use sinex_events::{EventFactory, services as event_sources, event_types, sources};
-use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_events::{EventFactory, event_types, sources};
+use sinex_db::queries::EventQueries;
 use sinex_db::validation::EventValidator;
-use std::sync::{
-    atomic::{AtomicBool, AtomicU32},
-    Arc,
-};
+use std::sync::Arc;
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
@@ -66,9 +61,8 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
         .not_empty();
     assert_validation_passes(event_type_validation)?;
     
-    let payload_validation = ValidationChain::validate(inserted_event.payload.clone(), "payload")
-        .json_type(sinex_validation::validation_chains::JsonType::Object);
-    assert_validation_passes(payload_validation)?;
+    // Payload should be an object
+    assert!(inserted_event.payload.is_object(), "Payload should be JSON object");
 
     // Validate specific payload fields using ValidationChain
     let path_validation = assert_with_validation(
@@ -1021,7 +1015,7 @@ impl Default for TestSourceConfig {
 /// Test satellite processor initialization (replaces EventSource trait)
 #[sinex_test]
 async fn test_satellite_processor_initialization(ctx: TestContext) -> TestResult {
-    use sinex_satellite_sdk::StatefulStreamProcessor;
+    
 
     // Test that we can create a processor configuration
     let config = json!({
@@ -1501,9 +1495,8 @@ async fn test_streamlined_validation_demo(_ctx: TestContext) -> TestResult {
         .not_empty()
         .into_result()?;
     
-    ValidationChain::validate(event.payload.clone(), "payload")
-        .json_type(sinex_validation::validation_chains::JsonType::Object)
-        .into_result()?;
+    // Validate payload is an object
+    assert!(event.payload.is_object(), "Event payload must be an object");
 
     // Also test with EventValidator
     let validator_result = validator.validate(&event);

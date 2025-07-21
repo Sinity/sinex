@@ -24,6 +24,9 @@ use crate::common::prelude::*;
 
 use crate::common::database_pool::acquire_test_database;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder};
+use crate::common::query_helpers::TestQueries;
+use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_events::EventFactory;
 use sinex_ulid::Ulid;
 use std::fs;
@@ -48,6 +51,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
     let base_pool = base_test_db.pool();
 
     // Create test database
+    // NOTE: Database DDL operations must remain as raw SQL
     sqlx::query(&format!("CREATE DATABASE {}", test_db_name))
         .execute(base_pool)
         .await?;
@@ -108,17 +112,11 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         let pool = test_db.pool();
 
         // Add some existing checkpoint data
-        let checkpoint_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)",
-            checkpoint_id.to_uuid(),
-            "existing_agent",
-            "startup_event_123",
-            json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
-        )
-        .execute(pool)
-        .await?;
+        TestCheckpointBuilder::new("existing_agent")
+            .with_last_processed("startup_event_123")
+            .with_state(json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"}))
+            .insert(pool)
+            .await?;
 
         // Insert some events
         for i in 0..10 {
@@ -230,6 +228,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
     }
 
     // Cleanup test database
+    // NOTE: Database DDL operations must remain as raw SQL
     sqlx::query(&format!("DROP DATABASE {}", test_db_name))
         .execute(base_pool)
         .await
@@ -271,15 +270,17 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
         if connections.len() > i {
             if let Ok(mut tx) = pool.begin().await {
                 // Start transaction with some work
-                sqlx::query!(
-                    "INSERT INTO core.events (
-            event_id, source, event_type, host, payload)
-                     VALUES ($1::uuid, $2, $3, $4, $5)",
-                    Ulid::new().to_uuid(),
-                    "shutdown.test",
-                    "active_transaction",
-                    "localhost",
-                    json!({"tx_id": i, "shutdown_test": true})
+                // NOTE: Using raw event insertion within transaction context
+                let event_id = Ulid::new();
+                EventQueries::insert_event(
+                    "shutdown.test".to_string(),
+                    "active_transaction".to_string(),
+                    "localhost".to_string(),
+                    json!({"tx_id": i, "shutdown_test": true}),
+                    None,
+                    None,
+                    None,
+                    None,
                 )
                 .execute(&mut *tx)
                 .await
@@ -475,12 +476,14 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
     }
 
     // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source IN ('shutdown.test', 'interrupted.shutdown')"
-    )
-    .execute(ctx.pool())
-    .await
-    .ok();
+    EventQueries::delete_by_source("shutdown.test".to_string())
+        .execute(ctx.pool())
+        .await
+        .ok();
+    EventQueries::delete_by_source("interrupted.shutdown".to_string())
+        .execute(ctx.pool())
+        .await
+        .ok();
 
     Ok(())
 }
@@ -928,17 +931,11 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let pool = test_db.pool();
 
         // Insert test checkpoint data before migration
-        let migration_checkpoint_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)",
-            migration_checkpoint_id.to_uuid(),
-            "migration_test_agent",
-            "migration_event_456",
-            json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
-        )
-        .execute(pool)
-        .await?;
+        TestCheckpointBuilder::new("migration_test_agent")
+            .with_last_processed("migration_event_456")
+            .with_state(json!({"version": "1.0.0", "description": "Agent for testing data preservation"}))
+            .insert(pool)
+            .await?;
 
         // Insert test events
         let test_events = 50;
@@ -1155,17 +1152,11 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Create test checkpoint for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
-    let degradation_checkpoint_id = Ulid::new();
-    sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
-        degradation_checkpoint_id.to_uuid(),
-        agent_name,
-        "degradation_test_event",
-        json!({"version": "1.0.0", "description": "Graceful degradation test"})
-    )
-    .execute(&pool)
-    .await?;
+    TestCheckpointBuilder::new(&agent_name)
+        .with_last_processed("degradation_test_event")
+        .with_state(json!({"version": "1.0.0", "description": "Graceful degradation test"}))
+        .insert(&pool)
+        .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
 
@@ -1331,16 +1322,13 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM core.events WHERE source = 'degradation.test'")
+    EventQueries::delete_by_source("degradation.test".to_string())
         .execute(&pool)
         .await
         .ok();
-    sqlx::query!(
-        "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
-        agent_name
-    )
-    .execute(&pool)
-    .await?;
+    CheckpointQueries::delete_by_automaton_pattern(agent_name)
+        .execute(&pool)
+        .await?;
 
     Ok(())
 }
@@ -1597,7 +1585,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
     }
 
     // Cleanup
-    sqlx::query!("DELETE FROM core.events WHERE source = 'resource.monitoring'")
+    EventQueries::delete_by_source("resource.monitoring".to_string())
         .execute(&pool)
         .await
         .ok();
@@ -1620,15 +1608,16 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
 
         // Try to insert many events in a single transaction
         for i in 0..1000 {
-            sqlx::query!(
-                "INSERT INTO core.events (
-            event_id, source, event_type, host, payload)
-                     VALUES ($1::uuid, $2, $3, $4, $5)",
-                Ulid::new().to_uuid(),
-                "exhaustion.test",
-                "large_transaction",
-                "localhost",
-                json!({"batch_item": i, "data": "x".repeat(100)})
+            let event_id = Ulid::new();
+            EventQueries::insert_event(
+                "exhaustion.test".to_string(),
+                "large_transaction".to_string(),
+                "localhost".to_string(),
+                json!({"batch_item": i, "data": "x".repeat(100)}),
+                None,
+                None,
+                None,
+                None,
             )
             .execute(&mut *tx)
             .await?;
@@ -1677,15 +1666,16 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
 
                 // Each transaction inserts a small batch
                 for j in 0..10 {
-                    sqlx::query!(
-                        "INSERT INTO core.events (
-            event_id, source, event_type, host, payload)
-                             VALUES ($1::uuid, $2, $3, $4, $5)",
-                        Ulid::new().to_uuid(),
+                    let event_id = Ulid::new();
+                    EventQueries::insert_event(
                         format!("concurrent.tx.{}", i),
-                        "concurrent_test",
-                        "localhost",
-                        json!({"tx_id": i, "item": j})
+                        "concurrent_test".to_string(),
+                        "localhost".to_string(),
+                        json!({"tx_id": i, "item": j}),
+                        None,
+                        None,
+                        None,
+                        None,
                     )
                     .execute(&mut *tx)
                     .await?;
@@ -1762,12 +1752,14 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     }
 
     // Cleanup all test data
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
-    )
-    .execute(&pool)
-    .await
-    .ok();
+    EventQueries::delete_by_source("exhaustion%".to_string())
+        .execute(&pool)
+        .await
+        .ok();
+    EventQueries::delete_by_source("concurrent%".to_string())
+        .execute(&pool)
+        .await
+        .ok();
 
     Ok(())
 }

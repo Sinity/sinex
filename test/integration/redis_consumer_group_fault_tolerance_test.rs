@@ -6,15 +6,13 @@
 // redelivery patterns.
 
 use crate::common::prelude::*;
-use crate::common::satellite_test_utils::*;
 use redis::{cmd, AsyncCommands, RedisResult};
-use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use tokio::task::JoinSet;
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 /// Test Redis Consumer Group recovery after consumer crash
 #[sinex_test]

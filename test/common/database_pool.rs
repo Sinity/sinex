@@ -21,7 +21,6 @@ use crate::common::prelude::*;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use sinex_core_types::timeouts;
-use sinex_error::ErrorContext;
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -563,7 +562,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
             core.entities,
             core.artifacts,
             core.event_clusters,
-            sinex_schemas.processor_manifests
+            core.processor_manifests
         CASCADE
     "#,
     )
@@ -589,7 +588,7 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
             "DELETE FROM core.revisions",
             "DELETE FROM core.artifact_tags",
             "DELETE FROM core.artifact_relations",
-            "DELETE FROM sinex_schemas.processor_manifests",
+            "DELETE FROM core.processor_manifests",
             // Finally, delete from primary tables
             "DELETE FROM core.entities",
             "DELETE FROM core.artifacts",

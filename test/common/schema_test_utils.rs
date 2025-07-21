@@ -3,9 +3,6 @@
 use crate::common::prelude::*;
 use serde_json::{json, Value};
 use sinex_events::{event_types, sources};
-use sinex_db::queries::{EventQueries, SchemaQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use std::str::FromStr;
 
 /// Register test schema with event source and type
 pub async fn register_test_schema(
@@ -285,14 +282,14 @@ pub mod database {
         sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas 
-            (id, event_source, event_type, schema_version, json_schema_definition)
+            (id, schema_name, schema_version, schema_content, event_types)
             VALUES ($1::uuid, $2, $3, $4, $5)
             "#,
             schema_id.to_uuid(),
-            event_source,
-            event_type,
+            format!("{}.{}", event_source, event_type),
             schema_version,
-            schema
+            schema,
+            &vec![event_type]
         )
         .execute(pool)
         .await?;
@@ -303,22 +300,22 @@ pub mod database {
     /// Get a schema from the database
     pub async fn get_schema(pool: &DbPool, schema_id: Ulid) -> AnyhowResult<Option<Value>> {
         let result = sqlx::query!(
-            "SELECT json_schema_definition FROM sinex_schemas.event_payload_schemas WHERE id::uuid = $1::uuid",
+            "SELECT schema_content FROM sinex_schemas.event_payload_schemas WHERE id::uuid = $1::uuid",
             schema_id.to_uuid()
         )
         .fetch_optional(pool)
         .await?;
         
-        Ok(result.map(|r| r.json_schema_definition))
+        Ok(result.map(|r| r.schema_content))
     }
 
     /// List all schemas in the database
     pub async fn list_schemas(pool: &DbPool) -> AnyhowResult<Vec<(Ulid, String, String, Value)>> {
         let rows = sqlx::query!(
             r#"
-            SELECT id::text as id, event_type, schema_version as version, json_schema_definition 
+            SELECT id::text as id, schema_name, schema_version as version, schema_content, event_types 
             FROM sinex_schemas.event_payload_schemas 
-            ORDER BY event_type, schema_version
+            ORDER BY schema_name, schema_version
             "#
         )
         .fetch_all(pool)
@@ -326,7 +323,7 @@ pub mod database {
         
         Ok(rows.into_iter().map(|row| {
             let id = row.id.unwrap_or_default().parse::<Ulid>().unwrap();
-            (id, row.event_type, row.version, row.json_schema_definition)
+            (id, row.schema_name, row.version, row.schema_content)
         }).collect())
     }
 

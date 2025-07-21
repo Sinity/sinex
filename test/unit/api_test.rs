@@ -62,7 +62,6 @@ use self::toml_helpers::*;
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
 use sinex_db::{
     create_annotation, create_artifact, create_entity, create_relation, delete_annotation,
     get_annotation_by_id, get_annotations_for_event, get_artifact_by_id, get_entities_by_type,

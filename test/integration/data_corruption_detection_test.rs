@@ -8,12 +8,10 @@
 // - Large-scale corruption scanning
 
 use crate::common::prelude::*;
-use serde_json::Value;
 use sinex_db::integrity::{IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::{DataCorruptionIndicator, DataCorruptionType};
+use sinex_db::validation::DataCorruptionType;
 use sinex_db::queries::{EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::EventFactory;
 use uuid::Uuid;
 
 #[sinex_test]
@@ -257,8 +255,8 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
     let automaton_name = format!("fk_test_automaton_{}", Ulid::new());
 
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Foreign key integrity test automaton')",
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+         VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
     .execute(&pool)

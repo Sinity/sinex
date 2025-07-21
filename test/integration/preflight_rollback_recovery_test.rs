@@ -2,7 +2,6 @@
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
 use std::env;
 use std::fs;
 use tempfile::TempDir;

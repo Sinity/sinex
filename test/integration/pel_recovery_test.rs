@@ -5,12 +5,9 @@
 // and edge cases that can occur in production environments.
 
 use crate::common::prelude::*;
-use crate::common::satellite_test_utils::*;
 use redis::{AsyncCommands, RedisResult, cmd};
-use serde_json::json;
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
-use tokio::time::{sleep, timeout};
+use std::time::Duration;
+use tokio::time::sleep;
 
 /// Test basic PEL recovery after consumer failure
 #[sinex_test]

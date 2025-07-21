@@ -1,9 +1,10 @@
 use crate::common::prelude::*;
+use crate::common::query_helpers::TestQueries;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::json;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, event_types};
 
 /// Property tests for schema validation functionality
 ///
@@ -465,18 +466,21 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
                 });
 
                 // Insert schema into database
-                let _schema_id = Ulid::new();
-                let result = sqlx::query!(
-                    "INSERT INTO sinex_schemas.event_payload_schemas (event_source, event_type, schema_version, json_schema_definition, is_active)
-                     VALUES ('test_source', $1, $2, $3, true)
-                     ON CONFLICT (event_source, event_type, schema_version) DO NOTHING",
+                let result = TestQueries::register_test_schema(
+                    &pool,
                     name,
                     version,
+                    vec![format!("{}.{}", "test_source", name)],
                     schema_def
-                ).execute(&pool).await;
+                ).await;
 
-                if result.is_ok() {
-                    created_schemas.push((name.clone(), version.clone()));
+                match result {
+                    Ok(_) => {
+                        created_schemas.push((name.clone(), version.clone()));
+                    },
+                    Err(_) => {
+                        // Schema might already exist due to conflict
+                    }
                 }
             }
 

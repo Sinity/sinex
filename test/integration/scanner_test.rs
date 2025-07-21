@@ -8,15 +8,9 @@
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
 use chrono::{TimeZone, Utc};
-use sinex_core_types::CoreError;
-use sinex_events::EventFactory;
-use sinex_satellite_sdk::{EventSourceConfig, ScanArgs, ScanReport, StatefulStreamProcessor};
-use std::collections::HashMap;
+use sinex_satellite_sdk::{ScanArgs, StatefulStreamProcessor};
 use std::fs;
-use std::path::PathBuf;
-use tempfile::TempDir;
 
 // =============================================================================
 // Filesystem Scanner Tests
@@ -298,7 +292,7 @@ command_after_range
     let start_time = Utc.timestamp_opt(1640998000, 0).unwrap(); // Between first and second
     let end_time = Utc.timestamp_opt(1641007000, 0).unwrap(); // Between third and fourth
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+    let (tx, rx) = tokio::sync::mpsc::channel(100);
     let scanner_args = ScanArgs {
         targets: vec![history_file.to_string_lossy().to_string()],
         dry_run: false,

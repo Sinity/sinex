@@ -10,9 +10,9 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use sinex_db::queries::{EventQueries, OperationQueries, SchemaQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_db::{ulid_to_uuid, uuid_to_ulid};
+use sinex_db::queries::{EventQueries, VerificationQueries};
+use sinex_db::queries::verification::{EventIdRecord, TestEventRecord, CountRecord, CheckpointIdRecord};
+use sinex_db::{uuid_to_ulid};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -246,16 +246,11 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     let test_event_type = "verification.crud_test";
 
     // CREATE: Insert a test event
-    let insert_result = sqlx::query!(
-        r#"
-        INSERT INTO core.events (source, event_type, host, payload)
-        VALUES ($1, $2, $3, $4)
-        RETURNING event_id::uuid as "id!"
-        "#,
-        test_source,
-        test_event_type,
-        "localhost",
-        json!({"test": "crud_operations", "operation": "insert"})
+    let insert_result: EventIdRecord = VerificationQueries::insert_test_event(
+        test_source.to_string(),
+        test_event_type.to_string(),
+        "localhost".to_string(),
+        json!({"test": "crud_operations", "operation": "insert"}),
     )
     .fetch_one(pool)
     .await
@@ -264,13 +259,10 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     let inserted_id = uuid_to_ulid(insert_result.id);
 
     // READ: Query the test event
-    let read_result = sqlx::query!(
-        "SELECT event_id::uuid as \"id!\", source, event_type, payload FROM core.events WHERE event_id = $1::uuid::ulid",
-        ulid_to_uuid(inserted_id)
-    )
-    .fetch_optional(pool)
-    .await
-    .context("Failed to read test event")?;
+    let read_result: Option<TestEventRecord> = VerificationQueries::get_test_event(inserted_id)
+        .fetch_optional(pool)
+        .await
+        .context("Failed to read test event")?;
 
     let read_event = read_result.context("Test event not found after insert")?;
 
@@ -283,10 +275,9 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // UPDATE: Modify the test event payload
-    let update_result = sqlx::query!(
-        "UPDATE core.events SET payload = $1 WHERE event_id = $2::uuid::ulid",
+    let update_result = VerificationQueries::update_test_event(
+        inserted_id,
         json!({"test": "crud_operations", "operation": "update", "modified": true}),
-        ulid_to_uuid(inserted_id)
     )
     .execute(pool)
     .await
@@ -300,13 +291,10 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // DELETE: Remove the test event
-    let delete_result = sqlx::query!(
-        "DELETE FROM core.events WHERE event_id = $1::uuid::ulid",
-        ulid_to_uuid(inserted_id)
-    )
-    .execute(pool)
-    .await
-    .context("Failed to delete test event")?;
+    let delete_result = VerificationQueries::delete_test_event(inserted_id)
+        .execute(pool)
+        .await
+        .context("Failed to delete test event")?;
 
     if delete_result.rows_affected() != 1 {
         bail!(
@@ -316,14 +304,10 @@ async fn test_crud_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // Verify deletion
-    let id_as_uuid = ulid_to_uuid(inserted_id);
-    let verify_result = sqlx::query!(
-        "SELECT event_id::uuid as \"id!\" FROM core.events WHERE event_id::uuid = $1",
-        id_as_uuid
-    )
-    .fetch_optional(pool)
-    .await
-    .context("Failed to verify deletion")?;
+    let verify_result: Option<TestEventRecord> = VerificationQueries::get_test_event(inserted_id)
+        .fetch_optional(pool)
+        .await
+        .context("Failed to verify deletion")?;
 
     if verify_result.is_some() {
         bail!("Test event still exists after deletion");
@@ -345,28 +329,23 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
     // Test successful transaction
     let mut tx = pool.begin().await.context("Failed to begin transaction")?;
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (source, event_type, host, payload)
-        VALUES ($1, $2, $3, $4)
-        "#,
-        "sinex-preflight-tx-test",
-        "verification.transaction_test",
-        "localhost",
-        json!({"test": "transaction", "phase": "commit"})
+    VerificationQueries::insert_test_event(
+        "sinex-preflight-tx-test".to_string(),
+        "verification.transaction_test".to_string(),
+        "localhost".to_string(),
+        json!({"test": "transaction", "phase": "commit"}),
     )
-    .execute(&mut *tx)
+    .execute_tx(&mut tx)
     .await
     .context("Failed to insert in transaction")?;
 
     tx.commit().await.context("Failed to commit transaction")?;
 
-    // Verify committed transaction exists (we can't predict the auto-generated ID)
-    let committed_event = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
-        "sinex-preflight-tx-test",
-        "verification.transaction_test", 
-        "commit"
+    // Verify committed transaction exists
+    let committed_event: CountRecord = VerificationQueries::count_by_source_and_phase(
+        "sinex-preflight-tx-test".to_string(),
+        "verification.transaction_test".to_string(),
+        "commit".to_string(),
     )
     .fetch_one(pool)
     .await
@@ -382,17 +361,13 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
         .await
         .context("Failed to begin rollback transaction")?;
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (source, event_type, host, payload)
-        VALUES ($1, $2, $3, $4)
-        "#,
-        "sinex-preflight-tx-test",
-        "verification.transaction_test",
-        "localhost",
-        json!({"test": "transaction", "phase": "rollback"})
+    VerificationQueries::insert_test_event(
+        "sinex-preflight-tx-test".to_string(),
+        "verification.transaction_test".to_string(),
+        "localhost".to_string(),
+        json!({"test": "transaction", "phase": "rollback"}),
     )
-    .execute(&mut *tx)
+    .execute_tx(&mut tx)
     .await
     .context("Failed to insert in rollback transaction")?;
 
@@ -401,11 +376,10 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
         .context("Failed to rollback transaction")?;
 
     // Verify rolled back transaction doesn't exist
-    let rollback_event = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
-        "sinex-preflight-tx-test",
-        "verification.transaction_test",
-        "rollback"
+    let rollback_event: CountRecord = VerificationQueries::count_by_source_and_phase(
+        "sinex-preflight-tx-test".to_string(),
+        "verification.transaction_test".to_string(),
+        "rollback".to_string(),
     )
     .fetch_one(pool)
     .await
@@ -416,11 +390,9 @@ async fn test_transaction_handling(pool: &PgPool) -> Result<()> {
     }
 
     // Cleanup committed event
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source = $1 AND event_type = $2 AND payload->>'phase' = $3",
-        "sinex-preflight-tx-test",
-        "verification.transaction_test",
-        "commit"
+    VerificationQueries::cleanup_test_events(
+        "sinex-preflight-tx-test".to_string(),
+        "verification.transaction_test".to_string(),
     )
     .execute(pool)
     .await
@@ -439,18 +411,13 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
     for i in 0..operation_count {
         let pool_clone = pool.clone();
         join_set.spawn(async move {
-            let result = sqlx::query!(
-                r#"
-                INSERT INTO core.events (source, event_type, host, payload)
-                VALUES ($1, $2, $3, $4)
-                RETURNING event_id::uuid as "id!"
-                "#,
-                "sinex-preflight-concurrent-test",
-                "verification.concurrent_test",
-                "localhost",
-                json!({"test": "concurrent", "operation_id": i})
+            let result = VerificationQueries::insert_test_event(
+                "sinex-preflight-concurrent-test".to_string(),
+                "verification.concurrent_test".to_string(),
+                "localhost".to_string(),
+                json!({"test": "concurrent", "operation_id": i}),
             )
-            .fetch_one(&pool_clone)
+            .fetch_one::<EventIdRecord>(&pool_clone)
             .await;
 
             result
@@ -477,10 +444,9 @@ async fn test_concurrent_operations(pool: &PgPool) -> Result<usize> {
     }
 
     // Cleanup test events using source and event_type filter
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source = $1 AND event_type = $2",
-        "sinex-preflight-concurrent-test",
-        "verification.concurrent_test"
+    VerificationQueries::cleanup_test_events(
+        "sinex-preflight-concurrent-test".to_string(),
+        "verification.concurrent_test".to_string(),
     )
     .execute(pool)
     .await
@@ -497,10 +463,7 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
     let mut tested_extensions = HashMap::new();
 
     // Test UUID generation
-    match sqlx::query!("SELECT gen_random_uuid() as test_uuid")
-        .fetch_one(pool)
-        .await
-    {
+    match VerificationQueries::test_uuid_generation(pool).await {
         Ok(_) => {
             tested_extensions.insert("uuid-builtin", json!({"status": "working"}));
         }
@@ -516,10 +479,7 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
     }
 
     // Test ULID generation (if available)
-    match sqlx::query!("SELECT gen_ulid()::text as test_ulid")
-        .fetch_one(pool)
-        .await
-    {
+    match VerificationQueries::test_ulid_generation(pool).await {
         Ok(_) => {
             tested_extensions.insert("pgx_ulid", json!({"status": "working"}));
         }
@@ -535,16 +495,21 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
     }
 
     // Test TimescaleDB extension by checking version
-    match sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
-        .fetch_one(pool)
-        .await
-    {
-        Ok(result) => {
+    match VerificationQueries::get_timescaledb_version(pool).await {
+        Ok(Some(version)) => {
             tested_extensions.insert(
                 "timescaledb",
                 json!({
                     "status": "working",
-                    "version": result.extversion
+                    "version": version
+                }),
+            );
+        }
+        Ok(None) => {
+            tested_extensions.insert(
+                "timescaledb",
+                json!({
+                    "status": "not_installed"
                 }),
             );
         }
@@ -560,10 +525,7 @@ async fn test_extension_functionality(pool: &PgPool) -> Result<Value> {
     }
 
     // Test JSON schema validation (if available)
-    match sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
-        .fetch_one(pool)
-        .await
-    {
+    match VerificationQueries::test_json_schema_validation(pool).await {
         Ok(_) => {
             tested_extensions.insert("pg_jsonschema", json!({"status": "working"}));
         }
@@ -669,20 +631,15 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
 
     // Simulate rapid event ingestion
     for i in 0..event_count {
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO core.events (source, event_type, host, payload)
-            VALUES ($1, $2, $3, $4)
-            RETURNING event_id::uuid as "id!"
-            "#,
-            "sinex-preflight-pipeline-test",
-            "verification.ingestion_test",
-            "localhost",
+        let result: EventIdRecord = VerificationQueries::insert_test_event(
+            "sinex-preflight-pipeline-test".to_string(),
+            "verification.ingestion_test".to_string(),
+            "localhost".to_string(),
             json!({
                 "test": "event_ingestion",
                 "sequence": i,
                 "timestamp": chrono::Utc::now()
-            })
+            }),
         )
         .fetch_one(pool)
         .await
@@ -704,14 +661,11 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
 
     let inserted_count = count_result.count.unwrap_or(0) as usize;
 
-    // Cleanup test events using source filter (more efficient)
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source = $1",
-        "sinex-preflight-pipeline-test"
-    )
-    .execute(pool)
-    .await
-    .ok(); // Ignore cleanup errors
+    // Cleanup test events using source filter
+    VerificationQueries::cleanup_by_source("sinex-preflight-pipeline-test".to_string())
+        .execute(pool)
+        .await
+        .ok(); // Ignore cleanup errors
 
     if inserted_count < event_count {
         bail!(
@@ -728,20 +682,11 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
     // Test automaton checkpoint table operations
 
     // Check if automaton_checkpoints table exists
-    let table_exists = sqlx::query!(
-        r#"
-        SELECT EXISTS (
-            SELECT FROM information_schema.tables 
-            WHERE table_schema = 'core' 
-            AND table_name = 'automaton_checkpoints'
-        ) as exists
-        "#
-    )
-    .fetch_one(pool)
-    .await
-    .context("Failed to check automaton_checkpoints table existence")?;
+    let table_exists = VerificationQueries::table_exists(pool, "core", "automaton_checkpoints")
+        .await
+        .context("Failed to check automaton_checkpoints table existence")?;
 
-    if !table_exists.exists.unwrap_or(false) {
+    if !table_exists {
         return Ok(json!({
             "table_exists": false,
             "note": "Automaton checkpoints table not found - will be created during deployment"
@@ -749,33 +694,21 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
     }
 
     // Test basic checkpoint operations
-    match sqlx::query!(
-        r#"
-        INSERT INTO core.automaton_checkpoints (
-            automaton_name, consumer_group, consumer_name, 
-            last_processed_id, processed_count, state_data
-        )
-        VALUES ($1, $2, $3, $4, $5, $6)
-        RETURNING id::uuid as "id!"
-        "#,
-        "test-automaton",
-        "test-group",
-        "test-consumer",
-        "0-0",
+    match VerificationQueries::insert_test_checkpoint(
+        "test-automaton".to_string(),
+        "test-group".to_string(),
+        "test-consumer".to_string(),
         0i64,
-        json!({"test": "checkpoint_operations"})
+        json!({"test": "checkpoint_operations"}),
     )
-    .fetch_one(pool)
+    .fetch_one::<CheckpointIdRecord>(pool)
     .await
     {
         Ok(checkpoint) => {
             // Clean up test checkpoint
-            let _ = sqlx::query!(
-                "DELETE FROM core.automaton_checkpoints WHERE id::uuid = $1",
-                checkpoint.id
-            )
-            .execute(pool)
-            .await;
+            let _ = VerificationQueries::delete_test_checkpoint(checkpoint.id)
+                .execute(pool)
+                .await;
 
             Ok(json!({
                 "table_exists": true,
@@ -783,10 +716,10 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
                 "checkpoint_id": checkpoint.id.to_string()
             }))
         }
-        Err(e) => Err(anyhow::anyhow!(
+        Err(e) => bail!(
             "Automaton checkpoint insert test failed: {}",
             e
-        )),
+        ),
     }
 }
 
@@ -862,7 +795,7 @@ async fn test_database_performance(pool: &PgPool) -> Result<Value> {
         let query_start = Instant::now();
 
         EventQueries::count_all()
-            .fetch_one(pool)
+            .fetch_one::<()>(pool)
             .await
             .context("Performance test query failed")?;
 

@@ -27,7 +27,9 @@
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
+use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder};
+use crate::common::query_helpers::TestQueries;
+use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_ulid::Ulid;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -195,18 +197,12 @@ impl StressTestUtils {
         source_prefix: &str,
     ) -> AnyhowResult<(), anyhow::Error> {
         // Clean up in reverse dependency order for satellite architecture
-        sqlx::query!(
-            "DELETE FROM core.events WHERE source LIKE $1",
-            format!("{}%", source_prefix)
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query!(
-            "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
-            agent_name
-        )
-        .execute(&pool)
-        .await?;
+        EventQueries::delete_by_source(format!("{}%", source_prefix))
+            .execute(pool)
+            .await?;
+        CheckpointQueries::delete_by_automaton_pattern(agent_name.to_string())
+            .execute(pool)
+            .await?;
 
         Ok(())
     }
@@ -218,33 +214,16 @@ impl StressTestUtils {
         source: &str,
         event_type: &str,
     ) -> AnyhowResult<Vec<String>> {
-        let mut event_ids = Vec::new();
-
-        for i in 0..count {
-            let event_id = Ulid::new();
-            let payload = json!({
+        let events = BatchEventBuilder::new(source, event_type, count)
+            .with_payload_generator(|i| json!({
                 "sequence": i,
                 "stress_test": true,
                 "data": format!("test_data_{}", i)
-            });
-
-            sqlx::query!(
-                "INSERT INTO core.events (
-            event_id, source, event_type, payload, host)
-                 VALUES ($1::uuid, $2, $3, $4, $5)",
-                event_id.to_uuid(),
-                source,
-                event_type,
-                payload,
-                "test-host"
-            )
-            .execute(&pool)
+            }))
+            .insert(pool)
             .await?;
-
-            event_ids.push(event_id.to_string());
-        }
-
-        Ok(event_ids)
+        
+        Ok(events.into_iter().map(|e| e.id.to_string()).collect())
     }
 }
 
@@ -453,57 +432,33 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
     let agent_name = format!("deadlock_test_{}", Ulid::new());
 
     // Create initial checkpoint for deadlock scenario test automaton
-    let checkpoint_id = Ulid::new();
-    sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
-        checkpoint_id.to_uuid(),
-        agent_name,
-        "initial_event",
-        json!({
+    TestCheckpointBuilder::new(&agent_name)
+        .with_last_processed("initial_event")
+        .with_state(json!({
             "version": "1.0.0",
             "description": "Coordinated deadlock scenario test",
             "automaton_type": "generic",
             "status": "running"
-        })
-    )
-    .execute(&pool)
-    .await?;
+        }))
+        .insert(&pool)
+        .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
     let deadlock_work_items = 20;
 
     for i in 0..deadlock_work_items {
-        let event_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO core.events (
-            event_id, source, event_type, payload, host)
-             VALUES ($1::uuid, $2, $3, $4, $5)",
-            event_id.to_uuid(),
-            "stress.deadlock_scenario",
-            "deadlock_item",
-            json!({"deadlock_item": i}),
-            "test-host"
-        )
-        .execute(&pool)
-        .await?;
+        TestEventBuilder::new("stress.deadlock_scenario", "deadlock_item")
+            .with_field("deadlock_item", json!(i))
+            .insert(&pool)
+            .await?;
         
         // Create checkpoint entry for satellite architecture
-        let checkpoint_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-             VALUES ($1::uuid, $2, $3, $4)
-             ON CONFLICT (automaton_name) DO UPDATE SET
-                state_data = EXCLUDED.state_data,
-                updated_at = NOW()",
-            checkpoint_id.to_uuid(),
-            agent_name,
-            format!("deadlock_event_{}", i),
-            json!({"deadlock_items": i + 1, "status": "active"})
-        )
-        .execute(&pool)
-        .await?;
+        TestCheckpointBuilder::new(&agent_name)
+            .with_last_processed(&format!("deadlock_event_{}", i))
+            .with_state(json!({"deadlock_items": i + 1, "status": "active"}))
+            .insert(&pool)
+            .await?;
     }
 
     let problematic_worker_count = 10;
@@ -540,8 +495,9 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             interval.tick().await;
 
             // Check for stuck checkpoint processing (satellite architecture)
+            // NOTE: Complex time-based query with NOW() - INTERVAL kept as raw SQL
             let stuck_checkpoints: Vec<(String, String)> = sqlx::query!(
-                "SELECT event_id::text, automaton_name FROM core.automaton_checkpoints
+                "SELECT id::text, automaton_name FROM core.automaton_checkpoints
                  WHERE automaton_name = $1
                    AND state_data->>'status' = 'processing'
                    AND updated_at < NOW() - INTERVAL '3 seconds'",
@@ -558,6 +514,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             .collect();
 
             // Check for active checkpoint processors
+            // NOTE: JSON field queries kept as raw SQL for specific status checks
             let active_checkpoints: HashSet<String> = sqlx::query_scalar!(
                 "SELECT automaton_name FROM core.automaton_checkpoints
                  WHERE automaton_name = $1
@@ -927,22 +884,16 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     let agent_name = format!("race_condition_{}", Ulid::new());
 
     // Create initial checkpoint for race condition test automaton
-    let checkpoint_id = Ulid::new();
-    sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
-        checkpoint_id.to_uuid(),
-        agent_name,
-        "initial_event",
-        json!({
+    TestCheckpointBuilder::new(&agent_name)
+        .with_last_processed("initial_event")
+        .with_state(json!({
             "version": "1.0.0",
             "description": "Race condition detection test",
             "automaton_type": "generic",
             "status": "running"
-        })
-    )
-    .execute(&pool)
-    .await?;
+        }))
+        .insert(&pool)
+        .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
@@ -950,35 +901,17 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
     let race_workers = 15;
 
     for i in 0..race_work_items {
-        let event_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO core.events (
-            event_id, source, event_type, payload, host)
-             VALUES ($1::uuid, $2, $3, $4, $5)",
-            event_id.to_uuid(),
-            "stress.race_condition",
-            "race_item",
-            json!({"race_item": i}),
-            "test-host"
-        )
-        .execute(&pool)
-        .await?;
+        TestEventBuilder::new("stress.race_condition", "race_item")
+            .with_field("race_item", json!(i))
+            .insert(&pool)
+            .await?;
         
         // Create checkpoint entry for satellite architecture
-        let checkpoint_id = Ulid::new();
-        sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-             VALUES ($1::uuid, $2, $3, $4)
-             ON CONFLICT (automaton_name) DO UPDATE SET
-                state_data = EXCLUDED.state_data,
-                updated_at = NOW()",
-            checkpoint_id.to_uuid(),
-            agent_name,
-            format!("race_event_{}", i),
-            json!({"race_items": i + 1, "status": "active"})
-        )
-        .execute(&pool)
-        .await?;
+        TestCheckpointBuilder::new(&agent_name)
+            .with_last_processed(&format!("race_event_{}", i))
+            .with_state(json!({"race_items": i + 1, "status": "active"}))
+            .insert(&pool)
+            .await?;
     }
 
     let detection_pool = pool.clone();
@@ -1463,22 +1396,16 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     let test_duration = Duration::from_secs(5);
 
     // Create initial checkpoint for extreme concurrency test automaton
-    let checkpoint_id = Ulid::new();
-    sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
-        checkpoint_id.to_uuid(),
-        agent_name,
-        "initial_event",
-        json!({
+    TestCheckpointBuilder::new(&agent_name)
+        .with_last_processed("initial_event")
+        .with_state(json!({
             "version": "1.0.0",
             "description": "Extreme concurrency stress test",
             "automaton_type": "generic",
             "status": "running"
-        })
-    )
-    .execute(&pool)
-    .await?;
+        }))
+        .insert(&pool)
+        .await?;
 
     let metrics = Arc::new(ConcurrencyStressMetrics::new());
 
@@ -1486,37 +1413,20 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
     let create_agent = agent_name.clone();
     let creator_handle = tokio::spawn(async move {
         for i in 0..work_items {
-            let event_id = Ulid::new();
-            sqlx::query!(
-                "INSERT INTO core.events (
-            event_id, source, event_type, payload, host)
-                 VALUES ($1::uuid, $2, $3, $4, $5)",
-                event_id.to_uuid(),
-                "stress.extreme_concurrency",
-                "stress_item",
-                json!({"stress_item": i, "batch": "extreme"}),
-                "test-host"
-            )
-            .execute(&create_pool)
-            .await
-            .expect("Event creation failed");
+            TestEventBuilder::new("stress.extreme_concurrency", "stress_item")
+                .with_field("stress_item", json!(i))
+                .with_field("batch", json!("extreme"))
+                .insert(&create_pool)
+                .await
+                .expect("Event creation failed");
             
             // Create checkpoint entry for satellite architecture
-            let checkpoint_id = Ulid::new();
-            sqlx::query!(
-                "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)
-                 ON CONFLICT (automaton_name) DO UPDATE SET
-                    state_data = EXCLUDED.state_data,
-                    updated_at = NOW()",
-                checkpoint_id.to_uuid(),
-                &create_agent,
-                format!("stress_event_{}", i),
-                json!({"stress_items": i + 1, "status": "active", "max_attempts": 5})
-            )
-            .execute(&create_pool)
-            .await
-            .expect("Checkpoint creation failed");
+            TestCheckpointBuilder::new(&create_agent)
+                .with_last_processed(&format!("stress_event_{}", i))
+                .with_state(json!({"stress_items": i + 1, "status": "active", "max_attempts": 5}))
+                .insert(&create_pool)
+                .await
+                .expect("Checkpoint creation failed");
 
             sleep(Duration::from_millis(50)).await;
         }
@@ -1591,15 +1501,10 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
                 }
             }
 
-            // Satellite architecture - monitor checkpoint activity instead of work queue
-            let checkpoint_count = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
-                monitor_agent
-            )
-            .fetch_one(&monitor_pool)
-            .await
-            .unwrap_or(Some(0))
-            .unwrap_or(0);
+            // Satellite architecture - monitor checkpoint activity
+            let checkpoint_count = TestQueries::count_checkpoints_by_automaton(&monitor_pool, &monitor_agent)
+                .await
+                .unwrap_or(0);
 
             let recent_updates = sqlx::query_scalar!(
                 "SELECT COUNT(*) FROM core.automaton_checkpoints 

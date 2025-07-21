@@ -6,7 +6,7 @@
 // - Schema validation is enforced at the database level
 
 use crate::common::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::EventFactory;
 use serde_json::json;
 use sinex_db::events::{insert_event, get_event_by_id};
 

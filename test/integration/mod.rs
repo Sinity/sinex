@@ -49,12 +49,9 @@
 // Integration tests use shared database pools with transaction isolation,
 // providing faster test execution while maintaining perfect isolation between tests.
 
-use crate::common::prelude::*;
 
 // === Core Component Integration ===
 
-/// Consolidated database integration tests
-use sinex_satellite_sdk::EventSourceConfig;
 
 pub mod database_test;
 

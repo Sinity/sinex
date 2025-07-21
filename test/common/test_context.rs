@@ -27,15 +27,13 @@ use sinex_core_types::DbPoolRef;
 use crate::common::timing_optimization::wait_helpers::{
     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
 };
-use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_events::EventFactory;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use redis::aio::MultiplexedConnection;
 use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle, StreamMessage};
 use sinex_satellite_sdk::checkpoint::CheckpointState;
-use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_db::queries::EventQueries;
 
 // Event builders moved to sinex-events
 

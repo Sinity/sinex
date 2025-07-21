@@ -15,6 +15,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources};
 
 /// Enhanced D-Bus watcher with real-time signal subscription
 pub struct EnhancedDbusWatcher {

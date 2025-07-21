@@ -8,9 +8,9 @@
 // - Performance under load
 
 use crate::common::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::EventFactory;
 use sinex_db::integrity::{malformed_detection, IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::{EventValidator, SchemaViolationType, ValidationError};
+use sinex_db::validation::{EventValidator, ValidationError};
 
 #[sinex_test]
 async fn test_malformed_event_detection(ctx: TestContext) -> TestResult {

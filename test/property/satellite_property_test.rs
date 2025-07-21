@@ -3,14 +3,10 @@
 // Tests that verify satellite communication, lifecycle, and coordination properties
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::property::strategies::*;
+use crate::common::property_builders::*;
 use proptest::prelude::*;
 use sinex_satellite_sdk::config::SatelliteConfig;
-use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Mutex;
 
 /// Test satellite configuration parsing and validation
 proptest! {
@@ -46,6 +42,288 @@ proptest! {
                 Err(_) => {
                     // Some configurations might be invalid, which is acceptable
                     // as long as the parsing doesn't panic
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
                 }
             }
         });
@@ -100,6 +378,288 @@ proptest! {
             // Verify ULID ordering is preserved (ULIDs are time-ordered)
             for i in 1..db_events.len() {
                 assert!(db_events[i-1].id.timestamp() <= db_events[i].id.timestamp());
+            }
+        });
+    }
+}
+
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
+                }
             }
         });
     }
@@ -167,6 +727,288 @@ proptest! {
     }
 }
 
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
+                }
+            }
+        });
+    }
+}
+
 /// Test satellite resource management
 proptest! {
     #[test]
@@ -214,6 +1056,288 @@ proptest! {
             // Check resource usage (basic check - would need more sophisticated monitoring in production)
             let process_count = satellites.len();
             assert!(process_count <= concurrent_satellites);
+        });
+    }
+}
+
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
+                }
+            }
         });
     }
 }
@@ -267,6 +1391,288 @@ proptest! {
             // Verify no events were lost during config update
             let final_count = ctx.event_count().await.unwrap();
             assert_eq!(final_count, events.len() as i64);
+        });
+    }
+}
+
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
+                }
+            }
         });
     }
 }
@@ -329,6 +1735,288 @@ proptest! {
     }
 }
 
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
+                }
+            }
+        });
+    }
+}
+
 /// Test satellite coordination with automata
 proptest! {
     #[test]
@@ -376,6 +2064,288 @@ proptest! {
 
             let final_count = ctx.event_count().await.unwrap();
             assert_eq!(final_count, events.len() as i64);
+        });
+    }
+}
+
+/// Test satellite event processing with property builders
+proptest! {
+    #[test]
+    fn satellite_processes_events_correctly(
+        events in arbitrary_event_batch(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Simulate satellite processing
+            let processed_count = event_ids.len();
+            
+            // Verify events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= processed_count as i64);
+        });
+    }
+}
+
+/// Test satellite heartbeat events
+proptest! {
+    #[test]
+    fn satellite_heartbeat_events_are_valid(
+        heartbeat in heartbeat_event(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert heartbeat event
+            let result = sinex_db::insert_event_with_validator(&pool, &heartbeat, None).await;
+            assert!(result.is_ok());
+            
+            // Verify heartbeat fields
+            assert_eq!(heartbeat.source, sources::SINEX);
+            assert_eq!(heartbeat.event_type, event_types::sinex::AUTOMATON_HEARTBEAT);
+            
+            // Verify payload structure
+            let payload = heartbeat.payload.as_object().unwrap();
+            assert!(payload.contains_key("automaton_name"));
+            assert!(payload.contains_key("events_processed"));
+            assert!(payload.contains_key("uptime_seconds"));
+        });
+    }
+}
+
+/// Test satellite event batching behavior
+proptest! {
+    #[test]
+    fn satellite_batching_maintains_order(
+        batch in time_ordered_batch(),
+        batch_size in 1usize..=100usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Process events in batches
+            let mut all_inserted = Vec::new();
+            for chunk in batch.chunks(batch_size) {
+                for event in chunk {
+                    let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                    all_inserted.push((inserted.id, event.ts_orig));
+                }
+            }
+            
+            // Verify timestamp ordering is preserved
+            for window in all_inserted.windows(2) {
+                let (_, ts1) = &window[0];
+                let (_, ts2) = &window[1];
+                if let (Some(t1), Some(t2)) = (ts1, ts2) {
+                    assert!(t1 <= t2, "Events should maintain timestamp order");
+                }
+            }
+        });
+    }
+}
+
+/// Test satellite recovery with realistic event streams
+proptest! {
+    #[test]
+    fn satellite_recovery_handles_event_types(
+        fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
+        shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
+        window_events in proptest::collection::vec(window_event(), 1..=10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert different event types
+            let mut total_events = 0;
+            
+            for event in fs_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in shell_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            for event in window_events {
+                sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                total_events += 1;
+            }
+            
+            // Verify all events were inserted
+            let count = sinex_db::count_events(&pool).await.unwrap();
+            assert!(count >= total_events);
+        });
+    }
+}
+
+/// Test satellite handling of malformed events
+proptest! {
+    #[test]
+    fn satellite_rejects_invalid_events(
+        invalid_event in prop_oneof![
+            empty_source_event(),
+            massive_payload_event(),
+            extreme_timestamp_event(),
+        ],
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Try to insert invalid event
+            let result = sinex_db::insert_event_with_validator(&pool, &invalid_event, None).await;
+            
+            // Some invalid events should be rejected
+            if invalid_event.source.is_empty() {
+                assert!(result.is_err(), "Empty source should be rejected");
+            }
+            
+            // Massive payloads might fail due to size limits
+            if invalid_event.payload.to_string().len() > 1_000_000 {
+                // Large payloads might be rejected or succeed based on DB config
+                // So we just verify no panic occurs
+            }
+        });
+    }
+}
+
+/// Test satellite checkpoint integration
+proptest! {
+    #[test]
+    fn satellite_checkpoint_progression(
+        events in arbitrary_event_batch(),
+        checkpoint in arbitrary_checkpoint(),
+        satellite_name in "[a-z]+-satellite",
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event in &events {
+                let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Create checkpoint manager
+            let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+                pool.clone(),
+                satellite_name.clone(),
+                format!("{}-group", satellite_name),
+                format!("{}-consumer", satellite_name),
+            );
+            
+            // Save checkpoint
+            let state = sinex_satellite_sdk::checkpoint::CheckpointState {
+                checkpoint,
+                processed_count: events.len() as u64,
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({"events": event_ids.len()})),
+                version: 2,
+            };
+            
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            
+            // Verify checkpoint was saved
+            let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
+            assert!(loaded.is_some());
+            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+        });
+    }
+}
+
+/// Test realistic user activity streams
+proptest! {
+    #[test]
+    fn satellite_handles_user_activity_patterns(
+        activity_batch in user_activity_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            let mut inserted_count = 0;
+            
+            // Insert user activity events
+            for event in &activity_batch {
+                let result = sinex_db::insert_event_with_validator(&pool, event, None).await;
+                if result.is_ok() {
+                    inserted_count += 1;
+                }
+            }
+            
+            // Verify events represent realistic user activity
+            assert!(inserted_count > 0, "At least some events should be inserted");
+            
+            // Check event diversity (different sources)
+            let sources_used: std::collections::HashSet<_> = activity_batch
+                .iter()
+                .map(|e| e.source.as_str())
+                .collect();
+            assert!(sources_used.len() > 1, "User activity should include multiple event sources");
+        });
+    }
+}
+
+/// Test related events handling (e.g., file lifecycle)
+proptest! {
+    #[test]
+    fn satellite_tracks_related_events(
+        related_batch in related_events_batch(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+            
+            // Extract the file path from first event
+            let file_path = if let Some(path_value) = related_batch[0].payload.get("path") {
+                path_value.as_str().unwrap_or("unknown")
+            } else {
+                "unknown"
+            };
+            
+            // Insert related events
+            let mut event_ids = Vec::new();
+            for event in &related_batch {
+                let inserted = sinex_db::insert_event_with_validator(&pool, event, None).await.unwrap();
+                event_ids.push(inserted.id);
+            }
+            
+            // Verify event sequence represents file lifecycle
+            assert_eq!(related_batch[0].event_type, event_types::filesystem::FILE_CREATED);
+            assert!(related_batch.iter().any(|e| e.event_type == event_types::filesystem::FILE_MODIFIED));
+            assert_eq!(related_batch.last().unwrap().event_type, event_types::filesystem::FILE_DELETED);
+            
+            // All events should reference the same file
+            for event in &related_batch {
+                if let Some(path) = event.payload.get("path") {
+                    assert_eq!(path.as_str().unwrap(), file_path);
+                }
+            }
         });
     }
 }

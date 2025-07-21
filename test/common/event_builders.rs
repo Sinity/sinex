@@ -5,7 +5,6 @@
 
 // Re-export everything from sinex-events event builders
 
-use crate::common::prelude::*;
 
 // Re-export everything from sinex-events event builders
 pub use sinex_events::event_builders::*;

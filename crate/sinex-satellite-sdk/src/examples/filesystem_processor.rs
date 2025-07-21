@@ -22,6 +22,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info, warn};
+use sinex_events::constants::{sources};
 
 /// Example filesystem processor implementing unified stream processor interface
 #[derive(Debug)]
@@ -100,7 +101,7 @@ impl FilesystemProcessor {
             }
 
             if emit_events {
-                let factory = EventFactory::new("fs");
+                let factory = EventFactory::new(sources::FS);
                 let event = if metadata.is_file() {
                     factory.create_event(
                         "file.discovered",

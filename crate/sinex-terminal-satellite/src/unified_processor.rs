@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::{EventFactory, event_types, sources, services};
+use sinex_events::{EventFactory, event_types, services};
 use sinex_macros::with_context;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
@@ -27,6 +27,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
+// use sinex_events::constants::{event_types, services}; // already imported above
 
 /// Terminal monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

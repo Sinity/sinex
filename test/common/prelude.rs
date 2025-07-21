@@ -28,7 +28,7 @@ pub use std::collections::{HashMap, HashSet};
 pub use std::fmt::Debug;
 pub use std::str::FromStr;
 pub use std::sync::{
-    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 pub use std::time::{Duration, Instant};
@@ -37,9 +37,7 @@ pub use anyhow::Result as AnyhowResult;
 /// Standard error type for test functions
 pub type TestResult = AnyhowResult<()>;
 pub use sinex_core_types::CoreError;
-pub use sinex_validation::Result as ValidationResult;
 // ===== Serialization =====
-pub use serde::{Deserialize, Serialize};
 pub use serde_json::{json, Value};
 // ===== Time and Date =====
 pub use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -73,16 +71,13 @@ pub use sinex_test_macros::sinex_test;
 #[allow(unused_imports)]
 pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
-pub use crate::common::timing_optimization::wait_helpers::wait_for_filtered_event_count;
 // ===== Common Functions =====
 // Event operations
 pub use crate::common::insert_event;
 // Query shortcuts
-pub use sinex_db::{events, events::get_event_by_id, insert_event_with_validator};
+pub use sinex_db::{events::get_event_by_id, insert_event_with_validator};
 // Test helper functions from common/mod.rs
-pub use crate::common::{get_events_by_type, get_events_in_time_range, get_recent_events};
 // Satellite architecture testing utilities
-pub use crate::common::count_events_from_source;
 // ===== Enhanced Assertions =====
 pub use crate::common::enhanced_assertions::{
     assert_channel_send_success, assert_eq_with_context, assert_event_inserted_with_context,
@@ -91,12 +86,21 @@ pub use crate::common::enhanced_assertions::{
 };
 // ===== Mock Types for Testing =====
 pub use crate::common::mocks::{
-    AtuinHistoryImporter, ClipboardMonitor, EventSourceContext, FilesystemMonitor, RedisClient,
-    ShellHistoryMonitor, TerminalMonitor,
+    AtuinHistoryImporter, EventSourceContext, FilesystemMonitor,
+    ShellHistoryMonitor,
 };
 // ===== Worker Test Utilities =====
 pub use crate::common::worker_test_utils::{
-    claim_work_queue_items, clear_work_queue, complete_work_queue_item, create_work_item,
-    ensure_work_queue_table, get_work_queue_status, WorkQueueItem,
+    claim_work_queue_items, complete_work_queue_item,
 };
 // ===== Constants =====
+
+// ===== Test Query Helpers and Builders =====
+// Query helpers for test-friendly database operations
+pub use crate::common::query_helpers::{TestQueries, CheckpointRecord, OperationRecord};
+
+// Test data builders with fluent interfaces
+pub use crate::common::builders::{
+    TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder, 
+    TestScenarioBuilder, TestEvents
+};

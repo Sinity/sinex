@@ -1,9 +1,7 @@
 use crate::common::prelude::*;
 use serde_json::json;
 use sinex_db::events::{get_event_by_id, insert_event};
-use sinex_db::queries::{EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{RawEvent, EventFactory, sources, event_types};
+use sinex_events::{EventFactory, event_types};
 use sinex_test_macros::sinex_test;
 use tracing::info;
 

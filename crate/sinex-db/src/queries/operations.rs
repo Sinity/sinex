@@ -4,9 +4,9 @@
 //! health checks, and monitoring. All queries automatically handle ULID/UUID
 //! conversion and provide consistent error handling.
 
+use crate::constants::tables;
 use crate::query_builder::{QueryBuilder, QueryParam};
 use chrono::{DateTime, Utc};
-use std::collections::HashMap;
 
 /// Operations query registry with centralized system operations
 pub struct OperationQueries;
@@ -18,7 +18,7 @@ impl OperationQueries {
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn health_check() -> QueryBuilder {
         // Use a simple table-less select that PostgreSQL supports
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&["1 as health"])
             .limit(1)
     }
@@ -28,7 +28,7 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<HealthMetricsRecord>(pool)`
     pub fn get_health_metrics() -> QueryBuilder {
-        QueryBuilder::select("core.events").columns(&[
+        QueryBuilder::select(tables::EVENTS).columns(&[
             "COUNT(*) as \"total_events!\"",
             "COUNT(DISTINCT source) as \"active_sources!\"",
             "COUNT(DISTINCT event_type) as \"event_types!\"",
@@ -42,7 +42,7 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<ThroughputMetricsRecord>(pool)`
     pub fn get_throughput_metrics(since: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "COUNT(*) as \"events_count!\"",
                 "COUNT(*) / EXTRACT(EPOCH FROM (NOW() - $1::timestamptz)) as \"events_per_second!\"",
@@ -57,7 +57,7 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<SourceActivityRecord>(pool)`
     pub fn get_source_activity(since: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "source as \"source!\"",
                 "COUNT(*) as \"event_count!\"",
@@ -74,7 +74,7 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<EventTypeDistributionRecord>(pool)`
     pub fn get_event_type_distribution(since: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_type as \"event_type!\"",
                 "COUNT(*) as \"count!\"",
@@ -90,7 +90,7 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<ErrorRateRecord>(pool)`
     pub fn get_error_rate(since: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "COUNT(*) as \"total_events!\"",
                 "COUNT(*) FILTER (WHERE event_type LIKE '%error%' OR event_type LIKE '%fail%') as \"error_events!\"",
@@ -159,7 +159,7 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointHealthRecord>(pool)`
     pub fn get_checkpoint_health() -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select(tables::AUTOMATON_CHECKPOINTS)
             .columns(&[
                 "automaton_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
@@ -307,6 +307,102 @@ impl OperationQueries {
             .where_eq("datname", QueryParam::String("sinex_dev".to_string()))
     }
 
+    // ===== Operations Log Functions =====
+
+    /// Insert a new operation into the operations log
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.execute(pool)`
+    pub fn insert_operation(
+        operation_id: sinex_ulid::Ulid,
+        operation_type: String,
+        description: String,
+        metadata: serde_json::Value,
+        operator: String,
+        operation_ts: DateTime<Utc>,
+    ) -> QueryBuilder {
+        QueryBuilder::insert("core.operations_log")
+            .columns(&[
+                "operation_id",
+                "operation_type",
+                "description",
+                "metadata",
+                "operator",
+                "operation_ts",
+            ])
+            .values(&[
+                QueryParam::Ulid(operation_id),
+                QueryParam::String(operation_type),
+                QueryParam::String(description),
+                QueryParam::Json(metadata),
+                QueryParam::String(operator),
+                QueryParam::Timestamp(operation_ts),
+            ])
+    }
+
+    /// Update operation status
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.execute(pool)`
+    pub fn update_operation_status(
+        operation_id: sinex_ulid::Ulid,
+        result_status: String,
+        completed_at: DateTime<Utc>,
+        error_message: Option<String>,
+    ) -> QueryBuilder {
+        let mut builder = QueryBuilder::update("core.operations_log")
+            .set("result_status", QueryParam::String(result_status))
+            .set("completed_at", QueryParam::Timestamp(completed_at))
+            .where_eq("operation_id", QueryParam::Ulid(operation_id));
+
+        if let Some(error_msg) = error_message {
+            builder = builder.set("error_message", QueryParam::String(error_msg));
+        }
+
+        builder
+    }
+
+    /// Get operation by ID
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_one::<OperationRecord>(pool)`
+    pub fn get_operation_by_id(operation_id: sinex_ulid::Ulid) -> QueryBuilder {
+        QueryBuilder::select("core.operations_log")
+            .columns(&[
+                "operation_id as \"operation_id: sinex_ulid::Ulid\"",
+                "operation_type",
+                "description",
+                "metadata",
+                "result_status",
+                "operator",
+                "error_message",
+                "operation_ts",
+                "completed_at",
+            ])
+            .where_eq("operation_id", QueryParam::Ulid(operation_id))
+    }
+
+    /// Get recent operations
+    ///
+    /// # Returns
+    /// QueryBuilder that can be executed with `.fetch_all::<OperationRecord>(pool)`
+    pub fn get_recent_operations(limit: Option<i64>) -> QueryBuilder {
+        QueryBuilder::select("core.operations_log")
+            .columns(&[
+                "operation_id as \"operation_id: sinex_ulid::Ulid\"",
+                "operation_type",
+                "description",
+                "metadata",
+                "result_status",
+                "operator",
+                "error_message",
+                "operation_ts",
+                "completed_at",
+            ])
+            .order_by("operation_ts", "DESC")
+            .limit(limit.unwrap_or(100))
+    }
+
     // ===== Metrics Operations =====
 
     /// Store a single metrics entry
@@ -345,8 +441,8 @@ impl OperationQueries {
     /// Query metrics by name and time range
     pub fn query_metrics(
         metric_name: Option<&str>,
-        namespace: Option<&str>,
-        subsystem: Option<&str>,
+        _namespace: Option<&str>,
+        _subsystem: Option<&str>,
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
         limit: Option<i64>,
@@ -379,8 +475,8 @@ impl OperationQueries {
     /// Get aggregated metrics for a metric over time
     pub fn get_metrics_aggregation(
         metric_name: &str,
-        namespace: Option<&str>,
-        subsystem: Option<&str>,
+        _namespace: Option<&str>,
+        _subsystem: Option<&str>,
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> QueryBuilder {

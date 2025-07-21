@@ -2,24 +2,21 @@
 //
 // Tests that verify checkpoint consistency, recovery, and concurrency properties
 
-use crate::common::prelude::*;
 
-use crate::common::prelude::*;
-use crate::property::strategies::*;
+use crate::common::property_builders::*;
 use proptest::prelude::*;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use sinex_satellite_sdk::stream_processor::Checkpoint;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Test that checkpoint updates are idempotent
 proptest! {
     #[test]
     fn checkpoint_updates_are_idempotent(
-        automaton_name in automaton_names(),
+        checkpoint in arbitrary_checkpoint(),
         processed_count in 0u64..10000u64,
-        last_processed_id in prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"),
-        checkpoint_data in checkpoint_data(),
+        checkpoint_data in prop::option::of(any::<serde_json::Value>()),
+        automaton_name in "[a-z]+-automaton",
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -34,20 +31,11 @@ proptest! {
             );
 
             // Create initial checkpoint state
-            let checkpoint = if let Some(id) = last_processed_id.clone() {
-                Checkpoint::Stream {
-                    message_id: id,
-                    event_id: None,
-                }
-            } else {
-                Checkpoint::None
-            };
-            
             let initial_state = CheckpointState {
-                checkpoint,
+                checkpoint: checkpoint.clone(),
                 processed_count,
                 last_activity: chrono::Utc::now(),
-                data: Some(checkpoint_data.clone()),
+                data: checkpoint_data.clone(),
                 version: 2,
             };
 
@@ -361,6 +349,189 @@ proptest! {
             // Verify cleanup maintains isolation
             let remaining_checkpoint = cleaned_manager.get_checkpoint_stats().await.unwrap();
             assert!(remaining_checkpoint.last_update.is_some());
+        });
+    }
+}
+
+/// Test checkpoint recovery with realistic event streams using property builders
+proptest! {
+    #[test]
+    fn checkpoint_recovery_with_event_builders(
+        events in arbitrary_event_batch(10..50),
+        automaton_name in automaton_names(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+
+            // Insert events
+            let mut event_ids = Vec::new();
+            for event_builder in events {
+                let event = event_builder.insert(&pool).await.unwrap();
+                event_ids.push(event.id);
+            }
+
+            // Create checkpoint manager
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+
+            // Simulate processing with checkpoints
+            let mut processed_count = 0u64;
+            for (i, event_id) in event_ids.iter().enumerate() {
+                processed_count += 1;
+                
+                let state = CheckpointState {
+                    checkpoint: Checkpoint::Database {
+                        event_id: *event_id,
+                    },
+                    processed_count,
+                    last_activity: chrono::Utc::now(),
+                    data: Some(json!({"batch_index": i})),
+                    version: 2,
+                };
+
+                checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            }
+
+            // Verify final state matches processed events
+            let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+            assert_eq!(final_state.max_processed, event_ids.len() as u64);
+            assert!(final_state.last_update.is_some());
+        });
+    }
+}
+
+/// Test checkpoint builders integration
+proptest! {
+    #[test] 
+    fn checkpoint_builder_integration(
+        checkpoint in arbitrary_checkpoint(),
+        events in arbitrary_event_batch(1..10),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+
+            // Insert checkpoint using builder
+            checkpoint.insert(&pool).await.unwrap();
+
+            // Insert events
+            let mut event_count = 0;
+            for event_builder in events {
+                event_builder.insert(&pool).await.unwrap();
+                event_count += 1;
+            }
+
+            // Verify checkpoint exists
+            let result = sqlx::query!(
+                "SELECT COUNT(*) as count FROM core.automaton_checkpoints"
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+            assert!(result.count.unwrap_or(0) > 0);
+        });
+    }
+}
+
+/// Test time-based checkpoint progression using property builders
+proptest! {
+    #[test]
+    fn time_based_checkpoint_progression(
+        (start_time, end_time) in arbitrary_time_range(),
+        automaton_name in automaton_names(),
+        event_count in 5usize..20usize,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+
+            // Create events spread across time range
+            let time_step = (end_time - start_time) / event_count as i32;
+            let mut processed_count = 0u64;
+
+            for i in 0..event_count {
+                let event_time = start_time + time_step * i as i32;
+                processed_count += 1;
+
+                let state = CheckpointState {
+                    checkpoint: Checkpoint::Time {
+                        timestamp: event_time,
+                    },
+                    processed_count,
+                    last_activity: event_time,
+                    data: Some(json!({
+                        "time_index": i,
+                        "timestamp": event_time.to_rfc3339(),
+                    })),
+                    version: 2,
+                };
+
+                checkpoint_manager.save_checkpoint(&state).await.unwrap();
+            }
+
+            // Verify progression
+            let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+            assert_eq!(final_state.max_processed, event_count as u64);
+        });
+    }
+}
+
+/// Test checkpoint state with ULID ranges
+proptest! {
+    #[test]
+    fn checkpoint_with_ulid_ranges(
+        (start_ulid, end_ulid) in arbitrary_ulid_range(),
+        automaton_name in automaton_names(),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let pool = ctx.pool().clone();
+
+            let checkpoint_manager = CheckpointManager::new(
+                pool.clone(),
+                automaton_name.clone(),
+                format!("{}-group", automaton_name),
+                format!("{}-consumer", automaton_name),
+            );
+
+            // Create checkpoint with ULID range
+            let state = CheckpointState {
+                checkpoint: Checkpoint::Database {
+                    event_id: end_ulid,
+                },
+                processed_count: 100, // Arbitrary count
+                last_activity: chrono::Utc::now(),
+                data: Some(json!({
+                    "start_ulid": start_ulid.to_string(),
+                    "end_ulid": end_ulid.to_string(),
+                    "range_processed": true,
+                })),
+                version: 2,
+            };
+
+            checkpoint_manager.save_checkpoint(&state).await.unwrap();
+
+            // Verify the range was saved
+            let stats = checkpoint_manager.get_checkpoint_stats().await.unwrap();
+            assert_eq!(stats.max_processed, 100);
+            assert!(stats.last_update.is_some());
         });
     }
 }

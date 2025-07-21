@@ -8,9 +8,11 @@
 // - Recovery scenarios and data loss detection
 
 use crate::common::prelude::*;
+use crate::common::query_helpers::TestQueries;
+use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder};
 use sinex_db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
-use sinex_events::{event_types, services, EventFactory};
+use sinex_db::validation::CheckpointInconsistencyType;
+use sinex_events::EventFactory;
 use std::collections::HashMap;
 
 #[sinex_test]
@@ -20,9 +22,10 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
     // Create test automaton
     let automaton_name = format!("test_automaton_{}", Ulid::new());
 
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Test automaton for checkpoint validation')",
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+         VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
     .execute(&pool)
@@ -31,10 +34,11 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
     // Insert some test events
     let mut event_ulids = Vec::new();
     for i in 0..10 {
-        let factory = EventFactory::new("test.checkpoint");
-        let event = factory.create_event("consistency_test", json!({"sequence": i}));
-        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
-        event_ulids.push(inserted_event.id);
+        let event = TestEventBuilder::new("test.checkpoint", "consistency_test")
+            .with_field("sequence", json!(i))
+            .insert(&pool)
+            .await?;
+        event_ulids.push(event.id);
 
         // Small delay between events
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
@@ -42,17 +46,12 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
 
     // Create initial checkpoint pointing to the 5th event
     let checkpoint_ulid = event_ulids[4];
-    sqlx::query!(
-        r#"
-        INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 5, NOW(), '{"processed": 5}'::jsonb)
-        "#,
-        automaton_name,
-        checkpoint_ulid.to_string()
-    )
-    .execute(&pool)
-    .await?;
+    TestCheckpointBuilder::new(&automaton_name)
+        .with_last_processed(&checkpoint_ulid.to_string())
+        .with_processed_count(5)
+        .with_state(json!({"processed": 5}))
+        .insert(&pool)
+        .await?;
 
     // Test checkpoint consistency verification
     let issues =
@@ -77,22 +76,21 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
         "Should detect processing lag"
     );
 
-    // Cleanup
+    // Cleanup - still need raw SQL for processor_manifests
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.checkpoint'")
-        .execute(&pool)
-        .await?;
+    TestQueries::cleanup_test_events(&pool).await?;
 
     Ok(())
 }
@@ -104,9 +102,10 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
     // Create test automaton
     let automaton_name = format!("gap_test_automaton_{}", Ulid::new());
 
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Gap detection test automaton')",
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+         VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
     .execute(&pool)
@@ -115,25 +114,28 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
     // Insert events in two batches with a gap
     let mut batch1_events = Vec::new();
     for i in 0..5 {
-        let event = {
-            let factory = EventFactory::new("test.gap_detection");
-            let event = factory.create_event("batch1", json!({"batch": 1, "sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
-        };
+        let event = TestEventBuilder::new("test.gap_detection", "batch1")
+            .with_field("batch", json!(1))
+            .with_field("sequence", json!(i))
+            .insert(&pool)
+            .await?;
         batch1_events.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
 
-    // Create checkpoint at end of batch1
+    // Create checkpoint at end of batch1 - need raw SQL for last_activity manipulation
     let last_batch1_ulid = *batch1_events.last().unwrap();
+    // This requires raw SQL to set specific last_activity time
     sqlx::query!(
         r#"
         INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb)
+        (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
+        VALUES ($1, $2::text, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb, $3, $4)
         "#,
         automaton_name,
-        last_batch1_ulid.to_string()
+        last_batch1_ulid.to_string(),
+        format!("{}-group", automaton_name),
+        format!("{}-consumer", automaton_name)
     )
     .execute(&pool)
     .await?;
@@ -143,11 +145,11 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
 
     let mut batch2_events = Vec::new();
     for i in 0..8 {
-        let event = {
-            let factory = EventFactory::new("test.gap_detection");
-            let event = factory.create_event("batch2", json!({"batch": 2, "sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
-        };
+        let event = TestEventBuilder::new("test.gap_detection", "batch2")
+            .with_field("batch", json!(2))
+            .with_field("sequence", json!(i))
+            .insert(&pool)
+            .await?;
         batch2_events.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -226,20 +228,23 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         "Should detect at least the expected gap"
     );
 
-    // Cleanup
+    // Cleanup - use query builder where available
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.gap_detection'")
+    // Delete events using query builder
+    use sinex_db::queries::EventQueries;
+    EventQueries::delete_by_source("test.gap_detection".to_string())
         .execute(&pool)
         .await?;
 
@@ -253,28 +258,32 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
     // Create test automaton
     let automaton_name = format!("stale_test_automaton_{}", Ulid::new());
 
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Stale checkpoint test automaton')",
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+         VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
     .execute(&pool)
     .await?;
 
     // Insert a single event
-    let factory = EventFactory::new("test.stale_checkpoint");
-    let raw_event = factory.create_event("stale_test", json!({"data": "test"}));
-    let event = sinex_db::insert_event_with_validator(&pool, &raw_event, None).await?;
+    let event = TestEventBuilder::new("test.stale_checkpoint", "stale_test")
+        .with_field("data", json!("test"))
+        .insert(&pool)
+        .await?;
 
-    // Create checkpoint with old timestamp (3 hours ago)
+    // Create checkpoint with old timestamp (3 hours ago) - requires raw SQL for last_activity manipulation
     sqlx::query!(
         r#"
         INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb)
+        (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
+        VALUES ($1, $2::text, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb, $3, $4)
         "#,
         automaton_name,
-        event.id.to_string()
+        event.id.to_string(),
+        format!("{}-group", automaton_name),
+        format!("{}-consumer", automaton_name)
     )
     .execute(&pool)
     .await?;
@@ -319,20 +328,24 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
         );
     }
 
-    // Cleanup
+    // Cleanup - use query builder
+    use sinex_db::queries::CheckpointQueries;
+    // Delete checkpoints for this automaton
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.stale_checkpoint'")
+    use sinex_db::queries::EventQueries;
+    EventQueries::delete_by_source("test.stale_checkpoint".to_string())
         .execute(&pool)
         .await?;
 
@@ -350,8 +363,8 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     for name in &automaton_names {
         sqlx::query!(
-            "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-             VALUES ($1, 'automaton', '1.0.0', 'Cross-validation test automaton')",
+            "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+             VALUES ($1, 'automaton', '1.0.0', 'test-host')",
             name
         )
         .execute(&pool)
@@ -378,17 +391,20 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
     for (name, processed_count, last_activity) in checkpoint_configs {
         let checkpoint_ulid = shared_events[processed_count - 1];
 
+        // Dynamic SQL required for variable last_activity expression
         sqlx::query(&format!(
             r#"
             INSERT INTO core.automaton_checkpoints 
-            (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-            VALUES ($1, $2, $3, {}, '{{"checkpoint_test": true}}'::jsonb)
+            (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
+            VALUES ($1, $2, $3, {}, '{{"checkpoint_test": true}}'::jsonb, $4, $5)
             "#,
             last_activity
         ))
         .bind(name)
         .bind(checkpoint_ulid.to_string())
         .bind(processed_count as i64)
+        .bind(format!("{}-group", name))
+        .bind(format!("{}-consumer", name))
         .execute(&pool)
         .await?;
     }
@@ -482,20 +498,19 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestRes
 
     // Cleanup
     for name in &automaton_names {
+        use sinex_db::queries::CheckpointQueries;
+        CheckpointQueries::delete_by_automaton_pattern(name.clone())
+            .execute(&pool)
+            .await?;
         sqlx::query!(
-            "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
-            name
-        )
-        .execute(&pool)
-        .await?;
-        sqlx::query!(
-            "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+            "DELETE FROM core.processor_manifests WHERE processor_name = $1",
             name
         )
         .execute(&pool)
         .await?;
     }
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.cross_validation'")
+    use sinex_db::queries::EventQueries;
+    EventQueries::delete_by_source("test.cross_validation".to_string())
         .execute(&pool)
         .await?;
 
@@ -509,9 +524,10 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     // Create test automaton for recovery scenarios
     let automaton_name = format!("recovery_test_automaton_{}", Ulid::new());
 
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Recovery scenario test automaton')",
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+         VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
     .execute(&pool)
@@ -520,17 +536,12 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     // Test Scenario 1: Checkpoint references non-existent event
     let non_existent_ulid = Ulid::new(); // Generate random ULID that doesn't exist in events
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 100, NOW(), '{"scenario": "non_existent_event"}'::jsonb)
-        "#,
-        automaton_name,
-        non_existent_ulid.to_string()
-    )
-    .execute(&pool)
-    .await?;
+    TestCheckpointBuilder::new(&automaton_name)
+        .with_last_processed(&non_existent_ulid.to_string())
+        .with_processed_count(100)
+        .with_state(json!({"scenario": "non_existent_event"}))
+        .insert(&pool)
+        .await?;
 
     // Verify this scenario is detected
     let issues =
@@ -546,6 +557,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     );
 
     // Clean up scenario 1
+    // Delete checkpoints for this automaton
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
@@ -554,16 +566,12 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     .await?;
 
     // Test Scenario 2: Checkpoint with invalid ULID format
-    sqlx::query!(
-        r#"
-        INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, 'invalid-ulid-format', 50, NOW(), '{"scenario": "invalid_ulid"}'::jsonb)
-        "#,
-        automaton_name
-    )
-    .execute(&pool)
-    .await?;
+    TestCheckpointBuilder::new(&automaton_name)
+        .with_last_processed("invalid-ulid-format")
+        .with_processed_count(50)
+        .with_state(json!({"scenario": "invalid_ulid"}))
+        .insert(&pool)
+        .await?;
 
     // Run integrity check for invalid ULID
     let integrity_tester = IntegrityTester::new(&pool).await?;
@@ -606,6 +614,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     }
 
     // Clean up scenario 2
+    // Delete checkpoints for this automaton
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
@@ -636,25 +645,21 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
     );
 
     // Test Scenario 4: Checkpoint ahead of events (impossible scenario but test data corruption)
-    let factory = EventFactory::new("test.recovery");
-    let event = factory.create_event("future_reference", json!({"scenario": "future_reference"}));
-    let future_event = insert_event_with_validator(&pool, &event, None).await?;
+    let _future_event = TestEventBuilder::new("test.recovery", "future_reference")
+        .with_field("scenario", json!("future_reference"))
+        .insert(&pool)
+        .await?;
 
     // Create a fake "future" ULID by modifying timestamp
     let future_timestamp = Utc::now() + ChronoDuration::hours(1);
     let future_ulid = Ulid::from_datetime(future_timestamp);
 
-    sqlx::query!(
-        r#"
-        INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 999, NOW(), '{"scenario": "future_checkpoint"}'::jsonb)
-        "#,
-        automaton_name,
-        future_ulid.to_string()
-    )
-    .execute(&pool)
-    .await?;
+    TestCheckpointBuilder::new(&automaton_name)
+        .with_last_processed(&future_ulid.to_string())
+        .with_processed_count(999)
+        .with_state(json!({"scenario": "future_checkpoint"}))
+        .insert(&pool)
+        .await?;
 
     // This scenario should be detected as checkpoint ahead of events
     let future_issues =
@@ -670,20 +675,23 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
         future_issues.len()
     );
 
-    // Cleanup
+    // Cleanup - use query builder
+    // Delete checkpoints for this automaton
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.recovery'")
+    use sinex_db::queries::EventQueries;
+    EventQueries::delete_by_source("test.recovery".to_string())
         .execute(&pool)
         .await?;
 
@@ -697,9 +705,10 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     // Create test automaton
     let automaton_name = format!("data_loss_test_automaton_{}", Ulid::new());
 
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Data loss detection test automaton')",
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
+         VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
     .execute(&pool)
@@ -708,11 +717,10 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     // Create a sequence of events
     let mut event_sequence = Vec::new();
     for i in 0..20 {
-        let event = {
-            let factory = EventFactory::new("test.data_loss");
-            let event = factory.create_event("sequence_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
-        };
+        let event = TestEventBuilder::new("test.data_loss", "sequence_event")
+            .with_field("sequence", json!(i))
+            .insert(&pool)
+            .await?;
         event_sequence.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -721,25 +729,27 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     // This suggests events 6-14 were "processed" but there's a gap
     let checkpoint_ulid = event_sequence[14]; // 15th event (0-indexed)
 
+    // Requires raw SQL for last_activity manipulation
     sqlx::query!(
         r#"
         INSERT INTO core.automaton_checkpoints 
-        (automaton_name, last_processed_id, processed_count, last_activity, state_data)
-        VALUES ($1, $2, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb)
+        (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
+        VALUES ($1, $2::text, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb, $3, $4)
         "#,
         automaton_name,
-        checkpoint_ulid.to_string()
+        checkpoint_ulid.to_string(),
+        format!("{}-group", automaton_name),
+        format!("{}-consumer", automaton_name)
     )
     .execute(&pool)
     .await?;
 
     // Now add more events after the checkpoint
     for i in 20..25 {
-        let event = {
-            let factory = EventFactory::new("test.data_loss");
-            let event = factory.create_event("post_checkpoint_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
-        };
+        let event = TestEventBuilder::new("test.data_loss", "post_checkpoint_event")
+            .with_field("sequence", json!(i))
+            .insert(&pool)
+            .await?;
         event_sequence.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -819,20 +829,24 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
         );
     }
 
-    // Cleanup
+    // Cleanup - use query builder
+    use sinex_db::queries::CheckpointQueries;
+    // Delete checkpoints for this automaton
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
+    // processor_manifests table doesn't have query builders yet
     sqlx::query!(
-        "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1",
+        "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
     .execute(&pool)
     .await?;
-    sqlx::query!("DELETE FROM core.events WHERE source = 'test.data_loss'")
+    use sinex_db::queries::EventQueries;
+    EventQueries::delete_by_source("test.data_loss".to_string())
         .execute(&pool)
         .await?;
 

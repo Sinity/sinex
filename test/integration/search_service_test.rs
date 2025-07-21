@@ -4,7 +4,8 @@
 // The SearchService MUST be fixed to use proper parameterized queries before production use!
 
 use crate::common::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use crate::common::builders::{TestEventBuilder, BatchEventBuilder, TestEvents};
+use crate::common::query_helpers::TestQueries;
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_services::{SearchQuery, SearchService};
@@ -18,18 +19,15 @@ async fn create_test_event(
     payload_content: serde_json::Value,
     time_offset: Option<Duration>,
 ) -> AnyhowResult<Ulid> {
-    let mut event = EventFactory::new(source)
-        .create_event(event_type, payload_content);
-
+    let mut builder = TestEventBuilder::new(source, event_type)
+        .with_payload(payload_content);
+    
     if let Some(offset) = time_offset {
-        let timestamp = Utc::now() - offset;
-        event.ts_orig = Some(timestamp);
+        builder = builder.with_timestamp(Utc::now() - offset);
     }
-    let event_id = event.id;
-
-    insert_event(pool, &event).await?;
-
-    Ok(event_id)
+    
+    let event = builder.insert(pool).await?;
+    Ok(event.id)
 }
 
 /// Create a set of diverse test events
@@ -163,6 +161,9 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
         assert!(result.is_ok(), "Search failed for pattern: {}", pattern);
 
         // Verify the database wasn't corrupted
+        // NOTE: Using raw SQL here specifically to verify database integrity after injection attempts
+        // This is intentionally NOT using query builders because we need to ensure the database
+        // structure remains intact after SQL injection attempts
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM core.events")
             .fetch_one(&pool)
             .await?;
@@ -356,10 +357,11 @@ async fn test_search_pagination(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
-    // Create more events for pagination testing
-    for i in 0..15 {
-        create_test_event(&pool, "test", "pagination.test", json!({ "index": i }), None).await?;
-    }
+    // Create more events for pagination testing using batch builder
+    BatchEventBuilder::new("test", "pagination.test", 15)
+        .with_payload_generator(|i| json!({ "index": i }))
+        .insert(&pool)
+        .await?;
 
     // First page
     let query = SearchQuery {

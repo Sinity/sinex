@@ -4,7 +4,7 @@
 // and other new abstractions to provide richer test failures and better debugging experience.
 
 use crate::common::prelude::*;
-use sinex_error::{CoreError, ErrorContext};
+use sinex_error::CoreError;
 use std::fmt::Debug;
 use std::future::Future;
 

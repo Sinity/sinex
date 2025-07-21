@@ -11,6 +11,9 @@
 //! - `schemas`: Schema validation and metadata
 //! - `operations`: System operations and health checks
 //! - `artifacts`: Blob and artifact management
+//! - `metrics`: Metrics storage and aggregation
+//! - `verification`: Preflight and integration testing
+//! - `knowledge_graph`: Entity and relation management
 //!
 //! # Usage
 //!
@@ -41,13 +44,23 @@ pub mod annotations;
 pub mod artifacts;
 pub mod checkpoints;
 pub mod events;
+pub mod knowledge_graph;
+pub mod metrics;
 pub mod operations;
 pub mod schemas;
+pub mod verification;
+pub mod validation;
+pub mod integrity;
 
 // Re-export query structs for easier access
 pub use annotations::AnnotationQueries;
 pub use artifacts::ArtifactQueries;
 pub use checkpoints::CheckpointQueries;
 pub use events::EventQueries;
+pub use knowledge_graph::KnowledgeGraphQueries;
+pub use metrics::MetricsQueries;
 pub use operations::OperationQueries;
 pub use schemas::SchemaQueries;
+pub use verification::VerificationQueries;
+pub use validation::ValidationQueries;
+pub use integrity::IntegrityQueries;

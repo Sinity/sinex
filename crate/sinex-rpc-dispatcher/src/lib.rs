@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
+// use sinex_events::constants::{event_types}; // already imported above
 
 /// RPC request dispatcher that routes requests to service automata
 pub struct RpcDispatcherAutomaton {

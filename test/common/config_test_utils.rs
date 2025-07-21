@@ -6,7 +6,6 @@
 
 // Removed ConfigValidator import as it's no longer used
 use crate::common::prelude::*;
-use sinex_error::ErrorContext;
 
 /// Helper functions for extracting values from toml::Value
 mod toml_helpers {

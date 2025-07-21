@@ -5,13 +5,9 @@
 // benchmarking tools.
 
 use crate::common::prelude::*;
-use sinex_db::integrity::{
-    checkpoint_verification, malformed_detection, ulid_verification, IntegrityTestConfig,
-    IntegrityTester,
-};
+use sinex_db::integrity::IntegrityTester;
 use sinex_db::validation::{DataIntegrityValidator, EventValidator, ValidationError};
 use sinex_db::RawEvent;
-use sinex_ulid::Ulid;
 
 /// Assert that an event is valid (used by test files)
 pub fn assert_valid_event(event: &RawEvent) {

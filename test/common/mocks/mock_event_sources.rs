@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use sinex_db::RawEvent;
 use sinex_satellite_sdk::{
-    EventSourceConfig, SatelliteResult, ScanArgs, StatefulStreamProcessor,
+    SatelliteResult, ScanArgs, StatefulStreamProcessor,
     stream_processor::{Checkpoint, ProcessorType, StreamProcessorContext, ScanReport},
 };
 use std::sync::Arc;

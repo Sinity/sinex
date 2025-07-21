@@ -14,7 +14,6 @@
 // - `worker_test_utils` - Worker and work queue testing
 // - `schema_test_utils` - JSON schema validation testing
 
-use crate::common::prelude::*;
 
 #[allow(dead_code)] // Test utilities may not all be used
 #[allow(unused_variables)] // Test patterns
@@ -33,10 +32,7 @@ pub mod event_builders;
 
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
-use sinex_db::events as db_events;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_events::{sources, EventFactory};
 
 /// Get test database URL with fallback
@@ -45,7 +41,6 @@ pub fn test_database_url() -> String {
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
 }
 
-use tokio::net::UnixListener;
 
 
 /// Count events from a specific satellite source
@@ -606,30 +601,7 @@ pub async fn get_events_in_time_range(
     Ok(events)
 }
 
-/// Macros for common test patterns
-#[macro_export]
-macro_rules! test_event_insertion {
-    ($test_name:ident, $event_builder:expr) => {
-        #[sinex_test]
-        async fn $test_name(pool: DbPool) -> TestResult {
-            let event = $event_builder;
-            $crate::common::assertions::assert_event_inserted(&pool, &event).await?;
-            Ok(())
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! test_invalid_event_insertion {
-    ($test_name:ident, $event_builder:expr) => {
-        #[sinex_test]
-        async fn $test_name(pool: DbPool) -> TestResult {
-            let event = $event_builder;
-            $crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
-            Ok(())
-        }
-    };
-}
+// Macros moved to test_macros.rs to avoid duplication
 
 /// Test environment utilities
 #[allow(dead_code)]
@@ -1193,6 +1165,21 @@ pub mod mocks;
 /// Configuration compatibility testing utilities
 pub mod config_compatibility_tester;
 
+/// Test-specific query helpers using centralized query builders
+pub mod query_helpers;
+
+/// Enhanced test data builders with fluent interfaces
+pub mod builders;
+
+/// Property test builders that integrate proptest with test framework
+pub mod property_builders;
+
+/// Test macros for reducing repetition
+pub mod test_macros;
+
+/// Performance measurement and optimization utilities
+pub mod performance_utils;
+
 /// Integration testing patterns for satellite architecture
 pub mod satellite_integration {
     use super::*;
@@ -1291,7 +1278,7 @@ pub mod satellite_integration {
 pub mod event_sources {
     use super::*;
     use sinex_events::RawEvent;
-    use sinex_satellite_sdk::{EventSourceConfig, StatefulStreamProcessor};
+    use sinex_satellite_sdk::EventSourceConfig;
     use tokio::time::{timeout, Duration};
 
     /// Trait for event sources in testing

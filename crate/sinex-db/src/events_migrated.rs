@@ -8,6 +8,7 @@ use crate::queries::EventQueries;
 use crate::validation::EventValidator;
 use crate::DbPoolRef;
 use anyhow::Result;
+use sinex_error::CoreError;
 use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
 use sqlx::FromRow;
@@ -94,7 +95,7 @@ pub async fn get_event_by_id_new(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<
     let record = EventQueries::get_by_id(event_id)
         .fetch_one::<EventRecord>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get event: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to get event: {}", e)))?;
 
     Ok(record.into())
 }
@@ -164,7 +165,7 @@ pub async fn insert_event_new(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<R
     )
     .fetch_one::<EventRecord>(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to insert event: {}", e))?;
+    .map_err(|e| CoreError::Database(format!("Failed to insert event: {}", e)))?;
 
     Ok(record.into())
 }
@@ -183,7 +184,7 @@ pub async fn count_events_new(pool: DbPoolRef<'_>) -> Result<i64> {
     let (count,) = EventQueries::count_all()
         .fetch_one::<(i64,)>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to count events: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to count events: {}", e)))?;
 
     Ok(count)
 }
@@ -240,7 +241,7 @@ pub async fn get_events_by_source_new(pool: DbPoolRef<'_>, source: &str, limit: 
     let records = EventQueries::get_by_source(source.to_string(), Some(limit), None)
         .fetch_all::<EventRecord>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get events by source: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to get events by source: {}", e)))?;
 
     let events = records
         .into_iter()
@@ -313,7 +314,7 @@ pub async fn get_events_by_time_range_new(
     let records = EventQueries::get_by_time_range(start_time, end_time, Some(limit), None)
         .fetch_all::<EventRecord>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get events by time range: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to get events by time range: {}", e)))?;
 
     let events = records
         .into_iter()
@@ -378,7 +379,7 @@ pub async fn get_events_by_ids_new(pool: DbPoolRef<'_>, event_ids: &[Ulid]) -> R
     let records = EventQueries::get_by_ids(event_ids.to_vec())
         .fetch_all::<EventRecord>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get events by IDs: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to get events by IDs: {}", e)))?;
 
     let events = records
         .into_iter()

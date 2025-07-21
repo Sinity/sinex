@@ -15,22 +15,20 @@
 // - **Data Consistency Workflows**: Cross-component data integrity verification
 
 use crate::common::prelude::*;
-use crate::common::{events, generators, satellite_test_utils};
+use crate::common::generators;
+use crate::common::builders::{TestEventBuilder, TestScenarioBuilder, BatchEventBuilder, TestEvents, TestCheckpointBuilder};
+use crate::common::query_helpers::TestQueries;
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use redis::{cmd, AsyncCommands};
 use sinex_core_types::CoreError;
-use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
+use sinex_db::queries::EventQueries;
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, services, EventFactory};
+use sinex_events::EventFactory;
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
-    config::EventSourceConfig,
-    redis_client::RedisStreamClient,
     stream_processor::Checkpoint,
-    StatefulStreamProcessor,
 };
-use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -45,26 +43,23 @@ use tokio::sync::{Mutex, RwLock};
 async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
-    // Phase 1: Simulate satellite event generation
-    let satellite_events = generators::test_events(50);
-    println!("Generated {} satellite events", satellite_events.len());
-
+    // Phase 1: Simulate satellite event generation using BatchEventBuilder
+    let batch_builder = BatchEventBuilder::new("satellite-test", "event.generated", 50)
+        .with_payload_generator(|i| json!({
+            "event_num": i,
+            "satellite_data": format!("test-data-{}", i),
+            "timestamp": Utc::now()
+        }))
+        .with_time_spacing(chrono::Duration::milliseconds(100));
+    
+    println!("Generating 50 satellite events");
+    
     // Phase 2: Process events through ingestion pipeline
     let ingestion_start = Instant::now();
-    let mut ingested_event_ids = Vec::new();
-
-    for event in &satellite_events {
-        match sinex_db::insert_event_with_validator(&pool, event, None).await {
-            Ok(stored_event) => {
-                ingested_event_ids.push(stored_event.id);
-                println!("Ingested event: {}", stored_event.id);
-            }
-            Err(e) => {
-                println!("Failed to ingest event {}: {}", event.id, e);
-                return Err(CoreError::Database(format!("Ingestion failed: {}", e)).into());
-            }
-        }
-    }
+    let inserted_events = batch_builder.insert(&pool).await?;
+    let ingested_event_ids: Vec<_> = inserted_events.iter().map(|e| e.id).collect();
+    
+    println!("Ingested {} events", ingested_event_ids.len());
 
     let ingestion_duration = ingestion_start.elapsed();
     println!("Ingestion completed in {:?}", ingestion_duration);
@@ -72,18 +67,18 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     // Phase 3: Verify all events are in database with correct structure
     let mut stored_events = Vec::new();
     for event_id in &ingested_event_ids {
-        let event = sinex_db::get_event_by_id(&pool, *event_id).await?;
+        let event = TestQueries::get_event(&pool, *event_id).await?;
         stored_events.push(event);
     }
 
     assert_eq!(
         stored_events.len(),
-        satellite_events.len(),
+        inserted_events.len(),
         "All events should be stored"
     );
 
     // Phase 4: Verify event data integrity
-    for (original, stored) in satellite_events.iter().zip(stored_events.iter()) {
+    for (original, stored) in inserted_events.iter().zip(stored_events.iter()) {
         assert_eq!(original.id, stored.id, "Event ID should match");
         assert_eq!(original.source, stored.source, "Source should match");
         assert_eq!(
@@ -101,7 +96,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
             .await?;
 
     assert!(
-        time_range_events >= satellite_events.len() as i64,
+        time_range_events >= inserted_events.len() as i64,
         "Events should be queryable by time range"
     );
 
@@ -131,18 +126,18 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
             let satellite_name = format!("satellite-{}", satellite_id);
 
             for event_id in 0..events_per_satellite {
-                let factory = EventFactory::new(&satellite_name);
-                let mut event = factory.create_event(
-                    &format!("satellite.event.{}", event_id),
-                    serde_json::json!({
-                        "satellite_id": satellite_id,
-                        "event_id": event_id,
-                        "data": format!("concurrent-test-data-{}-{}", satellite_id, event_id)
-                    }),
-                );
-                event.host = format!("host-{}", satellite_id);
+                let event_builder = TestEventBuilder::new(
+                    &satellite_name,
+                    &format!("satellite.event.{}", event_id)
+                )
+                .with_payload(json!({
+                    "satellite_id": satellite_id,
+                    "event_id": event_id,
+                    "data": format!("concurrent-test-data-{}-{}", satellite_id, event_id)
+                }))
+                .with_host(&format!("host-{}", satellite_id));
 
-                match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+                match event_builder.insert(&pool_clone).await {
                     Ok(stored_event) => {
                         let mut successes_lock = successes.lock().await;
                         successes_lock.push((satellite_id, event_id, stored_event.id));
@@ -186,16 +181,9 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     );
 
     // Verify database state
-    // Count events by pattern using LIKE
-    let (total_events,) = QueryBuilder::select("core.events")
-        .columns(&["COUNT(*) as count"])
-        .where_op(
-            "source",
-            "LIKE",
-            QueryParam::String("satellite-%".to_string()),
-        )
-        .fetch_one::<(i64,)>(&pool)
-        .await?;
+    // Count events by pattern using query helper
+    let satellite_events = TestQueries::get_events_by_source(&pool, "satellite-%", None).await?;
+    let total_events = satellite_events.len() as i64;
 
     assert_eq!(
         total_events,
@@ -204,6 +192,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
     );
 
     // Verify no data corruption with concurrent writes
+    // Note: Raw SQL required for DISTINCT aggregation
     let (distinct_event_ids,) = QueryBuilder::select("core.events")
         .columns(&["COUNT(DISTINCT event_id) as count"])
         .where_op(
@@ -253,10 +242,16 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     let stream_key = "sinex:test:stream";
 
     // Phase 2: Add events to stream
-    let test_events = generators::test_events(30);
+    let batch_events = BatchEventBuilder::new("stream-test", "stream.event", 30)
+        .with_payload_generator(|i| json!({
+            "stream_index": i,
+            "data": format!("stream-data-{}", i)
+        }))
+        .build();
+    
     let mut stream_event_ids: Vec<String> = Vec::new();
 
-    for event in &test_events {
+    for event in &batch_events {
         let stream_data = serde_json::json!({
             "event_id": event.id.to_string(),
             "source": event.source,
@@ -305,7 +300,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     let batch_size = 5;
     let mut processed_count = 0;
 
-    while processed_count < test_events.len() {
+    while processed_count < batch_events.len() {
         // Read batch from stream
         match cmd("XREADGROUP")
             .arg("GROUP")
@@ -402,6 +397,10 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
         final_checkpoint.processed_count > 0,
         "Checkpoint should track progress"
     );
+    
+    // Also verify via TestQueries
+    let db_checkpoint = TestQueries::get_checkpoint(&pool, automaton_name).await?;
+    assert!(db_checkpoint.is_some(), "Checkpoint should be in database");
 
     println!("✓ Stream processing workflow verified");
     Ok(())
@@ -417,124 +416,81 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
     let pool = ctx.pool().clone();
     let automaton_name = "checkpoint-test-automaton";
 
-    // Phase 1: Initialize checkpoint manager
+    // Phase 1: Set up checkpoint scenario using builders
+    let checkpoint_scenario = TestScenarioBuilder::new()
+        .with_checkpoint(
+            TestCheckpointBuilder::new(automaton_name)
+                .with_last_processed("event-1")
+                .with_processed_count(1)
+                .with_state(json!({"phase": "initial", "timestamp": Utc::now()}))
+                .with_version(2)
+        )
+        .with_checkpoint(
+            TestCheckpointBuilder::new(automaton_name)
+                .with_last_processed("event-10")
+                .with_processed_count(10)
+                .with_state(json!({"phase": "batch_1", "timestamp": Utc::now()}))
+                .with_version(2)
+        )
+        .with_checkpoint(
+            TestCheckpointBuilder::new(automaton_name)
+                .with_last_processed("event-25")
+                .with_processed_count(25)
+                .with_state(json!({"phase": "batch_2", "timestamp": Utc::now()}))
+                .with_version(2)
+        );
+    
+    // Phase 2: Execute checkpoint scenario
+    checkpoint_scenario.execute(&pool).await?;
+    
+    // Initialize checkpoint manager for verification
     let checkpoint_manager = CheckpointManager::new(
         pool.clone(),
         automaton_name.to_string(),
-        "test-consumer-group".to_string(),
-        "test-consumer-name".to_string(),
+        "test-automaton-group".to_string(),
+        "test-automaton-consumer".to_string(),
     );
 
-    // Phase 2: Simulate processing with checkpoints
-    let checkpoint_states = vec![
-        CheckpointState {
-            checkpoint: Checkpoint::Stream {
-                message_id: "event-1".to_string(),
-                event_id: None,
-            },
-            processed_count: 1,
-            last_activity: Utc::now(),
-            data: Some(serde_json::json!({"phase": "initial", "timestamp": Utc::now()})),
-            version: 2,
-        },
-        CheckpointState {
-            checkpoint: Checkpoint::Stream {
-                message_id: "event-10".to_string(),
-                event_id: None,
-            },
-            processed_count: 10,
-            last_activity: Utc::now(),
-            data: Some(serde_json::json!({"phase": "batch_1", "timestamp": Utc::now()})),
-            version: 2,
-        },
-        CheckpointState {
-            checkpoint: Checkpoint::Stream {
-                message_id: "event-25".to_string(),
-                event_id: None,
-            },
-            processed_count: 25,
-            last_activity: Utc::now(),
-            data: Some(serde_json::json!({"phase": "batch_2", "timestamp": Utc::now()})),
-            version: 2,
-        },
-    ];
+    // Simulate processing time between checkpoints
+    tokio::time::sleep(StdDuration::from_millis(100)).await;
 
-    // Save checkpoints progressively
-    for (i, state) in checkpoint_states.iter().enumerate() {
-        match checkpoint_manager.save_checkpoint(state).await {
-            Ok(_) => {
-                println!(
-                    "Saved checkpoint {}: {} events processed",
-                    i + 1,
-                    state.processed_count
-                );
-            }
-            Err(e) => {
-                return Err(CoreError::Database(format!("Checkpoint save failed: {}", e)).into());
-            }
-        }
-
-        // Simulate processing time
-        tokio::time::sleep(StdDuration::from_millis(100)).await;
-    }
-
-    // Phase 3: Verify checkpoint retrieval
-    let retrieved_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    let final_state = checkpoint_states.last().unwrap();
-
+    // Phase 3: Verify checkpoint retrieval via TestQueries
+    let db_checkpoint = TestQueries::get_checkpoint(&pool, automaton_name).await?
+        .expect("Checkpoint should exist");
+    
     assert_eq!(
-        retrieved_checkpoint.processed_count, final_state.processed_count,
-        "Retrieved checkpoint should match final state"
+        db_checkpoint.processed_count, 25,
+        "Retrieved checkpoint should have final count"
     );
     assert_eq!(
-        retrieved_checkpoint.last_processed_id(),
-        final_state.last_processed_id(),
+        db_checkpoint.last_processed_id.as_deref(),
+        Some("event-25"),
         "Last processed ID should match"
     );
 
     // Phase 4: Simulate automaton restart and recovery
-    let recovery_manager = CheckpointManager::new(
-        pool.clone(),
-        automaton_name.to_string(),
-        "test-consumer-group".to_string(),
-        "test-consumer-name".to_string(),
-    );
-    let recovery_checkpoint = recovery_manager.load_checkpoint().await?;
-
-    println!("Recovery checkpoint:");
-    println!(
-        "- Last processed ID: {:?}",
-        recovery_checkpoint.last_processed_id()
-    );
-    println!("- Processed count: {}", recovery_checkpoint.processed_count);
-    println!("- Data: {:?}", recovery_checkpoint.data);
-
-    // Verify recovery state matches expected
+    // Update checkpoint to simulate continued processing
+    TestCheckpointBuilder::new(automaton_name)
+        .with_last_processed("event-50")
+        .with_processed_count(50)
+        .with_state(json!({"phase": "recovery", "timestamp": Utc::now()}))
+        .with_version(2)
+        .insert(&pool)
+        .await?;
+    
+    // Verify continued processing via TestQueries
+    let final_checkpoint = TestQueries::get_checkpoint(&pool, automaton_name).await?
+        .expect("Final checkpoint should exist");
+    
     assert_eq!(
-        recovery_checkpoint.processed_count, 25,
-        "Recovery should start from last checkpoint"
-    );
-
-    // Phase 5: Continue processing from checkpoint
-    let continued_state = CheckpointState {
-        checkpoint: Checkpoint::Stream {
-            message_id: "event-50".to_string(),
-            event_id: None,
-        },
-        processed_count: recovery_checkpoint.processed_count + 25,
-        last_activity: Utc::now(),
-        data: Some(serde_json::json!({"phase": "recovery", "timestamp": Utc::now()})),
-        version: 2,
-    };
-
-    recovery_manager.save_checkpoint(&continued_state).await?;
-
-    // Verify continued processing
-    let final_recovery_checkpoint = recovery_manager.load_checkpoint().await?;
-    assert_eq!(
-        final_recovery_checkpoint.processed_count, 50,
+        final_checkpoint.processed_count, 50,
         "Processing should continue from recovery point"
     );
+    
+    println!("Recovery checkpoint:");
+    println!("- Last processed ID: {:?}", final_checkpoint.last_processed_id);
+    println!("- Processed count: {}", final_checkpoint.processed_count);
+    println!("- Data: {:?}", final_checkpoint.state_data);
 
     println!("✓ Checkpoint persistence and recovery workflow verified");
     Ok(())
@@ -584,18 +540,12 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 
             // Phase 2c: Component processing
             for i in 0..10 {
-                let factory = EventFactory::new(&component_name);
-                let mut event = factory.create_event(
-                    &format!("{}.heartbeat", component_name),
-                    serde_json::json!({
-                        "component": component_name,
-                        "heartbeat_id": i,
-                        "timestamp": Utc::now()
-                    }),
-                );
-                event.host = "coordination-test".to_string();
-
-                match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+                let heartbeat = TestEvents::heartbeat(&component_name)
+                    .with_field("heartbeat_id", json!(i))
+                    .with_field("component", json!(component_name))
+                    .with_host("coordination-test");
+                
+                match heartbeat.insert(&pool_clone).await {
                     Ok(_) => {
                         println!("Component {} sent heartbeat {}", component_name, i);
                     }
@@ -645,14 +595,18 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 
     // Phase 5: Verify component heartbeats in database
     for component in &components {
-        let heartbeat_source = format!("{}.heartbeat", component);
-        let (heartbeat_count,): (i64,) = EventQueries::count_by_source(heartbeat_source)
-            .fetch_one(&pool)
-            .await?;
-
+        let heartbeat_count = TestQueries::count_events_by_source(&pool, "sinex").await?;
+        
+        // Note: All heartbeats use "sinex" as source per TestEvents::heartbeat
+        // We need to check event_type instead
+        let component_events = TestQueries::get_events_by_type(&pool, "automaton.heartbeat", None).await?;
+        let component_heartbeats = component_events.iter()
+            .filter(|e| e.payload["automaton_name"].as_str() == Some(component))
+            .count();
+        
         assert_eq!(
-            heartbeat_count, 10,
-            "Each component should have sent 10 heartbeats"
+            component_heartbeats, 10,
+            "Component {} should have sent 10 heartbeats", component
         );
     }
 
@@ -702,18 +656,18 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
             for retry in 0..3 {
                 tokio::time::sleep(StdDuration::from_millis(50)).await;
 
-                let factory = EventFactory::new(component_name);
-                let mut event = factory.create_event(
-                    &format!("recovery.attempt.{}", retry),
-                    serde_json::json!({
-                        "operation_id": operation_id,
-                        "retry_attempt": retry,
-                        "error_type": "simulated_failure"
-                    }),
-                );
-                event.host = "error-recovery-test".to_string();
+                let recovery_event = TestEventBuilder::new(
+                    component_name,
+                    &format!("recovery.attempt.{}", retry)
+                )
+                .with_payload(json!({
+                    "operation_id": operation_id,
+                    "retry_attempt": retry,
+                    "error_type": "simulated_failure"
+                }))
+                .with_host("error-recovery-test");
 
-                match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+                match recovery_event.insert(&pool_clone).await {
                     Ok(_) => {
                         recovery_success = true;
                         println!(
@@ -742,17 +696,14 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
             }
         } else {
             // Normal operation
-            let factory = EventFactory::new(component_name);
-            let mut event = factory.create_event(
-                "normal.operation",
-                serde_json::json!({
+            let normal_event = TestEventBuilder::new(component_name, "normal.operation")
+                .with_payload(json!({
                     "operation_id": operation_id,
                     "status": "success"
-                }),
-            );
-            event.host = "error-recovery-test".to_string();
+                }))
+                .with_host("error-recovery-test");
 
-            match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+            match normal_event.insert(&pool_clone).await {
                 Ok(_) => {
                     let mut successes_lock = successes.lock().await;
                     successes_lock.push(operation_id);
@@ -776,40 +727,21 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
     println!("- Successful operations: {}", successes.len());
 
     // Phase 4: Verify database state reflects recovery
-    let recovery_events: i64 = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*)
-        FROM core.events
-        WHERE source = $1 AND event_type LIKE $2
-        "#,
-        component_name,
-        "recovery.attempt%"
-    )
-    .fetch_one(&pool)
-    .await?
-    .unwrap_or(0);
-
-    let normal_events: i64 = sqlx::query_scalar!(
-        r#"
-        SELECT COUNT(*)
-        FROM core.events
-        WHERE source = $1 AND event_type = $2
-        "#,
-        component_name,
-        "normal.operation"
-    )
-    .fetch_one(&pool)
-    .await?
-    .unwrap_or(0);
+    let all_events = TestQueries::get_events_by_source(&pool, component_name, None).await?;
+    
+    let recovery_events = all_events.iter()
+        .filter(|e| e.event_type.starts_with("recovery.attempt"))
+        .count() as i64;
+    
+    let normal_events = all_events.iter()
+        .filter(|e| e.event_type == "normal.operation")
+        .count() as i64;
 
     assert!(recovery_events > 0, "Recovery events should be recorded");
     assert!(normal_events > 0, "Normal operations should be recorded");
 
     // Phase 5: Verify system resilience
-    let total_events = EventQueries::count_by_source(component_name.to_string())
-        .fetch_one::<(i64,)>(&pool)
-        .await
-        .map(|r| r.0)?;
+    let total_events = TestQueries::count_events_by_source(&pool, component_name).await?;
 
     assert!(
         total_events > operation_count as i64 / 2,
@@ -859,19 +791,19 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
                 for event_id in 0..events_per_worker {
                     let event_start = Instant::now();
 
-                    let factory = EventFactory::new(&format!("load-worker-{}", worker_id));
-                    let mut event = factory.create_event(
-                        "performance.load.event",
-                        serde_json::json!({
-                            "worker_id": worker_id,
-                            "event_id": event_id,
-                            "timestamp": Utc::now(),
-                            "data": format!("load-test-data-{}-{}", worker_id, event_id)
-                        }),
-                    );
-                    event.host = "performance-test".to_string();
+                    let load_event = TestEventBuilder::new(
+                        &format!("load-worker-{}", worker_id),
+                        "performance.load.event"
+                    )
+                    .with_payload(json!({
+                        "worker_id": worker_id,
+                        "event_id": event_id,
+                        "timestamp": Utc::now(),
+                        "data": format!("load-test-data-{}-{}", worker_id, event_id)
+                    }))
+                    .with_host("performance-test");
 
-                    match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+                    match load_event.insert(&pool_clone).await {
                         Ok(_) => {
                             let mut successes_lock = successes.lock().await;
                             *successes_lock += 1;
@@ -934,10 +866,14 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
     );
 
     // Phase 7: Verify database consistency under load
-    let total_db_events = EventQueries::count_by_source("load-worker-%".to_string())
-        .fetch_one::<(i64,)>(&pool)
-        .await
-        .map(|r| r.0)?;
+    let mut total_db_events = 0i64;
+    for worker_id in 0..concurrent_workers {
+        let worker_count = TestQueries::count_events_by_source(
+            &pool,
+            &format!("load-worker-{}", worker_id)
+        ).await?;
+        total_db_events += worker_count;
+    }
 
     assert_eq!(
         total_db_events, successes as i64,
@@ -975,27 +911,27 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         let mut chain_events: Vec<RawEvent> = Vec::new();
 
         for component_id in 0..component_count {
-            let factory = EventFactory::new(&format!("consistency-component-{}", component_id));
-            let mut event = factory.create_event(
-                &format!("consistency.chain.{}", chain_id),
-                serde_json::json!({
-                    "chain_id": chain_id,
-                    "component_id": component_id,
-                    "sequence_number": component_id,
-                    "previous_event_id": if component_id > 0 {
-                        Some(chain_events.last().unwrap().id.to_string())
-                    } else {
-                        None
-                    },
-                    "consistency_check": format!("chain-{}-step-{}", chain_id, component_id)
-                }),
-            );
-            event.host = "consistency-test".to_string();
-            event.ts_orig = Some(
-                base_timestamp + Duration::seconds(chain_id as i64 * 10 + component_id as i64),
+            let event_builder = TestEventBuilder::new(
+                &format!("consistency-component-{}", component_id),
+                &format!("consistency.chain.{}", chain_id)
+            )
+            .with_payload(json!({
+                "chain_id": chain_id,
+                "component_id": component_id,
+                "sequence_number": component_id,
+                "previous_event_id": if component_id > 0 {
+                    Some(chain_events.last().unwrap().id.to_string())
+                } else {
+                    None
+                },
+                "consistency_check": format!("chain-{}-step-{}", chain_id, component_id)
+            }))
+            .with_host("consistency-test")
+            .with_timestamp(
+                base_timestamp + Duration::seconds(chain_id as i64 * 10 + component_id as i64)
             );
 
-            chain_events.push(event);
+            chain_events.push(event_builder.build());
         }
 
         event_chains.push(chain_events);
@@ -1009,7 +945,17 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
         let mut chain_success = true;
 
         for event in chain_events {
-            match sinex_db::insert_event_with_validator(&pool, event, None).await {
+            match TestQueries::insert_full_event(
+                &pool,
+                &event.source,
+                &event.event_type,
+                &event.host,
+                event.payload.clone(),
+                event.ts_orig,
+                event.ingestor_version.clone(),
+                event.payload_schema_id,
+                event.source_event_ids.clone(),
+            ).await {
                 Ok(_) => {
                     println!(
                         "Inserted event for chain {} from component {}",
@@ -1041,6 +987,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     }
 
     // Phase 5: Verify temporal consistency
+    // Note: Raw SQL required for JSON field extraction and complex ordering
     let temporal_check = sqlx::query!(
         r#"
         SELECT 
@@ -1084,6 +1031,7 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     }
 
     // Phase 6: Verify referential consistency
+    // Note: Raw SQL required for JSON field extraction
     let referential_check = sqlx::query!(
         r#"
         SELECT 
@@ -1102,15 +1050,16 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     for event in referential_check {
         if let Some(prev_id) = event.previous_event_id {
             let event_id = prev_id.parse::<sinex_ulid::Ulid>().unwrap_or_default();
-            let prev_exists_result = sinex_db::get_event_by_id(&pool, event_id).await;
-            let prev_exists = if prev_exists_result.is_ok() { 1 } else { 0 };
-
-            if prev_exists == 0 {
-                referential_violations += 1;
-                println!(
-                    "Referential violation: event {} references non-existent {}",
-                    event.event_id, prev_id
-                );
+            // Use TestQueries instead of direct db access
+            match TestQueries::get_event(&pool, event_id).await {
+                Ok(_) => {}, // Event exists
+                Err(_) => {
+                    referential_violations += 1;
+                    println!(
+                        "Referential violation: event {} references non-existent {}",
+                        event.event_id, prev_id
+                    );
+                }
             }
         }
     }

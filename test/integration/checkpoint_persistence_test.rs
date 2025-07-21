@@ -1,9 +1,8 @@
 use crate::common::prelude::*;
+use crate::common::builders::TestEventBuilder;
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde_json::json;
-use sinex_db::SqlxPgPool;
-use sinex_events::RawEvent;
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
@@ -144,11 +143,16 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     // Step 1: Inject test events into the hotlog stream
     info!("Step 1: Injecting test events");
 
-    let factory = EventFactory::new("test");
     let test_events = vec![
-        factory.create_event("test.event", json!({"test": "event1"})),
-        factory.create_event("test.event", json!({"test": "event2"})),
-        factory.create_event("test.event", json!({"test": "event3"})),
+        TestEventBuilder::new("test", "test.event")
+            .with_field("test", json!("event1"))
+            .build(),
+        TestEventBuilder::new("test", "test.event")
+            .with_field("test", json!("event2"))
+            .build(),
+        TestEventBuilder::new("test", "test.event")
+            .with_field("test", json!("event3"))
+            .build(),
     ];
 
     // Add events to hotlog stream (simulating ingestd)

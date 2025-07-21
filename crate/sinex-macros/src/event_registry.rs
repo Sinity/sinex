@@ -15,16 +15,16 @@ use syn::{parse_macro_input, Ident, LitStr, Token};
 /// ```rust
 /// event_registry! {
 ///     sources {
-///         FILESYSTEM => "fs",
+///         FILESYSTEM => sources::FS,
 ///         SHELL => "shell",
 ///         CLIPBOARD => "clipboard",
 ///     }
 ///     
 ///     events {
 ///         filesystem => FILESYSTEM {
-///             FILE_CREATED => "file.created" with FileCreatedPayload,
-///             FILE_MODIFIED => "file.modified" with FileModifiedPayload,
-///             FILE_DELETED => "file.deleted" with FileDeletedPayload,
+///             FILE_CREATED => event_types::file::CREATED with FileCreatedPayload,
+///             FILE_MODIFIED => event_types::file::MODIFIED with FileModifiedPayload,
+///             FILE_DELETED => event_types::file::DELETED with FileDeletedPayload,
 ///         },
 ///         shell => SHELL {
 ///             COMMAND_EXECUTED => "command.executed" with CommandExecutedPayload,
@@ -253,14 +253,14 @@ mod tests {
     fn test_event_registry_parsing() {
         let input = quote! {
             sources {
-                FILESYSTEM => "fs",
+                FILESYSTEM => sources::FS,
                 SHELL => "shell",
             }
 
             events {
                 filesystem => FILESYSTEM {
-                    FILE_CREATED => "file.created" with FileCreatedPayload,
-                    FILE_MODIFIED => "file.modified" with FileModifiedPayload,
+                    FILE_CREATED => event_types::file::CREATED with FileCreatedPayload,
+                    FILE_MODIFIED => event_types::file::MODIFIED with FileModifiedPayload,
                 },
             }
         };

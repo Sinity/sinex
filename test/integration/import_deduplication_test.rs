@@ -9,18 +9,13 @@
 
 use crate::common::prelude::*;
 
-use crate::common::event_sources::EventSource;
 use crate::common::mocks::EventSourceContext;
-use crate::common::prelude::*;
 use chrono::{TimeZone, Utc};
 use sinex_annex::{AnnexConfig, BlobManager};
-use sinex_core_types::CoreError;
-use sinex_events::EventFactory;
-use sinex_satellite_sdk::{ScanArgs, ScanReport};
+use sinex_satellite_sdk::ScanArgs;
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
-use tempfile::TempDir;
 use tracing::info;
 
 // =============================================================================
@@ -339,7 +334,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
     // Create new monitor instance for fresh analysis
     let source_ctx2 = EventSourceContext::new(config).with_db_pool(ctx.pool().clone());
 
-    let mut monitor2 = ShellHistoryMonitor::initialize(source_ctx2).await?;
+    let monitor2 = ShellHistoryMonitor::initialize(source_ctx2).await?;
 
     // Test overlap analysis without actual import (we'd need to capture the analysis)
     // This tests the statistical calculation parts

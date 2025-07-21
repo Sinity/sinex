@@ -12,8 +12,6 @@
 // - **Network Issues**: Distributed system edge cases
 // - **State Violations**: Invalid state transitions
 
-use serde_json::json;
-use sinex_events::RawEvent;
 
 #[allow(dead_code)]
 // Boundary tests for system limits

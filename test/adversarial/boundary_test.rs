@@ -9,11 +9,12 @@
 // - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
-use crate::common::events;
 use crate::common::prelude::*;
+use crate::common::builders::{TestEventBuilder, TestEvents};
+use crate::common::query_helpers::TestQueries;
 use chrono::Datelike;
 use futures::future::join_all;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::EventFactory;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -48,16 +49,30 @@ async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResul
         // Create large string
         let _large_data = "x".repeat(size);
 
-        let event = events::large_payload_test_event(1024);
+        // Using TestEvents helper for large payload generation
+        let event = TestEvents::large_payload(size / 1024)
+            .with_field("test_label", json!(label))
+            .build();
 
         let start = Instant::now();
-        match insert_event(&pool, &event).await {
+        match TestQueries::insert_full_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.clone(),
+            event.payload_schema_id,
+            event.source_event_ids.clone(),
+        ).await {
             Ok(_) => {
                 let elapsed = start.elapsed();
                 println!("    SUCCESS: Inserted in {:?}", elapsed);
 
-                // Try to update with more data
+                // Try to update with more data - keeping raw SQL for boundary testing
                 let extra_data = "y".repeat(100 * 1024 * 1024); // 100MB more
+                // RAW SQL: Testing PostgreSQL JSONB size limits
                 let update_result = sqlx::query!(
                     r#"
                     UPDATE core.events
@@ -220,26 +235,36 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
 async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
-    // Insert test data
+    // Insert test data using TestEventBuilder
     for i in 0..100 {
-        let factory = EventFactory::new("complexity_test");
-        let event = factory.create_event(
-            "query.test",
-            json!({"value": i, "category": i % 10}),
-        );
+        let event = TestEventBuilder::new("complexity_test", "query.test")
+            .with_field("value", json!(i))
+            .with_field("category", json!(i % 10))
+            .build();
 
-        insert_event(&pool, &event).await?;
+        TestQueries::insert_full_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            event.payload,
+            event.ts_orig,
+            event.ingestor_version,
+            event.payload_schema_id,
+            event.source_event_ids,
+        ).await?;
     }
 
     // Test increasingly complex queries
+    // RAW SQL: Testing database query complexity limits
     let complex_queries = vec![
-        // Simple query
+        // Simple query - could use TestQueries but keeping for consistency
         ("SELECT COUNT(*) FROM core.events WHERE source = 'complexity_test'", "simple_count"),
         
-        // Complex aggregation
+        // Complex aggregation - testing PostgreSQL aggregation performance
         ("SELECT source, event_type, COUNT(*), AVG((payload->>'value')::int) FROM core.events WHERE source = 'complexity_test' GROUP BY source, event_type", "complex_aggregation"),
         
-        // Very complex query with multiple joins and subqueries
+        // Very complex query with CTEs - testing query planner limits
         ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM core.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM core.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
     ];
 
@@ -322,14 +347,16 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
     let pool = ctx.pool().clone();
 
     // Create test event to be processed
-    let test_event = events::generic_adversarial_event(
-        "partition_test",
-        "network.test",
-        json!({"test": true}),
-        None,
-    );
+    let test_event = TestEventBuilder::new("partition_test", "network.test")
+        .with_field("test", json!(true))
+        .build();
 
-    insert_event(&pool, &test_event).await?;
+    TestQueries::insert_test_event(
+        &pool,
+        &test_event.source,
+        &test_event.event_type,
+        test_event.payload,
+    ).await?;
 
     let partition_events = Arc::new(AtomicU64::new(0));
     let successful_operations = Arc::new(AtomicU64::new(0));
@@ -377,7 +404,7 @@ async fn test_network_partition_during_processing(ctx: TestContext) -> TestResul
                     continue;
                 }
 
-                // Normal operation
+                // Normal operation - RAW SQL: Testing connection state
                 match sqlx::query!("SELECT 1 as test")
                     .fetch_one(&pool_clone)
                     .await
@@ -591,29 +618,24 @@ async fn test_numeric_overflow_in_event_counters(ctx: TestContext) -> TestResult
     for (test_value, description) in test_values {
         println!("Testing numeric boundary: {} ({})", test_value, description);
 
-        let factory = EventFactory::new("numeric_test");
-        let event = factory.create_event(
-            "boundary.test",
-            json!({
-                "counter": test_value,
-                "description": description
-            }),
-        );
+        let event = TestEventBuilder::new("numeric_test", "boundary.test")
+            .with_field("counter", json!(test_value))
+            .with_field("description", json!(description))
+            .build();
 
-        match insert_event(&pool, &event).await {
-            Ok(_) => {
+        match TestQueries::insert_test_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            event.payload.clone(),
+        ).await {
+            Ok(inserted_event) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
 
-                // Try to query it back
-                match sqlx::query!(
-                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
-                    event.id.to_uuid()
-                )
-                .fetch_one(&pool)
-                .await
-                {
-                    Ok(row) => {
-                        let retrieved_value = row.payload["counter"].as_i64().unwrap_or(-1);
+                // Try to query it back using TestQueries
+                match TestQueries::get_event(&pool, inserted_event.id).await {
+                    Ok(retrieved_event) => {
+                        let retrieved_value = retrieved_event.payload["counter"].as_i64().unwrap_or(-1);
                         if retrieved_value == test_value {
                             println!("  SUCCESS: Value retrieved correctly");
                         } else {
@@ -661,29 +683,24 @@ async fn test_floating_point_precision_boundaries(ctx: TestContext) -> TestResul
             test_value, description
         );
 
-        let factory = EventFactory::new("float_test");
-        let event = factory.create_event(
-            "precision.test",
-            json!({
-                "value": test_value,
-                "description": description
-            }),
-        );
+        let event = TestEventBuilder::new("float_test", "precision.test")
+            .with_field("value", json!(test_value))
+            .with_field("description", json!(description))
+            .build();
 
-        match insert_event(&pool, &event).await {
-            Ok(_) => {
+        match TestQueries::insert_test_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            event.payload.clone(),
+        ).await {
+            Ok(inserted_event) => {
                 println!("  SUCCESS: Inserted event with value {}", test_value);
 
-                // Try to query it back
-                match sqlx::query!(
-                    "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
-                    event.id.to_uuid()
-                )
-                .fetch_one(&pool)
-                .await
-                {
-                    Ok(row) => {
-                        let retrieved_value = row.payload["value"].as_f64().unwrap_or(-1.0);
+                // Try to query it back using TestQueries
+                match TestQueries::get_event(&pool, inserted_event.id).await {
+                    Ok(retrieved_event) => {
+                        let retrieved_value = retrieved_event.payload["value"].as_f64().unwrap_or(-1.0);
 
                         if test_value.is_nan() && retrieved_value.is_nan() {
                             println!("  SUCCESS: NaN preserved");
@@ -790,10 +807,16 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
                     "large_data": "x".repeat(1024 * 1024) // 1MB string
                 });
 
-                let factory = EventFactory::new("resource_test");
-                let event = factory.create_event("exhaustion.test", large_payload);
+                let event = TestEventBuilder::new("resource_test", "exhaustion.test")
+                    .with_payload(large_payload)
+                    .build();
 
-                match timeout(Duration::from_secs(5), insert_event(&pool_clone, &event)).await {
+                match timeout(Duration::from_secs(5), TestQueries::insert_test_event(
+                    &pool_clone,
+                    &event.source,
+                    &event.event_type,
+                    event.payload,
+                )).await {
                     Ok(Ok(_)) => {
                         success_count.fetch_add(1, Ordering::SeqCst);
                     }

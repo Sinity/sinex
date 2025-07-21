@@ -5,8 +5,8 @@
 
 use sinex_macros::{auto_db_metrics, auto_event_metrics, auto_metrics, auto_resource_metrics};
 use sinex_metrics_lib::{export_json, export_prometheus, init_metrics};
-use std::collections::HashMap;
 use tokio::time::{sleep, Duration};
+use sinex_events::constants::{event_types};
 
 // Example of automatic function metrics
 #[auto_metrics]
@@ -35,7 +35,7 @@ async fn get_user_by_id(user_id: u64) -> Result<String, Box<dyn std::error::Erro
 }
 
 // Example of automatic event processing metrics
-#[auto_event_metrics(event_type = "file.created")]
+#[auto_event_metrics(event_type = event_types::file::CREATED)]
 async fn handle_file_created(event: &str) -> Result<(), Box<dyn std::error::Error>> {
     // Simulate event processing
     sleep(Duration::from_millis(25)).await;

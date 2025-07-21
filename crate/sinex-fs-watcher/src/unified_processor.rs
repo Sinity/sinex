@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
+// use sinex_events::constants::{sources}; // already imported above
 
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

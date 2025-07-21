@@ -6,7 +6,6 @@
 use crate::common::prelude::*;
 
 use crate::common::mocks::EventSourceContext;
-use crate::common::prelude::*;
 use sinex_satellite_sdk::VersionInfo;
 use std::fs;
 use tempfile::TempDir;

@@ -11,15 +11,12 @@ use std::str::FromStr;
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::{EventSourceConfig, SatelliteConfig},
-    grpc_client::IngestClient,
-    stream_processor::Checkpoint,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tonic::transport::Server;
-use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 
 // Helper function to convert proto::RawEvent to RawEvent

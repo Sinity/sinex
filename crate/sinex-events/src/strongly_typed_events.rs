@@ -14,6 +14,7 @@ use crate::{EventSender, RawEvent};
 
 // Define our own error type to avoid circular dependency on sinex-core
 use thiserror::Error;
+use crate::{event_types, sources};
 
 #[derive(Error, Debug)]
 pub enum TypedEventError {
@@ -644,7 +645,7 @@ impl TypedFilesystemEventBuilder {
             permissions,
         };
 
-        let event = TypedEventBuilder::new(self.source, "file.created", payload).build();
+        let event = TypedEventBuilder::new(self.source, event_types::filesystem::FILE_CREATED, payload).build();
         EventEnvelope::FileCreated(event)
     }
 
@@ -661,7 +662,7 @@ impl TypedFilesystemEventBuilder {
             modification_type: modification_type.into(),
         };
 
-        let event = TypedEventBuilder::new(self.source, "file.modified", payload).build();
+        let event = TypedEventBuilder::new(self.source, event_types::filesystem::FILE_MODIFIED, payload).build();
         EventEnvelope::FileModified(event)
     }
 
@@ -671,7 +672,7 @@ impl TypedFilesystemEventBuilder {
             deleted_at: Utc::now(),
         };
 
-        let event = TypedEventBuilder::new(self.source, "file.deleted", payload).build();
+        let event = TypedEventBuilder::new(self.source, event_types::filesystem::FILE_DELETED, payload).build();
         EventEnvelope::FileDeleted(event)
     }
 
@@ -857,12 +858,12 @@ mod tests {
             permissions: Some(0o644),
         };
 
-        let event = TypedEventBuilder::new(sources::FS, "file.created", payload)
+        let event = TypedEventBuilder::new(sources::FS, event_types::filesystem::FILE_CREATED, payload)
             .with_host("test-host")
             .build();
 
         assert_eq!(event.source, sources::FS);
-        assert_eq!(event.event_type, "file.created");
+        assert_eq!(event.event_type, event_types::filesystem::FILE_CREATED);
         assert_eq!(event.payload.path, "/test.txt");
         assert_eq!(event.payload.size, 1024);
     }
@@ -878,12 +879,12 @@ mod tests {
         };
 
         let typed_event =
-            TypedEventBuilder::new("terminal.kitty", "command.executed", payload).build();
+            TypedEventBuilder::new(sources::TERMINAL_KITTY, "command.executed", payload).build();
 
         let envelope = EventEnvelope::CommandExecuted(typed_event);
         let json_event = envelope.to_json_event();
 
-        assert_eq!(json_event.source, "terminal.kitty");
+        assert_eq!(json_event.source, sources::TERMINAL_KITTY);
         assert_eq!(json_event.event_type, "command.executed");
         assert_eq!(json_event.payload["command"], "ls -la");
         assert_eq!(json_event.payload["exit_status"], 0);
@@ -894,7 +895,7 @@ mod tests {
         // This should compile - correct payload for file.created
         let _file_event = TypedEventBuilder::new(
             sources::FS,
-            "file.created",
+            event_types::filesystem::FILE_CREATED,
             FileCreatedPayload {
                 path: "/test".to_string(),
                 size: 0,
@@ -908,7 +909,7 @@ mod tests {
         // This would not compile:
         // let _wrong_event = TypedEventBuilder::new(
         //     sources::FS,
-        //     "file.created",
+        //     event_types::filesystem::FILE_CREATED,
         //     CommandExecutedPayload { ... }  // Wrong payload type!
         // ).build();
     }

@@ -6,8 +6,10 @@
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
+use crate::common::builders::{TestEventBuilder, BatchEventBuilder};
+use crate::common::query_helpers::TestQueries;
 use crate::common::{events, generators};
+use sinex_db::queries::EventQueries;
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_events::{EventFactory, services, event_types};
@@ -149,6 +151,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
     }
     
     // Define comprehensive query test suite
+    // NOTE: Many of these are kept as raw SQL because they test specific database features
     let query_tests = vec![
         ("Primary Key Lookup", "SELECT * FROM core.events WHERE event_id = $1::uuid"),
         ("Source Index Scan", "SELECT * FROM core.events WHERE source = $1 LIMIT 100"),
@@ -316,10 +319,10 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
                         3 => {
                             // Query operations (20%)
                             let start = Instant::now();
-                            let result = sqlx::query!(
-                                "SELECT COUNT(*) as count FROM core.events WHERE source = $1",
-                                format!("concurrent-db-worker-{}", worker_id)
-                            ).fetch_one(&pool_clone).await;
+                            let result = TestQueries::count_events_by_source(
+                                &pool_clone,
+                                &format!("concurrent-db-worker-{}", worker_id)
+                            ).await;
                             let duration = start.elapsed();
                             
                             let mut metrics_lock = metrics.lock().await;
@@ -328,6 +331,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
                         4 => {
                             // Complex query operations (20%)
                             let start = Instant::now();
+                            // NOTE: Complex aggregation with GROUP BY requires raw SQL
                             let result = sqlx::query!(
                                 "SELECT source, event_type, COUNT(*) as count FROM core.events WHERE source LIKE $1 GROUP BY source, event_type",
                                 format!("concurrent-db-worker-{}%", worker_id)
@@ -351,6 +355,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
     final_metrics.print_summary();
     
     // Verify database consistency
+    // NOTE: Using LIKE pattern requires raw SQL
     let total_inserted = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-db-worker-%'"
     ).fetch_one(&pool).await?;
@@ -606,6 +611,7 @@ async fn test_transaction_performance(ctx: TestContext) -> TestResult {
     metrics.print_summary();
     
     // Verify database consistency
+    // NOTE: Complex OR condition with LIKE pattern requires raw SQL
     let tx_event_count = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-tx-%' OR source = 'transaction-test'"
     ).fetch_one(&pool).await?;

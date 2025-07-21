@@ -78,7 +78,6 @@
 // Unit tests use minimal infrastructure and avoid the full `#[sinex_test]` macro
 // when external resources aren't needed. Use standard `#[test]` for pure unit tests.
 
-use crate::common::prelude::*;
 
 // === Consolidated Unit Tests ===
 

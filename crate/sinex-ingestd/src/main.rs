@@ -1,7 +1,6 @@
 use anyhow::Result;
 use clap::Parser;
 use sinex_ingestd::{IngestService, IngestdConfig};
-use std::path::PathBuf;
 use tracing::{error, info};
 
 #[derive(Parser, Debug)]

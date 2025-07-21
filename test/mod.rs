@@ -62,7 +62,6 @@
 // }
 // ```
 
-use crate::common::prelude::*;
 
 // Common test infrastructure (always available)
 mod common;

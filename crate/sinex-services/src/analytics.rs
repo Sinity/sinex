@@ -2,7 +2,7 @@
 
 use crate::error::ServiceResult;
 use sinex_db::queries::{OperationQueries, EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_db::queries::events::TimeBucketRecord;
 use sinex_db::DbPool;
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
@@ -123,29 +123,12 @@ impl AnalyticsService {
             microseconds: interval_minutes as i64 * 60 * 1_000_000,
         };
 
-        let rows = sqlx::query!(
-            r#"
-            SELECT 
-                time_bucket($1::interval, ts_ingest) as bucket,
-                COUNT(*) as count
-            FROM core.events
-            WHERE ts_ingest >= $2 AND ts_ingest <= $3
-            GROUP BY bucket
-            ORDER BY bucket ASC
-            "#,
-            interval,
-            start_time,
-            end_time
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = EventQueries::get_events_over_time(&self.pool, start_time, end_time, interval)
+            .await?;
 
         Ok(rows
             .into_iter()
-            .filter_map(|r| match (r.bucket, r.count) {
-                (Some(b), Some(c)) => Some((b, c)),
-                _ => None,
-            })
+            .map(|r| (r.bucket, r.count))
             .collect())
     }
 
@@ -196,28 +179,12 @@ impl AnalyticsService {
             microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
         };
 
-        let rows = sqlx::query!(
-            r#"
-            SELECT 
-                time_bucket($1::interval, ts_ingest) as bucket,
-                COUNT(*) as count
-            FROM core.events
-            GROUP BY bucket
-            ORDER BY count DESC
-            LIMIT $2
-            "#,
-            interval,
-            limit as i64
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let rows = EventQueries::get_activity_heatmap(&self.pool, interval, limit as i64)
+            .await?;
 
         Ok(rows
             .into_iter()
-            .filter_map(|r| match (r.bucket, r.count) {
-                (Some(b), Some(c)) => Some((b, c)),
-                _ => None,
-            })
+            .map(|r| (r.bucket, r.count))
             .collect())
     }
 }

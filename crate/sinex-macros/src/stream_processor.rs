@@ -943,7 +943,7 @@ fn generate_error_handling_helpers(
 
                 if !#recovery_enabled {
                     return Err(sinex_satellite_sdk::SatelliteError::General(
-                        anyhow::anyhow!("Recovery is disabled for this processor")
+                        anyhow::CoreError::Internal { message: "Recovery is disabled for this processor".to_string() }
                     ));
                 }
 

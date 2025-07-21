@@ -8,14 +8,13 @@
 // - Integration with the health aggregator
 
 use crate::common::prelude::*;
-use chrono::{Duration, Utc};
-use sinex_core_runtime::{MetricsProvider, ProcessHeartbeatEmitter};
-use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, ProcessStartedPayload, ProcessHeartbeatPayload, ProcessShutdownPayload};
+use crate::common::builders::{TestEventBuilder, TestEvents};
+use crate::common::query_helpers::TestQueries;
+use chrono::Utc;
+use sinex_core_runtime::MetricsProvider;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::time::{sleep, timeout};
+use tokio::time::sleep;
 
 // =============================================================================
 // Mock Metrics Provider for Testing
@@ -83,32 +82,26 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
     metrics_provider.set_memory(256); // 256 MB
     metrics_provider.increment_events_processed(42);
 
-    let event_factory = EventFactory::new("sinex.process");
-    
     // Create a heartbeat event with the metrics
-    let heartbeat_payload = serde_json::json!({
-        "process_name": "test_process",
-        "version": "1.0.0",
-        "uptime_seconds": *metrics_provider.uptime.lock().unwrap(),
-        "memory_mb": *metrics_provider.memory_mb.lock().unwrap(),
-        "cpu_percent": 15.5,
-        "events_processed": *metrics_provider.events_processed.lock().unwrap(),
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": {}
-    });
-    let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
-    
-    // Insert the event into the database
-    ctx.insert_event(&heartbeat_event).await?;
+    let heartbeat_event = TestEventBuilder::new("sinex.process", "process.heartbeat")
+        .with_field("process_name", json!("test_process"))
+        .with_field("version", json!("1.0.0"))
+        .with_field("uptime_seconds", json!(*metrics_provider.uptime.lock().unwrap()))
+        .with_field("memory_mb", json!(*metrics_provider.memory_mb.lock().unwrap()))
+        .with_field("cpu_percent", json!(15.5))
+        .with_field("events_processed", json!(*metrics_provider.events_processed.lock().unwrap()))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!({}))
+        .insert(ctx.pool())
+        .await?;
 
     // Verify heartbeat event was created
-    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let all_events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(10),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     let heartbeat_events: Vec<_> = all_events.iter()
@@ -137,77 +130,69 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
     let version = "2.0.0";
     let source_name = "sinex.process";
 
-    // Create EventFactory for generating events
-    let event_factory = EventFactory::new(source_name);
-
     // Emit process started event
-    let started_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "git_revision": "abc123",
-        "binary_hash": "def456",
-        "build_time": Utc::now(),
-        "config_hash": "ghi789"
-    });
-    let started_event = event_factory.create_event("process.started", started_payload);
-    ctx.insert_event(&started_event).await?;
+    TestEventBuilder::new(source_name, "process.started")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("git_revision", json!("abc123"))
+        .with_field("binary_hash", json!("def456"))
+        .with_field("build_time", json!(Utc::now()))
+        .with_field("config_hash", json!("ghi789"))
+        .insert(ctx.pool())
+        .await?;
 
     // Update metrics over time
     metrics_provider.set_uptime(10);
     metrics_provider.increment_events_processed(15);
 
     // Emit heartbeat
-    let heartbeat1_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 10,
-        "memory_mb": *metrics_provider.memory_mb.lock().unwrap(),
-        "cpu_percent": 15.5,
-        "events_processed": *metrics_provider.events_processed.lock().unwrap(),
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": {}
-    });
-    let heartbeat1_event = event_factory.create_event("process.heartbeat", heartbeat1_payload);
-    ctx.insert_event(&heartbeat1_event).await?;
+    TestEventBuilder::new(source_name, "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(10))
+        .with_field("memory_mb", json!(*metrics_provider.memory_mb.lock().unwrap()))
+        .with_field("cpu_percent", json!(15.5))
+        .with_field("events_processed", json!(*metrics_provider.events_processed.lock().unwrap()))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!({}))
+        .insert(ctx.pool())
+        .await?;
 
     // Update metrics again
     metrics_provider.set_uptime(20);
     metrics_provider.increment_events_processed(25);
 
     // Emit another heartbeat
-    let heartbeat2_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 20,
-        "memory_mb": *metrics_provider.memory_mb.lock().unwrap(),
-        "cpu_percent": 15.5,
-        "events_processed": *metrics_provider.events_processed.lock().unwrap(),
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": {}
-    });
-    let heartbeat2_event = event_factory.create_event("process.heartbeat", heartbeat2_payload);
-    ctx.insert_event(&heartbeat2_event).await?;
+    TestEventBuilder::new(source_name, "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(20))
+        .with_field("memory_mb", json!(*metrics_provider.memory_mb.lock().unwrap()))
+        .with_field("cpu_percent", json!(15.5))
+        .with_field("events_processed", json!(*metrics_provider.events_processed.lock().unwrap()))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!({}))
+        .insert(ctx.pool())
+        .await?;
 
     // Emit process shutdown event
-    let shutdown_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 20,
-        "graceful": true,
-        "shutdown_reason": "Graceful shutdown requested"
-    });
-    let shutdown_event = event_factory.create_event("process.shutdown", shutdown_payload);
-    ctx.insert_event(&shutdown_event).await?;
+    TestEventBuilder::new(source_name, "process.shutdown")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(20))
+        .with_field("graceful", json!(true))
+        .with_field("shutdown_reason", json!("Graceful shutdown requested"))
+        .insert(ctx.pool())
+        .await?;
 
     // Verify all events were created in correct order
-    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let all_events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(10),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     // Filter to only our process
@@ -257,32 +242,27 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
     metrics_provider.add_custom_metric("cache_hit_rate", serde_json::json!(0.85));
     metrics_provider.add_custom_metric("last_error", serde_json::json!("Connection timeout"));
 
-    // Create EventFactory for generating events
-    let event_factory = EventFactory::new(source_name);
-
     // Create heartbeat with custom metrics
     let custom_metrics = metrics_provider.custom_metrics.lock().unwrap().clone();
-    let heartbeat_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": *metrics_provider.uptime.lock().unwrap(),
-        "memory_mb": *metrics_provider.memory_mb.lock().unwrap(),
-        "cpu_percent": 15.5,
-        "events_processed": *metrics_provider.events_processed.lock().unwrap(),
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": custom_metrics
-    });
-    let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
-    ctx.insert_event(&heartbeat_event).await?;
+    TestEventBuilder::new(source_name, "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(*metrics_provider.uptime.lock().unwrap()))
+        .with_field("memory_mb", json!(*metrics_provider.memory_mb.lock().unwrap()))
+        .with_field("cpu_percent", json!(15.5))
+        .with_field("events_processed", json!(*metrics_provider.events_processed.lock().unwrap()))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!(custom_metrics))
+        .insert(ctx.pool())
+        .await?;
 
     // Verify custom metrics are included
-    let events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(10),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     // Filter to only our process heartbeats
@@ -310,9 +290,6 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
     let version = "1.0.0";
     let source_name = "sinex.process";
 
-    // Create EventFactory for generating events
-    let event_factory = EventFactory::new(source_name);
-
     // Simulate continuous heartbeat emission by creating multiple events
     for i in 0..5 {
         // Update metrics over time
@@ -320,31 +297,29 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
         metrics_provider.increment_events_processed(10);
 
         // Create heartbeat event
-        let heartbeat_payload = serde_json::json!({
-            "process_name": process_name,
-            "version": version,
-            "uptime_seconds": *metrics_provider.uptime.lock().unwrap(),
-            "memory_mb": *metrics_provider.memory_mb.lock().unwrap(),
-            "cpu_percent": 15.5,
-            "events_processed": *metrics_provider.events_processed.lock().unwrap(),
-            "errors_count": 0,
-            "health_status": "healthy",
-            "custom_metrics": {}
-        });
-        let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
-        ctx.insert_event(&heartbeat_event).await?;
+        TestEventBuilder::new(source_name, "process.heartbeat")
+            .with_field("process_name", json!(process_name))
+            .with_field("version", json!(version))
+            .with_field("uptime_seconds", json!(*metrics_provider.uptime.lock().unwrap()))
+            .with_field("memory_mb", json!(*metrics_provider.memory_mb.lock().unwrap()))
+            .with_field("cpu_percent", json!(15.5))
+            .with_field("events_processed", json!(*metrics_provider.events_processed.lock().unwrap()))
+            .with_field("errors_count", json!(0))
+            .with_field("health_status", json!("healthy"))
+            .with_field("custom_metrics", json!({}))
+            .insert(ctx.pool())
+            .await?;
 
         // Small delay between heartbeats
         sleep(tokio::time::Duration::from_millis(100)).await;
     }
 
     // Verify multiple heartbeat events were emitted
-    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let all_events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(100),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     // Count heartbeat events for our process
@@ -387,71 +362,86 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
         ("monitor", "healthy", 7200, 64, 100),
     ];
 
-    let event_factory = EventFactory::new("sinex.process");
-
     for (name, status, uptime, memory, events) in processes {
         // Emit process started event
-        let started_payload = serde_json::json!({
-            "process_name": name,
-            "version": "1.0.0",
-            "git_revision": "abc123",
-            "binary_hash": "def456",
-            "build_time": Utc::now(),
-            "config_hash": "ghi789"
-        });
-        let started_event = event_factory.create_event("process.started", started_payload);
-        ctx.insert_event(&started_event).await?;
+        TestEventBuilder::new("sinex.process", "process.started")
+            .with_field("process_name", json!(name))
+            .with_field("version", json!("1.0.0"))
+            .with_field("git_revision", json!("abc123"))
+            .with_field("binary_hash", json!("def456"))
+            .with_field("build_time", json!(Utc::now()))
+            .with_field("config_hash", json!("ghi789"))
+            .insert(ctx.pool())
+            .await?;
 
         // Emit heartbeat with health status
-        let heartbeat_payload = serde_json::json!({
-            "process_name": name,
-            "version": "1.0.0",
-            "uptime_seconds": uptime,
-            "memory_mb": memory,
-            "cpu_percent": 15.5,
-            "events_processed": events,
-            "errors_count": 0,
-            "health_status": status,
-            "custom_metrics": {}
-        });
-        let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
-        ctx.insert_event(&heartbeat_event).await?;
+        TestEventBuilder::new("sinex.process", "process.heartbeat")
+            .with_field("process_name", json!(name))
+            .with_field("version", json!("1.0.0"))
+            .with_field("uptime_seconds", json!(uptime))
+            .with_field("memory_mb", json!(memory))
+            .with_field("cpu_percent", json!(15.5))
+            .with_field("events_processed", json!(events))
+            .with_field("errors_count", json!(0))
+            .with_field("health_status", json!(status))
+            .with_field("custom_metrics", json!({}))
+            .insert(ctx.pool())
+            .await?;
     }
 
-    // Simulate health aggregator query (from the updated health aggregator)
-    let health_data = sqlx::query!(
-        r#"
-        SELECT DISTINCT ON (payload->>'process_name')
-            payload->>'process_name' as component_name,
-            ts_orig as timestamp,
-            payload->>'health_status' as status,
-            (payload->>'uptime_seconds')::bigint as uptime_seconds,
-            (payload->>'memory_mb')::integer as memory_usage_mb,
-            (payload->>'events_processed')::integer as events_processed_last_minute,
-            payload->>'version' as binary_version
-        FROM core.events
-        WHERE source = 'sinex.process'
-          AND event_type = 'process.heartbeat'
-        ORDER BY payload->>'process_name', ts_orig DESC
-        "#
-    )
-    .fetch_all(ctx.pool())
-    .await?;
+    // Get all process heartbeat events using query builder
+    let events = TestQueries::get_events_by_source(ctx.pool(), "sinex.process", Some(100)).await?;
+    
+    // Filter to heartbeats and group by process name
+    let mut process_map = std::collections::HashMap::new();
+    for event in events {
+        if event.event_type == "process.heartbeat" {
+            if let Some(process_name) = event.payload.get("process_name").and_then(|v| v.as_str()) {
+                // Keep only the latest heartbeat for each process
+                match process_map.get(process_name) {
+                    None => { process_map.insert(process_name.to_string(), event); },
+                    Some(existing) => {
+                        if event.ts_orig.unwrap_or(event.ts_ingest) > existing.ts_orig.unwrap_or(existing.ts_ingest) {
+                            process_map.insert(process_name.to_string(), event);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    let health_data: Vec<_> = process_map.into_iter().map(|(_, event)| event).collect();
 
     assert_eq!(health_data.len(), 4, "Should find all 4 processes");
 
     // Verify each process has correct data
     let mut found_processes = std::collections::HashMap::new();
-    for row in health_data {
-        let name = row.component_name.unwrap();
+    for event in health_data {
+        let name = event.payload.get("process_name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        let status = event.payload.get("health_status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown")
+            .to_string();
+        
+        let uptime = event.payload.get("uptime_seconds")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0);
+        
+        let memory = event.payload.get("memory_mb")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        
+        let events_processed = event.payload.get("events_processed")
+            .and_then(|v| v.as_i64())
+            .unwrap_or(0) as i32;
+        
         found_processes.insert(
-            name.clone(),
-            (
-                row.status.unwrap_or_else(|| "unknown".to_string()),
-                row.uptime_seconds.unwrap_or(0),
-                row.memory_usage_mb.unwrap_or(0),
-                row.events_processed_last_minute.unwrap_or(0),
-            ),
+            name,
+            (status, uptime, memory, events_processed),
         );
     }
 
@@ -480,50 +470,48 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "failing_process";
     let version = "1.0.0";
-    let event_factory = EventFactory::new("sinex.process");
-
     // Start normally
-    let started_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "git_revision": "abc123",
-        "binary_hash": "def456",
-        "build_time": Utc::now(),
-        "config_hash": "ghi789"
-    });
-    ctx.insert_event(&event_factory.create_event("process.started", started_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.started")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("git_revision", json!("abc123"))
+        .with_field("binary_hash", json!("def456"))
+        .with_field("build_time", json!(Utc::now()))
+        .with_field("config_hash", json!("ghi789"))
+        .insert(ctx.pool())
+        .await?;
 
     // First heartbeat - healthy
-    let heartbeat1_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 10,
-        "memory_mb": 128,
-        "cpu_percent": 15.5,
-        "events_processed": 100,
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": {}
-    });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat1_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(10))
+        .with_field("memory_mb", json!(128))
+        .with_field("cpu_percent", json!(15.5))
+        .with_field("events_processed", json!(100))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!({}))
+        .insert(ctx.pool())
+        .await?;
 
     // Simulate degraded state
     metrics_provider.add_custom_metric("health_status", serde_json::json!("degraded"));
     metrics_provider.add_custom_metric("error_count", serde_json::json!(5));
     let custom_metrics = metrics_provider.custom_metrics.lock().unwrap().clone();
     
-    let heartbeat2_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 20,
-        "memory_mb": 128,
-        "cpu_percent": 25.5,
-        "events_processed": 150,
-        "errors_count": 5,
-        "health_status": "degraded",
-        "custom_metrics": custom_metrics
-    });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat2_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(20))
+        .with_field("memory_mb", json!(128))
+        .with_field("cpu_percent", json!(25.5))
+        .with_field("events_processed", json!(150))
+        .with_field("errors_count", json!(5))
+        .with_field("health_status", json!("degraded"))
+        .with_field("custom_metrics", json!(custom_metrics))
+        .insert(ctx.pool())
+        .await?;
 
     // Simulate critical state
     metrics_provider.add_custom_metric("health_status", serde_json::json!("critical"));
@@ -534,36 +522,35 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
     );
     let custom_metrics = metrics_provider.custom_metrics.lock().unwrap().clone();
     
-    let heartbeat3_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 30,
-        "memory_mb": 256,
-        "cpu_percent": 45.5,
-        "events_processed": 160,
-        "errors_count": 15,
-        "health_status": "critical",
-        "custom_metrics": custom_metrics
-    });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat3_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(30))
+        .with_field("memory_mb", json!(256))
+        .with_field("cpu_percent", json!(45.5))
+        .with_field("events_processed", json!(160))
+        .with_field("errors_count", json!(15))
+        .with_field("health_status", json!("critical"))
+        .with_field("custom_metrics", json!(custom_metrics))
+        .insert(ctx.pool())
+        .await?;
 
     // Simulate shutdown due to errors
-    let shutdown_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": version,
-        "uptime_seconds": 30,
-        "graceful": false,
-        "shutdown_reason": "Process terminated due to critical errors"
-    });
-    ctx.insert_event(&event_factory.create_event("process.shutdown", shutdown_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.shutdown")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!(version))
+        .with_field("uptime_seconds", json!(30))
+        .with_field("graceful", json!(false))
+        .with_field("shutdown_reason", json!("Process terminated due to critical errors"))
+        .insert(ctx.pool())
+        .await?;
 
     // Verify the failure progression is recorded
-    let events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(20),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     // Filter to only our process
@@ -619,44 +606,42 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     let process_name = "restartable_process";
-    let event_factory = EventFactory::new("sinex.process");
-
     // First process instance
     let metrics1 = MockMetricsProvider::new();
     
     // Start first instance
-    let started1_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": "1.0.0",
-        "git_revision": "abc123",
-        "binary_hash": "def456",
-        "build_time": Utc::now(),
-        "config_hash": "ghi789"
-    });
-    ctx.insert_event(&event_factory.create_event("process.started", started1_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.started")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!("1.0.0"))
+        .with_field("git_revision", json!("abc123"))
+        .with_field("binary_hash", json!("def456"))
+        .with_field("build_time", json!(Utc::now()))
+        .with_field("config_hash", json!("ghi789"))
+        .insert(ctx.pool())
+        .await?;
 
     metrics1.set_uptime(10);
-    let heartbeat1_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": "1.0.0",
-        "uptime_seconds": 10,
-        "memory_mb": 128,
-        "cpu_percent": 15.5,
-        "events_processed": 50,
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": {}
-    });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat1_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!("1.0.0"))
+        .with_field("uptime_seconds", json!(10))
+        .with_field("memory_mb", json!(128))
+        .with_field("cpu_percent", json!(15.5))
+        .with_field("events_processed", json!(50))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!({}))
+        .insert(ctx.pool())
+        .await?;
 
-    let shutdown1_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": "1.0.0",
-        "uptime_seconds": 10,
-        "graceful": true,
-        "shutdown_reason": "Planned restart"
-    });
-    ctx.insert_event(&event_factory.create_event("process.shutdown", shutdown1_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.shutdown")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!("1.0.0"))
+        .with_field("uptime_seconds", json!(10))
+        .with_field("graceful", json!(true))
+        .with_field("shutdown_reason", json!("Planned restart"))
+        .insert(ctx.pool())
+        .await?;
 
     // Small delay to ensure different timestamps
     sleep(tokio::time::Duration::from_millis(100)).await;
@@ -665,37 +650,36 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
     let metrics2 = MockMetricsProvider::new();
     
     // Start second instance with new version
-    let started2_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": "1.0.1", // New version
-        "git_revision": "xyz789",
-        "binary_hash": "uvw123",
-        "build_time": Utc::now(),
-        "config_hash": "rst456"
-    });
-    ctx.insert_event(&event_factory.create_event("process.started", started2_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.started")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!("1.0.1")) // New version
+        .with_field("git_revision", json!("xyz789"))
+        .with_field("binary_hash", json!("uvw123"))
+        .with_field("build_time", json!(Utc::now()))
+        .with_field("config_hash", json!("rst456"))
+        .insert(ctx.pool())
+        .await?;
 
     metrics2.set_uptime(5); // Fresh start
-    let heartbeat2_payload = serde_json::json!({
-        "process_name": process_name,
-        "version": "1.0.1",
-        "uptime_seconds": 5,
-        "memory_mb": 128,
-        "cpu_percent": 12.5,
-        "events_processed": 10,
-        "errors_count": 0,
-        "health_status": "healthy",
-        "custom_metrics": {}
-    });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat2_payload)).await?;
+    TestEventBuilder::new("sinex.process", "process.heartbeat")
+        .with_field("process_name", json!(process_name))
+        .with_field("version", json!("1.0.1"))
+        .with_field("uptime_seconds", json!(5))
+        .with_field("memory_mb", json!(128))
+        .with_field("cpu_percent", json!(12.5))
+        .with_field("events_processed", json!(10))
+        .with_field("errors_count", json!(0))
+        .with_field("health_status", json!("healthy"))
+        .with_field("custom_metrics", json!({}))
+        .insert(ctx.pool())
+        .await?;
 
     // Verify restart is detectable by analyzing events
-    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let all_events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(20),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     // Filter to only our process
@@ -747,26 +731,24 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "high_freq_test";
     let version = "1.0.0";
-    let event_factory = EventFactory::new("sinex.process");
-
     // Emit many heartbeats rapidly
     let start_time = std::time::Instant::now();
     for i in 0..20 {
         metrics_provider.set_uptime(i * 5);
         metrics_provider.increment_events_processed(10);
         
-        let heartbeat_payload = serde_json::json!({
-            "process_name": process_name,
-            "version": version,
-            "uptime_seconds": *metrics_provider.uptime.lock().unwrap(),
-            "memory_mb": *metrics_provider.memory_mb.lock().unwrap(),
-            "cpu_percent": 15.5,
-            "events_processed": *metrics_provider.events_processed.lock().unwrap(),
-            "errors_count": 0,
-            "health_status": "healthy",
-            "custom_metrics": {}
-        });
-        ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat_payload)).await?;
+        TestEventBuilder::new("sinex.process", "process.heartbeat")
+            .with_field("process_name", json!(process_name))
+            .with_field("version", json!(version))
+            .with_field("uptime_seconds", json!(*metrics_provider.uptime.lock().unwrap()))
+            .with_field("memory_mb", json!(*metrics_provider.memory_mb.lock().unwrap()))
+            .with_field("cpu_percent", json!(15.5))
+            .with_field("events_processed", json!(*metrics_provider.events_processed.lock().unwrap()))
+            .with_field("errors_count", json!(0))
+            .with_field("health_status", json!("healthy"))
+            .with_field("custom_metrics", json!({}))
+            .insert(ctx.pool())
+            .await?;
 
         // Small delay to avoid overwhelming the database
         sleep(tokio::time::Duration::from_millis(10)).await;
@@ -774,12 +756,11 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
     let duration = start_time.elapsed();
 
     // Verify all heartbeats were recorded
-    let all_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_source(
-        "sinex.process".to_string(),
+    let all_events = TestQueries::get_events_by_source(
+        ctx.pool(),
+        "sinex.process",
         Some(50),
-        None,
     )
-    .fetch_all(ctx.pool())
     .await?;
 
     // Count heartbeat events for our process

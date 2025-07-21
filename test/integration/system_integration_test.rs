@@ -11,6 +11,8 @@
 // - Query interface testing
 
 use crate::common::prelude::*;
+use crate::common::builders::{TestEventBuilder, TestEvents, BatchEventBuilder};
+use crate::common::query_helpers::TestQueries;
 use sinex_events::{event_types, EventFactory, sources};
 use crate::common::mocks::EventSourceContext;
 use crate::common::{assertions, events};
@@ -133,7 +135,7 @@ async fn test_database_startup_health(pool: &DbPool) -> AnyhowResult<bool> {
     let tables = vec![
         "core.events",
         "sinex_schemas.work_queue",
-        "sinex_schemas.processor_manifests",
+        "core.processor_manifests",
     ];
 
     for table in tables {
@@ -285,12 +287,15 @@ async fn test_clipboard_source_health() -> AnyhowResult<bool> {
 }
 
 async fn test_worker_system_startup(pool: &DbPool) -> AnyhowResult<bool> {
-    let factory = EventFactory::new("worker_startup_test");
-    let test_event = factory.create_event("system.health_check", json!({"test": true}));
-    let inserted_event_id = insert_event(pool, &test_event).await?;
+    let test_event = TestEventBuilder::new("worker_startup_test", "system.health_check")
+        .with_payload(json!({"test": true}))
+        .insert(pool)
+        .await?;
+    
+    let inserted_event_id = test_event.id;
 
+    // Note: Work queue operations still require raw SQL access
     add_to_work_queue(pool, inserted_event_id, "test-agent", 3).await?;
-
     let claimed_items = claim_work_queue_items(pool, "test-agent", "startup-worker", 1).await?;
 
     assert!(
@@ -381,12 +386,13 @@ async fn test_partial_system_startup(config: &CollectorConfig) -> AnyhowResult<b
 }
 
 async fn test_database_recovery_scenario(pool: &DbPool) -> AnyhowResult<bool> {
-    let factory = EventFactory::new("recovery_test");
-    let test_event = factory.create_event("system.test", json!({"test": true}));
-    let insert_result = sinex_db::insert_event(pool, &test_event).await;
+    let test_event = TestEventBuilder::new("recovery_test", "system.test")
+        .with_payload(json!({"test": true}))
+        .insert(pool)
+        .await;
 
     assert!(
-        insert_result.is_ok(),
+        test_event.is_ok(),
         "Database insert should succeed in recovery test"
     );
 
@@ -556,22 +562,16 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     println!("✓ Configuration validation and extraction completed");
 
-    let factory = EventFactory::new("integration_test");
-    let test_event = factory.create_event(
-        "comprehensive.test",
-        json!({
+    let test_event = TestEventBuilder::new("integration_test", "comprehensive.test")
+        .with_payload(json!({
             "test_phase": "abstraction_integration", 
             "abstractions": ["ValidationChain", "ErrorContext", "ChannelSenderExt"],
             "db_url": db_url,
-        })
-    );
-
-    let event_id = assert_event_inserted_with_context(
-        ctx.pool(),
-        &test_event,
-        "comprehensive_integration_test",
-    )
-    .await?;
+        }))
+        .insert(ctx.pool())
+        .await?;
+    
+    let event_id = test_event.id;
 
     println!("✓ Event inserted with ID: {}", event_id);
 
@@ -598,7 +598,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     println!("✓ Channel operations testing completed");
 
     // Test database state
-    let event_count = EventQueries::count_by_source(ctx.pool(), "integration_test").await?;
+    let event_count = TestQueries::count_events_by_source(ctx.pool(), "integration_test").await?;
 
     assert_with_context(
         event_count >= 1,
@@ -608,7 +608,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 
     println!("✓ Database state validation completed");
 
-    let retrieved_event = sinex_db::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved_event = TestQueries::get_event(ctx.pool(), event_id).await?;
     assert_events_equivalent(&retrieved_event, &test_event)?;
 
     println!("✅ Comprehensive abstraction integration test completed successfully!");
@@ -701,11 +701,9 @@ impl EventSource for ChaosEventSource {
 
             FailureMode::StreamingCrash { after_events } => {
                 for i in 0..*after_events {
-                    let factory = EventFactory::new("test.chaos");
-                    let event = factory.create_event(
-                        "test.event",
-                        json!({"event_num": i, "message": "test event"}),
-                    );
+                    let event = TestEventBuilder::new("test.chaos", "test.event")
+                        .with_payload(json!({"event_num": i, "message": "test event"}))
+                        .build();
 
                     if tx.send(event).await.is_err() {
                         return Err(CoreError::Unknown("Channel closed".to_string()));
@@ -722,17 +720,14 @@ impl EventSource for ChaosEventSource {
                 for i in 0..100 {
                     let is_corrupted = (i as f32 / 100.0) < *corruption_rate;
 
-                    let factory = EventFactory::new("test.chaos");
                     let event = if is_corrupted {
-                        factory.create_event(
-                            "corrupted.event",
-                            json!({"corrupted": true, "invalid_data": null}),
-                        )
+                        TestEventBuilder::new("test.chaos", "corrupted.event")
+                            .with_payload(json!({"corrupted": true, "invalid_data": null}))
+                            .build()
                     } else {
-                        factory.create_event(
-                            "test.event",
-                            json!({"event_num": i, "valid": true}),
-                        )
+                        TestEventBuilder::new("test.chaos", "test.event")
+                            .with_payload(json!({"event_num": i, "valid": true}))
+                            .build()
                     };
 
                     if tx.send(event).await.is_err() {
@@ -812,7 +807,17 @@ async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
         }
 
         if event.event_type == "test.event" {
-            sinex_db::insert_event(ctx.pool(), &event).await?;
+            TestQueries::insert_full_event(
+                ctx.pool(),
+                &event.source,
+                &event.event_type,
+                &event.host,
+                event.payload.clone(),
+                event.ts_orig,
+                event.ingestor_version.clone(),
+                event.payload_schema_id,
+                event.source_event_ids.clone(),
+            ).await?;
         }
     }
 
@@ -826,10 +831,13 @@ async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
         "Not all events should be corrupted"
     );
 
-    let stored_count = sinex_db::count_events(ctx.pool()).await?;
+    let all_events = TestQueries::get_events_by_source(ctx.pool(), "test.chaos", None).await?;
+    let stored_count = all_events.iter()
+        .filter(|e| e.event_type == "test.event")
+        .count();
     assert_eq!(
         stored_count,
-        received_events - corrupted_events,
+        (received_events - corrupted_events) as usize,
         "Only valid events should be stored"
     );
 
@@ -864,23 +872,27 @@ async fn test_database_disconnection_recovery(ctx: TestContext) -> TestResult {
 }
 
 async fn test_database_connection_recovery(pool: &DbPool) -> AnyhowResult<bool> {
-    let factory = EventFactory::new("database_recovery_test");
-    let test_event = factory.create_event(
-        "connection.test",
-        json!({
+    let test_event = TestEventBuilder::new("database_recovery_test", "connection.test")
+        .with_payload(json!({
             "phase": "normal_operation",
             "timestamp": chrono::Utc::now().to_rfc3339()
-        }),
-    );
-
-    let normal_insert = sinex_db::insert_event(pool, &test_event).await;
+        }))
+        .insert(pool)
+        .await;
+    
     assert!(
-        normal_insert.is_ok(),
+        test_event.is_ok(),
         "Normal database operation should work"
     );
 
+    let timeout_event = TestEventBuilder::new("database_recovery_test", "connection.test")
+        .with_payload(json!({
+            "phase": "timeout_test",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }));
+    
     let timeout_result =
-        tokio::time::timeout(Duration::from_millis(100), sinex_db::insert_event(pool, &test_event)).await;
+        tokio::time::timeout(Duration::from_millis(100), timeout_event.insert(pool)).await;
 
     let connection_resilient = match timeout_result {
         Ok(Ok(_)) => true,
@@ -889,17 +901,16 @@ async fn test_database_connection_recovery(pool: &DbPool) -> AnyhowResult<bool> 
     };
 
     tokio::task::yield_now().await;
-    let factory = EventFactory::new("database_recovery_test");
-    let recovery_event = factory.create_event(
-        "recovery.test",
-        json!({
+    
+    let recovery_event = TestEventBuilder::new("database_recovery_test", "recovery.test")
+        .with_payload(json!({
             "phase": "post_timeout",
             "timestamp": chrono::Utc::now().to_rfc3339()
-        }),
-    );
-
-    let recovery_insert = sinex_db::insert_event(pool, &recovery_event).await;
-    let system_recovered = recovery_insert.is_ok();
+        }))
+        .insert(pool)
+        .await;
+    
+    let system_recovered = recovery_event.is_ok();
 
     Ok(connection_resilient && system_recovered)
 }
@@ -912,14 +923,12 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
     let producer_events = buffered_events.clone();
     let producer = tokio::spawn(async move {
         for i in 0..50 {
-            let factory = EventFactory::new("buffering_test");
-            let event = factory.create_event(
-                "event.during_outage",
-                json!({
+            let event = TestEventBuilder::new("buffering_test", "event.during_outage")
+                .with_payload(json!({
                     "sequence": i,
                     "generated_at": chrono::Utc::now().to_rfc3339()
-                }),
-            );
+                }))
+                .build();
 
             producer_events.lock().await.push(event);
             tokio::task::yield_now().await;
@@ -932,7 +941,17 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
     let mut successful_inserts = 0;
 
     for event in buffered.iter() {
-        if sinex_db::insert_event(pool, event).await.is_ok() {
+        if TestQueries::insert_full_event(
+            pool,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.clone(),
+            event.payload_schema_id,
+            event.source_event_ids.clone(),
+        ).await.is_ok() {
             successful_inserts += 1;
         }
     }
@@ -943,7 +962,7 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
         "All buffered events should be processed on recovery"
     );
 
-    let count = EventQueries::count_by_source("buffering_test".to_string()).fetch_one::<(i64,)>(&pool).await.map(|r| r.0)?;
+    let count = TestQueries::count_events_by_source(&pool, "buffering_test").await?;
     pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
 
     Ok(true)
@@ -1170,7 +1189,8 @@ async fn test_component_health_checks(
 async fn check_database_health(pool: &DbPool) -> AnyhowResult<HealthStatus> {
     match OperationQueries::health_check_basic(pool).await {
         Ok(true) => {
-            match sinex_db::count_events(pool).await {
+            // Try a simple query to verify DB is operational
+            match TestQueries::get_recent_events(pool, 1).await {
                 Ok(_) => Ok(HealthStatus::Healthy),
                 Err(_) => Ok(HealthStatus::Degraded),
             }
@@ -1278,21 +1298,18 @@ const EXTREME_PAYLOAD_SIZE: usize = 100 * 1024 * 1024;
 #[sinex_test]
 async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
     let small_content = "x".repeat(SMALL_PAYLOAD_SIZE / 2);
-    let payload = json!({
-        "content": small_content,
-        "size": small_content.len(),
-        "metadata": {
+    
+    let event = TestEvents::minimal()
+        .with_field("content", json!(small_content))
+        .with_field("size", json!(small_content.len()))
+        .with_field("metadata", json!({
             "type": "small_test",
             "timestamp": chrono::Utc::now().to_rfc3339()
-        }
-    });
+        }))
+        .insert(ctx.pool())
+        .await?;
 
-    let factory = EventFactory::new("test.boundary");
-    let event = factory.create_event("small.payload", payload);
-
-    sinex_db::insert_event(ctx.pool(), &event).await?;
-
-    let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
+    let retrieved = TestQueries::get_event(ctx.pool(), event.id).await?;
     assert_eq!(retrieved.id, event.id);
     assert_eq!(
         retrieved.payload["content"].as_str().unwrap().len(),
@@ -1304,32 +1321,26 @@ async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
-    let large_content = "b".repeat(LARGE_PAYLOAD_SIZE);
-    let payload = json!({
-        "very_large_text": large_content,
-        "size": large_content.len(),
-        "type": "large_payload_test"
-    });
-
-    let factory = EventFactory::new("test.boundary");
-    let event = factory.create_event("large.payload", payload);
-
+    let size_mb = LARGE_PAYLOAD_SIZE / (1024 * 1024);
+    let event_builder = TestEvents::large_payload(size_mb);
+    
     let start = std::time::Instant::now();
-    let result = sinex_db::insert_event(ctx.pool(), &event).await;
+    let result = event_builder.insert(ctx.pool()).await;
     let duration = start.elapsed();
 
     match result {
-        Ok(_inserted_event) => {
+        Ok(event) => {
             println!("Large payload insert took: {:?}", duration);
 
             let start_retrieval = std::time::Instant::now();
-            let retrieved = sinex_db::get_event_by_id(ctx.pool(), event.id).await?;
+            let retrieved = TestQueries::get_event(ctx.pool(), event.id).await?;
             let retrieval_duration = start_retrieval.elapsed();
 
             println!("Large payload retrieval took: {:?}", retrieval_duration);
+            assert!(retrieved.payload["data"].as_str().is_some());
             assert_eq!(
-                retrieved.payload["very_large_text"].as_str().unwrap().len(),
-                large_content.len()
+                retrieved.payload["size_kb"].as_u64().unwrap() as usize,
+                size_mb * 1024
             );
         }
         Err(e) => {
@@ -1347,17 +1358,11 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_extreme_payload_rejection(ctx: TestContext) -> TestResult {
-    let extreme_content = "c".repeat(EXTREME_PAYLOAD_SIZE);
-    let payload = json!({
-        "extreme_text": extreme_content,
-        "size": extreme_content.len(),
-        "warning": "This should probably be rejected"
-    });
-
-    let factory = EventFactory::new("test.boundary");
-    let event = factory.create_event("extreme.payload", payload);
-
-    let result = sinex_db::insert_event(ctx.pool(), &event).await;
+    let size_mb = EXTREME_PAYLOAD_SIZE / (1024 * 1024);
+    let event_builder = TestEvents::large_payload(size_mb)
+        .with_field("warning", json!("This should probably be rejected"));
+    
+    let result = event_builder.insert(ctx.pool()).await;
     assert!(result.is_err(), "Extreme payloads should be rejected");
 
     let error_msg = result.unwrap_err().to_string();
@@ -2081,7 +2086,7 @@ use mock_types::*;
 async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
     // Create a complete agent manifest
     let result = sqlx::query(
-        "INSERT INTO sinex_schemas.processor_manifests
+        "INSERT INTO core.processor_manifests
          (processor_name, processor_type, description, version, status,
           config_template_json, produces_event_types, consumes_event_types,
           required_capabilities, llm_dependencies, repo_url)
@@ -2140,7 +2145,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
         "SELECT automaton_name, description, version, status, agent_type,
                 config_template_json, produces_event_types, subscribes_to_event_types,
                 required_capabilities, llm_dependencies, repo_url
-         FROM sinex_schemas.processor_manifests
+         FROM core.processor_manifests
          WHERE processor_name = $1 AND processor_type = 'automaton'",
     )
     .bind("test_agent_crud")
@@ -2169,7 +2174,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     // Create agent
-    sqlx::query("INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version) VALUES ($1, 'automaton', $2)")
+    sqlx::query("INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version) VALUES ($1, 'automaton', $2)")
         .bind("update_test_agent")
         .bind("1.0.0")
         .execute(ctx.pool())
@@ -2179,7 +2184,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     // Get initial timestamps
     let (registered, updated): (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>) =
         sqlx::query_as(
-            "SELECT registered_at, updated_at FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'"
+            "SELECT registered_at, updated_at FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'"
         )
         .bind("update_test_agent")
         .fetch_one(ctx.pool())
@@ -2190,7 +2195,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
 
     // Update various fields
     sqlx::query(
-        "UPDATE sinex_schemas.processor_manifests
+        "UPDATE core.processor_manifests
          SET version = $1,
              status = $2,
              last_heartbeat_ts = $3,
@@ -2211,7 +2216,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
     // Verify updates and trigger
     let (version, status, updated_new): (String, String, chrono::DateTime<chrono::Utc>) =
         sqlx::query_as(
-            "SELECT version, status, updated_at FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'"
+            "SELECT version, status, updated_at FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'"
         )
         .bind("update_test_agent")
         .fetch_one(ctx.pool())
@@ -2232,7 +2237,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     // Create agent
-    sqlx::query("INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version) VALUES ($1, 'automaton', $2)")
+    sqlx::query("INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version) VALUES ($1, 'automaton', $2)")
         .bind("delete_test_agent")
         .bind("1.0.0")
         .execute(ctx.pool())
@@ -2266,7 +2271,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     .unwrap();
 
     // Delete agent - should cascade delete work queue items
-    sqlx::query("DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'")
+    sqlx::query("DELETE FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'")
         .bind("delete_test_agent")
         .execute(ctx.pool())
         .await
@@ -2274,7 +2279,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 
     // Verify agent is deleted
     let count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'",
+        "SELECT COUNT(*) FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'",
     )
     .bind("delete_test_agent")
     .fetch_one(ctx.pool())
@@ -2301,7 +2306,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
     // Create agent in pending state
     sqlx::query(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, status)
+        "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, status)
          VALUES ($1, 'automaton', $2, $3)",
     )
     .bind("status_test_agent")
@@ -2323,7 +2328,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
 
     for status in valid_statuses {
         let result = sqlx::query(
-            "UPDATE sinex_schemas.processor_manifests SET status = $1 WHERE processor_name = $2 AND processor_type = 'automaton'",
+            "UPDATE core.processor_manifests SET status = $1 WHERE processor_name = $2 AND processor_type = 'automaton'",
         )
         .bind(status)
         .bind("status_test_agent")
@@ -2340,7 +2345,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
     // Test error state with error tracking
     let error_time = chrono::Utc::now();
     sqlx::query(
-        "UPDATE sinex_schemas.processor_manifests
+        "UPDATE core.processor_manifests
          SET status = $1, last_heartbeat_ts = $2, description = $3
          WHERE processor_name = $4 AND processor_type = 'automaton'",
     )
@@ -2358,7 +2363,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
         Option<String>,
     ) = sqlx::query_as(
         "SELECT status, last_error_ts, last_error_summary
-             FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'",
+             FROM core.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton'",
     )
     .bind("status_test_agent")
     .fetch_one(ctx.pool())
@@ -2400,7 +2405,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
     });
 
     sqlx::query(
-        "INSERT INTO sinex_schemas.processor_manifests
+        "INSERT INTO core.processor_manifests
          (processor_name, processor_type, version, description)
          VALUES ($1, 'automaton', $2, $3)",
     )
@@ -2414,7 +2419,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
 
     // Query agents by capability
     let agents_with_fs_write: Vec<String> = sqlx::query_scalar(
-        "SELECT processor_name FROM sinex_schemas.processor_manifests
+        "SELECT processor_name FROM core.processor_manifests
          WHERE processor_type = 'automaton' AND produces_event_types @> '["file.created"]'",
     )
     .fetch_all(ctx.pool())
@@ -2425,7 +2430,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
 
     // Query agents using specific LLM model
     let agents_using_gpt4: Vec<String> = sqlx::query_scalar(
-        "SELECT processor_name FROM sinex_schemas.processor_manifests
+        "SELECT processor_name FROM core.processor_manifests
          WHERE processor_type = 'automaton' AND description LIKE '%gpt-4%'",
     )
     .fetch_all(ctx.pool())
@@ -2469,7 +2474,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
 
     for (name, subscriptions) in agents {
         sqlx::query(
-            "INSERT INTO sinex_schemas.processor_manifests
+            "INSERT INTO core.processor_manifests
              (processor_name, processor_type, version, consumes_event_types)
              VALUES ($1, 'automaton', $2, $3)",
         )
@@ -2483,7 +2488,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
 
     // Query agents subscribing to any events (using GIN index)
     let subscribers: Vec<String> = sqlx::query_scalar(
-        "SELECT processor_name FROM sinex_schemas.processor_manifests
+        "SELECT processor_name FROM core.processor_manifests
          WHERE processor_type = 'automaton' AND consumes_event_types IS NOT NULL
          ORDER BY processor_name",
     )
@@ -2495,7 +2500,7 @@ async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
 
     // Query agents subscribing to specific event feed
     let raw_feed_subscribers: Vec<String> = sqlx::query_scalar(
-        "SELECT processor_name FROM sinex_schemas.processor_manifests
+        "SELECT processor_name FROM core.processor_manifests
          WHERE processor_type = 'automaton' AND consumes_event_types @> '["core.events_feed_all"]'
          ORDER BY processor_name",
     )

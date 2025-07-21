@@ -119,6 +119,13 @@ impl From<DbError> for sinex_core_types::CoreError {
     }
 }
 
+/// Convert DbError to sinex_error::CoreError
+impl From<DbError> for sinex_error::CoreError {
+    fn from(err: DbError) -> Self {
+        sinex_error::CoreError::Database(err.to_string())
+    }
+}
+
 // ===== Removed Query Execution Helpers =====
 // These were unused abstractions that added complexity without value.
 // Use sqlx::query! macros directly instead.

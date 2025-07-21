@@ -5,7 +5,6 @@
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
 use sinex_satellite_sdk::VersionInfo;
 use std::collections::HashMap;
 use std::fs;

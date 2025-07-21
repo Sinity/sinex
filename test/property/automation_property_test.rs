@@ -2,12 +2,9 @@
 //
 // Tests that verify automaton processing, state management, and coordination properties
 
-use crate::common::prelude::*;
 use crate::property::strategies::*;
 use proptest::prelude::*;
-use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 /// Test automaton event processing is deterministic
 proptest! {

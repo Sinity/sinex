@@ -16,7 +16,6 @@
 use crate::common::prelude::*;
 
 use crate::common::generators;
-use crate::common::prelude::*;
 use serde_json::json;
 use sinex_db::{
     annotations, artifacts, knowledge_graph,

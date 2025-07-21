@@ -6,9 +6,8 @@
 
 use crate::common::prelude::*;
 
-use crate::common::prelude::*;
 use sinex_events::{
-    sources, strongly_typed_events::*, EventEnvelope, EventFactory, RawEvent, event_types,
+    sources, EventFactory, RawEvent,
 };
 use std::collections::HashSet;
 

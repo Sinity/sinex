@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
+use crate::{event_types, sources};
 
 // Type aliases for timestamp and JSON handling
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
@@ -100,8 +101,8 @@ mod tests {
         let test_schema_id = Ulid::new();
         let test_timestamp = chrono::Utc::now();
 
-        let factory = EventFactory::new("fs");
-        let mut event = factory.create_event("file.created", payload.clone());
+        let factory = EventFactory::new(sources::FS);
+        let mut event = factory.create_event(event_types::filesystem::FILE_CREATED, payload.clone());
         event.id = test_id;
         event.host = "test-host".to_string();
         event.ingestor_version = Some("1.0.0".to_string());
@@ -109,8 +110,8 @@ mod tests {
         event.ts_orig = Some(test_timestamp);
 
         assert_eq!(event.id, test_id);
-        assert_eq!(event.source, "fs");
-        assert_eq!(event.event_type, "file.created");
+        assert_eq!(event.source, sources::FS);
+        assert_eq!(event.event_type, event_types::filesystem::FILE_CREATED);
         assert_eq!(event.host, "test-host");
         assert_eq!(event.ingestor_version, Some("1.0.0".to_string()));
         assert_eq!(event.payload_schema_id, Some(test_schema_id));

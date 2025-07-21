@@ -403,7 +403,7 @@ impl CheckpointQueries {
                 created_at,
                 updated_at
             ) VALUES (
-                $1::uuid, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12
+                $1::uuid, $2, $3, $4, $5::uuid, $6, $7, $8, $9, $10, $11, $12
             )
             ON CONFLICT (automaton_name, consumer_group, consumer_name) 
             DO UPDATE SET
@@ -419,7 +419,10 @@ impl CheckpointQueries {
             processor_name,
             consumer_group,
             consumer_name,
-            last_processed_id,
+            last_processed_id.as_ref().map(|id| {
+                let ulid = id.parse::<Ulid>().expect("Invalid ULID format");
+                crate::query_helpers::ulid_to_uuid(ulid)
+            }),
             processed_count,
             last_activity,
             state_data,

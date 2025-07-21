@@ -6,7 +6,6 @@
 // - Simulate various processing scenarios
 
 use crate::common::prelude::*;
-use redis::aio::MultiplexedConnection;
 use sinex_events::RawEvent;
 use sinex_satellite_sdk::{checkpoint::{CheckpointManager, CheckpointState}, stream_processor::Checkpoint};
 use std::sync::Arc;

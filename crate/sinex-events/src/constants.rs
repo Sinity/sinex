@@ -408,12 +408,13 @@ pub mod git_annex {
 }
 
 // Re-export commonly used constants for convenience (specific imports to avoid conflicts)
-pub use event_types::filesystem::*;
-pub use event_types::shell::*;
-pub use event_types::window_manager::*;
+// NOTE: Commented out to avoid self-referential imports
+// pub use event_types::filesystem::*;
+// pub use event_types::shell::*;
+// pub use event_types::window_manager::*;
 
 // Sources (without HEALTH_AGGREGATOR to avoid conflict)
-pub use sources::{FS, SHELL_KITTY, SHELL_RECORDING, SHELL_ASCIINEMA, SHELL_SCROLLBACK, WM_HYPRLAND, CLIPBOARD, DBUS, JOURNALD, UDEV, SYSTEMD, TERMINAL_KITTY, BLOB_STORAGE, SINEX};
+// pub use sources::{FS, SHELL_KITTY, SHELL_RECORDING, SHELL_ASCIINEMA, SHELL_SCROLLBACK, WM_HYPRLAND, CLIPBOARD, DBUS, JOURNALD, UDEV, SYSTEMD, TERMINAL_KITTY, BLOB_STORAGE, SINEX};
 
 // Services (all service names)
-pub use services::*;
+// pub use services::*;

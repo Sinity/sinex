@@ -10,8 +10,6 @@
 
 use crate::common::prelude::*;
 use serde_json::Value;
-use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
 
 /// A work queue item for testing
 #[derive(Debug, Clone)]

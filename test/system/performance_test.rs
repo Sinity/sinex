@@ -23,7 +23,10 @@
 use crate::common::prelude::*;
 
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_events::{EventFactory, services, event_types};
+use crate::common::builders::{TestEventBuilder, BatchEventBuilder};
+use crate::common::query_helpers::TestQueries;
+use sinex_events::{EventFactory, event_types};
+use sinex_db::queries::EventQueries;
 use sqlx::Row;
 use std::time::{Duration, Instant};
 
@@ -99,7 +102,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM core.events WHERE source = 'load_test'")
+    EventQueries::delete_by_source("load_test".to_string())
         .execute(&pool)
         .await?;
 
@@ -191,7 +194,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM core.events WHERE source = 'concurrent_load_test'")
+    EventQueries::delete_by_source("concurrent_load_test".to_string())
         .execute(&pool)
         .await?;
 
@@ -280,6 +283,8 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
             // Process events until none left
             loop {
                 // Try to claim an event for processing
+                // NOTE: This complex query with FOR UPDATE SKIP LOCKED is kept as raw SQL
+                // because it requires specific locking behavior not easily expressed in query builders
                 let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                     r#"
                     SELECT event_id::uuid
@@ -369,27 +374,36 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
         .await?;
     }
 
-    // Test various query patterns
-    let queries_to_test = vec![
-        ("Simple count", "SELECT COUNT(*) FROM core.events WHERE source = 'latency_test'"),
-        ("Filtered count", "SELECT COUNT(*) FROM core.events WHERE source = 'latency_test' AND event_type = 'type_a'"),
-        ("JSON query", "SELECT COUNT(*) FROM core.events WHERE source = 'latency_test' AND payload->>'category' = 'special'"),
-        ("Recent events", "SELECT * FROM core.events WHERE source = 'latency_test' ORDER BY ts_ingest DESC LIMIT 10"),
-    ];
+    // Test various query patterns using query builders
+    let start = Instant::now();
+    let simple_count = TestQueries::count_events_by_source(ctx.pool(), "latency_test").await?;
+    let simple_elapsed = start.elapsed();
+    println!("Simple count: {:?} (result: {})", simple_elapsed, simple_count);
+    assert!(simple_elapsed < Duration::from_millis(100), "Simple count query too slow: {:?}", simple_elapsed);
 
-    for (name, query) in queries_to_test {
-        let start = Instant::now();
-        let _result = sqlx::query(query).fetch_all(ctx.pool()).await?;
-        let elapsed = start.elapsed();
+    let start = Instant::now();
+    let filtered_events = TestQueries::get_events_by_type(ctx.pool(), "type_a", Some(1000)).await?;
+    let filtered_count = filtered_events.iter()
+        .filter(|e| e.source == "latency_test")
+        .count() as i64;
+    let filtered_elapsed = start.elapsed();
+    println!("Filtered count: {:?} (result: {})", filtered_elapsed, filtered_count);
+    assert!(filtered_elapsed < Duration::from_millis(100), "Filtered count query too slow: {:?}", filtered_elapsed);
 
-        println!("{}: {:?}", name, elapsed);
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "{} query too slow: {:?}",
-            name,
-            elapsed
-        );
-    }
+    // JSON query - keeping raw SQL for specific JSON operations not covered by query builders
+    let start = Instant::now();
+    let json_result = sqlx::query!("SELECT COUNT(*) FROM core.events WHERE source = 'latency_test' AND payload->>'category' = 'special'")
+        .fetch_one(ctx.pool())
+        .await?;
+    let json_elapsed = start.elapsed();
+    println!("JSON query: {:?} (result: {})", json_elapsed, json_result.count.unwrap_or(0));
+    assert!(json_elapsed < Duration::from_millis(100), "JSON query too slow: {:?}", json_elapsed);
+
+    let start = Instant::now();
+    let recent_events = TestQueries::get_events_by_source(ctx.pool(), "latency_test", Some(10)).await?;
+    let recent_elapsed = start.elapsed();
+    println!("Recent events: {:?} (result: {} events)", recent_elapsed, recent_events.len());
+    assert!(recent_elapsed < Duration::from_millis(100), "Recent events query too slow: {:?}", recent_elapsed);
 
     Ok(())
 }
@@ -448,7 +462,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM core.events WHERE source = 'memory_test'")
+    EventQueries::delete_by_source("memory_test".to_string())
         .execute(&pool)
         .await?;
 
@@ -513,6 +527,8 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
 
                 // Process events until none left
                 loop {
+                    // NOTE: This complex query with FOR UPDATE SKIP LOCKED is kept as raw SQL
+                    // because it requires specific locking behavior not easily expressed in query builders
                     let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
                         r#"
                         SELECT event_id::uuid
@@ -577,7 +593,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
         );
 
         // Cleanup for next test
-        sqlx::query!("DELETE FROM core.events WHERE source = 'scaling_test'")
+        EventQueries::delete_by_source("scaling_test".to_string())
             .execute(&pool)
             .await?;
     }
@@ -616,6 +632,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
 
             for i in 0..queries_per_connection {
                 // Simple query to test connection pooling
+                // NOTE: This query tests connection behavior, not event data, so raw SQL is appropriate
                 let result = sqlx::query("SELECT $1 as conn_id, $2 as query_id")
                     .bind(conn_id)
                     .bind(i)
@@ -696,7 +713,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
         );
 
         // Cleanup
-        sqlx::query!("DELETE FROM core.events WHERE source = 'large_payload_test'")
+        EventQueries::delete_by_source("large_payload_test".to_string())
             .execute(&pool)
             .await?;
     }
@@ -760,7 +777,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
     );
 
     // Cleanup
-    sqlx::query!("DELETE FROM core.events WHERE source = 'burst_test'")
+    EventQueries::delete_by_source("burst_test".to_string())
         .execute(&pool)
         .await?;
 

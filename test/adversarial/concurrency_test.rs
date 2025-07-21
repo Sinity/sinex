@@ -10,8 +10,8 @@
 // - **Memory Concurrency**: Shared state, atomic operations, cache coherency
 
 use crate::common::prelude::*;
-
-use crate::common::events;
+use crate::common::builders::TestEventBuilder;
+use crate::common::query_helpers::TestQueries;
 use chrono::Utc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
@@ -27,9 +27,16 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     let pool = ctx.pool().clone();
 
     // Insert event to be claimed
-    let event = events::race_test_event("race");
+    let event = TestEventBuilder::new("race", "race.test")
+        .with_field("test", json!("race_condition"))
+        .build();
 
-    let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+    let inserted = TestQueries::insert_test_event(
+        &pool,
+        &event.source,
+        &event.event_type,
+        event.payload,
+    ).await?;
     let event_id = inserted.id;
 
     // Create high-precision synchronization
@@ -46,7 +53,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     let handle1 = tokio::spawn(async move {
         barrier1.wait();
 
-        // Try to claim with SELECT FOR UPDATE
+        // Try to claim with SELECT FOR UPDATE - RAW SQL: Testing concurrent claim behavior
         let result = sqlx::query!(
             r#"
                 UPDATE core.events
@@ -69,7 +76,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     let handle2 = tokio::spawn(async move {
         barrier2.wait();
 
-        // Try to claim at exact same time
+        // Try to claim at exact same time - RAW SQL: Testing race condition
         let result = sqlx::query!(
             r#"
                 UPDATE core.events
@@ -95,12 +102,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
     println!("Total successful claims: {}", total_claims);
 
     // Check final state
-    let final_state = sqlx::query!(
-        "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid",
-        event_id.to_uuid()
-    )
-    .fetch_one(&pool)
-    .await?;
+    let final_state = TestQueries::get_event(&pool, event_id).await?;
 
     println!("Final payload: {}", final_state.payload);
 
@@ -118,24 +120,24 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
 
     // Simulate dependent events processed out of order
     for test_round in 0..10 {
-        let parent_event = events::generic_adversarial_event(
-            "causality_test",
-            "parent.event",
-            json!({"round": test_round}),
-            None,
-        );
+        let parent_event = TestEventBuilder::new("causality_test", "parent.event")
+            .with_field("round", json!(test_round))
+            .build();
 
-        insert_event(&pool, &parent_event).await?;
+        let parent_inserted = TestQueries::insert_test_event(
+            &pool,
+            &parent_event.source,
+            &parent_event.event_type,
+            parent_event.payload,
+        ).await?;
 
         // Create dependent events
         let mut child_events = Vec::new();
         for i in 0..5 {
-            let child = events::generic_adversarial_event(
-                "causality_test",
-                "child.event",
-                json!({"round": test_round, "child_id": i}),
-                None,
-            );
+            let child = TestEventBuilder::new("causality_test", "child.event")
+                .with_field("round", json!(test_round))
+                .with_field("child_id", json!(i))
+                .build();
             child_events.push(child);
         }
 
@@ -144,10 +146,10 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
         for child in child_events {
             let pool_clone = pool.clone();
             let violations = order_violations.clone();
-            let parent_id = parent_event.id;
+            let parent_id = parent_inserted.id;
 
             let handle = tokio::spawn(async move {
-                // Check if parent has been processed
+                // Check if parent has been processed - RAW SQL: Testing causality tracking
                 let parent_check = sqlx::query!(
                     "SELECT payload->>'processed' as processed FROM core.events WHERE event_id::uuid = $1::uuid",
                     parent_id.to_uuid()
@@ -163,7 +165,12 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
                 }
 
                 // Insert child event
-                insert_event(&pool_clone, &child).await
+                TestQueries::insert_test_event(
+                    &pool_clone,
+                    &child.source,
+                    &child.event_type,
+                    child.payload,
+                ).await
             });
 
             handles.push(handle);
@@ -172,9 +179,10 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
         // Process parent after small delay
         tokio::time::sleep(Duration::from_millis(10)).await;
 
+        // RAW SQL: Testing concurrent payload updates
         sqlx::query!(
             "UPDATE core.events SET payload = payload || '{\"processed\": \"true\"}'::jsonb WHERE event_id::uuid = $1::uuid",
-            parent_event.id.to_uuid()
+            parent_inserted.id.to_uuid()
         )
         .execute(&pool)
         .await?;
@@ -215,18 +223,18 @@ async fn test_concurrent_event_insertion_race(ctx: TestContext) -> TestResult {
 
         let handle = tokio::spawn(async move {
             for insertion_id in 0..10 {
-                let event = events::generic_adversarial_event(
-                    "insertion_race",
-                    "concurrent.insert",
-                    json!({
-                        "worker_id": worker_id,
-                        "insertion_id": insertion_id,
-                        "timestamp": Utc::now().to_rfc3339()
-                    }),
-                    None,
-                );
+                let event = TestEventBuilder::new("insertion_race", "concurrent.insert")
+                    .with_field("worker_id", json!(worker_id))
+                    .with_field("insertion_id", json!(insertion_id))
+                    .with_field("timestamp", json!(Utc::now().to_rfc3339()))
+                    .build();
 
-                match insert_event(&pool_clone, &event).await {
+                match TestQueries::insert_test_event(
+                    &pool_clone,
+                    &event.source,
+                    &event.event_type,
+                    event.payload,
+                ).await {
                     Ok(_) => {
                         success_count.fetch_add(1, Ordering::SeqCst);
                     }
@@ -277,15 +285,17 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
     let pool = ctx.pool().clone();
 
     // Create base event
-    let base_event = events::generic_adversarial_event(
-        "consistency_test",
-        "base.event",
-        json!({"counter": 0}),
-        None,
-    );
+    let base_event = TestEventBuilder::new("consistency_test", "base.event")
+        .with_field("counter", json!(0))
+        .build();
 
-    insert_event(&pool, &base_event).await?;
-    let event_id = base_event.id;
+    let inserted_event = TestQueries::insert_test_event(
+        &pool,
+        &base_event.source,
+        &base_event.event_type,
+        base_event.payload,
+    ).await?;
+    let event_id = inserted_event.id;
 
     let successful_updates = Arc::new(AtomicU64::new(0));
     let failed_updates = Arc::new(AtomicU64::new(0));
@@ -299,7 +309,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
 
         let handle = tokio::spawn(async move {
             for update_id in 0..5 {
-                // Try to increment counter atomically
+                // Try to increment counter atomically - RAW SQL: Testing concurrent updates
                 let update_result = sqlx::query!(
                     r#"
                     UPDATE core.events 
@@ -340,18 +350,11 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
     let failed = failed_updates.load(Ordering::SeqCst);
 
     // Check final counter value
-    let final_state = sqlx::query!(
-        "SELECT payload->>'counter' as counter FROM core.events WHERE event_id::uuid = $1::uuid",
-        event_id.to_uuid()
-    )
-    .fetch_one(&pool)
-    .await?;
+    let final_state = TestQueries::get_event(&pool, event_id).await?;
 
-    let final_counter: i32 = final_state
-        .counter
-        .unwrap_or("0".to_string())
-        .parse()
-        .unwrap_or(0);
+    let final_counter: i32 = final_state.payload["counter"]
+        .as_i64()
+        .unwrap_or(0) as i32;
 
     println!("Data consistency test results:");
     println!("  Successful updates: {}", successful);
@@ -382,17 +385,19 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
     // Insert events to be claimed
     let mut event_ids = vec![];
     for _i in 0..10 {
-        let event = events::generic_adversarial_event(
-            "coordination_test",
-            "work.item",
-            json!({"test": true}),
-            None,
-        );
+        let event = TestEventBuilder::new("coordination_test", "work.item")
+            .with_field("test", json!(true))
+            .build();
 
-        sinex_db::insert_event_with_validator(&pool, &event, None)
-            .await
-            .unwrap();
-        event_ids.push(event.id);
+        let inserted = TestQueries::insert_test_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            event.payload,
+        )
+        .await
+        .unwrap();
+        event_ids.push(inserted.id);
     }
 
     // Use barrier to synchronize workers at microsecond level
@@ -497,21 +502,25 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Create two events that workers will try to claim in different orders
-    let event1 = events::generic_adversarial_event(
-        "deadlock_test",
-        "resource.a",
-        json!({"resource": "A"}),
-        None,
-    );
-    let event2 = events::generic_adversarial_event(
-        "deadlock_test",
-        "resource.b",
-        json!({"resource": "B"}),
-        None,
-    );
+    let event1 = TestEventBuilder::new("deadlock_test", "resource.a")
+        .with_field("resource", json!("A"))
+        .build();
+    let event2 = TestEventBuilder::new("deadlock_test", "resource.b")
+        .with_field("resource", json!("B"))
+        .build();
 
-    insert_event(&pool, &event1).await?;
-    insert_event(&pool, &event2).await?;
+    let inserted1 = TestQueries::insert_test_event(
+        &pool,
+        &event1.source,
+        &event1.event_type,
+        event1.payload,
+    ).await?;
+    let inserted2 = TestQueries::insert_test_event(
+        &pool,
+        &event2.source,
+        &event2.event_type,
+        event2.payload,
+    ).await?;
 
     let successful_operations = Arc::new(AtomicU64::new(0));
     let failed_operations = Arc::new(AtomicU64::new(0));
@@ -531,12 +540,12 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
 
             // Worker tries to claim both events in different orders
             let (first_id, second_id) = if worker_id % 2 == 0 {
-                (event1.id, event2.id)
+                (inserted1.id, inserted2.id)
             } else {
-                (event2.id, event1.id)
+                (inserted2.id, inserted1.id)
             };
 
-            // Try to claim first event
+            // Try to claim first event - RAW SQL: Testing deadlock scenarios
             let claim1_result = sqlx::query!(
                 "UPDATE core.events SET payload = payload || jsonb_build_object('claimed_by', $2::text) WHERE event_id::uuid = $1::uuid",
                 first_id.to_uuid(),
@@ -549,7 +558,7 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
                 // Small delay to increase chance of deadlock
                 tokio::time::sleep(Duration::from_millis(10)).await;
 
-                // Try to claim second event
+                // Try to claim second event - RAW SQL: Testing deadlock detection
                 let claim2_result = sqlx::query!(
                     "UPDATE core.events SET payload = payload || jsonb_build_object('claimed_by', $2::text) WHERE event_id::uuid = $1::uuid",
                     second_id.to_uuid(),
@@ -619,15 +628,18 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
     let mut work_items = Vec::new();
 
     for i in 0..work_item_count {
-        let event = events::generic_adversarial_event(
-            "load_balance_test",
-            "work.item",
-            json!({"item_id": i, "priority": i % 3}),
-            None,
-        );
+        let event = TestEventBuilder::new("load_balance_test", "work.item")
+            .with_field("item_id", json!(i))
+            .with_field("priority", json!(i % 3))
+            .build();
 
-        insert_event(&pool, &event).await?;
-        work_items.push(event.id);
+        let inserted = TestQueries::insert_test_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            event.payload,
+        ).await?;
+        work_items.push(inserted.id);
     }
 
     let worker_counts = Arc::new(std::sync::Mutex::new(HashMap::new()));
@@ -645,7 +657,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
             let mut worker_processed = 0;
 
             loop {
-                // Try to claim next available work item
+                // Try to claim next available work item - RAW SQL: Testing work distribution
                 let claim_result = sqlx::query!(
                     r#"
                     UPDATE core.events 
@@ -740,15 +752,17 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Create test event
-    let test_event = events::generic_adversarial_event(
-        "isolation_test",
-        "transaction.test",
-        json!({"value": 100}),
-        None,
-    );
+    let test_event = TestEventBuilder::new("isolation_test", "transaction.test")
+        .with_field("value", json!(100))
+        .build();
 
-    insert_event(&pool, &test_event).await?;
-    let event_id = test_event.id;
+    let inserted = TestQueries::insert_test_event(
+        &pool,
+        &test_event.source,
+        &test_event.event_type,
+        test_event.payload,
+    ).await?;
+    let event_id = inserted.id;
 
     let isolation_violations = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -761,7 +775,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
         let handle = tokio::spawn(async move {
             let mut tx = pool_clone.begin().await.unwrap();
 
-            // Read initial value
+            // Read initial value - RAW SQL: Testing transaction isolation
             let initial_read = sqlx::query!(
                 "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
                 event_id.to_uuid()
@@ -779,7 +793,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
             // Sleep to allow other transactions to interfere
             tokio::time::sleep(Duration::from_millis(50)).await;
 
-            // Update based on initial read
+            // Update based on initial read - RAW SQL: Testing isolation levels
             let new_value = initial_value + tx_id;
             sqlx::query!(
                 "UPDATE core.events SET payload = jsonb_set(payload, '{value}', $2::text::jsonb) WHERE event_id::uuid = $1::uuid",
@@ -790,7 +804,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
             .await
             .unwrap();
 
-            // Read again to check consistency
+            // Read again to check consistency - RAW SQL: Verifying isolation
             let final_read = sqlx::query!(
                 "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
                 event_id.to_uuid()
@@ -834,16 +848,11 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
     println!("  Isolation violations: {}", violations);
 
     // Check final state
-    let final_state = sqlx::query!(
-        "SELECT payload->>'value' as value FROM core.events WHERE event_id::uuid = $1::uuid",
-        event_id.to_uuid()
-    )
-    .fetch_one(&pool)
-    .await?;
+    let final_state = TestQueries::get_event(&pool, event_id).await?;
 
     println!(
         "  Final value: {}",
-        final_state.value.unwrap_or("N/A".to_string())
+        final_state.payload["value"].as_i64().unwrap_or(-1)
     );
 
     // Isolation should be maintained
@@ -858,15 +867,18 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Create shared resource
-    let shared_event = events::generic_adversarial_event(
-        "lock_test",
-        "shared.resource",
-        json!({"counter": 0, "lock_count": 0}),
-        None,
-    );
+    let shared_event = TestEventBuilder::new("lock_test", "shared.resource")
+        .with_field("counter", json!(0))
+        .with_field("lock_count", json!(0))
+        .build();
 
-    insert_event(&pool, &shared_event).await?;
-    let event_id = shared_event.id;
+    let inserted = TestQueries::insert_test_event(
+        &pool,
+        &shared_event.source,
+        &shared_event.event_type,
+        shared_event.payload,
+    ).await?;
+    let event_id = inserted.id;
 
     let lock_contentions = Arc::new(AtomicU64::new(0));
     let successful_locks = Arc::new(AtomicU64::new(0));
@@ -885,7 +897,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
             for _attempt in 0..5 {
                 let lock_start = Instant::now();
 
-                // Try to acquire exclusive lock
+                // Try to acquire exclusive lock - RAW SQL: Testing lock contention
                 let lock_result = sqlx::query!(
                     "SELECT payload FROM core.events WHERE event_id::uuid = $1::uuid FOR UPDATE",
                     event_id.to_uuid()
@@ -911,6 +923,7 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
                         // Hold lock briefly and update
                         tokio::time::sleep(Duration::from_millis(20)).await;
 
+                        // RAW SQL: Testing concurrent lock updates
                         sqlx::query!(
                             "UPDATE core.events SET payload = jsonb_set(payload, '{lock_count}', ((payload->>'lock_count')::int + 1)::text::jsonb) WHERE event_id::uuid = $1::uuid",
                             event_id.to_uuid()
@@ -945,18 +958,11 @@ async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
     println!("  Lock contentions: {}", contentions);
 
     // Check final lock count
-    let final_state = sqlx::query!(
-        "SELECT payload->>'lock_count' as lock_count FROM core.events WHERE event_id::uuid = $1::uuid",
-        event_id.to_uuid()
-    )
-    .fetch_one(&pool)
-    .await?;
+    let final_state = TestQueries::get_event(&pool, event_id).await?;
 
-    let final_lock_count: i32 = final_state
-        .lock_count
-        .unwrap_or("0".to_string())
-        .parse()
-        .unwrap_or(0);
+    let final_lock_count: i32 = final_state.payload["lock_count"]
+        .as_i64()
+        .unwrap_or(0) as i32;
 
     println!("  Final lock count: {}", final_lock_count);
 

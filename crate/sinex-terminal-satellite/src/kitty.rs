@@ -14,6 +14,7 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources};
 
 /// Kitty window information
 #[derive(Debug, Clone)]
