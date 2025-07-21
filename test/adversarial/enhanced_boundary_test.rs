@@ -2,6 +2,7 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -308,9 +309,6 @@ async fn test_resource_exhaustion_boundaries(ctx: TestContext) -> TestResult {
     println!("Created {} events before exhaustion", events_created);
     assert!(events_created > 0, "Should have created at least some events");
 
-    Ok(())
-}
-
 /// Test system behavior with timing edge cases
 #[sinex_test]
 async fn test_timing_boundary_cases(ctx: TestContext) -> TestResult {
@@ -437,9 +435,6 @@ async fn test_database_constraint_boundaries(ctx: TestContext) -> TestResult {
     ctx.insert_event(&event1).await?;
     let result = ctx.insert_event(&event2).await;
     assert!(result.is_err(), "Should reject duplicate ULID");
-
-    Ok(())
-}
 
 /// Test system behavior with Redis stream limits
 #[sinex_test]

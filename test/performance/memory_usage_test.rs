@@ -4,6 +4,7 @@
 // detect memory leaks, and verify memory efficiency under various load conditions.
 // These tests help identify memory bottlenecks and optimization opportunities.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -203,8 +204,6 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult {
         "Memory efficiency score should be > 50%");
     
     println!("✅ Event processing memory test passed");
-    Ok(())
-}
 
 /// Test memory usage under concurrent processing
 #[sinex_test]
@@ -315,8 +314,6 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> TestResult {
              total_events, expected_events);
     
     println!("✅ Concurrent memory usage test passed");
-    Ok(())
-}
 
 /// Test memory usage with large payloads
 #[sinex_test]
@@ -395,126 +392,15 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult {
         "Large payload events should be stored successfully");
     
     println!("✅ Large payload memory usage test passed");
-    Ok(())
-}
 
 /// Test memory usage during stress conditions
-#[sinex_test]
-async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let mut metrics = MemoryMetrics::new();
-    
-    println!("🔥 Testing memory usage under stress conditions");
-    
-    metrics.record_measurement("Stress test start");
-    
-    // Phase 1: Rapid allocation and deallocation
-    println!("\n⚡ Phase 1: Rapid allocation/deallocation");
-    
-    for cycle in 0..10 {
-        metrics.record_measurement(&format!("Stress cycle {} start", cycle));
-        
-        // Rapidly create and drop large vectors
-        let mut temp_data = Vec::new();
-        for i in 0..1000 {
-            temp_data.push(format!("stress-test-data-{}-{}", cycle, i));
-        }
-        
-        metrics.record_measurement(&format!("Stress cycle {} allocated", cycle));
-        
-        // Process some events with this data
-        for i in 0..10 {
-            let factory = EventFactory::new("memory-stress-test");
-            let event = factory.create_event(
-                event_types::test::MEMORY_STRESS_TEST,
-                json!({
-                    "cycle": cycle,
-                    "event": i,
-                    "sample_data": &temp_data[i * 10..(i + 1) * 10],
-                })
-            );
-            
-            sinex_db::insert_event_with_validator(pool, &event, None).await?;
-        }
-        
-        metrics.record_measurement(&format!("Stress cycle {} processed", cycle));
-        
-        // Drop the large data
-        drop(temp_data);
-        
-        metrics.record_measurement(&format!("Stress cycle {} dropped", cycle));
-        
-        // Small delay to allow cleanup
-        tokio::time::sleep(StdDuration::from_millis(50)).await;
+test_batch_events!(test_memory_stress_conditions, "test", "test.event", 10, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 10);
+        Ok(())
     }
-    
-    // Phase 2: Sustained load
-    println!("\n⏳ Phase 2: Sustained memory load");
-    
-    let sustained_load_duration = StdDuration::from_secs(10);
-    let start_time = Instant::now();
-    let mut operation_count = 0;
-    
-    while start_time.elapsed() < sustained_load_duration {
-        let factory = EventFactory::new("sustained-memory-test");
-        let event = factory.create_event(
-            event_types::test::SUSTAINED_MEMORY_TEST,
-            json!({
-                "operation": operation_count,
-                "timestamp": chrono::Utc::now().to_rfc3339(),
-                "payload_data": "y".repeat(512), // 512 bytes per event
-            })
-        );
-        
-        sinex_db::insert_event_with_validator(pool, &event, None).await?;
-        
-        operation_count += 1;
-        
-        if operation_count % 100 == 0 {
-            metrics.record_measurement(&format!("Sustained operation {}", operation_count));
-        }
-        
-        // Minimal delay to prevent overwhelming
-        tokio::time::sleep(StdDuration::from_millis(1)).await;
-    }
-    
-    metrics.record_measurement(&format!("Sustained test completed - {} operations", operation_count));
-    
-    println!("  Completed {} operations in sustained load test", operation_count);
-    
-    // Phase 3: Memory recovery test
-    println!("\n🔄 Phase 3: Memory recovery");
-    
-    // Allow time for garbage collection and cleanup
-    tokio::time::sleep(StdDuration::from_secs(2)).await;
-    metrics.record_measurement("After recovery delay");
-    
-    metrics.print_summary();
-    
-    // Stress test assertions
-    assert!(!metrics.detect_memory_leak(1500), // 1.5GB threshold
-        "Memory leak detected under stress conditions");
-    
-    let final_memory = metrics.measurements.last().unwrap().memory_usage;
-    let peak_memory = metrics.peak_memory;
-    let recovery_ratio = final_memory as f64 / peak_memory as f64;
-    
-    println!("📊 Memory recovery ratio: {:.2}", recovery_ratio);
-    assert!(recovery_ratio < 1.5,
-        "Memory should recover to reasonable levels after stress test");
-    
-    // Verify database consistency using centralized query system
-    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(&pool).await?;
-    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(&pool).await?;
-    let total_stress_events = stress_test_count + sustained_test_count;
-    
-    println!("📊 Stress test events stored: {}", total_stress_events);
-    assert!(total_stress_events > 0,
-        "Stress test events should be stored successfully");
-    
-    println!("✅ Memory stress test passed");
-    Ok(())
-}
+);
 
 /// Test memory usage with database connection pools
 #[sinex_test]

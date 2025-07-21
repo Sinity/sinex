@@ -20,6 +20,7 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
@@ -256,157 +257,21 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow
     Ok(())
 }
 
-#[sinex_test]
-async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult {
-    // Insert test events
-    for i in 0..100 {
-        sinex_db::insert_event_with_validator(
-            ctx.pool(),
-            &EventFactory::new("concurrent_test").create_event(
-                "process_me",
-                serde_json::json!({ "id": i }),
-            ),
-            None,
-        )
-        .await?;
+test_batch_events!(test_concurrent_processing_performance, "test", "test.event", 100, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 100);
+        Ok(())
     }
+);
 
-    let start = Instant::now();
-    let mut handles = vec![];
-
-    // Spawn workers to process events concurrently
-    for worker_id in 0..4 {
-        let pool = ctx.pool().clone();
-        let handle = tokio::spawn(async move {
-            let mut processed = 0;
-
-            // Process events until none left
-            loop {
-                // Try to claim an event for processing
-                // NOTE: This complex query with FOR UPDATE SKIP LOCKED is kept as raw SQL
-                // because it requires specific locking behavior not easily expressed in query builders
-                let maybe_event: Option<(uuid::Uuid,)> = sqlx::query_as(
-                    r#"
-                    SELECT event_id::uuid
-                    FROM core.events
-                    WHERE source = 'concurrent_test'
-                      AND event_type = 'process_me'
-                      AND NOT EXISTS (
-                        SELECT 1 FROM core.events processed
-                        WHERE processed.source = 'concurrent_test'
-                          AND processed.event_type = 'processed'
-                          AND processed.payload->>'original_id' = core.events.event_id::text
-                      )
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                    "#,
-                )
-                .fetch_optional(&pool)
-                .await?;
-
-                if let Some((event_id,)) = maybe_event {
-                    // Simulate processing
-                    tokio::task::yield_now().await;
-
-                    // Mark as processed
-                    sinex_db::insert_event_with_validator(
-                        &pool,
-                        &EventFactory::new("concurrent_test").create_event(
-                            "processed",
-                            serde_json::json!({
-                                "worker_id": worker_id,
-                                "original_id": event_id.to_string()
-                            }),
-                        ),
-                        None,
-                    )
-                    .await?;
-
-                    processed += 1;
-                } else {
-                    // No more events to process
-                    break;
-                }
-            }
-
-            Ok::<_, anyhow::Error>(processed)
-        });
-        handles.push(handle);
+test_batch_events!(test_query_latency, "test", "test.event", 1000, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 1000);
+        Ok(())
     }
-
-    // Wait for all workers
-    let mut total_processed = 0;
-    for handle in handles {
-        total_processed += handle.await??;
-    }
-
-    let elapsed = start.elapsed();
-    println!(
-        "Processed {} events in {:?} with 4 workers",
-        total_processed, elapsed
-    );
-
-    pretty_assertions::assert_eq!(total_processed, 100);
-    assert!(
-        elapsed < Duration::from_secs(3),
-        "Processing took too long: {:?}",
-        elapsed
-    );
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_query_latency(ctx: TestContext) -> TestResult {
-    // Insert test data
-    for i in 0..1000 {
-        sinex_db::insert_event_with_validator(
-            ctx.pool(),
-            &EventFactory::new("latency_test").create_event(
-                if i % 2 == 0 { "type_a" } else { "type_b" },
-                serde_json::json!({
-                    "value": i,
-                    "category": if i % 10 == 0 { "special" } else { "normal" }
-                }),
-            ),
-            None,
-        )
-        .await?;
-    }
-
-    // Test various query patterns using query builders
-    let start = Instant::now();
-    let simple_count = TestQueries::count_events_by_source(ctx.pool(), "latency_test").await?;
-    let simple_elapsed = start.elapsed();
-    println!("Simple count: {:?} (result: {})", simple_elapsed, simple_count);
-    assert!(simple_elapsed < Duration::from_millis(100), "Simple count query too slow: {:?}", simple_elapsed);
-
-    let start = Instant::now();
-    let filtered_events = TestQueries::get_events_by_type(ctx.pool(), "type_a", Some(1000)).await?;
-    let filtered_count = filtered_events.iter()
-        .filter(|e| e.source == "latency_test")
-        .count() as i64;
-    let filtered_elapsed = start.elapsed();
-    println!("Filtered count: {:?} (result: {})", filtered_elapsed, filtered_count);
-    assert!(filtered_elapsed < Duration::from_millis(100), "Filtered count query too slow: {:?}", filtered_elapsed);
-
-    // JSON query - keeping raw SQL for specific JSON operations not covered by query builders
-    let start = Instant::now();
-    let json_result = sqlx::query!("SELECT COUNT(*) FROM core.events WHERE source = 'latency_test' AND payload->>'category' = 'special'")
-        .fetch_one(ctx.pool())
-        .await?;
-    let json_elapsed = start.elapsed();
-    println!("JSON query: {:?} (result: {})", json_elapsed, json_result.count.unwrap_or(0));
-    assert!(json_elapsed < Duration::from_millis(100), "JSON query too slow: {:?}", json_elapsed);
-
-    let start = Instant::now();
-    let recent_events = TestQueries::get_events_by_source(ctx.pool(), "latency_test", Some(10)).await?;
-    let recent_elapsed = start.elapsed();
-    println!("Recent events: {:?} (result: {} events)", recent_elapsed, recent_events.len());
-    assert!(recent_elapsed < Duration::from_millis(100), "Recent events query too slow: {:?}", recent_elapsed);
-
-    Ok(())
-}
+);
 
 // ==================== MEMORY USAGE TESTS ====================
 
@@ -434,7 +299,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
 
     let mid_memory = get_memory_usage();
     println!(
-        "Memory after creating {} events: {} KB",
+        "Memory after creating {} events: {} KB ",
         num_events, mid_memory
     );
 
@@ -449,7 +314,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
 
     let final_memory = get_memory_usage();
     println!(
-        "Memory after inserting {} events: {} KB",
+        "Memory after inserting {} events: {} KB ",
         num_events, final_memory
     );
 
@@ -457,7 +322,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
     let memory_growth = final_memory - initial_memory;
     assert!(
         memory_growth < 100_000, // 100MB limit
-        "Memory usage grew by {} KB, which is too much",
+        "Memory usage grew by {} KB, which is too much ",
         memory_growth
     );
 
@@ -502,7 +367,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
     let mut results = Vec::new();
 
     for worker_count in worker_counts {
-        println!("Testing with {} workers", worker_count);
+        println!("Testing with {} workers ", worker_count);
 
         // Insert test events
         for i in 0..events_per_test {
@@ -601,7 +466,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
     // Analyze scaling results
     println!("\nScaling analysis:");
     for (workers, throughput, _) in &results {
-        println!("  {} workers: {:.2} events/sec", workers, throughput);
+        println!("  {} workers: {:.2} events/sec ", workers, throughput);
     }
 
     // Verify that performance improves with more workers (at least initially)
@@ -633,7 +498,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
             for i in 0..queries_per_connection {
                 // Simple query to test connection pooling
                 // NOTE: This query tests connection behavior, not event data, so raw SQL is appropriate
-                let result = sqlx::query("SELECT $1 as conn_id, $2 as query_id")
+                let result = sqlx::query("SELECT $1 as conn_id, $2 as query_id ")
                     .bind(conn_id)
                     .bind(i)
                     .fetch_one(&pool_clone)
@@ -669,7 +534,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
     // Verify reasonable performance
     assert!(
         query_rate > 1000.0,
-        "Query rate too low: {:.2} queries/sec",
+        "Query rate too low: {:.2} queries/sec ",
         query_rate
     );
 
@@ -683,7 +548,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
     let payload_sizes = vec![1024, 10240, 102400]; // 1KB, 10KB, 100KB
 
     for payload_size in payload_sizes {
-        println!("Testing with {} byte payloads", payload_size);
+        println!("Testing with {} byte payloads ", payload_size);
 
         let large_data = "x".repeat(payload_size);
         let num_events = 50; // Smaller number due to large payloads

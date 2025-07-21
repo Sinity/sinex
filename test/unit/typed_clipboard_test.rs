@@ -1,4 +1,5 @@
 /// Unit tests for typed clipboard implementation
+use crate::common::test_macros::*;
 use sinex_events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 
 #[test]

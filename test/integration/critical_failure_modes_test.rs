@@ -3,6 +3,7 @@
 // This module tests critical failure scenarios that could break the system
 // in production, focusing on basic functionality without complex dependencies.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::mocks::EventSourceContext;
@@ -346,72 +347,16 @@ async fn test_filesystem_monitor_error_recovery(_ctx: TestContext) -> TestResult
 // ============================================================================
 
 /// Test concurrent filesystem monitor creation
-#[sinex_test]
-async fn test_concurrent_filesystem_monitor_creation(_ctx: TestContext) -> TestResult {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    let temp_dir = TempDir::new()?;
-    let temp_path = temp_dir.path();
-
-    // Create test file
-    fs::write(temp_path.join("test.txt"), "content")?;
-
-    let success_count = Arc::new(AtomicU32::new(0));
-    let mut tasks = Vec::new();
-
-    // Create monitors concurrently
-    for i in 0..10 {
-        let success_count = success_count.clone();
-        let temp_path = temp_path.to_path_buf();
-
-        let task = tokio::spawn(async move {
-            let config = serde_json::json!({
-                "watch_patterns": [temp_path.to_str().unwrap()],
-                "ignore_patterns": [format!("*.ignore_{}", i)], // Make each config slightly different
-                "recursive": true
-            });
-
-            let ctx = EventSourceContext::new(config);
-            match FilesystemMonitor::initialize(ctx).await {
-                Ok(_) => {
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                    Ok(())
-                }
-                Err(e) => Err(e),
-            }
-        });
-
-        tasks.push(task);
+test_concurrent_operations!(test_concurrent_filesystem_monitor_creation, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-
-    // Wait for all tasks
-    let results = futures::future::join_all(tasks).await;
-
-    // Most should succeed
-    let mut successes = 0;
-    for result in results {
-        match result {
-            Ok(Ok(())) => successes += 1,
-            Ok(Err(_)) => {
-                // Some failures are acceptable under concurrent load
-            }
-            Err(_) => {
-                // Task panic is not acceptable
-                panic!("Task should not panic during monitor creation");
-            }
-        }
-    }
-
-    // At least half should succeed
-    assert!(
-        successes >= 5,
-        "Too many failures in concurrent creation: {}/10",
-        successes
-    );
-
-    Ok(())
-}
+);
 
 // ============================================================================
 // Helper Functions

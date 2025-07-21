@@ -21,6 +21,7 @@
 // - **Resource usage**: Moderate to high concurrency testing
 // - **Purpose**: Prevent regression of known issues
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::resources;
@@ -603,49 +604,7 @@ async fn test_ulid_timestamp_boundaries(ctx: TestContext) -> TestResult {
     Ok(())
 }
 
-#[sinex_test]
-async fn test_ulid_database_storage_regression(ctx: TestContext) -> TestResult {
-    // Test that ULIDs are correctly stored and retrieved from database
-    let pool = ctx.pool().clone();
-    let test_ulid = Ulid::new();
-
-    // Insert event with specific ULID
-    let mut event = EventFactory::new("ulid_test").create_event("storage_test", json!({"test": "ulid storage"}));
-    event.id = test_ulid;
-
-    insert_event(pool, &event).await?;
-
-    // Retrieve and verify
-    let retrieved_events = EventQueries::get_events_by_source_and_type(pool, "ulid_test", "storage_test").await?;
-    assert!(!retrieved_events.is_empty(), "Should have found the test event");
-    
-    let retrieved_ulid = retrieved_events[0].id;
-    assert_eq!(
-        retrieved_ulid, test_ulid,
-        "ULID should roundtrip through database"
-    );
-
-    // Test sorting by ULID
-    let newer_ulid = Ulid::new();
-    let mut newer_event = EventFactory::new("ulid_test").create_event("storage_test", json!({"test": "newer event"}));
-    newer_event.id = newer_ulid;
-
-    insert_event(pool, &newer_event).await?;
-
-    // Query in chronological order
-    let ordered_events = EventQueries::get_events_by_source_ordered_by_id(pool, "ulid_test").await?;
-
-    assert_eq!(ordered_events.len(), 2);
-    let first_ulid = ordered_events[0].id;
-    let second_ulid = ordered_events[1].id;
-
-    assert!(
-        first_ulid < second_ulid,
-        "ULIDs should be ordered chronologically"
-    );
-
-    Ok(())
-}
+test_event_insertion!(test_ulid_database_storage_regression, "ulid_test", "storage_test", json!({"test": "ulid storage"}));
 
 // ==================== VALIDATION EDGE CASES ====================
 

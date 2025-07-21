@@ -4,8 +4,13 @@
 // properly and that the overall system works as expected.
 
 use crate::common::prelude::*;
+use crate::common::test_macros::*;
 use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder};
 use crate::common::query_helpers::TestQueries;
+use crate::common::test_factories::{
+    UserActivityFactory, SystemEventFactory, WorkflowFactory,
+    FileSystemScenarioFactory, ErrorScenarioFactory
+};
 use anyhow::Result;
 use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient};
 use sinex_db::queries::CheckpointQueries;
@@ -74,24 +79,27 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
 
 #[sinex_test]
 async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
-    info!("Testing satellite SDK components");
+    info!("Testing satellite SDK components with fixtures");
 
-    // Test checkpoint manager
+    // Use populated checkpoints fixture for testing
+    let checkpoints_fixture = crate::common::fixtures::populated_checkpoints(&ctx).await?;
+    
+    info!("✓ Using fixture with {} checkpoints", checkpoints_fixture.checkpoint_ids.len());
+
+    // Test checkpoint manager with first automaton from fixture
     use sinex_satellite_sdk::checkpoint::CheckpointManager;
     
-
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool().clone(),
-        "test-automaton".to_string(),
-        "test-group".to_string(),
-        "test-consumer".to_string(),
+        checkpoints_fixture.automaton_names[0].clone(),
+        "default_group".to_string(),
+        "default".to_string(),
     );
 
-    // Load initial checkpoint (should be default)
-    let mut checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert_eq!(checkpoint.processed_count, 0);
-    assert!(checkpoint.last_processed_id().is_none());
-    info!("✓ Default checkpoint loads correctly");
+    // Load checkpoint from fixture
+    let checkpoint = checkpoint_manager.load_checkpoint().await?;
+    assert_eq!(checkpoint.processed_count, 100); // First automaton has 100 events
+    info!("✓ Checkpoint from fixture loaded correctly");
 
     // Update checkpoint
     checkpoint.processed_count = 42;
@@ -166,6 +174,192 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     assert_eq!(retrieved_canonical.source_event_ids, Some(vec![event_id]));
     info!("✓ Complete satellite event flow simulation successful");
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_satellite_processing_with_realistic_workload(ctx: TestContext) -> TestResult {
+    info!("Testing satellite processing with realistic workload");
+    
+    // Generate a realistic user session to process
+    let session_events = UserActivityFactory::create_user_session(30, 15);
+    
+    // Insert all events as if they came from satellites
+    let mut raw_event_ids = Vec::new();
+    for event in &session_events {
+        let inserted = insert_event(ctx.pool(), event).await?;
+        raw_event_ids.push(inserted.id);
+    }
+    
+    info!("✓ Inserted {} raw events from simulated satellites", raw_event_ids.len());
+    
+    // Simulate automaton processing by grouping related events
+    // Group by event type for canonical event creation
+    let mut events_by_type: std::collections::HashMap<String, Vec<sinex_ulid::Ulid>> = std::collections::HashMap::new();
+    
+    for (event, id) in session_events.iter().zip(raw_event_ids.iter()) {
+        events_by_type.entry(event.event_type.clone())
+            .or_insert_with(Vec::new)
+            .push(*id);
+    }
+    
+    // Create canonical events for each type
+    let mut canonical_count = 0;
+    for (event_type, source_ids) in events_by_type.iter() {
+        if source_ids.len() >= 2 {  // Only create canonical for multiple events
+            let canonical = TestEventBuilder::new(
+                "canonical.activity",
+                &format!("{}.aggregated", event_type)
+            )
+            .with_payload(json!({
+                "event_type": event_type,
+                "source_count": source_ids.len(),
+                "aggregated_at": chrono::Utc::now().to_rfc3339(),
+                "summary": format!("Aggregated {} {} events", source_ids.len(), event_type)
+            }))
+            .with_source_events(source_ids.clone())
+            .insert(ctx.pool())
+            .await?;
+            
+            canonical_count += 1;
+            info!("✓ Created canonical event for {} events of type {}", source_ids.len(), event_type);
+        }
+    }
+    
+    assert!(canonical_count > 0, "Should create at least one canonical event");
+    info!("✓ Created {} canonical events from {} raw events", canonical_count, raw_event_ids.len());
+    
+    // Verify checkpointing for the processing
+    let checkpoint_manager = sinex_satellite_sdk::checkpoint::CheckpointManager::new(
+        ctx.pool().clone(),
+        "activity-processor".to_string(),
+        "main".to_string(),
+        "worker-1".to_string(),
+    );
+    
+    // Save processing state
+    let mut checkpoint = checkpoint_manager.load_checkpoint().await?;
+    checkpoint.processed_count = raw_event_ids.len() as u64;
+    checkpoint.set_last_processed_id(Some(raw_event_ids.last().unwrap().to_string()));
+    checkpoint.data = Some(json!({
+        "canonical_events_created": canonical_count,
+        "processing_complete": true
+    }));
+    
+    checkpoint_manager.save_checkpoint(&checkpoint).await?;
+    info!("✓ Saved checkpoint for processing {} events", raw_event_ids.len());
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_satellite_error_handling_workflow(ctx: TestContext) -> TestResult {
+    info!("Testing satellite error handling with realistic scenarios");
+    
+    // Generate error scenarios
+    let error_events = ErrorScenarioFactory::create_error_cascade();
+    
+    // Insert error events
+    let mut error_ids = Vec::new();
+    for event in &error_events {
+        let inserted = insert_event(ctx.pool(), event).await?;
+        error_ids.push(inserted.id);
+    }
+    
+    info!("✓ Inserted {} error events", error_ids.len());
+    
+    // Simulate error detection and recovery by an automaton
+    let error_detections = error_events.iter()
+        .filter(|e| e.event_type.contains("error"))
+        .count();
+    
+    assert!(error_detections > 0, "Should have error events to process");
+    
+    // Create alert event based on error cascade
+    let alert_event = TestEventBuilder::new("monitoring.alerts", "error.cascade_detected")
+        .with_payload(json!({
+            "error_count": error_detections,
+            "first_error_id": error_ids.first().unwrap().to_string(),
+            "last_error_id": error_ids.last().unwrap().to_string(),
+            "cascade_duration_seconds": 30,
+            "affected_services": ["health-aggregator"],
+            "alert_level": "warning",
+            "recommended_action": "Check service health and restart if needed"
+        }))
+        .with_source_events(error_ids.clone())
+        .insert(ctx.pool())
+        .await?;
+    
+    info!("✓ Created alert event for error cascade");
+    
+    // Verify recovery events were also captured
+    let recovery_events = error_events.iter()
+        .filter(|e| e.event_type == "sinex.process_started" && 
+                e.payload.get("recovery").and_then(|v| v.as_bool()).unwrap_or(false))
+        .count();
+    
+    assert!(recovery_events > 0, "Should have recovery events");
+    info!("✓ Verified {} recovery events in the cascade", recovery_events);
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_satellite_file_system_monitoring(ctx: TestContext) -> TestResult {
+    info!("Testing satellite file system monitoring workflow");
+    
+    // Generate file system activity
+    let fs_workflow = FileSystemScenarioFactory::create_file_workflow("/home/user/monitored-project");
+    let build_events = FileSystemScenarioFactory::create_build_process();
+    
+    // Insert file system events
+    let mut fs_event_ids = Vec::new();
+    for event in fs_workflow.iter().chain(build_events.iter()) {
+        let inserted = insert_event(ctx.pool(), event).await?;
+        fs_event_ids.push(inserted.id);
+    }
+    
+    info!("✓ Inserted {} file system events", fs_event_ids.len());
+    
+    // Simulate file system monitoring automaton
+    // Count different types of operations
+    let creates = fs_workflow.iter()
+        .filter(|e| e.event_type.contains("created"))
+        .count();
+    let modifies = fs_workflow.iter()
+        .filter(|e| e.event_type.contains("modified"))
+        .count();
+    let deletes = fs_workflow.iter()
+        .filter(|e| e.event_type.contains("deleted"))
+        .count();
+    
+    // Create summary event
+    let summary = TestEventBuilder::new("fs.monitor", "activity.summary")
+        .with_payload(json!({
+            "period_minutes": 10,
+            "total_operations": fs_event_ids.len(),
+            "files_created": creates,
+            "files_modified": modifies,
+            "files_deleted": deletes,
+            "build_detected": build_events.len() > 0,
+            "hot_paths": ["/home/user/monitored-project/src/lib.rs"],
+            "summary": "Active development session detected"
+        }))
+        .with_source_events(fs_event_ids.clone())
+        .insert(ctx.pool())
+        .await?;
+    
+    info!("✓ Created file system activity summary");
+    
+    // Verify build artifact detection
+    let build_artifacts = build_events.iter()
+        .filter(|e| e.payload.get("path").and_then(|v| v.as_str())
+                    .map(|p| p.contains("target/release")).unwrap_or(false))
+        .count();
+    
+    assert!(build_artifacts > 0, "Should detect build artifacts");
+    info!("✓ Detected {} build artifacts", build_artifacts);
+    
     Ok(())
 }
 

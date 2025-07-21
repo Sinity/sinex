@@ -132,6 +132,9 @@ tokio-stream.workspace = true
 # Additional test-specific dependencies
 sinex-services = { path = "crate/sinex-services" }
 sinex-ingestd = { path = "crate/sinex-ingestd" }
+# Snapshot testing dependencies
+similar = "2.3"
+regex = "1.10"
 
 [workspace.package]
 version = "0.4.2"

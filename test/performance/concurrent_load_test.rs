@@ -4,6 +4,7 @@
 // Focuses on measuring throughput, latency, and system stability
 // when multiple operations are running simultaneously.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -261,8 +262,6 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> TestResult {
         "Average concurrent insert latency should be < 100ms");
     
     println!("✅ Concurrent event ingestion test passed");
-    Ok(())
-}
 
 /// Test mixed workload with different operation types
 #[sinex_test]
@@ -417,8 +416,6 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult {
         "Mixed query latency should be < 50ms");
     
     println!("✅ Mixed concurrent workload test passed");
-    Ok(())
-}
 
 /// Test system behavior under high concurrency with rate limiting
 #[sinex_test]
@@ -512,8 +509,6 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> TestResult {
         "Rate-limited P95 latency should be < 500ms");
     
     println!("✅ Rate-limited concurrent load test passed");
-    Ok(())
-}
 
 /// Test burst load handling
 #[sinex_test]

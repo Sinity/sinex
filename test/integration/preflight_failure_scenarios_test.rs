@@ -1,5 +1,6 @@
 // Preflight Failure Scenarios Tests - Comprehensive failure handling and error reporting
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use serde_json::json;
@@ -70,9 +71,6 @@ async fn test_database_connection_failures(_ctx: TestContext) -> TestResult {
 
     println!("✓ Database connection failure scenarios tested");
 
-    Ok(())
-}
-
 /// Test database extension failures
 #[sinex_test]
 async fn test_database_extension_failures(_ctx: TestContext) -> TestResult {
@@ -92,9 +90,6 @@ async fn test_database_extension_failures(_ctx: TestContext) -> TestResult {
     );
 
     println!("✓ Database extension failure scenarios tested");
-
-    Ok(())
-}
 
 /// Test migration readiness failures
 #[sinex_test]
@@ -147,9 +142,6 @@ async fn test_resource_constraint_failures(_ctx: TestContext) -> TestResult {
         "✓ Resource constraint scenarios tested - {} warnings",
         warning_messages.len()
     );
-
-    Ok(())
-}
 
 /// Test filesystem permission failures
 #[sinex_test]
@@ -230,9 +222,6 @@ async fn test_configuration_failures(_ctx: TestContext) -> TestResult {
 
     println!("✓ Configuration failure scenarios tested");
 
-    Ok(())
-}
-
 /// Test environment variable validation failures
 #[sinex_test]
 async fn test_environment_validation_failures(_ctx: TestContext) -> TestResult {
@@ -310,9 +299,6 @@ async fn test_service_dependency_failures(_ctx: TestContext) -> TestResult {
     }
 
     println!("✓ Service dependency failure scenarios tested");
-
-    Ok(())
-}
 
 /// Test binary availability failures
 #[sinex_test]
@@ -417,9 +403,6 @@ async fn test_error_message_formatting(_ctx: TestContext) -> TestResult {
     }
 
     println!("✓ Error message formatting tested");
-
-    Ok(())
-}
 
 /// Test error aggregation across multiple phases
 #[sinex_test]

@@ -7,6 +7,7 @@
 // - Encoding corruption detection
 // - Large-scale corruption scanning
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use sinex_db::integrity::{IntegrityTestConfig, IntegrityTester};
 use sinex_db::validation::DataCorruptionType;

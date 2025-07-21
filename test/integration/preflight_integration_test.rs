@@ -1,6 +1,8 @@
 // Preflight Integration Tests - Full pipeline verification testing
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
+use crate::common::fixtures;
 
 use serde_json::json;
 use std::collections::HashMap;
@@ -143,9 +145,6 @@ async fn test_complete_preflight_pipeline_success(ctx: TestContext) -> TestResul
         total_duration.as_millis()
     );
 
-    Ok(())
-}
-
 /// Test preflight pipeline with early failure (database connectivity)
 #[sinex_test]
 async fn test_preflight_pipeline_early_failure(_ctx: TestContext) -> TestResult {
@@ -168,9 +167,6 @@ async fn test_preflight_pipeline_early_failure(_ctx: TestContext) -> TestResult 
     }
 
     println!("✓ Early failure handling verified");
-
-    Ok(())
-}
 
 /// Test preflight pipeline timeout handling
 #[sinex_test]
@@ -294,9 +290,6 @@ async fn test_phase_interaction_database_setup(ctx: TestContext) -> TestResult {
     assert!(ext_details.get("extensions").is_some());
 
     println!("✓ Database-to-extensions phase interaction verified");
-
-    Ok(())
-}
 
 /// Test configuration-to-services phase interaction
 #[sinex_test]
@@ -427,8 +420,16 @@ async fn test_resource_constraint_handling(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_integration_with_database_operations(ctx: TestContext) -> TestResult {
     env::set_var("DATABASE_URL", ctx.database_url());
+    
+    // Pre-populate database with test data using fixtures
+    let session = fixtures::standard_user_session(&ctx).await?;
+    let checkpoints = fixtures::populated_checkpoints(&ctx).await?;
+    
+    println!("Preflight test using fixtures:");
+    println!("  - {} events from user session", session.event_ids.len());
+    println!("  - {} checkpoints", checkpoints.checkpoint_ids.len());
 
-    // Run integration verification
+    // Run integration verification with pre-populated data
     let (status, details, messages) =
         sinex_preflight::verification::verify_end_to_end_integration()
             .await

@@ -12,6 +12,7 @@
 // - No duplicate processing under high contention
 // - Checkpoint-based recovery and progress tracking
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::satellite_test_utils::{StreamMessage, simulate_redis_consumer};
 use proptest::prelude::*;
@@ -328,9 +329,6 @@ async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> TestResu
             Ok(())
         })?
     });
-    
-    Ok(())
-}
 
 /// Test consumer group scaling and high contention scenarios
 #[sinex_test]
@@ -447,8 +445,6 @@ async fn test_consumer_group_contention_properties(ctx: TestContext) -> TestResu
             Ok(())
         })?
     });
-    Ok(())
-}
 
 /// Test scaling properties with many events and consumers
 #[sinex_test]
@@ -612,9 +608,6 @@ async fn test_redis_streams_scalability_properties(ctx: TestContext) -> TestResu
             Ok(())
         })?
     });
-    
-    Ok(())
-}
 
 /// Test that Redis Stream IDs maintain ordering guarantees
 #[tokio::test]
@@ -737,9 +730,6 @@ async fn test_redis_stream_ordering_properties() -> AnyhowResult<(), anyhow::Err
             Ok(())
         })?
     });
-
-    Ok(())
-}
 
 /// Test checkpoint-based recovery after consumer crashes
 #[sinex_test]
@@ -897,9 +887,6 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
             Ok(())
         })?
     });
-
-    Ok(())
-}
 
 /// Test that consumer group state remains consistent under various failure scenarios
 #[sinex_test]

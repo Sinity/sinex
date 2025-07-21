@@ -6,6 +6,7 @@
 // - Shell history scanner with multi-shell support
 // - Overlap analysis and interactive prompts
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use chrono::{TimeZone, Utc};

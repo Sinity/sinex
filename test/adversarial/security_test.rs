@@ -11,6 +11,7 @@
 // - **Query Interface**: API security and exploit prevention
 // - **Unicode Exploits**: Character encoding and normalization attacks
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::resources;
 use sinex_db::validation::EventValidator;
@@ -153,9 +154,6 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
     );
 
     println!("  ✓ All path traversal attacks blocked");
-
-    Ok(())
-}
 
 /// Test various path traversal attack patterns
 #[sinex_test]

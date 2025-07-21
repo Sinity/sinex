@@ -13,6 +13,7 @@
 // - `performance` - Throughput and ordering guarantees
 // - `properties` - Property-based testing
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use proptest::prelude::*;

@@ -13,6 +13,7 @@
 // All tests use #[sinex_test] for automatic transaction isolation and TestContext
 // for unified database access patterns.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::generators;
@@ -62,9 +63,6 @@ async fn test_create_note_annotation(ctx: TestContext) -> TestResult {
     let metadata = &annotation.metadata;
     assert_eq!(metadata["tags"], json!(tags));
     assert!(metadata["created_at"].is_string());
-
-    Ok(())
-}
 
 /// Test creating multiple notes on the same event
 #[sinex_test(timeout = 30)]
@@ -203,9 +201,6 @@ async fn test_entity_type_constraints_invalid(ctx: TestContext) -> TestResult {
         .await;
     assert!(result.is_err(), "Should fail with invalid entity type");
 
-    Ok(())
-}
-
 /// Test direct entity creation with full parameters
 #[sinex_test(timeout = 30)]
 async fn test_direct_entity_creation(ctx: TestContext) -> TestResult {
@@ -229,9 +224,6 @@ async fn test_direct_entity_creation(ctx: TestContext) -> TestResult {
     assert_eq!(entity.metadata["department"], json!("engineering"));
     assert_eq!(entity.metadata["role"], json!("senior"));
     assert!(entity.merged_into_id.is_none());
-
-    Ok(())
-}
 
 /// Test entity search functionality
 #[sinex_test(timeout = 30)]
@@ -284,9 +276,6 @@ async fn test_entity_search(ctx: TestContext) -> TestResult {
     // Test search with no results
     let results = knowledge_graph::search_entities(ctx.pool(), "NonExistent", 10).await?;
     assert_eq!(results.len(), 0);
-
-    Ok(())
-}
 
 /// Test getting entities by type
 #[sinex_test(timeout = 30)]
@@ -390,9 +379,6 @@ async fn test_link_entities(ctx: TestContext) -> TestResult {
     assert!(relation.strength.is_none());
     assert!(relation.valid_until.is_none());
 
-    Ok(())
-}
-
 /// Test bidirectional relationship queries
 #[sinex_test(timeout = 30)]
 async fn test_bidirectional_relationships(ctx: TestContext) -> TestResult {
@@ -446,9 +432,6 @@ async fn test_bidirectional_relationships(ctx: TestContext) -> TestResult {
     assert_eq!(relations2.len(), 1);
     assert_eq!(relations2[0].from_entity_id, entity1.entity_id);
     assert_eq!(relations2[0].to_entity_id, entity2.entity_id);
-
-    Ok(())
-}
 
 /// Test relationship with strength and validity period
 #[sinex_test(timeout = 30)]
@@ -507,9 +490,6 @@ async fn test_relationship_with_strength_and_validity(ctx: TestContext) -> TestR
     let relations = knowledge_graph::get_entity_relations(ctx.pool(), entity1.entity_id).await?;
     assert_eq!(relations.len(), 1);
     assert_eq!(relations[0].relation_id, relation.relation_id);
-
-    Ok(())
-}
 
 /// Test getting relationship by ID
 #[sinex_test(timeout = 30)]
@@ -624,9 +604,6 @@ async fn test_create_and_get_artifact(ctx: TestContext) -> TestResult {
     assert_eq!(retrieved.title, artifact.title);
     assert_eq!(retrieved.artifact_type, artifact.artifact_type);
 
-    Ok(())
-}
-
 /// Test artifact type constraints - valid types
 #[sinex_test(timeout = 30)]
 async fn test_artifact_type_constraints_valid(ctx: TestContext) -> TestResult {
@@ -678,9 +655,6 @@ async fn test_artifact_type_constraints_invalid(ctx: TestContext) -> TestResult 
 
     let result = artifacts::create_artifact(ctx.pool(), artifact_input).await;
     assert!(result.is_err(), "Should fail with invalid artifact type");
-
-    Ok(())
-}
 
 /// Test getting recent artifacts
 #[sinex_test(timeout = 30)]
@@ -874,9 +848,6 @@ async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> TestRe
         "Transaction should have rolled back, no entities should exist"
     );
 
-    Ok(())
-}
-
 /// Test handling non-existent entity IDs in relationships
 #[sinex_test(timeout = 30)]
 async fn test_relationship_with_nonexistent_entities(ctx: TestContext) -> TestResult {
@@ -906,9 +877,6 @@ async fn test_relationship_with_nonexistent_entities(ctx: TestContext) -> TestRe
         result.is_err(),
         "Should fail when linking to non-existent entity"
     );
-
-    Ok(())
-}
 
 /// Test duplicate entity names (should be allowed)
 #[sinex_test(timeout = 30)]
@@ -946,9 +914,6 @@ async fn test_duplicate_entity_names_allowed(ctx: TestContext) -> TestResult {
     let search_results = knowledge_graph::search_entities(ctx.pool(), "Apple", 10).await?;
     assert_eq!(search_results.len(), 2);
 
-    Ok(())
-}
-
 /// Test empty entity list handling
 #[sinex_test(timeout = 30)]
 async fn test_empty_entity_list(ctx: TestContext) -> TestResult {
@@ -962,9 +927,6 @@ async fn test_empty_entity_list(ctx: TestContext) -> TestResult {
         .create_entities_from_list(inserted_event.id, vec![])
         .await?;
     assert_eq!(entity_ids.len(), 0);
-
-    Ok(())
-}
 
 /// Test annotation with empty content (should be allowed)
 #[sinex_test(timeout = 30)]

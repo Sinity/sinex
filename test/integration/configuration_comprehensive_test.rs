@@ -3,6 +3,7 @@
 // This module provides systematic testing of all configuration options across
 // the Sinex ecosystem, including validation, compatibility, and environment testing.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;

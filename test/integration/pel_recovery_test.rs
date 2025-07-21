@@ -4,6 +4,7 @@
 // These tests focus specifically on unacknowledged message recovery patterns
 // and edge cases that can occur in production environments.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use redis::{AsyncCommands, RedisResult, cmd};
 use std::time::Duration;
@@ -95,9 +96,6 @@ async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(final_pel.count(), 0, "PEL should be empty after recovery");
-
-    Ok(())
-}
 
 /// Test PEL recovery with partial acknowledgments
 #[sinex_test]
@@ -195,9 +193,6 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
         0,
         "PEL should be empty after full recovery"
     );
-
-    Ok(())
-}
 
 /// Test PEL recovery with message retry limits
 #[sinex_test]
@@ -319,9 +314,6 @@ async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
     assert_eq!(dlq_messages.keys.len(), 1);
     assert_eq!(dlq_messages.keys[0].ids.len(), 1);
     assert_eq!(dlq_messages.keys[0].ids[0].id, dlq_id);
-
-    Ok(())
-}
 
 /// Test PEL recovery with concurrent consumers
 #[sinex_test]
@@ -472,9 +464,6 @@ async fn test_concurrent_pel_recovery(ctx: TestContext) -> TestResult {
         final_pel.count()
     );
 
-    Ok(())
-}
-
 /// Test PEL recovery with message ordering preservation
 #[sinex_test]
 async fn test_pel_recovery_message_ordering(ctx: TestContext) -> TestResult {
@@ -587,9 +576,6 @@ async fn test_pel_recovery_message_ordering(ctx: TestContext) -> TestResult {
         0,
         "PEL should be empty after ordered recovery"
     );
-
-    Ok(())
-}
 
 /// Test PEL recovery with idle time thresholds
 #[sinex_test]
@@ -704,9 +690,6 @@ async fn test_pel_recovery_idle_thresholds(ctx: TestContext) -> TestResult {
         0,
         "PEL should be empty after threshold-based recovery"
     );
-
-    Ok(())
-}
 
 /// Test PEL recovery with malformed or corrupted messages
 #[sinex_test]

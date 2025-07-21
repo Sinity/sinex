@@ -3539,6 +3539,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "similar"
+version = "2.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
+
+[[package]]
 name = "sinex"
 version = "0.4.2"
 dependencies = [
@@ -3560,12 +3566,14 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "redis",
+ "regex",
  "reqwest",
  "rstest",
  "rusqlite",
  "serde",
  "serde_json",
  "serial_test",
+ "similar",
  "sinex-annex",
  "sinex-channel",
  "sinex-config",

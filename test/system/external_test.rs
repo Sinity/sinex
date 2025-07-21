@@ -18,6 +18,7 @@
 // - **Resource usage**: Significant disk I/O, external process spawning
 // - **Dependencies**: Git Annex, external command tools, filesystem access
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::resources;

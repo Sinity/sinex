@@ -19,6 +19,7 @@
 // - Test with malformed but parseable JSON structures
 // - Focus on the `output_event` function which is the main processing pipeline entry point
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use chrono::{DateTime, TimeZone, Utc};

@@ -4,6 +4,7 @@
 // under various conditions. These tests establish performance baselines and verify
 // that the system meets performance requirements.
 
+use crate::common::test_macros::*;
 use redis::cmd;
 use crate::common::prelude::*;
 
@@ -147,8 +148,6 @@ async fn test_event_ingestion_throughput(ctx: TestContext) -> TestResult {
         "Error rate should be < 5%");
     
     println!("✓ Event ingestion throughput test passed");
-    Ok(())
-}
 
 /// Test event ingestion latency under various loads
 #[sinex_test]

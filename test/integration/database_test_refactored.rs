@@ -30,9 +30,6 @@ async fn test_event_lifecycle(ctx: TestContext) -> TestResult {
     assert_eq!(retrieved.event_type, "file.created");
     assert_eq!(retrieved.payload["path"], "/test/file.txt");
 
-    Ok(())
-}
-
 /// Test batch event insertion
 #[sinex_test]
 async fn test_batch_insertion(ctx: TestContext) -> TestResult {
@@ -52,9 +49,6 @@ async fn test_batch_insertion(ctx: TestContext) -> TestResult {
     // Verify count
     let count = TestQueries::count_events_by_source(&pool, "test").await?;
     assert_eq!(count, 10);
-
-    Ok(())
-}
 
 /// Test checkpoint operations
 #[sinex_test]
@@ -77,9 +71,6 @@ async fn test_checkpoint_operations(ctx: TestContext) -> TestResult {
     assert_eq!(checkpoint.automaton_name, "test-automaton");
     assert_eq!(checkpoint.processed_count, 42);
     assert_eq!(checkpoint.last_processed_id, Some("1234567890".to_string()));
-
-    Ok(())
-}
 
 /// Test event filtering by source
 #[sinex_test]
@@ -133,9 +124,6 @@ async fn test_time_range_queries(ctx: TestContext) -> TestResult {
     // Should get events from -75min, -45min (2 events)
     assert_eq!(range_events.len(), 2);
 
-    Ok(())
-}
-
 /// Test concurrent event insertion
 #[sinex_test]
 async fn test_concurrent_insertion(ctx: TestContext) -> TestResult {
@@ -167,9 +155,6 @@ async fn test_concurrent_insertion(ctx: TestContext) -> TestResult {
     let count = TestQueries::count_events_by_source(&pool, "shell").await?;
     assert_eq!(count, 5);
 
-    Ok(())
-}
-
 /// Test event cleanup
 #[sinex_test]
 async fn test_cleanup_operations(ctx: TestContext) -> TestResult {
@@ -193,9 +178,6 @@ async fn test_cleanup_operations(ctx: TestContext) -> TestResult {
     // Verify cleanup (only affects sources starting with "test")
     let count_after = TestQueries::count_events_by_source(&pool, "test-cleanup").await?;
     assert_eq!(count_after, 0);
-
-    Ok(())
-}
 
 /// Test checkpoint updates
 #[sinex_test]
@@ -224,9 +206,6 @@ async fn test_checkpoint_updates(ctx: TestContext) -> TestResult {
     assert_eq!(checkpoint.processed_count, 20);
     assert_eq!(checkpoint.last_processed_id, Some("new-id".to_string()));
 
-    Ok(())
-}
-
 /// Test recent events query
 #[sinex_test]
 async fn test_recent_events(ctx: TestContext) -> TestResult {
@@ -252,9 +231,6 @@ async fn test_recent_events(ctx: TestContext) -> TestResult {
     assert_eq!(recent[0].payload["sequence"], 4);
     assert_eq!(recent[1].payload["sequence"], 3);
     assert_eq!(recent[2].payload["sequence"], 2);
-
-    Ok(())
-}
 
 /// Test event relationships using source_event_ids
 #[sinex_test]

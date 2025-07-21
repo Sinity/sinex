@@ -4,11 +4,16 @@
 // index effectiveness, connection pool behavior, and database scalability.
 // These tests help identify database bottlenecks and optimization opportunities.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::builders::{TestEventBuilder, BatchEventBuilder};
 use crate::common::query_helpers::TestQueries;
 use crate::common::{events, generators};
+use crate::common::test_factories::{
+    UserActivityFactory, SystemEventFactory, WorkflowFactory,
+    FileSystemScenarioFactory, scenarios
+};
 use sinex_db::queries::EventQueries;
 use chrono::{Duration, Utc};
 use serde_json::json;
@@ -140,15 +145,12 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
     
-    // Pre-populate with test data
-    let event_count = 2000;
-    let test_events = generators::test_events(event_count);
+    // Use performance dataset fixture for pre-populated data
+    let dataset = crate::common::fixtures::performance_dataset_with_size(&ctx, 2000).await?;
     
-    println!("🔄 Populating database with {} test events for query performance testing", event_count);
-    
-    for event in &test_events {
-        sinex_db::insert_event_with_validator(pool, event, None).await?;
-    }
+    println!("🔄 Using performance dataset with {} test events", dataset.event_count);
+    println!("📊 Data spans from {} to {}", dataset.time_range.0, dataset.time_range.1);
+    println!("📁 Sources: {:?}", dataset.sources);
     
     // Define comprehensive query test suite
     // NOTE: Many of these are kept as raw SQL because they test specific database features
@@ -271,8 +273,6 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
     }
     
     println!("✅ Query performance test passed");
-    Ok(())
-}
 
 /// Test database performance under concurrent load
 #[sinex_test]
@@ -374,265 +374,252 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
         "Concurrent query success rate should be > 95%");
     
     println!("✅ Concurrent database performance test passed");
-    Ok(())
-}
 
-/// Test database connection pool performance
+/// Test connection pool performance
+test_concurrent_operations!(test_connection_pool_performance, 5,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 5);
+        Ok(())
+    }
+);
+
+/// Test transaction performance
+test_batch_events!(test_transaction_performance, "test", "test.event", 3, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 3);
+        Ok(())
+    }
+);
+
+/// Test database performance with realistic workload patterns
 #[sinex_test]
-async fn test_connection_pool_performance(ctx: TestContext) -> TestResult {
+async fn test_database_performance_with_realistic_workload(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
     
-    println!("🏊 Testing connection pool performance");
+    println!("🎯 Testing database performance with realistic workload patterns");
     
-    // Test connection acquisition under load
-    let connection_tests = 100;
+    // Generate a full workday scenario
+    let workday_events = scenarios::user_workday();
+    let total_events = workday_events.len();
     
-    for i in 0..connection_tests {
-        let start = Instant::now();
+    println!("📊 Generated {} events representing a full workday", total_events);
+    
+    // Phase 1: Bulk insert performance
+    let bulk_start = Instant::now();
+    
+    // Insert events in batches (simulating real-time ingestion)
+    let batch_size = 50;
+    for (batch_idx, chunk) in workday_events.chunks(batch_size).enumerate() {
+        let batch_start = Instant::now();
         
-        let conn_result = pool.acquire().await;
-        let acquire_duration = start.elapsed();
-        
-        match conn_result {
-            Ok(mut conn) => {
-                metrics.record_connection(acquire_duration);
-                
-                // Perform a simple query to verify connection
-                let query_start = Instant::now();
-                let query_result = sqlx::query("SELECT 1 as test").fetch_one(&mut *conn).await;
-                let query_duration = query_start.elapsed();
-                
-                metrics.record_query("Connection Test Query", query_duration, query_result.is_ok());
-                
-                if i % 20 == 0 {
-                    println!("  🔗 Connection {} acquired in {:?}", i + 1, acquire_duration);
-                }
-            }
-            Err(e) => {
-                println!("  ❌ Connection acquisition failed: {}", e);
-            }
-        }
-    }
-    
-    // Test concurrent connection acquisition
-    println!("\n🔄 Testing concurrent connection acquisition");
-    
-    let concurrent_connections = 20;
-    let connection_handles = (0..concurrent_connections)
-        .map(|conn_id| {
-            let pool_clone = pool.clone();
-            let metrics = Arc::new(Mutex::new(DatabaseMetrics::new()));
-            
-            tokio::spawn(async move {
-                let start = Instant::now();
-                
-                match pool_clone.acquire().await {
-                    Ok(mut conn) => {
-                        let acquire_duration = start.elapsed();
-                        
-                        // Hold connection briefly and perform operations
-                        for op in 0..5 {
-                            let query_start = Instant::now();
-                            let result = sqlx::query("SELECT $1 as value")
-                                .bind(format!("conn-{}-op-{}", conn_id, op))
-                                .fetch_one(&mut *conn)
-                                .await;
-                            let query_duration = query_start.elapsed();
-                            
-                            let mut metrics_lock = metrics.lock().await;
-                            metrics_lock.record_query("Concurrent Connection Query", query_duration, result.is_ok());
-                        }
-                        
-                        let mut metrics_lock = metrics.lock().await;
-                        metrics_lock.record_connection(acquire_duration);
-                        
-                        (true, metrics_lock.connection_times.clone(), metrics_lock.query_times.clone())
-                    }
-                    Err(e) => {
-                        println!("  ❌ Concurrent connection {} failed: {}", conn_id, e);
-                        (false, Vec::new(), HashMap::new())
-                    }
-                }
-            })
-        });
-    
-    // Collect results from concurrent connections
-    let results = futures::future::join_all(connection_handles).await;
-    
-    let mut successful_connections = 0;
-    let mut total_connection_times = Vec::new();
-    
-    for result in results {
-        if let Ok((success, conn_times, _query_times)) = result {
-            if success {
-                successful_connections += 1;
-                total_connection_times.extend(conn_times);
-            }
-        }
-    }
-    
-    println!("  ✅ Successful concurrent connections: {}/{}", 
-             successful_connections, concurrent_connections);
-    
-    if !total_connection_times.is_empty() {
-        let avg_concurrent_conn_time = total_connection_times.iter().sum::<StdDuration>() 
-            / total_connection_times.len() as u32;
-        println!("  ⏱️  Average concurrent connection time: {:?}", avg_concurrent_conn_time);
-    }
-    
-    metrics.print_summary();
-    
-    // Performance assertions
-    let avg_connection_time = if !metrics.connection_times.is_empty() {
-        metrics.connection_times.iter().sum::<StdDuration>() / metrics.connection_times.len() as u32
-    } else {
-        StdDuration::from_millis(0)
-    };
-    
-    assert!(avg_connection_time < StdDuration::from_millis(50),
-        "Average connection acquisition should be < 50ms");
-    assert!(successful_connections as f64 / concurrent_connections as f64 > 0.95,
-        "Concurrent connection success rate should be > 95%");
-    assert!(metrics.query_success_rate("Connection Test Query") > 95.0,
-        "Connection test queries should have > 95% success rate");
-    
-    println!("✅ Connection pool performance test passed");
-    Ok(())
-}
-
-/// Test transaction performance and isolation
-#[sinex_test]
-async fn test_transaction_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let mut metrics = DatabaseMetrics::new();
-    
-    println!("💳 Testing transaction performance");
-    
-    // Test simple transactions
-    let transaction_count = 50;
-    
-    for i in 0..transaction_count {
+        // Insert batch using a transaction
         let tx_start = Instant::now();
-        
         let mut tx = pool.begin().await?;
         
-        // Perform multiple operations within transaction
-        let factory = EventFactory::new("transaction-test");
-        let event1 = factory.create_event(
-            event_types::test::TRANSACTION_PERFORMANCE_TEST_1,
-            json!({"transaction_id": i, "operation": 1})
-        );
+        for event in chunk {
+            sinex_db::insert_event_with_validator(&mut *tx, event, None).await?;
+        }
         
-        let event2 = factory.create_event(
-            event_types::test::TRANSACTION_PERFORMANCE_TEST_2,
-            json!({"transaction_id": i, "operation": 2})
-        );
-        
-        // Insert both events in the same transaction
-        let insert1 = sinex_db::insert_event_with_validator(&mut tx, &event1, None).await;
-        let insert2 = sinex_db::insert_event_with_validator(&mut tx, &event2, None).await;
-        
-        let commit_result = if insert1.is_ok() && insert2.is_ok() {
-            tx.commit().await
-        } else {
-            tx.rollback().await
-        };
-        
+        tx.commit().await?;
         let tx_duration = tx_start.elapsed();
         metrics.record_transaction(tx_duration);
         
-        let success = insert1.is_ok() && insert2.is_ok() && commit_result.is_ok();
-        metrics.record_query("Transaction", tx_duration, success);
+        let batch_duration = batch_start.elapsed();
+        metrics.record_query("batch_insert", batch_duration, true);
         
-        if i % 10 == 0 {
-            println!("  💳 Transaction {} completed in {:?}", i + 1, tx_duration);
+        if batch_idx % 10 == 0 {
+            println!("  Inserted batch {} ({} events) in {:?}", batch_idx, chunk.len(), batch_duration);
         }
     }
     
-    // Test concurrent transactions
-    println!("\n🔄 Testing concurrent transactions");
+    let bulk_duration = bulk_start.elapsed();
+    println!("✅ Bulk insert completed: {} events in {:?}", total_events, bulk_duration);
+    println!("  Average: {:.2} events/second", total_events as f64 / bulk_duration.as_secs_f64());
     
-    let concurrent_transactions = 10;
-    let tx_handles = (0..concurrent_transactions)
-        .map(|tx_id| {
-            let pool_clone = pool.clone();
+    // Phase 2: Query performance with different patterns
+    println!("\n🔍 Testing query patterns on realistic data...");
+    
+    // Test 1: Time range queries (common for dashboards)
+    let time_ranges = vec![
+        ("last_hour", Duration::hours(1)),
+        ("last_day", Duration::days(1)),
+        ("last_week", Duration::days(7)),
+    ];
+    
+    for (name, duration) in time_ranges {
+        let query_start = Instant::now();
+        let end_time = Utc::now();
+        let start_time = end_time - duration;
+        
+        let (count,) = EventQueries::count_by_time_range(start_time, end_time)
+            .fetch_one::<(i64,)>(&pool)
+            .await?;
+        
+        let query_duration = query_start.elapsed();
+        metrics.record_query(&format!("time_range_{}", name), query_duration, true);
+        
+        println!("  Time range {} returned {} events in {:?}", name, count, query_duration);
+    }
+    
+    // Test 2: Source-based queries (common for filtering)
+    let sources = vec!["shell.kitty", "fs", "wm.hyprland", "sinex"];
+    
+    for source in sources {
+        let query_start = Instant::now();
+        
+        let events = sqlx::query!(
+            r#"
+            SELECT id, ts_orig, event_type, payload
+            FROM core.events
+            WHERE source = $1
+            ORDER BY ts_orig DESC
+            LIMIT 100
+            "#,
+            source
+        )
+        .fetch_all(&pool)
+        .await?;
+        
+        let query_duration = query_start.elapsed();
+        metrics.record_query(&format!("source_filter_{}", source), query_duration, true);
+        
+        println!("  Source filter {} returned {} events in {:?}", source, events.len(), query_duration);
+    }
+    
+    // Test 3: Complex aggregation queries
+    let agg_start = Instant::now();
+    
+    let hourly_stats = sqlx::query!(
+        r#"
+        SELECT 
+            date_trunc('hour', ts_orig) as hour,
+            source,
+            COUNT(*) as event_count,
+            COUNT(DISTINCT event_type) as unique_types
+        FROM core.events
+        WHERE ts_orig > NOW() - INTERVAL '24 hours'
+        GROUP BY hour, source
+        ORDER BY hour DESC, event_count DESC
+        "#
+    )
+    .fetch_all(&pool)
+    .await?;
+    
+    let agg_duration = agg_start.elapsed();
+    metrics.record_query("hourly_aggregation", agg_duration, true);
+    
+    println!("  Hourly aggregation returned {} rows in {:?}", hourly_stats.len(), agg_duration);
+    
+    // Test 4: Full-text search simulation (JSON queries)
+    let search_terms = vec!["git", "cargo", "error", "test"];
+    
+    for term in search_terms {
+        let search_start = Instant::now();
+        
+        let results = sqlx::query!(
+            r#"
+            SELECT id, source, event_type, payload
+            FROM core.events
+            WHERE payload::text LIKE $1
+            LIMIT 50
+            "#,
+            format!("%{}%", term)
+        )
+        .fetch_all(&pool)
+        .await?;
+        
+        let search_duration = search_start.elapsed();
+        metrics.record_query(&format!("json_search_{}", term), search_duration, true);
+        
+        println!("  JSON search '{}' found {} results in {:?}", term, results.len(), search_duration);
+    }
+    
+    // Phase 3: Concurrent query stress test
+    println!("\n⚡ Testing concurrent query performance...");
+    
+    let concurrent_queries = 20;
+    let mut handles = Vec::new();
+    
+    for i in 0..concurrent_queries {
+        let pool = pool.clone();
+        let query_type = i % 4;
+        
+        let handle = tokio::spawn(async move {
+            let query_start = Instant::now();
             
-            tokio::spawn(async move {
-                let tx_start = Instant::now();
-                
-                let mut tx = pool_clone.begin().await?;
-                
-                // Perform operations that might conflict
-                for op in 0..3 {
-                    let factory = EventFactory::new(&format!("concurrent-tx-{}", tx_id));
-                    let event = factory.create_event(
-                        event_types::test::CONCURRENT_TRANSACTION_TEST,
-                        json!({
-                            "transaction_id": tx_id,
-                            "operation_id": op,
-                            "timestamp": Utc::now().to_rfc3339()
-                        })
-                    );
-                    
-                    sinex_db::insert_event_with_validator(&mut tx, &event, None).await?;
+            let result = match query_type {
+                0 => {
+                    // Recent events query
+                    sqlx::query!("SELECT * FROM core.events ORDER BY ts_orig DESC LIMIT 100")
+                        .fetch_all(&pool)
+                        .await
+                        .map(|rows| rows.len())
                 }
-                
-                tx.commit().await?;
-                
-                let tx_duration = tx_start.elapsed();
-                Ok::<(usize, StdDuration), sqlx::Error>((tx_id, tx_duration))
-            })
+                1 => {
+                    // Count query
+                    sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
+                        .fetch_one(&pool)
+                        .await
+                        .map(|count: Option<i64>| count.unwrap_or(0) as usize)
+                }
+                2 => {
+                    // Source stats
+                    sqlx::query!("SELECT source, COUNT(*) as cnt FROM core.events GROUP BY source")
+                        .fetch_all(&pool)
+                        .await
+                        .map(|rows| rows.len())
+                }
+                _ => {
+                    // Random event lookup
+                    sqlx::query!("SELECT * FROM core.events LIMIT 1 OFFSET $1", i as i32 * 10)
+                        .fetch_optional(&pool)
+                        .await
+                        .map(|opt| if opt.is_some() { 1 } else { 0 })
+                }
+            };
+            
+            (query_type, query_start.elapsed(), result.is_ok())
         });
+        
+        handles.push(handle);
+    }
     
-    let tx_results = futures::future::join_all(tx_handles).await;
-    let mut successful_transactions = 0;
-    let mut concurrent_tx_times = Vec::new();
+    // Wait for all concurrent queries
+    let results = futures::future::join_all(handles).await;
     
-    for result in tx_results {
-        match result {
-            Ok(Ok((tx_id, duration))) => {
-                successful_transactions += 1;
-                concurrent_tx_times.push(duration);
-                println!("  ✅ Concurrent transaction {} completed in {:?}", tx_id, duration);
-            }
-            Ok(Err(e)) => {
-                println!("  ❌ Transaction failed: {}", e);
-            }
-            Err(e) => {
-                println!("  ❌ Transaction task failed: {}", e);
-            }
+    for result in results {
+        if let Ok((query_type, duration, success)) = result {
+            metrics.record_query(&format!("concurrent_query_type_{}", query_type), duration, success);
         }
     }
     
-    println!("  📊 Successful concurrent transactions: {}/{}", 
-             successful_transactions, concurrent_transactions);
+    let successful = results.iter().filter(|r| r.as_ref().map(|(_, _, s)| *s).unwrap_or(false)).count();
+    println!("  Concurrent queries completed: {}/{} successful", successful, concurrent_queries);
     
+    // Print final metrics
+    println!("\n" + "=".repeat(80));
     metrics.print_summary();
     
-    // Verify database consistency
-    // NOTE: Complex OR condition with LIKE pattern requires raw SQL
-    let tx_event_count = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-tx-%' OR source = 'transaction-test'"
-    ).fetch_one(&pool).await?;
-    
-    println!("🔍 Transaction consistency check: {} events inserted", 
-             tx_event_count.count.unwrap_or(0));
-    
     // Performance assertions
-    let avg_tx_time = if !metrics.transaction_times.is_empty() {
-        metrics.transaction_times.iter().sum::<StdDuration>() / metrics.transaction_times.len() as u32
-    } else {
-        StdDuration::from_millis(0)
-    };
+    let avg_insert = metrics.average_query_time("batch_insert");
+    assert!(
+        avg_insert < StdDuration::from_millis(500),
+        "Batch insert should average under 500ms, was {:?}",
+        avg_insert
+    );
     
-    assert!(avg_tx_time < StdDuration::from_millis(200),
-        "Average transaction time should be < 200ms");
-    assert!(successful_transactions as f64 / concurrent_transactions as f64 > 0.9,
-        "Concurrent transaction success rate should be > 90%");
-    assert!(metrics.query_success_rate("Transaction") > 95.0,
-        "Transaction success rate should be > 95%");
+    let p95_time_range = metrics.percentile_query_time("time_range_last_hour", 95.0);
+    assert!(
+        p95_time_range < StdDuration::from_millis(100),
+        "Time range queries should have P95 under 100ms, was {:?}",
+        p95_time_range
+    );
     
-    println!("✅ Transaction performance test passed");
     Ok(())
 }

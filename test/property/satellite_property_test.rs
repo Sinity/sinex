@@ -2,8 +2,10 @@
 //
 // Tests that verify satellite communication, lifecycle, and coordination properties
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::property_builders::*;
+use crate::property::strategies::{event_sources, event_payloads, event_sequences};
 use proptest::prelude::*;
 use sinex_satellite_sdk::config::SatelliteConfig;
 use std::time::Duration;
@@ -250,8 +252,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -386,7 +387,7 @@ proptest! {
 /// Test satellite event processing with property builders
 proptest! {
     #[test]
-    fn satellite_processes_events_correctly(
+    fn satellite_processes_events_correctly_1(
         events in arbitrary_event_batch(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -415,7 +416,7 @@ proptest! {
 /// Test satellite heartbeat events
 proptest! {
     #[test]
-    fn satellite_heartbeat_events_are_valid(
+    fn satellite_heartbeat_events_are_valid_1(
         heartbeat in heartbeat_event(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -444,7 +445,7 @@ proptest! {
 /// Test satellite event batching behavior
 proptest! {
     #[test]
-    fn satellite_batching_maintains_order(
+    fn satellite_batching_maintains_order_1(
         batch in time_ordered_batch(),
         batch_size in 1usize..=100usize,
     ) {
@@ -477,7 +478,7 @@ proptest! {
 /// Test satellite recovery with realistic event streams
 proptest! {
     #[test]
-    fn satellite_recovery_handles_event_types(
+    fn satellite_recovery_handles_event_types_1(
         fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
         shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
         window_events in proptest::collection::vec(window_event(), 1..=10),
@@ -515,7 +516,7 @@ proptest! {
 /// Test satellite handling of malformed events
 proptest! {
     #[test]
-    fn satellite_rejects_invalid_events(
+    fn satellite_rejects_invalid_events_1(
         invalid_event in prop_oneof![
             empty_source_event(),
             massive_payload_event(),
@@ -547,7 +548,7 @@ proptest! {
 /// Test satellite checkpoint integration
 proptest! {
     #[test]
-    fn satellite_checkpoint_progression(
+    fn satellite_checkpoint_progression_1(
         events in arbitrary_event_batch(),
         checkpoint in arbitrary_checkpoint(),
         satellite_name in "[a-z]+-satellite",
@@ -585,8 +586,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -594,7 +594,7 @@ proptest! {
 /// Test realistic user activity streams
 proptest! {
     #[test]
-    fn satellite_handles_user_activity_patterns(
+    fn satellite_handles_user_activity_patterns_1(
         activity_batch in user_activity_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -628,7 +628,7 @@ proptest! {
 /// Test related events handling (e.g., file lifecycle)
 proptest! {
     #[test]
-    fn satellite_tracks_related_events(
+    fn satellite_tracks_related_events_1(
         related_batch in related_events_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -730,7 +730,7 @@ proptest! {
 /// Test satellite event processing with property builders
 proptest! {
     #[test]
-    fn satellite_processes_events_correctly(
+    fn satellite_processes_events_correctly_2(
         events in arbitrary_event_batch(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -759,7 +759,7 @@ proptest! {
 /// Test satellite heartbeat events
 proptest! {
     #[test]
-    fn satellite_heartbeat_events_are_valid(
+    fn satellite_heartbeat_events_are_valid_2(
         heartbeat in heartbeat_event(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -788,7 +788,7 @@ proptest! {
 /// Test satellite event batching behavior
 proptest! {
     #[test]
-    fn satellite_batching_maintains_order(
+    fn satellite_batching_maintains_order_2(
         batch in time_ordered_batch(),
         batch_size in 1usize..=100usize,
     ) {
@@ -821,7 +821,7 @@ proptest! {
 /// Test satellite recovery with realistic event streams
 proptest! {
     #[test]
-    fn satellite_recovery_handles_event_types(
+    fn satellite_recovery_handles_event_types_2(
         fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
         shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
         window_events in proptest::collection::vec(window_event(), 1..=10),
@@ -859,7 +859,7 @@ proptest! {
 /// Test satellite handling of malformed events
 proptest! {
     #[test]
-    fn satellite_rejects_invalid_events(
+    fn satellite_rejects_invalid_events_2(
         invalid_event in prop_oneof![
             empty_source_event(),
             massive_payload_event(),
@@ -891,7 +891,7 @@ proptest! {
 /// Test satellite checkpoint integration
 proptest! {
     #[test]
-    fn satellite_checkpoint_progression(
+    fn satellite_checkpoint_progression_2(
         events in arbitrary_event_batch(),
         checkpoint in arbitrary_checkpoint(),
         satellite_name in "[a-z]+-satellite",
@@ -929,8 +929,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -938,7 +937,7 @@ proptest! {
 /// Test realistic user activity streams
 proptest! {
     #[test]
-    fn satellite_handles_user_activity_patterns(
+    fn satellite_handles_user_activity_patterns_2(
         activity_batch in user_activity_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -972,7 +971,7 @@ proptest! {
 /// Test related events handling (e.g., file lifecycle)
 proptest! {
     #[test]
-    fn satellite_tracks_related_events(
+    fn satellite_tracks_related_events_2(
         related_batch in related_events_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1063,7 +1062,7 @@ proptest! {
 /// Test satellite event processing with property builders
 proptest! {
     #[test]
-    fn satellite_processes_events_correctly(
+    fn satellite_processes_events_correctly_3(
         events in arbitrary_event_batch(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -1092,7 +1091,7 @@ proptest! {
 /// Test satellite heartbeat events
 proptest! {
     #[test]
-    fn satellite_heartbeat_events_are_valid(
+    fn satellite_heartbeat_events_are_valid_3(
         heartbeat in heartbeat_event(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -1121,7 +1120,7 @@ proptest! {
 /// Test satellite event batching behavior
 proptest! {
     #[test]
-    fn satellite_batching_maintains_order(
+    fn satellite_batching_maintains_order_3(
         batch in time_ordered_batch(),
         batch_size in 1usize..=100usize,
     ) {
@@ -1154,7 +1153,7 @@ proptest! {
 /// Test satellite recovery with realistic event streams
 proptest! {
     #[test]
-    fn satellite_recovery_handles_event_types(
+    fn satellite_recovery_handles_event_types_3(
         fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
         shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
         window_events in proptest::collection::vec(window_event(), 1..=10),
@@ -1192,7 +1191,7 @@ proptest! {
 /// Test satellite handling of malformed events
 proptest! {
     #[test]
-    fn satellite_rejects_invalid_events(
+    fn satellite_rejects_invalid_events_3(
         invalid_event in prop_oneof![
             empty_source_event(),
             massive_payload_event(),
@@ -1224,7 +1223,7 @@ proptest! {
 /// Test satellite checkpoint integration
 proptest! {
     #[test]
-    fn satellite_checkpoint_progression(
+    fn satellite_checkpoint_progression_3(
         events in arbitrary_event_batch(),
         checkpoint in arbitrary_checkpoint(),
         satellite_name in "[a-z]+-satellite",
@@ -1262,8 +1261,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -1271,7 +1269,7 @@ proptest! {
 /// Test realistic user activity streams
 proptest! {
     #[test]
-    fn satellite_handles_user_activity_patterns(
+    fn satellite_handles_user_activity_patterns_3(
         activity_batch in user_activity_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1305,7 +1303,7 @@ proptest! {
 /// Test related events handling (e.g., file lifecycle)
 proptest! {
     #[test]
-    fn satellite_tracks_related_events(
+    fn satellite_tracks_related_events_3(
         related_batch in related_events_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1398,7 +1396,7 @@ proptest! {
 /// Test satellite event processing with property builders
 proptest! {
     #[test]
-    fn satellite_processes_events_correctly(
+    fn satellite_processes_events_correctly_4(
         events in arbitrary_event_batch(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -1427,7 +1425,7 @@ proptest! {
 /// Test satellite heartbeat events
 proptest! {
     #[test]
-    fn satellite_heartbeat_events_are_valid(
+    fn satellite_heartbeat_events_are_valid_4(
         heartbeat in heartbeat_event(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -1456,7 +1454,7 @@ proptest! {
 /// Test satellite event batching behavior
 proptest! {
     #[test]
-    fn satellite_batching_maintains_order(
+    fn satellite_batching_maintains_order_4(
         batch in time_ordered_batch(),
         batch_size in 1usize..=100usize,
     ) {
@@ -1489,7 +1487,7 @@ proptest! {
 /// Test satellite recovery with realistic event streams
 proptest! {
     #[test]
-    fn satellite_recovery_handles_event_types(
+    fn satellite_recovery_handles_event_types_4(
         fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
         shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
         window_events in proptest::collection::vec(window_event(), 1..=10),
@@ -1527,7 +1525,7 @@ proptest! {
 /// Test satellite handling of malformed events
 proptest! {
     #[test]
-    fn satellite_rejects_invalid_events(
+    fn satellite_rejects_invalid_events_4(
         invalid_event in prop_oneof![
             empty_source_event(),
             massive_payload_event(),
@@ -1559,7 +1557,7 @@ proptest! {
 /// Test satellite checkpoint integration
 proptest! {
     #[test]
-    fn satellite_checkpoint_progression(
+    fn satellite_checkpoint_progression_4(
         events in arbitrary_event_batch(),
         checkpoint in arbitrary_checkpoint(),
         satellite_name in "[a-z]+-satellite",
@@ -1597,8 +1595,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -1606,7 +1603,7 @@ proptest! {
 /// Test realistic user activity streams
 proptest! {
     #[test]
-    fn satellite_handles_user_activity_patterns(
+    fn satellite_handles_user_activity_patterns_4(
         activity_batch in user_activity_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1640,7 +1637,7 @@ proptest! {
 /// Test related events handling (e.g., file lifecycle)
 proptest! {
     #[test]
-    fn satellite_tracks_related_events(
+    fn satellite_tracks_related_events_4(
         related_batch in related_events_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1738,7 +1735,7 @@ proptest! {
 /// Test satellite event processing with property builders
 proptest! {
     #[test]
-    fn satellite_processes_events_correctly(
+    fn satellite_processes_events_correctly_5(
         events in arbitrary_event_batch(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -1767,7 +1764,7 @@ proptest! {
 /// Test satellite heartbeat events
 proptest! {
     #[test]
-    fn satellite_heartbeat_events_are_valid(
+    fn satellite_heartbeat_events_are_valid_5(
         heartbeat in heartbeat_event(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -1796,7 +1793,7 @@ proptest! {
 /// Test satellite event batching behavior
 proptest! {
     #[test]
-    fn satellite_batching_maintains_order(
+    fn satellite_batching_maintains_order_5(
         batch in time_ordered_batch(),
         batch_size in 1usize..=100usize,
     ) {
@@ -1829,7 +1826,7 @@ proptest! {
 /// Test satellite recovery with realistic event streams
 proptest! {
     #[test]
-    fn satellite_recovery_handles_event_types(
+    fn satellite_recovery_handles_event_types_5(
         fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
         shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
         window_events in proptest::collection::vec(window_event(), 1..=10),
@@ -1867,7 +1864,7 @@ proptest! {
 /// Test satellite handling of malformed events
 proptest! {
     #[test]
-    fn satellite_rejects_invalid_events(
+    fn satellite_rejects_invalid_events_5(
         invalid_event in prop_oneof![
             empty_source_event(),
             massive_payload_event(),
@@ -1899,7 +1896,7 @@ proptest! {
 /// Test satellite checkpoint integration
 proptest! {
     #[test]
-    fn satellite_checkpoint_progression(
+    fn satellite_checkpoint_progression_5(
         events in arbitrary_event_batch(),
         checkpoint in arbitrary_checkpoint(),
         satellite_name in "[a-z]+-satellite",
@@ -1937,8 +1934,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -1946,7 +1942,7 @@ proptest! {
 /// Test realistic user activity streams
 proptest! {
     #[test]
-    fn satellite_handles_user_activity_patterns(
+    fn satellite_handles_user_activity_patterns_5(
         activity_batch in user_activity_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -1980,7 +1976,7 @@ proptest! {
 /// Test related events handling (e.g., file lifecycle)
 proptest! {
     #[test]
-    fn satellite_tracks_related_events(
+    fn satellite_tracks_related_events_5(
         related_batch in related_events_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2071,7 +2067,7 @@ proptest! {
 /// Test satellite event processing with property builders
 proptest! {
     #[test]
-    fn satellite_processes_events_correctly(
+    fn satellite_processes_events_correctly_6(
         events in arbitrary_event_batch(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -2100,7 +2096,7 @@ proptest! {
 /// Test satellite heartbeat events
 proptest! {
     #[test]
-    fn satellite_heartbeat_events_are_valid(
+    fn satellite_heartbeat_events_are_valid_6(
         heartbeat in heartbeat_event(),
         satellite_name in "[a-z]+-satellite",
     ) {
@@ -2129,7 +2125,7 @@ proptest! {
 /// Test satellite event batching behavior
 proptest! {
     #[test]
-    fn satellite_batching_maintains_order(
+    fn satellite_batching_maintains_order_6(
         batch in time_ordered_batch(),
         batch_size in 1usize..=100usize,
     ) {
@@ -2162,7 +2158,7 @@ proptest! {
 /// Test satellite recovery with realistic event streams
 proptest! {
     #[test]
-    fn satellite_recovery_handles_event_types(
+    fn satellite_recovery_handles_event_types_6(
         fs_events in proptest::collection::vec(filesystem_event(), 1..=10),
         shell_events in proptest::collection::vec(shell_command_event(), 1..=10),
         window_events in proptest::collection::vec(window_event(), 1..=10),
@@ -2200,7 +2196,7 @@ proptest! {
 /// Test satellite handling of malformed events
 proptest! {
     #[test]
-    fn satellite_rejects_invalid_events(
+    fn satellite_rejects_invalid_events_6(
         invalid_event in prop_oneof![
             empty_source_event(),
             massive_payload_event(),
@@ -2232,7 +2228,7 @@ proptest! {
 /// Test satellite checkpoint integration
 proptest! {
     #[test]
-    fn satellite_checkpoint_progression(
+    fn satellite_checkpoint_progression_6(
         events in arbitrary_event_batch(),
         checkpoint in arbitrary_checkpoint(),
         satellite_name in "[a-z]+-satellite",
@@ -2270,8 +2266,7 @@ proptest! {
             
             // Verify checkpoint was saved
             let loaded = checkpoint_manager.load_checkpoint().await.unwrap();
-            assert!(loaded.is_some());
-            assert_eq!(loaded.unwrap().processed_count, events.len() as u64);
+            assert_eq!(loaded.processed_count, events.len() as u64);
         });
     }
 }
@@ -2279,7 +2274,7 @@ proptest! {
 /// Test realistic user activity streams
 proptest! {
     #[test]
-    fn satellite_handles_user_activity_patterns(
+    fn satellite_handles_user_activity_patterns_6(
         activity_batch in user_activity_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -2313,7 +2308,7 @@ proptest! {
 /// Test related events handling (e.g., file lifecycle)
 proptest! {
     #[test]
-    fn satellite_tracks_related_events(
+    fn satellite_tracks_related_events_6(
         related_batch in related_events_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();

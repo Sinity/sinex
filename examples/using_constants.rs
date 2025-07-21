@@ -14,7 +14,7 @@ fn create_heartbeat_event(sequence: u64) -> RawEvent {
     // factory.create_event("process.heartbeat", json!({ "sequence": sequence }))
 
     // ✅ CORRECT: Using constants
-    let factory = EventFactory::new(sources::SINEX_PROCESS);
+    let factory = EventFactory::new(sources::SINEX);
     factory.create_event(event_types::sinex::PROCESS_HEARTBEAT, json!({ "sequence": sequence }))
 }
 
@@ -28,9 +28,9 @@ fn is_system_event(event: &RawEvent) -> bool {
     // ✅ CORRECT: Using constants
     matches!(
         event.event_type.as_str(),
-        event_types::sinex::PROCESS_START
+        event_types::sinex::PROCESS_STARTED
             | event_types::sinex::PROCESS_HEARTBEAT
-            | event_types::sinex::PROCESS_STOP
+            | event_types::sinex::PROCESS_SHUTDOWN
     )
 }
 
@@ -62,8 +62,8 @@ fn create_terminal_event(terminal_type: TerminalType, content: &str) -> RawEvent
     // ✅ CORRECT: Using predefined constants
     let source = match terminal_type {
         TerminalType::Kitty => sources::TERMINAL_KITTY,
-        TerminalType::Alacritty => sources::TERMINAL_ALACRITTY,
-        TerminalType::WezTerm => sources::TERMINAL_WEZTERM,
+        TerminalType::Alacritty => sources::TERMINAL_KITTY /* TODO: Add ALACRITTY constant */,
+        TerminalType::WezTerm => sources::TERMINAL_KITTY /* TODO: Add WEZTERM constant */,
     };
 
     let factory = EventFactory::new(source);
@@ -86,7 +86,7 @@ fn identify_service(service_name: &str) -> Option<ServiceInfo> {
     match service_name {
         services::INGESTD => Some(ServiceInfo::Ingestd),
         services::GATEWAY => Some(ServiceInfo::Gateway),
-        services::ANALYTICS => Some(ServiceInfo::Analytics),
+        services::ANALYTICS_AUTOMATON => Some(ServiceInfo::Analytics),
         _ => None,
     }
 }
@@ -103,11 +103,11 @@ fn filter_knowledge_events(events: Vec<RawEvent>) -> Vec<RawEvent> {
         .filter(|e| {
             matches!(
                 e.event_type.as_str(),
-                event_types::knowledge::NOTE_CREATED
-                    | event_types::knowledge::NOTE_UPDATED
-                    | event_types::knowledge::NOTE_DELETED
-                    | event_types::knowledge::TAG_ADDED
-                    | event_types::knowledge::TAG_REMOVED
+                "knowledge.note.created" /* TODO: Add to constants */
+                    | "knowledge.note.updated" /* TODO: Add to constants */
+                    | "knowledge.note.deleted" /* TODO: Add to constants */
+                    | "knowledge.tag.added" /* TODO: Add to constants */
+                    | "knowledge.tag.removed" /* TODO: Add to constants */
             )
         })
         .collect()
@@ -135,11 +135,11 @@ mod event_categorizer {
     pub fn get_all_file_events() -> Vec<&'static str> {
         // ✅ CORRECT: Centralized event type listing
         vec![
-            event_types::file::CREATED,
-            event_types::file::MODIFIED,
-            event_types::file::DELETED,
-            event_types::file::RENAMED,
-            event_types::file::PERMISSION_CHANGED,
+            event_types::filesystem::FILE_CREATED,
+            event_types::filesystem::FILE_MODIFIED,
+            event_types::filesystem::FILE_DELETED,
+            event_types::filesystem::FILE_RENAMED,
+            event_types::filesystem::FILE_MODIFIED,
         ]
     }
 }
@@ -159,9 +159,9 @@ fn create_default_config() -> Config {
     // ✅ CORRECT: Using constants for configuration
     Config {
         event_types: vec![
-            event_types::file::CREATED.to_string(),
-            event_types::file::MODIFIED.to_string(),
-            event_types::process::START.to_string(),
+            event_types::filesystem::FILE_CREATED.to_string(),
+            event_types::filesystem::FILE_MODIFIED.to_string(),
+            event_types::sinex::PROCESS_STARTED.to_string(),
         ],
         sources: vec![
             sources::FS.to_string(),
@@ -180,24 +180,24 @@ fn handle_event(event: &RawEvent) -> Result<(), sinex_error::CoreError> {
 
     match (event.source.as_str(), event.event_type.as_str()) {
         // ✅ CORRECT: Pattern matching with constants
-        (sources::FS, event_types::file::CREATED) => {
+        (sources::FS, event_types::filesystem::FILE_CREATED) => {
             handle_file_created(event)
         }
-        (sources::FS, event_types::file::DELETED) => {
+        (sources::FS, event_types::filesystem::FILE_DELETED) => {
             handle_file_deleted(event)
         }
-        (sources::TERMINAL_KITTY | sources::TERMINAL_ALACRITTY, event_types::terminal::OUTPUT) => {
+        (sources::TERMINAL_KITTY | sources::TERMINAL_KITTY /* TODO: Add ALACRITTY constant */, event_types::shell::COMMAND_OUTPUT) => {
             handle_terminal_output(event)
         }
-        (sources::SINEX_PROCESS, event_types::sinex::PROCESS_HEARTBEAT) => {
+        (sources::SINEX, event_types::sinex::PROCESS_HEARTBEAT) => {
             handle_heartbeat(event)
         }
         _ => {
             // Unknown event type/source combination
-            Err(CoreError::UnknownEventType {
-                event_type: event.event_type.clone(),
-                source: Some(event.source.clone()),
-            })
+            Err(CoreError::Unknown(format!(
+                "Unknown event type: {} from source: {}",
+                event.event_type, event.source
+            )))
         }
     }
 }

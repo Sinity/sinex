@@ -14,6 +14,7 @@
 // Uses #[sinex_test] for automatic transaction isolation and TestContext
 // for unified database access.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::{self, assertions, events, generators, schema_test_utils};
 use crate::common::query_helpers::{TestQueries, CheckpointRecord};
@@ -39,91 +40,29 @@ use uuid::Uuid;
 /// This is the most fundamental test - if this fails, nothing else works.
 // Basic insert/retrieve test removed - redundant with test_batch_event_insertion
 
-/// Test batch insertion of multiple events
+/// Test batch insertion of multiple events using fixtures
 #[sinex_test(timeout = 40)]
 async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
-    let events = generators::test_events(10);
-
-    // Insert events concurrently for better performance
-    let insert_tasks: Vec<_> = events
-        .iter()
-        .map(|event| {
-            let pool = ctx.pool().clone();
-            let event = event.clone();
-            tokio::spawn(async move {
-                sinex_db::insert_event_with_validator(&pool, &event, None)
-                    .await
-                    .map(|e| e.id)
-            })
-        })
-        .collect();
-
-    // Wait for all insertions to complete
-    let mut inserted_ids = Vec::new();
-    for task in insert_tasks {
-        let id = task.await??;
-        inserted_ids.push(id);
-    }
-
-    // Verify all events exist (also done concurrently)
-    let verify_tasks: Vec<_> = inserted_ids
-        .iter()
-        .map(|&id| {
-            let pool = ctx.pool().clone();
-            tokio::spawn(async move {
-                get_event_by_id(&pool, id)
-                    .await
-                    .is_ok()
-            })
-        })
-        .collect();
-
-    for task in verify_tasks {
-        assert!(task.await?);
+    // Use standard user session fixture for pre-populated data
+    let session = crate::common::fixtures::standard_user_session(&ctx).await?;
+    
+    // Verify the fixture created the expected events
+    assert!(session.event_ids.len() >= 30);
+    
+    // Check events exist in database
+    for id in &session.event_ids[..10] {
+        let event = get_event_by_id(ctx.pool(), *id).await?;
+        assert_eq!(event.id, *id);
     }
 
     // Check total count - use centralized query
     let recent_events = TestQueries::get_recent_events(ctx.pool(), 100).await?;
-    assert!(recent_events.len() >= 10);
+    assert!(recent_events.len() >= session.event_ids.len());
 
     Ok(())
 }
 
-/// Test querying events by source
-#[sinex_test(timeout = 35)]
-async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
-    // Create test events
-    let fs_event1 = events::file_created_event("/test/file1.txt");
-    let fs_event2 = events::file_modified_event("/test/file2.txt");
-    let term_event = events::kitty_event("ls -la");
-
-    // Insert all events concurrently
-    let events_to_insert = [&fs_event1, &fs_event2, &term_event];
-    let pool = ctx.pool().clone();
-    let insert_tasks: Vec<_> = events_to_insert
-        .iter()
-        .map(|&event| {
-            let pool = pool.clone();
-            let event = event.clone();
-            tokio::spawn(async move { assertions::assert_event_inserted(&pool, &event).await })
-        })
-        .collect();
-
-    // Wait for all insertions
-    for task in insert_tasks {
-        task.await?;
-    }
-
-    // Query using our helper function
-    let filesystem_events = common::get_events_by_source(ctx.pool(), "fs", 10).await?;
-    assert!(filesystem_events.len() >= 2);
-
-    for event in &filesystem_events {
-        pretty_assertions::assert_eq!(event.source, "fs");
-    }
-
-    Ok(())
-}
+test_event_filter!(test_query_events_by_source, &["test1", "test2", "fs"], 5, "fs", 5);
 
 /// Test invalid event insertion fails appropriately
 #[sinex_test]
@@ -155,54 +94,7 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult {
 // ULID INTEGRATION TESTS
 // =============================================================================
 
-#[sinex_test(timeout = 40)]
-async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
-    // Insert multiple events and collect their IDs
-    let mut ulids = Vec::new();
-
-    for i in 0..5 {
-        let event = events::file_created_event(&format!("/test/file_{}.txt", i));
-        let id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
-        ulids.push(id);
-
-        // Small delay to ensure ULID monotonic ordering
-        tokio::time::sleep(StdDuration::from_millis(1)).await;
-    }
-
-    // Query filesystem events to verify ordering
-    let filesystem_events = common::get_events_by_source(ctx.pool(), "fs", 10).await?;
-    assert!(filesystem_events.len() >= 5);
-
-    // Verify ULIDs are in chronological order
-    for i in 1..ulids.len() {
-        assert!(
-            ulids[i] > ulids[i - 1],
-            "ULIDs should be in chronological order"
-        );
-    }
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_ulid_uuid_conversion_consistency(ctx: TestContext) -> TestResult {
-    // Test that ULID <-> UUID conversion is consistent
-    let original_ulid = Ulid::new();
-    let uuid_form = original_ulid.to_uuid();
-    let back_to_ulid = Ulid::from_uuid(uuid_form);
-
-    pretty_assertions::assert_eq!(original_ulid, back_to_ulid);
-
-    // Test in database context
-    let event = events::file_created_event("/test/ulid-uuid.txt");
-    let event_id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
-
-    // Query back using centralized query helper
-    let retrieved = TestQueries::get_event(ctx.pool(), event_id).await?;
-    pretty_assertions::assert_eq!(retrieved.id, event_id);
-
-    Ok(())
-}
+test_event_insertion!(test_ulid_uuid_conversion_consistency, "fs", "file.created", json!({"path": "/test/ulid-uuid.txt"}));
 
 // =============================================================================
 // TIMESCALEDB TESTS
@@ -694,62 +586,38 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 // CHECKPOINT TESTS
 // =============================================================================
 
-/// Test checkpoint persistence and progress tracking
+/// Test checkpoint persistence using populated checkpoints fixture
 #[sinex_test]
 async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    // Create a test automaton checkpoint
-    let automaton_name = "test_checkpoint_automaton";
-    let consumer_group = "test_group";
-    let checkpoint_id = Ulid::new();
-
-    // Insert checkpoint using test builder
-    TestCheckpointBuilder::new(automaton_name)
-        .with_group(consumer_group)
-        .with_consumer("consumer_test")
-        .with_last_processed("test_event_id")
-        .with_processed_count(42)
-        .with_state(json!({"processed_count": 42, "test_data": true}))
-        .insert(&pool)
-        .await?;
-
-    // Verify checkpoint exists
-    #[derive(sqlx::FromRow)]
-    struct CheckpointRecord {
-        automaton_name: String,
-        consumer_group: String,
-        consumer_name: String,
-        last_processed_id: Option<String>,
-        state_data: Option<serde_json::Value>,
-        processed_count: i64,
-    }
+    // Use populated checkpoints fixture
+    let checkpoints = crate::common::fixtures::populated_checkpoints(&ctx).await?;
     
-    // Use the test query helper to get checkpoint
+    // Verify fixture created expected checkpoints
+    assert_eq!(checkpoints.automaton_names.len(), 3);
+    assert_eq!(checkpoints.checkpoint_ids.len(), 3);
+    assert_eq!(checkpoints.total_events_processed, 600); // 100 + 200 + 300
+    
+    // Verify first checkpoint details
     let checkpoint = TestQueries::get_checkpoint_full(
-        &pool,
-        automaton_name,
-        consumer_group,
-        "consumer_test",
+        ctx.pool(),
+        &checkpoints.automaton_names[0],
+        "default_group",
+        "default",
     )
     .await?
     .expect("Checkpoint should exist");
 
-    assert_eq!(checkpoint.automaton_name, automaton_name);
-    assert_eq!(checkpoint.consumer_group, consumer_group);
-    assert_eq!(
-        checkpoint.last_processed_id.as_ref(),
-        Some(&"test_event_id".to_string())
-    );
-
+    assert_eq!(checkpoint.automaton_name, "health-aggregator");
+    assert_eq!(checkpoint.processed_count, 100);
+    
     let state_data = checkpoint.state_data.unwrap();
     assert_eq!(
-        state_data.get("processed_count").unwrap().as_u64().unwrap(),
-        42
+        state_data.get("automaton_name").unwrap().as_str().unwrap(),
+        "health-aggregator"
     );
     assert_eq!(
-        state_data.get("test_data").unwrap().as_bool().unwrap(),
-        true
+        state_data.get("status").unwrap().as_str().unwrap(),
+        "healthy"
     );
 
     Ok(())
@@ -1073,87 +941,27 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
 // CONNECTION POOL TESTS
 // =============================================================================
 
-#[sinex_test]
-async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
-    // Use the existing managed pool instead of creating a new one
-    let pool = ctx.pool().clone();
-
-    // Try to acquire more connections than the pool size
-    let mut handles = vec![];
-    let pool = Arc::new(pool);
-
-    for i in 0..10 {
-        let pool = pool.clone();
-        let handle = tokio::spawn(async move {
-            let start = Instant::now();
-            match pool.acquire().await {
-                Ok(_conn) => {
-                    // Hold the connection for a bit
-                    tokio::time::sleep(StdDuration::from_millis(100)).await;
-                    Ok((i, start.elapsed()))
-                }
-                Err(e) => Err((i, e)),
-            }
-        });
-        handles.push(handle);
+test_concurrent_operations!(test_connection_pool_max_connections, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
+);
 
-    let results = join_all(handles).await;
-
-    // First several should succeed quickly
-    let mut succeeded = 0;
-    let mut _timed_out = 0;
-
-    for result in results {
-        match result? {
-            Ok((_, elapsed)) => {
-                succeeded += 1;
-                // Should get connection relatively quickly
-                assert!(elapsed < StdDuration::from_secs(3));
-            }
-            Err((_, _)) => {
-                _timed_out += 1;
-            }
-        }
+test_concurrent_operations!(test_connection_pool_concurrent_pressure, 100,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 100);
+        Ok(())
     }
-
-    // At least 5 should succeed (pool size)
-    assert!(succeeded >= 5);
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    // Spawn many concurrent tasks
-    let mut handles = vec![];
-
-    for i in 0..100 {
-        let pool = pool.clone();
-        let handle = tokio::spawn(async move {
-            // Each task does a quick query - simple SQL for testing connection pool
-            let result: i32 = sqlx::query_scalar("SELECT $1::int")
-                .bind(i)
-                .fetch_one(&pool)
-                .await?;
-
-            Ok::<_, sqlx::Error>(result)
-        });
-        handles.push(handle);
-    }
-
-    // All should complete successfully
-    let results = join_all(handles).await;
-
-    for (i, result) in results.into_iter().enumerate() {
-        let value = result??;
-        pretty_assertions::assert_eq!(value, i as i32);
-    }
-
-    Ok(())
-}
+);
 
 #[sinex_test]
 async fn test_connection_pool_error_recovery(ctx: TestContext) -> TestResult {

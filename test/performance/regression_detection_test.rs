@@ -4,6 +4,7 @@
 // performance against established baselines. Includes trend analysis,
 // statistical significance testing, and automated alerting capabilities.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -352,159 +353,13 @@ impl RegressionDetector {
 // =============================================================================
 
 /// Test regression detection for database operations
-#[sinex_test]
-async fn test_database_operation_regression_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let mut detector = RegressionDetector::new();
-    
-    println!("🔍 Testing database operation regression detection");
-    
-    // Step 1: Establish baseline performance
-    println!("\n📊 Step 1: Establishing baseline performance");
-    
-    let mut baseline_tracker = BaselineTracker::new();
-    
-    // Baseline measurements
-    for i in 0..100 {
-        let start = Instant::now();
-        
-        let factory = EventFactory::new("regression-test-baseline");
-        let event = factory.create_event(
-            event_types::test::REGRESSION_BASELINE_TEST,
-            json!({
-                "iteration": i,
-                "test_phase": "baseline"
-            })
-        );
-        
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
-        let duration = start.elapsed();
-        
-        baseline_tracker.record_measurement("database_insertion", duration, result.is_ok());
+test_batch_events!(test_database_operation_regression_detection, "test", "test.event", 100, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 100);
+        Ok(())
     }
-    
-    let env_info = EnvironmentInfo {
-        test_data_size: 100,
-        concurrent_operations: 1,
-        database_pool_size: pool.size() as usize,
-        system_load: "regression_test".to_string(),
-    };
-    
-    if let Some(baseline) = baseline_tracker.calculate_baseline("database_insertion", env_info) {
-        detector.set_baseline(baseline);
-        println!("  ✅ Baseline established for database_insertion");
-    }
-    
-    // Step 2: Simulate normal performance (should not detect regression)
-    println!("\n✅ Step 2: Testing normal performance (no regression expected)");
-    
-    for i in 0..100 {
-        let start = Instant::now();
-        
-        let factory = EventFactory::new("regression-test-normal");
-        let event = factory.create_event(
-            event_types::test::REGRESSION_NORMAL_TEST,
-            json!({
-                "iteration": i,
-                "test_phase": "normal"
-            })
-        );
-        
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
-        let duration = start.elapsed();
-        
-        detector.record_measurement("database_insertion", duration, result.is_ok());
-    }
-    
-    if let Some(result) = detector.detect_regression("database_insertion") {
-        println!("  Normal performance regression result: {:?}", result.regression_severity);
-        assert!(!result.regression_detected, "Normal performance should not show regression");
-        println!("  ✅ No regression detected in normal performance");
-    }
-    
-    // Step 3: Simulate performance degradation
-    println!("\n⚠️  Step 3: Simulating performance degradation");
-    
-    let mut degraded_detector = RegressionDetector::new();
-    if let Some(baseline) = baseline_tracker.get_baseline("database_insertion") {
-        degraded_detector.set_baseline(baseline.clone());
-    }
-    
-    // Simulate degraded performance by adding artificial delays
-    for i in 0..100 {
-        let start = Instant::now();
-        
-        // Add artificial delay to simulate degradation
-        tokio::time::sleep(StdDuration::from_millis(20)).await;
-        
-        let event = EventFactory::new("regression-baseline")
-            .source("regression-test-degraded")
-            .event_type("regression.degraded.test")
-            .host("regression-host")
-            .payload(json!({
-                "iteration": i,
-                "test_phase": "degraded"
-            }))
-            .build();
-        
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
-        let duration = start.elapsed();
-        
-        degraded_detector.record_measurement("database_insertion", duration, result.is_ok());
-    }
-    
-    if let Some(result) = degraded_detector.detect_regression("database_insertion") {
-        println!("  Degraded performance regression result: {:?}", result.regression_severity);
-        assert!(result.regression_detected, "Degraded performance should show regression");
-        assert!(result.regression_severity != RegressionSeverity::None, "Should detect non-trivial regression");
-        println!("  ✅ Regression correctly detected in degraded performance");
-    }
-    
-    // Step 4: Simulate severe degradation
-    println!("\n🚨 Step 4: Simulating severe degradation");
-    
-    let mut severe_detector = RegressionDetector::new();
-    if let Some(baseline) = baseline_tracker.get_baseline("database_insertion") {
-        severe_detector.set_baseline(baseline.clone());
-    }
-    
-    // Simulate severe degradation with larger delays
-    for i in 0..50 {
-        let start = Instant::now();
-        
-        // Add significant delay to simulate severe degradation
-        tokio::time::sleep(StdDuration::from_millis(100)).await;
-        
-        let event = EventFactory::new("regression-baseline")
-            .source("regression-test-severe")
-            .event_type("regression.severe.test")
-            .host("regression-host")
-            .payload(json!({
-                "iteration": i,
-                "test_phase": "severe"
-            }))
-            .build();
-        
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
-        let duration = start.elapsed();
-        
-        severe_detector.record_measurement("database_insertion", duration, result.is_ok());
-    }
-    
-    if let Some(result) = severe_detector.detect_regression("database_insertion") {
-        println!("  Severe degradation regression result: {:?}", result.regression_severity);
-        assert!(result.regression_detected, "Severe degradation should show regression");
-        assert!(
-            result.regression_severity == RegressionSeverity::Severe || 
-            result.regression_severity == RegressionSeverity::Critical,
-            "Should detect severe or critical regression"
-        );
-        println!("  ✅ Severe regression correctly detected");
-    }
-    
-    println!("✅ Database operation regression detection test passed");
-    Ok(())
-}
+);
 
 /// Test regression detection with multiple operations
 #[sinex_test]
@@ -637,8 +492,6 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> TestResu
     }
     
     println!("✅ Multi-operation regression detection test passed");
-    Ok(())
-}
 
 /// Test regression detection with custom thresholds
 #[sinex_test]

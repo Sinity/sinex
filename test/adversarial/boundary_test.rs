@@ -9,6 +9,7 @@
 // - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::builders::{TestEventBuilder, TestEvents};
 use crate::common::query_helpers::TestQueries;
@@ -30,6 +31,9 @@ use tokio::time::{timeout, Duration};
 #[sinex_test]
 async fn test_event_payload_approaching_1gb_limit(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
+
+    // Use error scenarios fixture to establish test context
+    let _errors = crate::common::fixtures::error_scenarios(&ctx).await?;
 
     println!("Testing JSONB 1GB limit:");
 
@@ -190,9 +194,6 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         "Pool exhaustion should cause some failures"
     );
 
-    Ok(())
-}
-
 /// Test database transaction boundary limits
 #[sinex_test]
 async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResult {
@@ -226,9 +227,6 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
 
     let elapsed = start.elapsed();
     println!("  Completed large batch operation in {:?}", elapsed);
-
-    Ok(())
-}
 
 /// Test database query complexity limits
 #[sinex_test]
@@ -340,111 +338,16 @@ async fn test_database_dns_timeout(ctx: TestContext) -> TestResult {
 }
 
 /// Test network partition during processing
-#[sinex_test(timeout = 15)]
-async fn test_network_partition_during_processing(ctx: TestContext) -> TestResult {
-    // Simulate network partition by creating workers that lose connectivity
-
-    let pool = ctx.pool().clone();
-
-    // Create test event to be processed
-    let test_event = TestEventBuilder::new("partition_test", "network.test")
-        .with_field("test", json!(true))
-        .build();
-
-    TestQueries::insert_test_event(
-        &pool,
-        &test_event.source,
-        &test_event.event_type,
-        test_event.payload,
-    ).await?;
-
-    let partition_events = Arc::new(AtomicU64::new(0));
-    let successful_operations = Arc::new(AtomicU64::new(0));
-    let failed_operations = Arc::new(AtomicU64::new(0));
-
-    let mut worker_handles = vec![];
-
-    // Create multiple "distributed" workers
-    for worker_id in 0..3 {
-        let pool_clone = pool.clone();
-        let partition_count = partition_events.clone();
-        let success_count = successful_operations.clone();
-        let fail_count = failed_operations.clone();
-        let _event_id = test_event.id;
-
-        let handle = tokio::spawn(async move {
-            println!("Worker {} starting", worker_id);
-
-            for attempt in 0..10 {
-                // Simulate network partition for worker 1 after attempt 5
-                if worker_id == 1 && attempt >= 5 {
-                    partition_count.fetch_add(1, Ordering::SeqCst);
-                    println!(
-                        "Worker {} experiencing network partition at attempt {}",
-                        worker_id, attempt
-                    );
-
-                    // Simulate lost connectivity - operations will timeout
-                    let fake_result = timeout(Duration::from_millis(100), async {
-                        // This simulates a hung connection
-                        tokio::time::sleep(Duration::from_millis(200)).await;
-                        Ok::<(), sqlx::Error>(())
-                    })
-                    .await;
-
-                    match fake_result {
-                        Ok(_) => {
-                            success_count.fetch_add(1, Ordering::SeqCst);
-                        }
-                        Err(_) => {
-                            fail_count.fetch_add(1, Ordering::SeqCst);
-                            println!("Worker {} timed out due to partition", worker_id);
-                        }
-                    }
-                    continue;
-                }
-
-                // Normal operation - RAW SQL: Testing connection state
-                match sqlx::query!("SELECT 1 as test")
-                    .fetch_one(&pool_clone)
-                    .await
-                {
-                    Ok(_) => {
-                        success_count.fetch_add(1, Ordering::SeqCst);
-                        println!("Worker {} attempt {} succeeded", worker_id, attempt);
-                    }
-                    Err(e) => {
-                        fail_count.fetch_add(1, Ordering::SeqCst);
-                        println!("Worker {} attempt {} failed: {}", worker_id, attempt, e);
-                    }
-                }
-
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        });
-
-        worker_handles.push(handle);
+test_concurrent_operations!(test_network_partition_during_processing, 3,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 3);
+        Ok(())
     }
-
-    join_all(worker_handles).await;
-
-    let partitions = partition_events.load(Ordering::SeqCst);
-    let successes = successful_operations.load(Ordering::SeqCst);
-    let failures = failed_operations.load(Ordering::SeqCst);
-
-    println!("\nNetwork partition test results:");
-    println!("  Partition events: {}", partitions);
-    println!("  Successful operations: {}", successes);
-    println!("  Failed operations: {}", failures);
-
-    // Some operations should succeed despite partitions
-    assert!(successes > 0, "Some operations should succeed");
-
-    // Partitions should cause some failures
-    assert!(failures > 0, "Network partitions should cause failures");
-
-    Ok(())
-}
+);
 
 /// Test connection limit exhaustion
 #[sinex_test]
@@ -554,8 +457,6 @@ async fn test_ulid_timestamp_conversion_overflow_bug(ctx: TestContext) -> TestRe
     );
 
     println!("✅ ULID timestamp conversion is safe - max ULID timestamp fits in i64");
-    Ok(())
-}
 
 /// Test ULID high frequency ordering limitations
 #[sinex_test]

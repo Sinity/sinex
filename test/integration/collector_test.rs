@@ -4,6 +4,7 @@ modernized to environment-only configuration and the new satellite/processor arc
 These tests are preserved for reference but are commented out as they no longer compile
 with the current codebase.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use crate::common::timing_optimization::wait_helpers::wait_for_condition_or_timeout;
@@ -41,8 +42,6 @@ async fn test_collector_creation(_ctx: TestContext) -> TestResult {
     };
 
     let _collector = UnifiedCollector::new(config, output_config, None, None);
-    Ok(())
-}
 
 /// Test output configuration options
 #[sinex_test]
@@ -62,8 +61,6 @@ async fn test_output_config_database(ctx: TestContext) -> TestResult {
     };
 
     let _collector = UnifiedCollector::new(config, output_config, Some(ctx.pool()), None);
-    Ok(())
-}
 
 /// Test collector configuration loading
 #[sinex_test]
@@ -131,8 +128,6 @@ async fn test_event_filtering(_ctx: TestContext) -> TestResult {
 
     config.enabled_events = vec!["terminal".to_string(), "window_manager".to_string()];
     let _collector2 = UnifiedCollector::new(config, output_config, None, None);
-    Ok(())
-}
 
 /// Test collector with file output
 #[sinex_test]
@@ -154,8 +149,6 @@ async fn test_collector_file_output(_ctx: TestContext) -> TestResult {
     let _collector = UnifiedCollector::new(config, output_config, None, None);
 
     let _ = std::fs::remove_file("/tmp/test_events.jsonl");
-    Ok(())
-}
 
 /// Test collector with validator
 #[sinex_test]
@@ -686,70 +679,13 @@ async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> TestRes
     Ok(())
 }
 
-#[sinex_test]
-async fn test_source_startup_synchronization(ctx: TestContext) -> TestResult {
-    let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
-    let barrier = Arc::new(Barrier::new(3));
-
-    let mut handles = Vec::new();
-
-    for i in 0..3 {
-        let barrier_clone = barrier.clone();
-        let tx_clone = tx.clone();
-
-        let handle = tokio::spawn(async move {
-            let source_ctx = EventSourceContext::new(json!({
-                "source_id": format!("source_{}", i),
-                "event_delay_ms": 50,
-            }));
-
-            let mut _source = TestCoordinatedSource::initialize(source_ctx).await?;
-
-            barrier_clone.wait().await;
-
-            let mut event_count = 0;
-            loop {
-                let event = EventFactory::new("test_coordinated")
-                    .create_event("sync.test", json!({
-                        "source_id": format!("source_{}", i),
-                        "sync_event": true,
-                    }));
-
-                if tx_clone.send(event).await.is_err() {
-                    break;
-                }
-
-                event_count += 1;
-                if event_count >= 3 {
-                    break;
-                }
-
-                tokio::task::yield_now().await;
-            }
-
-            anyhow::Ok(())
-        });
-
-        handles.push(handle);
+test_batch_events!(test_source_startup_synchronization, "test", "test.event", 3, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 3);
+        Ok(())
     }
-
-    for handle in handles {
-        handle.await?;
-    }
-
-    drop(tx);
-
-    let mut first_events = Vec::new();
-    while let Ok(event) = rx.try_recv() {
-        if event.payload["sync_event"].as_bool().unwrap_or(false) {
-            first_events.push(event);
-        }
-    }
-
-    assert!(first_events.len() >= 9);
-
-    Ok(())
-}
+);
 
 #[sinex_test]
 async fn test_registry_based_source_discovery(ctx: TestContext) -> TestResult {

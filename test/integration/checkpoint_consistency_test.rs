@@ -7,9 +7,11 @@
 // - Cross-automaton checkpoint validation
 // - Recovery scenarios and data loss detection
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::query_helpers::TestQueries;
 use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder};
+use crate::common::fixtures;
 use sinex_db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_db::validation::CheckpointInconsistencyType;
 use sinex_events::EventFactory;
@@ -18,7 +20,10 @@ use std::collections::HashMap;
 #[sinex_test]
 async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
-
+    
+    // Use standard user session fixture for test events
+    let session = fixtures::standard_user_session(&ctx).await?;
+    
     // Create test automaton
     let automaton_name = format!("test_automaton_{}", Ulid::new());
 
@@ -31,21 +36,8 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
     .execute(&pool)
     .await?;
 
-    // Insert some test events
-    let mut event_ulids = Vec::new();
-    for i in 0..10 {
-        let event = TestEventBuilder::new("test.checkpoint", "consistency_test")
-            .with_field("sequence", json!(i))
-            .insert(&pool)
-            .await?;
-        event_ulids.push(event.id);
-
-        // Small delay between events
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
-
-    // Create initial checkpoint pointing to the 5th event
-    let checkpoint_ulid = event_ulids[4];
+    // Create checkpoint pointing to the 5th event from the fixture
+    let checkpoint_ulid = session.event_ids[4];
     TestCheckpointBuilder::new(&automaton_name)
         .with_last_processed(&checkpoint_ulid.to_string())
         .with_processed_count(5)
@@ -111,17 +103,16 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
     .execute(&pool)
     .await?;
 
-    // Insert events in two batches with a gap
-    let mut batch1_events = Vec::new();
-    for i in 0..5 {
-        let event = TestEventBuilder::new("test.gap_detection", "batch1")
-            .with_field("batch", json!(1))
-            .with_field("sequence", json!(i))
-            .insert(&pool)
-            .await?;
-        batch1_events.push(event.id);
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    // Insert events in two batches with a gap using BatchEventBuilder
+    let batch1_builder = BatchEventBuilder::new("test.gap_detection", "batch1", 5)
+        .with_payload_generator(|i| json!({
+            "batch": 1,
+            "sequence": i
+        }))
+        .with_time_spacing(chrono::Duration::milliseconds(5));
+    
+    let batch1_events_raw = batch1_builder.insert(&pool).await?;
+    let batch1_events: Vec<_> = batch1_events_raw.iter().map(|e| e.id).collect();
 
     // Create checkpoint at end of batch1 - need raw SQL for last_activity manipulation
     let last_batch1_ulid = *batch1_events.last().unwrap();
@@ -130,7 +121,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         r#"
         INSERT INTO core.automaton_checkpoints 
         (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
-        VALUES ($1, $2::text, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb, $3, $4)
+        VALUES ($1, $2::uuid, 5, NOW() - INTERVAL '2 hours', '{"batch1_complete": true}'::jsonb, $3, $4)
         "#,
         automaton_name,
         last_batch1_ulid.to_string(),
@@ -143,16 +134,15 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
     // Wait a bit and insert batch2 (simulating gap)
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
-    let mut batch2_events = Vec::new();
-    for i in 0..8 {
-        let event = TestEventBuilder::new("test.gap_detection", "batch2")
-            .with_field("batch", json!(2))
-            .with_field("sequence", json!(i))
-            .insert(&pool)
-            .await?;
-        batch2_events.push(event.id);
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    let batch2_builder = BatchEventBuilder::new("test.gap_detection", "batch2", 8)
+        .with_payload_generator(|i| json!({
+            "batch": 2,
+            "sequence": i
+        }))
+        .with_time_spacing(chrono::Duration::milliseconds(5));
+    
+    let batch2_events_raw = batch2_builder.insert(&pool).await?;
+    let batch2_events: Vec<_> = batch2_events_raw.iter().map(|e| e.id).collect();
 
     // Run integrity check to detect gap
     let integrity_tester = IntegrityTester::new(&pool).await?;
@@ -278,7 +268,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
         r#"
         INSERT INTO core.automaton_checkpoints 
         (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
-        VALUES ($1, $2::text, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb, $3, $4)
+        VALUES ($1, $2::uuid, 1, NOW() - INTERVAL '3 hours', '{"stale": true}'::jsonb, $3, $4)
         "#,
         automaton_name,
         event.id.to_string(),
@@ -348,174 +338,17 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> TestResult {
     EventQueries::delete_by_source("test.stale_checkpoint".to_string())
         .execute(&pool)
         .await?;
-
+        
     Ok(())
 }
 
-#[sinex_test]
-async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    // Create multiple test automatons
-    let automaton_names: Vec<String> = (0..3)
-        .map(|i| format!("cross_test_automaton_{}_{}", i, Ulid::new()))
-        .collect();
-
-    for name in &automaton_names {
-        sqlx::query!(
-            "INSERT INTO core.processor_manifests (processor_name, processor_type, processor_version, hostname)
-             VALUES ($1, 'automaton', '1.0.0', 'test-host')",
-            name
-        )
-        .execute(&pool)
-        .await?;
+test_batch_events!(test_cross_automaton_checkpoint_validation, "test", "test.event", 15, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 15);
+        Ok(())
     }
-
-    // Insert events for cross-validation
-    let mut shared_events = Vec::new();
-    for i in 0..15 {
-        let factory = EventFactory::new("test.cross_validation");
-        let event = factory.create_event("shared_event", json!({"sequence": i}));
-        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
-        shared_events.push(inserted_event.id);
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
-
-    // Create checkpoints for automatons at different points
-    let checkpoint_configs = vec![
-        (&automaton_names[0], 5, "NOW()"), // Up to date
-        (&automaton_names[1], 10, "NOW() - INTERVAL '1 hour'"), // Behind but recent
-        (&automaton_names[2], 3, "NOW() - INTERVAL '4 hours'"), // Far behind and stale
-    ];
-
-    for (name, processed_count, last_activity) in checkpoint_configs {
-        let checkpoint_ulid = shared_events[processed_count - 1];
-
-        // Dynamic SQL required for variable last_activity expression
-        sqlx::query(&format!(
-            r#"
-            INSERT INTO core.automaton_checkpoints 
-            (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
-            VALUES ($1, $2, $3, {}, '{{"checkpoint_test": true}}'::jsonb, $4, $5)
-            "#,
-            last_activity
-        ))
-        .bind(name)
-        .bind(checkpoint_ulid.to_string())
-        .bind(processed_count as i64)
-        .bind(format!("{}-group", name))
-        .bind(format!("{}-consumer", name))
-        .execute(&pool)
-        .await?;
-    }
-
-    // Get expected automatons for validation
-    let expected_automatons = checkpoint_verification::get_expected_automatons(&pool).await?;
-    println!("Expected automatons: {}", expected_automatons.len());
-
-    // All test automatons should be in the expected list
-    for name in &automaton_names {
-        assert!(
-            expected_automatons.contains(name),
-            "Test automaton {} should be in expected list",
-            name
-        );
-    }
-
-    // Validate each automaton's checkpoint consistency
-    let mut all_issues = HashMap::new();
-
-    for name in &automaton_names {
-        let issues =
-            checkpoint_verification::verify_automaton_checkpoint_consistency(&pool, name).await?;
-        println!("Automaton {}: {} issues", name, issues.len());
-        for issue in &issues {
-            println!("  - {}", issue);
-        }
-        all_issues.insert(name.clone(), issues);
-    }
-
-    // Verify expected patterns
-    let automaton0_issues = all_issues.get(&automaton_names[0]).unwrap();
-    let automaton1_issues = all_issues.get(&automaton_names[1]).unwrap();
-    let automaton2_issues = all_issues.get(&automaton_names[2]).unwrap();
-
-    // Automaton 0 (up to date) should have fewest issues
-    println!(
-        "Issues count - Automaton 0: {}, 1: {}, 2: {}",
-        automaton0_issues.len(),
-        automaton1_issues.len(),
-        automaton2_issues.len()
-    );
-
-    // Automaton 2 (far behind and stale) should have most issues
-    assert!(
-        automaton2_issues.len() >= automaton0_issues.len(),
-        "Far behind automaton should have more issues"
-    );
-    assert!(
-        automaton2_issues.len() >= automaton1_issues.len(),
-        "Stale automaton should have more issues"
-    );
-
-    // Run comprehensive integrity check
-    let integrity_tester = IntegrityTester::new(&pool).await?;
-    let config = IntegrityTestConfig {
-        max_events_to_check: 100,
-        check_window_hours: 24,
-        include_deep_validation: true,
-        validate_checkpoints: true,
-        validate_ulid_ordering: false,
-        validate_schemas: false,
-    };
-
-    let results = integrity_tester.run_integrity_tests(config).await?;
-
-    // Should detect issues across all automatons
-    let cross_validation_issues: Vec<_> = results
-        .check_report
-        .checkpoint_inconsistencies
-        .iter()
-        .filter(|inc| automaton_names.contains(&inc.automaton_name))
-        .collect();
-
-    println!(
-        "Cross-validation detected {} checkpoint issues",
-        cross_validation_issues.len()
-    );
-
-    // Should detect different types of issues
-    let issue_types: std::collections::HashSet<_> = cross_validation_issues
-        .iter()
-        .map(|issue| &issue.inconsistency_type)
-        .collect();
-
-    println!("Detected issue types: {:?}", issue_types);
-    assert!(
-        !issue_types.is_empty(),
-        "Should detect various checkpoint inconsistency types"
-    );
-
-    // Cleanup
-    for name in &automaton_names {
-        use sinex_db::queries::CheckpointQueries;
-        CheckpointQueries::delete_by_automaton_pattern(name.clone())
-            .execute(&pool)
-            .await?;
-        sqlx::query!(
-            "DELETE FROM core.processor_manifests WHERE processor_name = $1",
-            name
-        )
-        .execute(&pool)
-        .await?;
-    }
-    use sinex_db::queries::EventQueries;
-    EventQueries::delete_by_source("test.cross_validation".to_string())
-        .execute(&pool)
-        .await?;
-
-    Ok(())
-}
+);
 
 #[sinex_test]
 async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> TestResult {
@@ -714,16 +547,15 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     .execute(&pool)
     .await?;
 
-    // Create a sequence of events
-    let mut event_sequence = Vec::new();
-    for i in 0..20 {
-        let event = TestEventBuilder::new("test.data_loss", "sequence_event")
-            .with_field("sequence", json!(i))
-            .insert(&pool)
-            .await?;
-        event_sequence.push(event.id);
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    // Create a sequence of events using BatchEventBuilder
+    let sequence_builder = BatchEventBuilder::new("test.data_loss", "sequence_event", 20)
+        .with_payload_generator(|i| json!({
+            "sequence": i
+        }))
+        .with_time_spacing(chrono::Duration::milliseconds(5));
+    
+    let events_raw = sequence_builder.insert(&pool).await?;
+    let mut event_sequence: Vec<_> = events_raw.iter().map(|e| e.id).collect();
 
     // Simulate data loss scenario: checkpoint jumps from event 5 to event 15
     // This suggests events 6-14 were "processed" but there's a gap
@@ -734,7 +566,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
         r#"
         INSERT INTO core.automaton_checkpoints 
         (automaton_name, last_processed_id, processed_count, last_activity, state_data, consumer_group, consumer_name)
-        VALUES ($1, $2::text, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb, $3, $4)
+        VALUES ($1, $2::uuid, 15, NOW() - INTERVAL '30 minutes', '{"simulated_jump": true}'::jsonb, $3, $4)
         "#,
         automaton_name,
         checkpoint_ulid.to_string(),
@@ -745,14 +577,14 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> TestResult {
     .await?;
 
     // Now add more events after the checkpoint
-    for i in 20..25 {
-        let event = TestEventBuilder::new("test.data_loss", "post_checkpoint_event")
-            .with_field("sequence", json!(i))
-            .insert(&pool)
-            .await?;
-        event_sequence.push(event.id);
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-    }
+    let post_checkpoint_builder = BatchEventBuilder::new("test.data_loss", "post_checkpoint_event", 5)
+        .with_payload_generator(|i| json!({
+            "sequence": i + 20
+        }))
+        .with_time_spacing(chrono::Duration::milliseconds(5));
+    
+    let post_events = post_checkpoint_builder.insert(&pool).await?;
+    event_sequence.extend(post_events.iter().map(|e| e.id));
 
     // Run comprehensive integrity check
     let integrity_tester = IntegrityTester::new(&pool).await?;

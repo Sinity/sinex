@@ -12,6 +12,7 @@
 // IMPORTANT: These tests require git-annex to be available. If git-annex
 // is not installed, tests will be skipped with appropriate warnings.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::resources::{create_test_file, temp_dir};

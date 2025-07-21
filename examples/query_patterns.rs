@@ -5,7 +5,7 @@
 
 use sinex_db::{queries::*, query_builder::QueryBuilder, QueryParam};
 use sinex_events::RawEvent;
-use sinex_error::{CoreError, ErrorContext};
+use sinex_error::{CoreError, ResultExt};
 use sqlx::PgPool;
 use sinex_ulid::Ulid;
 
@@ -24,13 +24,11 @@ async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<RawEvent, Core
     EventQueries::get_by_id(event_id)
         .fetch_one(pool)
         .await
-        .context(CoreError::NotFound {
-            entity: "event".to_string(),
-        })
+        .map_err(|e| CoreError::NotFound(format!("event not found: {}", e)))
 }
 
 /// Example 2: INSERT with multiple parameters
-async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), CoreError> {
+async fn insert_event(pool: &PgPool, event: &RawEvent) -> Result<(), CoreError> {
     // ❌ WRONG: Raw SQL insert
     // sqlx::query!(
     //     r#"
@@ -47,20 +45,18 @@ async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), CoreError> {
     // .await?;
 
     // ✅ CORRECT: Using QueryBuilder
-    QueryBuilder::new("INSERT INTO core.events")
+    QueryBuilder::insert("core.events")
         .columns(&["id", "ts_orig", "source", "event_type", "payload"])
         .values(&[
             QueryParam::Ulid(event.id),
-            QueryParam::DateTime(event.ts_orig),
-            QueryParam::Text(event.source.clone()),
-            QueryParam::Text(event.event_type.clone()),
+            QueryParam::OptionalTimestamp(event.ts_orig),
+            QueryParam::String(event.source.clone()),
+            QueryParam::String(event.event_type.clone()),
             QueryParam::Json(event.payload.clone()),
         ])
         .execute(pool)
         .await
-        .context(CoreError::Database {
-            operation: "insert_event".to_string(),
-        })?;
+        .map_err(|e| CoreError::Database(format!("insert_event: {}", e)))?;
 
     Ok(())
 }
@@ -71,7 +67,7 @@ async fn find_events_by_type_and_source(
     event_type: &str,
     source: &str,
     limit: i64,
-) -> Result<Vec<Event>, CoreError> {
+) -> Result<Vec<RawEvent>, CoreError> {
     // ❌ WRONG: Building query strings manually
     // let events = sqlx::query_as!(
     //     Event,
@@ -89,16 +85,14 @@ async fn find_events_by_type_and_source(
     // .await?;
 
     // ✅ CORRECT: Using QueryBuilder with fluent API
-    QueryBuilder::new("SELECT * FROM core.events")
-        .where_clause("event_type = $1", vec![QueryParam::Text(event_type.to_string())])
-        .and_where("source = $2", vec![QueryParam::Text(source.to_string())])
-        .order_by("ts_orig DESC")
+    QueryBuilder::select("core.events")
+        .where_eq("event_type", QueryParam::String(event_type.to_string()))
+        .where_eq("source", QueryParam::String(source.to_string()))
+        .order_by("ts_orig", "DESC")
         .limit(limit)
-        .fetch_all::<Event>(pool)
+        .fetch_all::<RawEvent>(pool)
         .await
-        .context(CoreError::Database {
-            operation: "find_events_by_type_and_source".to_string(),
-        })
+        .map_err(|e| CoreError::Database(format!("find_events_by_type_and_source: {}", e)))
 }
 
 /// Example 4: Using domain-specific query modules
@@ -119,16 +113,18 @@ async fn get_latest_checkpoint(
     // .await?;
 
     // ✅ CORRECT: Using dedicated query module
-    CheckpointQueries::get_last_processed_id(automaton_name)
-        .fetch_optional(pool)
+    // Note: This is a simplified example - actual checkpoint queries would use the proper API
+    QueryBuilder::select("core.automaton_checkpoints")
+        .columns(&["last_processed_id"])
+        .where_eq("automaton_name", QueryParam::String(automaton_name.to_string()))
+        .fetch_optional::<(Option<Ulid>,)>(pool)
         .await
-        .context(CoreError::Database {
-            operation: "get_latest_checkpoint".to_string(),
-        })
+        .map(|row| row.map(|r| r.0).flatten())
+        .map_err(|e| CoreError::Database(format!("get_latest_checkpoint: {}", e)))
 }
 
 /// Example 5: Batch operations
-async fn insert_events_batch(pool: &PgPool, events: &[Event]) -> Result<(), CoreError> {
+async fn insert_events_batch(pool: &PgPool, events: &[RawEvent]) -> Result<(), CoreError> {
     // ❌ WRONG: Loop with individual queries
     // for event in events {
     //     sqlx::query!(
@@ -143,26 +139,23 @@ async fn insert_events_batch(pool: &PgPool, events: &[Event]) -> Result<(), Core
     //     .await?;
     // }
 
-    // ✅ CORRECT: Using batch insert builder
-    let mut builder = QueryBuilder::new("INSERT INTO core.events")
-        .columns(&["id", "ts_orig", "source", "event_type", "payload"]);
-
+    // ✅ CORRECT: Using individual inserts (transaction support requires raw SQL currently)
+    // Note: For true batch inserts with transactions, use raw SQL or wait for 
+    // QueryBuilder transaction support
     for event in events {
-        builder = builder.add_values(&[
-            QueryParam::Ulid(event.id),
-            QueryParam::DateTime(event.ts_orig),
-            QueryParam::Text(event.source.clone()),
-            QueryParam::Text(event.event_type.clone()),
-            QueryParam::Json(event.payload.clone()),
-        ]);
+        QueryBuilder::insert("core.events")
+            .columns(&["id", "ts_orig", "source", "event_type", "payload"])
+            .values(&[
+                QueryParam::Ulid(event.id),
+                QueryParam::OptionalTimestamp(event.ts_orig),
+                QueryParam::String(event.source.clone()),
+                QueryParam::String(event.event_type.clone()),
+                QueryParam::Json(event.payload.clone()),
+            ])
+            .execute(pool)
+            .await
+            .map_err(|e| CoreError::Database(format!("insert_event_in_batch: {}", e)))?;
     }
-
-    builder
-        .execute(pool)
-        .await
-        .context(CoreError::Database {
-            operation: "insert_events_batch".to_string(),
-        })?;
 
     Ok(())
 }
@@ -170,33 +163,34 @@ async fn insert_events_batch(pool: &PgPool, events: &[Event]) -> Result<(), Core
 /// Example 6: Transaction with multiple operations
 async fn process_event_with_checkpoint(
     pool: &PgPool,
-    event: &Event,
+    event: &RawEvent,
     automaton_name: &str,
 ) -> Result<(), CoreError> {
-    // ✅ CORRECT: Using transaction with query builders
-    let mut tx = pool.begin().await.context(CoreError::Database {
-        operation: "begin_transaction".to_string(),
-    })?;
-
+    // ✅ CORRECT: For transaction-based operations, use raw SQL or separate operations
+    // Note: QueryBuilder currently doesn't support transactions directly
+    
     // Insert event
-    EventQueries::insert(event)
-        .execute(&mut *tx)
+    QueryBuilder::insert("core.events")
+        .columns(&["id", "ts_orig", "source", "event_type", "payload"])
+        .values(&[
+            QueryParam::Ulid(event.id),
+            QueryParam::OptionalTimestamp(event.ts_orig),
+            QueryParam::String(event.source.clone()),
+            QueryParam::String(event.event_type.clone()),
+            QueryParam::Json(event.payload.clone()),
+        ])
+        .execute(pool)
         .await
-        .context(CoreError::Database {
-            operation: "insert_event_in_tx".to_string(),
-        })?;
+        .map_err(|e| CoreError::Database(format!("insert_event: {}", e)))?;
 
     // Update checkpoint
-    CheckpointQueries::update_checkpoint(automaton_name, event.id)
-        .execute(&mut *tx)
+    QueryBuilder::update("core.automaton_checkpoints")
+        .set("last_processed_id", QueryParam::Ulid(event.id))
+        .set("last_activity", QueryParam::Timestamp(chrono::Utc::now()))
+        .where_eq("automaton_name", QueryParam::String(automaton_name.to_string()))
+        .execute(pool)
         .await
-        .context(CoreError::Database {
-            operation: "update_checkpoint_in_tx".to_string(),
-        })?;
-
-    tx.commit().await.context(CoreError::Database {
-        operation: "commit_transaction".to_string(),
-    })?;
+        .map_err(|e| CoreError::Database(format!("update_checkpoint: {}", e)))?;
 
     Ok(())
 }
@@ -205,45 +199,29 @@ async fn process_event_with_checkpoint(
 async fn search_events(
     pool: &PgPool,
     filters: EventSearchFilters,
-) -> Result<Vec<Event>, CoreError> {
+) -> Result<Vec<RawEvent>, CoreError> {
     // ✅ CORRECT: Building query dynamically based on filters
-    let mut query = QueryBuilder::new("SELECT * FROM core.events");
+    let mut query = QueryBuilder::select("core.events");
     let mut param_count = 0;
 
     if let Some(source) = filters.source {
-        param_count += 1;
-        query = query.where_clause(
-            &format!("source = ${}", param_count),
-            vec![QueryParam::Text(source)],
-        );
+        query = query.where_eq("source", QueryParam::String(source));
     }
 
     if let Some(event_type) = filters.event_type {
-        param_count += 1;
-        let clause = if param_count == 1 {
-            format!("event_type = ${}", param_count)
-        } else {
-            format!("event_type = ${}", param_count)
-        };
-        query = query.and_where(&clause, vec![QueryParam::Text(event_type)]);
+        query = query.where_eq("event_type", QueryParam::String(event_type));
     }
 
     if let Some(after) = filters.after {
-        param_count += 1;
-        query = query.and_where(
-            &format!("ts_orig > ${}", param_count),
-            vec![QueryParam::DateTime(after)],
-        );
+        query = query.where_op("ts_orig", ">", QueryParam::Timestamp(after));
     }
 
     query
-        .order_by("ts_orig DESC")
+        .order_by("ts_orig", "DESC")
         .limit(filters.limit.unwrap_or(100))
-        .fetch_all::<Event>(pool)
+        .fetch_all::<RawEvent>(pool)
         .await
-        .context(CoreError::Database {
-            operation: "search_events".to_string(),
-        })
+        .map_err(|e| CoreError::Database(format!("search_events: {}", e)))
 }
 
 #[derive(Default)]
@@ -260,15 +238,13 @@ async fn get_event_counts_by_source(
     since: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<(String, i64)>, CoreError> {
     // ✅ CORRECT: Using query builder for aggregations
-    QueryBuilder::new("SELECT source, COUNT(*) as count FROM core.events")
-        .where_clause("ts_orig > $1", vec![QueryParam::DateTime(since)])
+    QueryBuilder::select("core.events").columns(&["source", "COUNT(*) as count"])
+        .where_op("ts_orig", ">", QueryParam::Timestamp(since))
         .group_by("source")
-        .order_by("count DESC")
+        .order_by("count", "DESC")
         .fetch_all::<(String, i64)>(pool)
         .await
-        .context(CoreError::Database {
-            operation: "get_event_counts_by_source".to_string(),
-        })
+        .map_err(|e| CoreError::Database(format!("get_event_counts_by_source: {}", e)))
 }
 
 #[cfg(test)]

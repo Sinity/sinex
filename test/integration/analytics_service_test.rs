@@ -3,11 +3,13 @@
 // Tests all analytics methods with focus on aggregation logic,
 // time-based filtering, and accurate data insights.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use sinex_events::EventFactory;
 use chrono::{Duration, Utc};
 use sinex_services::AnalyticsService;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use crate::common::test_factories::{UserActivityFactory, SystemEventFactory, ErrorScenarioFactory};
 
 /// Helper to create test events with specific timestamps and content
 async fn create_analytics_test_event(
@@ -34,24 +36,52 @@ async fn create_analytics_test_event(
     Ok(())
 }
 
-/// Create diverse test dataset for analytics testing
+/// Create diverse test dataset for analytics testing using factories
 async fn setup_analytics_test_data(pool: &DbPool) -> TestResult {
-    // Filesystem events - 5 events spread over last 2 hours
-    for i in 0..5 {
-        create_analytics_test_event(
-            pool,
-            "fs",
-            "file.created",
-            json!({
-                "path": format!("/test/file_{}.txt", i),
-                "size": 1024 * (i + 1)
-            }),
-            Some(Duration::minutes(20 * i as i64)),
-        )
-        .await?;
+    // Use UserActivityFactory to create a realistic user session
+    let user_session = UserActivityFactory::create_user_session(120, 30);
+    
+    // Add some specific events for analytics testing
+    let mut all_events = Vec::new();
+    
+    // Include the user session events (which already has varied commands)
+    all_events.extend(user_session);
+    
+    // Add additional specific events for edge cases
+    // System events - very old (outside typical time ranges)
+    let factory = EventFactory::new("system");
+    let mut system_event = factory.create_event(
+        "boot.completed",
+        json!({
+            "uptime_seconds": 0,
+            "kernel_version": "6.1.0"
+        })
+    );
+    system_event.ts_orig = Some(Utc::now() - Duration::days(2));
+    system_event.host = "analytics-test-host".to_string();
+    
+    // Insert all events
+    for event in &all_events {
+        insert_event(pool, event).await?;
     }
+    
+    // Insert the old system event
+    insert_event(pool, &system_event).await?;
+    
+    Ok(())
+}
 
-    // Terminal commands - different commands with varying frequencies
+/// Create diverse test dataset with specific command frequencies for analytics
+async fn setup_analytics_test_data_with_specific_commands(pool: &DbPool) -> TestResult {
+    // Create base user activity
+    let base_activity = UserActivityFactory::create_development_workflow();
+    
+    // Insert base events
+    for event in &base_activity {
+        insert_event(pool, event).await?;
+    }
+    
+    // Add specific commands with exact frequencies for testing
     let commands = [
         ("git status", 8), // Most frequent
         ("cargo build", 5),
@@ -76,49 +106,7 @@ async fn setup_analytics_test_data(pool: &DbPool) -> TestResult {
             .await?;
         }
     }
-
-    // Window manager events - recent
-    for i in 0..3 {
-        create_analytics_test_event(
-            pool,
-            "wm.hyprland",
-            "window.opened",
-            json!({
-                "title": format!("Window {}", i),
-                "class": "test-app",
-                "workspace": i + 1
-            }),
-            Some(Duration::minutes(10 * i as i64)),
-        )
-        .await?;
-    }
-
-    // Clipboard events - older
-    create_analytics_test_event(
-        &pool,
-        "clipboard",
-        "copied",
-        json!({
-            "content": "test clipboard content",
-            "application": "firefox"
-        }),
-        Some(Duration::hours(3)),
-    )
-    .await?;
-
-    // System events - very old (outside typical time ranges)
-    create_analytics_test_event(
-        &pool,
-        "system",
-        "boot.completed",
-        json!({
-            "uptime_seconds": 0,
-            "kernel_version": "6.1.0"
-        }),
-        Some(Duration::days(2)),
-    )
-    .await?;
-
+    
     Ok(())
 }
 
@@ -154,6 +142,106 @@ async fn test_get_event_count_by_source_no_time_filter(ctx: TestContext) -> Test
     let total: i64 = counts.values().sum();
     assert_eq!(total, 29, "Total event count should be 29");
 
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_analytics_with_development_workflow(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    let service = AnalyticsService::new(pool.clone());
+    
+    // Use factory to create a development workflow
+    let dev_workflow = UserActivityFactory::create_development_workflow();
+    
+    // Insert workflow events
+    for event in &dev_workflow {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Test various analytics queries on the workflow
+    
+    // 1. Event count by source
+    let counts = service.get_event_count_by_source(None, None).await?;
+    assert!(counts.get("shell.kitty").unwrap_or(&0) >= &7, "Should have shell commands");
+    assert!(counts.get("fs").unwrap_or(&0) >= &5, "Should have file modifications");
+    assert!(counts.get("wm.hyprland").unwrap_or(&0) >= &1, "Should have window events");
+    
+    // 2. Most frequent commands
+    let commands = service.get_most_frequent_commands(10, None, None).await?;
+    assert!(!commands.is_empty(), "Should have command data");
+    
+    // Check that git commands are present
+    let git_commands: Vec<_> = commands.iter()
+        .filter(|(cmd, _)| cmd.starts_with("git"))
+        .collect();
+    assert!(git_commands.len() >= 3, "Should have git workflow commands");
+    
+    // 3. Event timeline
+    let timeline = service.get_event_timeline(
+        1,
+        Utc::now() - Duration::hours(1),
+        Utc::now()
+    ).await?;
+    
+    assert!(!timeline.is_empty(), "Should have timeline data");
+    
+    // Verify chronological order
+    for window in timeline.windows(2) {
+        assert!(
+            window[0].bucket <= window[1].bucket,
+            "Timeline should be chronologically ordered"
+        );
+    }
+    
+    println!("✓ Development workflow analytics verified");
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_analytics_with_system_monitoring(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    let service = AnalyticsService::new(pool.clone());
+    
+    // Generate system monitoring events
+    let monitoring_events = SystemEventFactory::create_system_monitoring(30, 60);
+    
+    // Insert monitoring events
+    for event in &monitoring_events {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Test system-specific analytics
+    
+    // 1. Count system events
+    let counts = service.get_event_count_by_source(None, None).await?;
+    let system_count = counts.get("sinex").unwrap_or(&0);
+    assert!(*system_count > 0, "Should have system monitoring events");
+    
+    // 2. Event types distribution for system source
+    let types = service.get_event_type_distribution(
+        Some("sinex".to_string()),
+        None,
+        None
+    ).await?;
+    
+    assert!(types.contains_key("sinex.system_health_summary"), "Should have health summaries");
+    assert!(types.contains_key("sinex.process_heartbeat"), "Should have heartbeats");
+    
+    // 3. Activity by hour - system monitoring should be consistent
+    let hourly = service.get_activity_by_hour(None, None).await?;
+    assert!(!hourly.is_empty(), "Should have hourly activity data");
+    
+    // System monitoring should show consistent activity
+    let current_hour = Utc::now().hour();
+    let current_hour_activity = hourly.iter()
+        .find(|(hour, _)| *hour == current_hour as i32);
+    
+    assert!(
+        current_hour_activity.is_some() && current_hour_activity.unwrap().1 > 0,
+        "Should have activity in current hour"
+    );
+    
+    println!("✓ System monitoring analytics verified");
     Ok(())
 }
 
@@ -340,7 +428,7 @@ async fn test_get_top_commands_no_time_filter(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(&pool).await?;
+    setup_analytics_test_data_with_specific_commands(&pool).await?;
 
     let top_commands = service.get_top_commands(None, None, 10).await?;
 
@@ -380,7 +468,7 @@ async fn test_get_top_commands_with_limit(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let service = AnalyticsService::new(pool.clone());
 
-    setup_analytics_test_data(&pool).await?;
+    setup_analytics_test_data_with_specific_commands(&pool).await?;
 
     let top_3_commands = service.get_top_commands(None, None, 3).await?;
 
@@ -719,5 +807,192 @@ async fn test_analytics_large_dataset_performance(ctx: TestContext) -> TestResul
         "Analytics should complete quickly"
     );
 
+    Ok(())
+}
+
+
+#[sinex_test]
+async fn test_analytics_with_user_activity_factory(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    let service = AnalyticsService::new(pool.clone());
+    
+    // Create a realistic user session using factory
+    let session_events = UserActivityFactory::create_user_session(60, 20);
+    
+    // Insert events
+    for event in &session_events {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Test analytics on factory-generated data
+    let source_counts = service.get_event_count_by_source(None, None).await?;
+    
+    // Verify we have events from multiple sources
+    assert!(source_counts.len() >= 3, "Should have at least 3 different sources");
+    assert!(source_counts.contains_key("shell.kitty"), "Should have shell events");
+    assert!(source_counts.contains_key("fs"), "Should have filesystem events");
+    
+    // Verify command distribution
+    let top_commands = service.get_top_commands(None, None, 10).await?;
+    assert!(!top_commands.is_empty(), "Should have some commands");
+    
+    // Verify time series
+    let now = Utc::now();
+    let one_hour_ago = now - Duration::hours(1);
+    let time_series = service.get_events_over_time(one_hour_ago, now, 60).await?;
+    assert!(!time_series.is_empty(), "Should have time series data");
+    
+    println!("Analytics on factory data:");
+    println!("  Sources: {:?}", source_counts.keys().collect::<Vec<_>>());
+    println!("  Top commands: {} unique", top_commands.len());
+    println!("  Time series buckets: {}", time_series.len());
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_analytics_with_development_workflow_factory(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    let service = AnalyticsService::new(pool.clone());
+    
+    // Create a development workflow
+    let dev_workflow = UserActivityFactory::create_development_workflow();
+    
+    // Insert events
+    for event in &dev_workflow {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Analyze development patterns
+    let source_counts = service.get_event_count_by_source(None, None).await?;
+    let type_counts = service.get_event_count_by_type(None, None).await?;
+    let top_commands = service.get_top_commands(None, None, 10).await?;
+    
+    // Verify development workflow patterns
+    assert!(source_counts.get("fs").unwrap_or(&0) > &0, "Should have file operations");
+    assert!(source_counts.get("shell.kitty").unwrap_or(&0) > &0, "Should have shell commands");
+    
+    // Check for typical development commands
+    let command_names: Vec<String> = top_commands.iter().map(|(cmd, _)| cmd.clone()).collect();
+    let has_dev_commands = command_names.iter().any(|cmd| 
+        cmd.contains("cargo") || cmd.contains("git") || cmd.contains("test")
+    );
+    assert!(has_dev_commands, "Should have development-related commands");
+    
+    // Verify file modification events
+    assert!(type_counts.contains_key("file.modified"), "Should have file modifications");
+    
+    println!("Development workflow analytics:");
+    println!("  File operations: {}", source_counts.get("fs").unwrap_or(&0));
+    println!("  Shell commands: {}", source_counts.get("shell.kitty").unwrap_or(&0));
+    println!("  Development commands found: {:?}", 
+             command_names.iter().filter(|cmd| 
+                 cmd.contains("cargo") || cmd.contains("git")
+             ).collect::<Vec<_>>());
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_analytics_activity_heatmap_with_factory(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    let service = AnalyticsService::new(pool.clone());
+    
+    // Create system monitoring events over time
+    let monitoring_events = SystemEventFactory::create_system_monitoring(120, 60);
+    
+    // Add user activity for more realistic heatmap
+    let user_activity = UserActivityFactory::create_user_session(120, 40);
+    
+    // Insert all events
+    for event in monitoring_events.iter().chain(user_activity.iter()) {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Test activity heatmap
+    let heatmap = service.activity_heatmap(60, 24).await?;
+    
+    // Verify heatmap structure
+    assert!(!heatmap.is_empty(), "Heatmap should have data");
+    
+    // Check that we have varied activity levels
+    let activity_levels: HashSet<_> = heatmap.values().cloned().collect();
+    assert!(activity_levels.len() > 1, "Should have varied activity levels");
+    
+    // Verify reasonable bucket distribution
+    let non_zero_buckets = heatmap.values().filter(|&&v| v > 0).count();
+    assert!(non_zero_buckets > 0, "Should have some activity");
+    
+    println!("Activity heatmap analysis:");
+    println!("  Total buckets: {}", heatmap.len());
+    println!("  Active buckets: {}", non_zero_buckets);
+    println!("  Activity levels: {:?}", activity_levels);
+    
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_analytics_with_error_scenarios(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    let service = AnalyticsService::new(pool.clone());
+    
+    // Generate various error conditions
+    let error_conditions = ErrorScenarioFactory::create_error_conditions();
+    let error_cascade = ErrorScenarioFactory::create_error_cascade();
+    let recovery = ErrorScenarioFactory::create_recovery_scenario();
+    
+    // Insert all error-related events
+    for event in error_conditions.iter().chain(error_cascade.iter()).chain(recovery.iter()) {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Analyze error patterns
+    
+    // 1. Event type distribution should show errors
+    let types = service.get_event_type_distribution(None, None, None).await?;
+    
+    let error_types: Vec<_> = types.iter()
+        .filter(|(k, _)| k.contains("error") || k.contains("failed"))
+        .collect();
+    
+    assert!(!error_types.is_empty(), "Should have error event types");
+    
+    // 2. Check systemd unit events
+    let systemd_types = service.get_event_type_distribution(
+        Some("systemd".to_string()),
+        None,
+        None
+    ).await?;
+    
+    assert!(systemd_types.contains_key("systemd.unit_stopped"), "Should have unit stops");
+    assert!(systemd_types.contains_key("systemd.unit_started"), "Should have unit starts");
+    
+    // 3. Timeline should show error spike and recovery
+    let timeline = service.get_event_timeline(
+        1,
+        Utc::now() - Duration::hours(1),
+        Utc::now()
+    ).await?;
+    
+    // Find periods with high activity (errors) and recovery
+    let high_activity_buckets: Vec<_> = timeline.iter()
+        .filter(|entry| entry.count > 5)
+        .collect();
+    
+    assert!(
+        !high_activity_buckets.is_empty(),
+        "Should have periods of high activity during error scenarios"
+    );
+    
+    // 4. Source distribution during errors
+    let error_sources = service.get_event_count_by_source(
+        Some(Utc::now() - Duration::minutes(10)),
+        Some(Utc::now())
+    ).await?;
+    
+    assert!(error_sources.contains_key("sinex"), "Should have sinex automaton errors");
+    assert!(error_sources.contains_key("systemd"), "Should have systemd events");
+    
+    println!("✓ Error scenario analytics verified");
     Ok(())
 }

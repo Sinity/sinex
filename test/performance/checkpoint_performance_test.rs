@@ -4,6 +4,7 @@
 // recovery time, and checkpoint consistency under load.
 // Critical for automaton reliability and system recovery.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -291,244 +292,18 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
         "Checkpoint consistency rate should be > 99%");
     
     println!("✅ Checkpoint save/load performance test passed");
-    Ok(())
-}
 
 /// Test checkpoint recovery performance
-#[sinex_test]
-async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let mut metrics = CheckpointMetrics::new();
-    
-    println!("🔄 Testing checkpoint recovery performance");
-    
-    // Setup: Create multiple automatons with checkpoints
-    let automaton_count = 20;
-    let consumer_group = "recovery-test-group";
-    
-    println!("  Setting up {} automatons with checkpoints", automaton_count);
-    
-    for i in 0..automaton_count {
-        let automaton_name = format!("recovery-test-automaton-{}", i);
-        let checkpoint_data = json!({
-            "processed_count": i * 100,
-            "last_event_time": chrono::Utc::now().to_rfc3339(),
-            "state": format!("state-data-{}", i),
-            "counters": (0..i).collect::<Vec<_>>(),
-            "metadata": {
-                "created": chrono::Utc::now().to_rfc3339(),
-                "version": "1.0",
-                "type": "recovery-test"
-            }
-        });
-        
-        sqlx::query!(
-            r#"
-            INSERT INTO core.automaton_checkpoints 
-            (automaton_name, consumer_group, last_processed_id, state_data)
-            VALUES ($1, $2, $3, $4)
-            "#,
-            automaton_name,
-            consumer_group,
-            format!("event-id-{}", i * 100),
-            checkpoint_data
-        ).execute(&pool).await?;
+test_concurrent_operations!(test_checkpoint_recovery_performance, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-    
-    println!("  Testing individual checkpoint recovery");
-    
-    // Test individual checkpoint recovery
-    for i in 0..automaton_count {
-        let automaton_name = format!("recovery-test-automaton-{}", i);
-        
-        let recovery_start = Instant::now();
-        
-        let result = sqlx::query!(
-            "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1 AND consumer_group = $2",
-            automaton_name,
-            consumer_group
-        ).fetch_optional(&pool).await;
-        
-        let recovery_duration = recovery_start.elapsed();
-        metrics.record_recovery_time(recovery_duration);
-        
-        match result {
-            Ok(Some(row)) => {
-                metrics.record_operation("individual_recovery", recovery_duration, true);
-                
-                // Verify recovery data
-                if let Some(state_data) = &row.state_data {
-                    let state_size = serde_json::to_string(state_data).unwrap_or_default().len();
-                    metrics.record_checkpoint_size(state_size);
-                    
-                    // Consistency check
-                    let expected_processed = i * 100;
-                    let consistent = state_data.get("processed_count")
-                        .and_then(|v| v.as_u64())
-                        .map(|v| v == expected_processed as u64)
-                        .unwrap_or(false);
-                    
-                    metrics.record_consistency_check(consistent);
-                } else {
-                    metrics.record_consistency_check(false);
-                }
-            }
-            Ok(None) => {
-                metrics.record_operation("individual_recovery", recovery_duration, false);
-                metrics.record_consistency_check(false);
-            }
-            Err(e) => {
-                metrics.record_operation("individual_recovery", recovery_duration, false);
-                metrics.record_consistency_check(false);
-                println!("  Recovery failed for {}: {}", automaton_name, e);
-            }
-        }
-        
-        if i % 5 == 0 {
-            println!("    Recovered {} automatons", i + 1);
-        }
-    }
-    
-    // Test bulk checkpoint recovery
-    println!("  Testing bulk checkpoint recovery");
-    
-    let bulk_recovery_start = Instant::now();
-    
-    let bulk_result = sqlx::query!(
-        "SELECT automaton_name, last_processed_id, state_data FROM core.automaton_checkpoints WHERE consumer_group = $1",
-        consumer_group
-    ).fetch_all(&pool).await;
-    
-    let bulk_recovery_duration = bulk_recovery_start.elapsed();
-    
-    match bulk_result {
-        Ok(rows) => {
-            metrics.record_operation("bulk_recovery", bulk_recovery_duration, true);
-            println!("    Bulk recovery loaded {} checkpoints", rows.len());
-            
-            // Verify all expected automatons were recovered
-            let recovered_count = rows.len();
-            let consistency_ok = recovered_count == automaton_count;
-            metrics.record_consistency_check(consistency_ok);
-            
-            // Calculate total state size
-            let total_state_size: usize = rows.iter()
-                .filter_map(|row| row.state_data.as_ref())
-                .map(|state| serde_json::to_string(state).unwrap_or_default().len())
-                .sum();
-            
-            println!("    Total state size: {} bytes", total_state_size);
-            metrics.record_checkpoint_size(total_state_size);
-        }
-        Err(e) => {
-            metrics.record_operation("bulk_recovery", bulk_recovery_duration, false);
-            metrics.record_consistency_check(false);
-            println!("    Bulk recovery failed: {}", e);
-        }
-    }
-    
-    // Test recovery under simulated failure conditions
-    println!("  Testing recovery under failure simulation");
-    
-    // Simulate concurrent checkpoint updates during recovery
-    let concurrent_recovery_handles = (0..5)
-        .map(|thread_id| {
-            let pool_clone = pool.clone();
-            let consumer_group = consumer_group.to_string();
-            
-            tokio::spawn(async move {
-                let mut thread_recoveries = 0;
-                let mut thread_errors = 0;
-                
-                for i in 0..10 {
-                    let automaton_name = format!("concurrent-recovery-{}-{}", thread_id, i);
-                    
-                    // Create checkpoint
-                    let checkpoint_data = json!({
-                        "thread_id": thread_id,
-                        "iteration": i,
-                        "timestamp": chrono::Utc::now().to_rfc3339()
-                    });
-                    
-                    let save_result = sqlx::query!(
-                        r#"
-                        INSERT INTO core.automaton_checkpoints 
-                        (automaton_name, consumer_group, last_processed_id, state_data)
-                        VALUES ($1, $2, $3, $4)
-                        "#,
-                        automaton_name,
-                        consumer_group,
-                        format!("concurrent-event-{}-{}", thread_id, i),
-                        checkpoint_data
-                    ).execute(&pool_clone).await;
-                    
-                    if save_result.is_ok() {
-                        // Immediately try to recover
-                        let recovery_result = sqlx::query!(
-                            "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1",
-                            automaton_name
-                        ).fetch_optional(&pool_clone).await;
-                        
-                        if recovery_result.is_ok() {
-                            thread_recoveries += 1;
-                        } else {
-                            thread_errors += 1;
-                        }
-                    } else {
-                        thread_errors += 1;
-                    }
-                    
-                    // Small delay
-                    tokio::time::sleep(StdDuration::from_millis(10)).await;
-                }
-                
-                (thread_recoveries, thread_errors)
-            })
-        })
-        .collect::<Vec<_>>();
-    
-    let concurrent_results = futures::future::join_all(concurrent_recovery_handles).await;
-    
-    let mut total_concurrent_recoveries = 0;
-    let mut total_concurrent_errors = 0;
-    
-    for result in concurrent_results {
-        if let Ok((recoveries, errors)) = result {
-            total_concurrent_recoveries += recoveries;
-            total_concurrent_errors += errors;
-        }
-    }
-    
-    println!("    Concurrent recovery: {} successes, {} errors", 
-             total_concurrent_recoveries, total_concurrent_errors);
-    
-    let concurrent_success_rate = if total_concurrent_recoveries + total_concurrent_errors > 0 {
-        total_concurrent_recoveries as f64 / (total_concurrent_recoveries + total_concurrent_errors) as f64 * 100.0
-    } else {
-        0.0
-    };
-    
-    metrics.record_consistency_check(concurrent_success_rate > 90.0);
-    
-    metrics.print_summary();
-    
-    // Performance assertions
-    assert!(metrics.success_rate("individual_recovery") > 95.0,
-        "Individual recovery success rate should be > 95%");
-    assert!(metrics.success_rate("bulk_recovery") > 95.0,
-        "Bulk recovery success rate should be > 95%");
-    assert!(metrics.average_latency("individual_recovery") < StdDuration::from_millis(30),
-        "Individual recovery latency should be < 30ms");
-    assert!(metrics.average_latency("bulk_recovery") < StdDuration::from_millis(100),
-        "Bulk recovery latency should be < 100ms");
-    assert!(metrics.consistency_rate() > 95.0,
-        "Recovery consistency rate should be > 95%");
-    assert!(concurrent_success_rate > 90.0,
-        "Concurrent recovery success rate should be > 90%");
-    
-    println!("✅ Checkpoint recovery performance test passed");
-    Ok(())
-}
+);
 
 /// Test checkpoint performance under high frequency updates
 #[sinex_test]

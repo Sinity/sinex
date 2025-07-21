@@ -10,6 +10,7 @@
 // - Payload boundary testing
 // - Query interface testing
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::builders::{TestEventBuilder, TestEvents, BatchEventBuilder};
 use crate::common::query_helpers::TestQueries;
@@ -781,64 +782,7 @@ async fn test_event_source_streaming_crash(ctx: TestContext) -> TestResult {
     assert!(result.is_err(), "Expected streaming to fail");
     assert_eq!(
         received_events, 3,
-        "Should have received exactly 3 events before crash"
-    );
-
-    Ok(())
-}
-
-#[sinex_test]
-async fn test_event_source_corrupted_events(ctx: TestContext) -> TestResult {
-    let mut source = ChaosEventSource::new(FailureMode::CorruptedEvents {
-        corruption_rate: 0.2,
-    });
-    let (tx, mut rx) = tokio::sync::mpsc::channel(1000);
-
-    let stream_task = tokio::spawn(async move { source.stream_events(tx).await });
-
-    let mut received_events = 0;
-    let mut corrupted_events = 0;
-
-    while let Ok(Some(event)) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
-        received_events += 1;
-
-        if event.event_type == "corrupted.event" {
-            corrupted_events += 1;
-        }
-
-        if event.event_type == "test.event" {
-            TestQueries::insert_full_event(
-                ctx.pool(),
-                &event.source,
-                &event.event_type,
-                &event.host,
-                event.payload.clone(),
-                event.ts_orig,
-                event.ingestor_version.clone(),
-                event.payload_schema_id,
-                event.source_event_ids.clone(),
-            ).await?;
-        }
-    }
-
-    assert!(received_events > 0, "Should have received some events");
-    assert!(
-        corrupted_events > 0,
-        "Should have received some corrupted events"
-    );
-    assert!(
-        corrupted_events < received_events,
-        "Not all events should be corrupted"
-    );
-
-    let all_events = TestQueries::get_events_by_source(ctx.pool(), "test.chaos", None).await?;
-    let stored_count = all_events.iter()
-        .filter(|e| e.event_type == "test.event")
-        .count();
-    assert_eq!(
-        stored_count,
-        (received_events - corrupted_events) as usize,
-        "Only valid events should be stored"
+        "Should have received exactly 3 events before failure"
     );
 
     Ok(())

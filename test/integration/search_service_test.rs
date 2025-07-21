@@ -4,6 +4,7 @@
 // The SearchService MUST be fixed to use proper parameterized queries before production use!
 
 use crate::common::prelude::*;
+use crate::common::test_macros::*;
 use crate::common::builders::{TestEventBuilder, BatchEventBuilder, TestEvents};
 use crate::common::query_helpers::TestQueries;
 use chrono::{Duration, Utc};

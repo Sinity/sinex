@@ -3,6 +3,7 @@
 // This module tests the integration of version tracking with basic functionality
 // without relying on complex API dependencies.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use sinex_satellite_sdk::VersionInfo;
@@ -24,9 +25,6 @@ async fn test_version_info_basic_functionality(_ctx: TestContext) -> TestResult 
     assert!(!version_info.binary_hash.is_empty());
     assert!(!version_info.component_version.is_empty());
     assert!(version_info.component_version.contains("test-component"));
-
-    Ok(())
-}
 
 /// Test VersionInfo with different component names
 #[sinex_test]
@@ -237,106 +235,28 @@ async fn test_version_info_memory_usage(_ctx: TestContext) -> TestResult {
 // ============================================================================
 
 /// Test concurrent version info creation
-#[sinex_test]
-async fn test_concurrent_version_info_creation(_ctx: TestContext) -> TestResult {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    let success_count = Arc::new(AtomicU32::new(0));
-    let mut tasks = Vec::new();
-
-    // Create version infos concurrently
-    for i in 0..20 {
-        let success_count = success_count.clone();
-
-        let task = tokio::spawn(async move {
-            let version_info = VersionInfo::current(&format!("concurrent-{}", i));
-
-            // Verify basic fields are populated
-            if !version_info.git_revision.is_empty()
-                && !version_info.binary_hash.is_empty()
-                && !version_info.component_version.is_empty()
-            {
-                success_count.fetch_add(1, Ordering::SeqCst);
-            }
-
-            version_info
-        });
-
-        tasks.push(task);
+test_concurrent_operations!(test_concurrent_version_info_creation, 20,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 20);
+        Ok(())
     }
-
-    // Wait for all tasks
-    let results = futures::future::join_all(tasks).await;
-
-    // All should succeed
-    assert_eq!(results.len(), 20);
-    assert_eq!(success_count.load(Ordering::SeqCst), 20);
-
-    // All should have valid component versions
-    for (i, result) in results.into_iter().enumerate() {
-        let version_info = result?;
-        assert!(version_info
-            .component_version
-            .contains(&format!("concurrent-{}", i)));
-    }
-
-    Ok(())
-}
+);
 
 /// Test version info under concurrent stress
-#[sinex_test]
-async fn test_version_info_concurrent_stress(_ctx: TestContext) -> TestResult {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    let success_count = Arc::new(AtomicU32::new(0));
-    let error_count = Arc::new(AtomicU32::new(0));
-    let mut tasks = Vec::new();
-
-    // Create many concurrent tasks
-    for i in 0..100 {
-        let success_count = success_count.clone();
-        let error_count = error_count.clone();
-
-        let task = tokio::spawn(async move {
-            // Each task creates multiple version infos
-            for j in 0..5 {
-                let component_name = format!("stress-{}-{}", i, j);
-                let version_info = VersionInfo::current(&component_name);
-
-                if !version_info.component_version.is_empty()
-                    && !version_info.git_revision.is_empty()
-                    && !version_info.binary_hash.is_empty()
-                {
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                } else {
-                    error_count.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-        });
-
-        tasks.push(task);
+test_concurrent_operations!(test_version_info_concurrent_stress, 100,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 100);
+        Ok(())
     }
-
-    // Wait for all tasks
-    futures::future::join_all(tasks).await;
-
-    let successes = success_count.load(Ordering::SeqCst);
-    let errors = error_count.load(Ordering::SeqCst);
-
-    // Should have high success rate (at least 95%)
-    let total = successes + errors;
-    assert_eq!(total, 500); // 100 tasks * 5 version infos each
-    assert!(
-        successes >= 475,
-        "Too many errors in concurrent stress test: {}/{}",
-        errors,
-        total
-    );
-
-    Ok(())
-}
+);
 
 // ============================================================================
 // Integration with File Operations

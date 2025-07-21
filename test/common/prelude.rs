@@ -104,3 +104,20 @@ pub use crate::common::builders::{
     TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder, 
     TestScenarioBuilder, TestEvents
 };
+
+// Test fixtures for reusable test data
+pub use crate::common::fixtures::{
+    FixtureHandle, UserSessionFixture, PopulatedCheckpointsFixture,
+    ErrorScenariosFixture, PerformanceDatasetFixture, PreWarmedFixture,
+    // Common fixture functions
+    standard_user_session, user_session_with_params, empty_database,
+    populated_checkpoints, error_scenarios, performance_dataset,
+    performance_dataset_with_size, pre_warmed_database,
+};
+
+// Test macros for common patterns
+pub use crate::{
+    test_event_insertion, test_invalid_event, test_batch_events,
+    test_checkpoint_flow, test_concurrent_operations, test_time_range_query,
+    test_event_filter, test_with_scenario, parameterized_test, test_event_flow,
+};

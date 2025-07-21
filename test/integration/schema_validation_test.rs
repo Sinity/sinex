@@ -5,7 +5,9 @@
 // - Invalid events are rejected with appropriate errors
 // - Schema validation is enforced at the database level
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
+use crate::common::fixtures;
 use sinex_events::EventFactory;
 use serde_json::json;
 use sinex_db::events::{insert_event, get_event_by_id};
@@ -55,21 +57,32 @@ async fn test_invalid_event_fails_schema_validation(ctx: TestContext) -> TestRes
 /// Test event validation with different payload types
 #[sinex_test]
 async fn test_event_validation_with_different_payload_types(ctx: TestContext) -> TestResult {
+    // Use standard user session fixture which includes various event types
+    let session = fixtures::standard_user_session(&ctx).await?;
+    
+    // Verify the fixture created events with different types
+    let pool = ctx.pool();
+    let mut event_types_found = std::collections::HashSet::new();
+    
+    for event_id in &session.event_ids {
+        let event = get_event_by_id(pool, *event_id).await?;
+        event_types_found.insert((event.source.clone(), event.event_type.clone()));
+    }
+    
+    // Ensure we have variety in event types from the fixture
+    assert!(event_types_found.len() >= 3, "Fixture should create multiple event types");
+    
+    // Test additional event types not in fixture
     let test_cases = vec![
-        (
-            "fs",
-            "file.created",
-            json!({"path": "/test/file.txt", "size": 1024}),
-        ),
-        (
-            "shell",
-            "command.executed",
-            json!({"command": "ls -la", "exit_code": 0}),
-        ),
         (
             "wm",
             "window.focused",
             json!({"window_id": 12345, "title": "Test Window"}),
+        ),
+        (
+            "browser",
+            "tab.opened",
+            json!({"url": "https://example.com", "tab_id": 42}),
         ),
     ];
 

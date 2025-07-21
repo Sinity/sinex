@@ -58,6 +58,7 @@ mod toml_helpers {
     }
 }
 
+use crate::common::test_macros::*;
 use self::toml_helpers::*;
 
 use crate::common::prelude::*;
@@ -135,7 +136,7 @@ async fn test_create_annotation_minimal(ctx: TestContext) -> TestResult {
     assert_eq!(annotation.content, "Simple note");
     assert_eq!(annotation.created_by, "system");
     assert_eq!(annotation.metadata, json!({}));
-
+    
     Ok(())
 }
 
@@ -173,6 +174,7 @@ async fn test_get_annotation_by_id_not_found(ctx: TestContext) -> TestResult {
     let non_existent_id = Ulid::new();
     let result = get_annotation_by_id(ctx.pool(), non_existent_id).await?;
     assert!(result.is_none());
+
     Ok(())
 }
 

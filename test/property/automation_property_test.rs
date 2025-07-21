@@ -2,6 +2,9 @@
 //
 // Tests that verify automaton processing, state management, and coordination properties
 
+use crate::common::property_builders::*;
+use crate::common::test_macros::*;
+use crate::common::builders::TestEventBuilder;
 use crate::property::strategies::*;
 use proptest::prelude::*;
 use std::sync::Arc;
@@ -11,10 +14,7 @@ proptest! {
     #[test]
     fn automaton_processing_is_deterministic(
         automaton_name in automaton_names(),
-        events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=50
-        ),
+        events in arbitrary_event_batch(),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -36,14 +36,8 @@ proptest! {
                 let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &test_automaton).await.unwrap();
 
                 // Process the same events
-                for (source, event_type, payload) in events.iter() {
-                    let event = crate::common::events::create_raw_event(
-                        source,
-                        event_type,
-                        payload.clone(),
-                        chrono::Utc::now()
-                    );
-                    ctx.insert_event(&event).await.unwrap();
+                for event in events.iter() {
+                    ctx.insert_event(event).await.unwrap();
                 }
 
                 // Wait for processing
@@ -78,10 +72,7 @@ proptest! {
     fn automaton_state_consistency_under_concurrency(
         automaton_name in automaton_names(),
         concurrent_operations in concurrent_operations(),
-        events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=20
-        ),
+        events in arbitrary_event_batch().prop_map(|batch| batch.into_iter().take(20).collect::<Vec<_>>()),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -95,14 +86,7 @@ proptest! {
             let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
 
             // Prepare events for concurrent processing
-            let test_events: Vec<_> = events.iter().map(|(source, event_type, payload)| {
-                crate::common::events::create_raw_event(
-                    source,
-                    event_type,
-                    payload.clone(),
-                    chrono::Utc::now()
-                )
-            }).collect();
+            let test_events = events.clone();
 
             // Launch concurrent operations
             let mut handles = Vec::new();
@@ -152,14 +136,8 @@ proptest! {
     #[test]
     fn automaton_recovery_from_checkpoint_is_correct(
         automaton_name in automaton_names(),
-        initial_events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=20
-        ),
-        recovery_events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=20
-        ),
+        initial_events in arbitrary_event_batch().prop_map(|batch| batch.into_iter().take(20).collect::<Vec<_>>()),
+        recovery_events in arbitrary_event_batch().prop_map(|batch| batch.into_iter().take(20).collect::<Vec<_>>()),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -173,14 +151,8 @@ proptest! {
             // Phase 1: Initial processing
             let automaton1 = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
 
-            for (source, event_type, payload) in initial_events.iter() {
-                let event = crate::common::events::create_raw_event(
-                    source,
-                    event_type,
-                    payload.clone(),
-                    chrono::Utc::now()
-                );
-                ctx.insert_event(&event).await.unwrap();
+            for event in initial_events.iter() {
+                ctx.insert_event(event).await.unwrap();
             }
 
             // Wait for initial processing
@@ -200,14 +172,8 @@ proptest! {
             assert_eq!(checkpoint_before.processed_count, checkpoint_after_restart.processed_count);
 
             // Phase 3: Continue processing
-            for (source, event_type, payload) in recovery_events.iter() {
-                let event = crate::common::events::create_raw_event(
-                    source,
-                    event_type,
-                    payload.clone(),
-                    chrono::Utc::now()
-                );
-                ctx.insert_event(&event).await.unwrap();
+            for event in recovery_events.iter() {
+                ctx.insert_event(event).await.unwrap();
             }
 
             // Wait for recovery processing
@@ -230,10 +196,10 @@ proptest! {
     fn automaton_batch_processing_is_efficient(
         automaton_name in automaton_names(),
         batch_size in batch_sizes(),
-        events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=200
-        ),
+        events in time_ordered_batch().prop_flat_map(|batch| {
+            proptest::collection::vec(Just(batch), 1..=10)
+                .prop_map(|batches| batches.into_iter().flatten().collect::<Vec<_>>())
+        }),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -252,14 +218,8 @@ proptest! {
                 let batch_start = std::time::Instant::now();
 
                 // Insert batch
-                for (source, event_type, payload) in chunk.iter() {
-                    let event = crate::common::events::create_raw_event(
-                        source,
-                        event_type,
-                        payload.clone(),
-                        chrono::Utc::now()
-                    );
-                    ctx.insert_event(&event).await.unwrap();
+                for event in chunk.iter() {
+                    ctx.insert_event(event).await.unwrap();
                     total_processed += 1;
                 }
 
@@ -284,10 +244,7 @@ proptest! {
     #[test]
     fn automaton_error_handling_is_robust(
         automaton_name in automaton_names(),
-        valid_events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=10
-        ),
+        valid_events in arbitrary_event_batch().prop_map(|batch| batch.into_iter().take(10).collect::<Vec<_>>()),
         invalid_events in proptest::collection::vec(
             adversarial_payloads(),
             1..=5
@@ -305,14 +262,8 @@ proptest! {
             let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
 
             // Phase 1: Process valid events
-            for (source, event_type, payload) in valid_events.iter() {
-                let event = crate::common::events::create_raw_event(
-                    source,
-                    event_type,
-                    payload.clone(),
-                    chrono::Utc::now()
-                );
-                ctx.insert_event(&event).await.unwrap();
+            for event in valid_events.iter() {
+                ctx.insert_event(event).await.unwrap();
             }
 
             if !valid_events.is_empty() {
@@ -323,12 +274,11 @@ proptest! {
 
             // Phase 2: Process invalid events (should be handled gracefully)
             for payload in invalid_events.iter() {
-                let invalid_event = crate::common::events::create_raw_event(
-                    "test",
-                    "invalid.event",
-                    payload.clone(),
-                    chrono::Utc::now()
-                );
+                let invalid_event = TestEventBuilder::new()
+                    .source("test")
+                    .event_type("invalid.event")
+                    .payload(payload.clone())
+                    .build();
 
                 // Try to insert invalid event - it may succeed or fail
                 let _ = ctx.insert_event(&invalid_event).await;
@@ -338,12 +288,11 @@ proptest! {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
             // Phase 3: Process more valid events to verify recovery
-            let recovery_event = crate::common::events::create_raw_event(
-                "test",
-                "recovery.event",
-                serde_json::json!({"recovery": true}),
-                chrono::Utc::now()
-            );
+            let recovery_event = TestEventBuilder::new()
+                .source("test")
+                .event_type("recovery.event")
+                .payload(serde_json::json!({"recovery": true}))
+                .build();
             ctx.insert_event(&recovery_event).await.unwrap();
 
             // Wait for recovery
@@ -363,7 +312,7 @@ proptest! {
     fn automaton_memory_usage_is_bounded(
         automaton_name in automaton_names(),
         large_events in proptest::collection::vec(
-            (event_sources(), event_types(), adversarial_payloads()),
+            massive_payload_event(),
             1..=50
         ),
         processing_interval in 1u64..100u64,
@@ -381,15 +330,8 @@ proptest! {
 
             // Process large events with controlled timing
             let mut processed_count = 0;
-            for (source, event_type, payload) in large_events.iter() {
-                let event = crate::common::events::create_raw_event(
-                    source,
-                    event_type,
-                    payload.clone(),
-                    chrono::Utc::now()
-                );
-
-                ctx.insert_event(&event).await.unwrap();
+            for event in large_events.iter() {
+                ctx.insert_event(event).await.unwrap();
                 processed_count += 1;
 
                 // Add processing interval to allow memory cleanup
@@ -417,10 +359,7 @@ proptest! {
     #[test]
     fn multiple_automata_coordination_is_correct(
         automaton_names in proptest::collection::vec(automaton_names(), 2..=5),
-        events in proptest::collection::vec(
-            (event_sources(), event_types(), event_payloads()),
-            1..=30
-        ),
+        events in arbitrary_event_batch().prop_map(|batch| batch.into_iter().take(30).collect::<Vec<_>>()),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -439,14 +378,8 @@ proptest! {
             }
 
             // Process events that all automata can see
-            for (source, event_type, payload) in events.iter() {
-                let event = crate::common::events::create_raw_event(
-                    source,
-                    event_type,
-                    payload.clone(),
-                    chrono::Utc::now()
-                );
-                ctx.insert_event(&event).await.unwrap();
+            for event in events.iter() {
+                ctx.insert_event(event).await.unwrap();
             }
 
             // Wait for all automata to process events

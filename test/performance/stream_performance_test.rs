@@ -4,6 +4,7 @@
 // consumer group behavior, and stream processing latency.
 // Focuses on the event streaming backbone of the Sinex system.
 
+use crate::common::test_macros::*;
 use redis::cmd;
 use crate::common::prelude::*;
 
@@ -197,8 +198,6 @@ async fn test_stream_write_performance(ctx: TestContext) -> TestResult {
         "Write success rate should be > 99%");
     
     println!("✅ Stream write performance test passed");
-    Ok(())
-}
 
 /// Test stream read performance with consumer groups
 #[sinex_test]
@@ -309,8 +308,6 @@ async fn test_stream_read_performance(ctx: TestContext) -> TestResult {
         "Should read at least 95% of messages");
     
     println!("✅ Stream read performance test passed");
-    Ok(())
-}
 
 /// Test concurrent stream processing performance
 #[sinex_test]
@@ -482,8 +479,6 @@ async fn test_concurrent_stream_performance(ctx: TestContext) -> TestResult {
         "Concurrent read success rate should be > 90%");
     
     println!("✅ Concurrent stream performance test passed");
-    Ok(())
-}
 
 /// Test stream performance with varying message sizes
 #[sinex_test]

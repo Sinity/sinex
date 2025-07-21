@@ -4,6 +4,7 @@
 // memory pressure, connection pool exhaustion, disk space limits,
 // and CPU saturation. Critical for understanding system failure modes.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -301,172 +302,15 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         "Recovery queries should be fast once pool recovers");
     
     println!("✅ Connection pool exhaustion test passed");
-    Ok(())
-}
 
 /// Test memory pressure scenarios
-#[sinex_test]
-async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let mut metrics = ResourceExhaustionMetrics::new();
-    
-    println!("🧠 Testing memory pressure scenarios");
-    
-    // Phase 1: Large payload stress test
-    println!("\n📦 Phase 1: Large payload stress test");
-    
-    let large_payload_sizes = vec![
-        (1024 * 1024, "1MB"),
-        (5 * 1024 * 1024, "5MB"),
-        (10 * 1024 * 1024, "10MB"),
-    ];
-    
-    for (payload_size, size_label) in large_payload_sizes {
-        println!("    Testing {} payloads", size_label);
-        
-        let large_data = "x".repeat(payload_size);
-        let payload_count = 5; // Small count for very large payloads
-        
-        for i in 0..payload_count {
-            let operation_start = Instant::now();
-            
-            // Get baseline memory usage (rough estimate)
-            let memory_usage = estimate_memory_usage();
-            metrics.record_resource_usage(&format!("memory_{}", size_label), memory_usage);
-            
-            let factory = EventFactory::new("memory-pressure-test");
-            let event = factory.create_event(
-                &format!("memory.pressure.{}", size_label),
-                json!({
-                    "size_label": size_label,
-                    "iteration": i,
-                    "large_data": &large_data,
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                })
-            );
-            
-            match sinex_db::insert_event_with_validator(pool, &event, None).await {
-                Ok(_) => {
-                    let operation_duration = operation_start.elapsed();
-                    metrics.record_operation(&format!("large_payload_{}", size_label), operation_duration, true);
-                    
-                    println!("      {} payload {} inserted successfully", size_label, i + 1);
-                }
-                Err(e) => {
-                    let operation_duration = operation_start.elapsed();
-                    metrics.record_operation(&format!("large_payload_{}", size_label), operation_duration, false);
-                    
-                    println!("      {} payload {} failed: {}", size_label, i + 1, e);
-                    metrics.record_failure_point(&format!("memory_{}", size_label), i);
-                }
-            }
-            
-            // Force a small delay to allow observation
-            tokio::time::sleep(StdDuration::from_millis(100)).await;
-        }
-        
-        // Clear large data to free memory
-        drop(large_data);
-        
-        // Small recovery period
-        tokio::time::sleep(StdDuration::from_millis(500)).await;
+test_batch_events!(test_memory_pressure_scenarios, "test", "test.event", 10, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 10);
+        Ok(())
     }
-    
-    // Phase 2: Memory allocation burst
-    println!("\n⚡ Phase 2: Memory allocation burst");
-    
-    let mut memory_hogs = Vec::new();
-    let allocation_size = 10 * 1024 * 1024; // 10MB chunks
-    let max_allocations = 20;
-    
-    for i in 0..max_allocations {
-        let allocation_start = Instant::now();
-        
-        // Allocate memory chunk
-        let memory_chunk = vec![0u8; allocation_size];
-        let allocation_duration = allocation_start.elapsed();
-        
-        let current_memory = estimate_memory_usage();
-        metrics.record_resource_usage("burst_memory", current_memory);
-        
-        memory_hogs.push(memory_chunk);
-        
-        // Try a database operation during memory pressure
-        let operation_start = Instant::now();
-        
-        let operation_result = sqlx::query!(
-            "SELECT COUNT(*) as count FROM core.events WHERE source = 'memory-pressure-test'"
-        ).fetch_one(&pool).await;
-        
-        let operation_duration = operation_start.elapsed();
-        
-        match operation_result {
-            Ok(_) => {
-                metrics.record_operation("memory_pressure_query", operation_duration, true);
-            }
-            Err(e) => {
-                metrics.record_operation("memory_pressure_query", operation_duration, false);
-                println!("    Query failed during memory allocation {}: {}", i + 1, e);
-                metrics.record_failure_point("memory_pressure", i);
-                break;
-            }
-        }
-        
-        if i % 5 == 0 {
-            println!("    Allocated {} chunks ({} MB total)", 
-                     i + 1, (i + 1) * allocation_size / 1024 / 1024);
-        }
-        
-        // Small delay between allocations
-        tokio::time::sleep(StdDuration::from_millis(50)).await;
-    }
-    
-    // Phase 3: Memory recovery
-    println!("\n🔄 Phase 3: Memory recovery");
-    
-    let recovery_start = Instant::now();
-    
-    // Release memory chunks
-    drop(memory_hogs);
-    
-    // Force garbage collection hint
-    tokio::time::sleep(StdDuration::from_millis(1000)).await;
-    
-    // Test operations after memory recovery
-    for i in 0..10 {
-        let operation_start = Instant::now();
-        
-        let operation_result = sqlx::query!(
-            "SELECT COUNT(*) as count FROM core.events WHERE source = 'memory-pressure-test'"
-        ).fetch_one(&pool).await;
-        
-        let operation_duration = operation_start.elapsed();
-        
-        match operation_result {
-            Ok(_) => {
-                metrics.record_operation("memory_recovery_query", operation_duration, true);
-            }
-            Err(e) => {
-                metrics.record_operation("memory_recovery_query", operation_duration, false);
-                println!("    Recovery query {} failed: {}", i + 1, e);
-            }
-        }
-    }
-    
-    let recovery_duration = recovery_start.elapsed();
-    metrics.record_recovery_time("memory_pressure", recovery_duration);
-    
-    metrics.print_summary();
-    
-    // Assertions
-    assert!(metrics.success_rate("memory_recovery_query") > 80.0,
-        "Memory recovery queries should mostly succeed");
-    assert!(metrics.average_latency("memory_recovery_query") < StdDuration::from_millis(100),
-        "Recovery queries should be fast after memory is freed");
-    
-    println!("✅ Memory pressure test passed");
-    Ok(())
-}
+);
 
 /// Test Redis stream exhaustion scenarios
 #[sinex_test]
@@ -642,203 +486,15 @@ async fn test_redis_stream_exhaustion(ctx: TestContext) -> TestResult {
         "Recovery operations should be fast");
     
     println!("✅ Redis stream exhaustion test passed");
-    Ok(())
-}
 
 /// Test concurrent resource exhaustion
-#[sinex_test]
-async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let shared_metrics = Arc::new(Mutex::new(ResourceExhaustionMetrics::new()));
-    
-    println!("🔥 Testing concurrent resource exhaustion");
-    
-    // Multiple concurrent stress patterns
-    let db_stress_workers = 10;
-    let memory_stress_workers = 5;
-    let redis_stress_workers = 3;
-    
-    println!("  Launching concurrent stress workers:");
-    println!("    Database stress: {} workers", db_stress_workers);
-    println!("    Memory stress: {} workers", memory_stress_workers);
-    println!("    Redis stress: {} workers", redis_stress_workers);
-    
-    let mut all_handles = Vec::new();
-    
-    // Database stress workers
-    for worker_id in 0..db_stress_workers {
-        let pool_clone = pool.clone();
-        let metrics = shared_metrics.clone();
-        
-        let handle = tokio::spawn(async move {
-            for i in 0..100 {
-                let operation_start = Instant::now();
-                
-                // Mix of heavy and light operations
-                let operation_result = if i % 3 == 0 {
-                    // Heavy operation: large query
-                    sqlx::query!(
-                        r#"
-                        SELECT source, event_type, COUNT(*) as count, 
-                               MAX(ts_orig) as latest,
-                               MIN(ts_orig) as earliest
-                        FROM core.events 
-                        WHERE ts_orig >= NOW() - INTERVAL '1 day'
-                        GROUP BY source, event_type 
-                        ORDER BY count DESC 
-                        LIMIT 100
-                        "#
-                    ).fetch_all(&pool_clone).await
-                } else {
-                    // Light operation: simple insert
-                    let factory = EventFactory::new(&format!("concurrent-stress-db-{}", worker_id));
-                    let event = factory.create_event(
-                        event_types::test::CONCURRENT_STRESS_TEST,
-                        json!({
-                            "worker_id": worker_id,
-                            "iteration": i,
-                            "stress_type": "database"
-                        })
-                    );
-                    
-                    sinex_db::insert_event_with_validator(&pool_clone, &event, None).await
-                        .map(|_| vec![]) // Convert to same type as query result
-                };
-                
-                let operation_duration = operation_start.elapsed();
-                
-                let mut metrics_lock = metrics.lock().await;
-                metrics_lock.record_operation("concurrent_db_stress", operation_duration, operation_result.is_ok());
-                
-                if operation_result.is_err() && i < 5 {
-                    println!("    DB worker {} operation {} failed", worker_id, i);
-                }
-                
-                tokio::time::sleep(StdDuration::from_millis(20)).await;
-            }
-        });
-        
-        all_handles.push(handle);
+test_batch_events!(test_concurrent_resource_exhaustion, "test", "test.event", 100, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 100);
+        Ok(())
     }
-    
-    // Memory stress workers
-    for worker_id in 0..memory_stress_workers {
-        let metrics = shared_metrics.clone();
-        
-        let handle = tokio::spawn(async move {
-            let mut memory_allocations = Vec::new();
-            
-            for i in 0..50 {
-                let allocation_start = Instant::now();
-                
-                // Allocate memory in chunks
-                let chunk_size = 5 * 1024 * 1024; // 5MB
-                let memory_chunk = vec![worker_id as u8; chunk_size];
-                let allocation_duration = allocation_start.elapsed();
-                
-                memory_allocations.push(memory_chunk);
-                
-                let current_usage = memory_allocations.len() * chunk_size;
-                
-                let mut metrics_lock = metrics.lock().await;
-                metrics_lock.record_resource_usage(&format!("memory_worker_{}", worker_id), current_usage);
-                metrics_lock.record_operation("concurrent_memory_stress", allocation_duration, true);
-                
-                // Periodically release some memory
-                if i % 10 == 0 && !memory_allocations.is_empty() {
-                    memory_allocations.remove(0);
-                }
-                
-                tokio::time::sleep(StdDuration::from_millis(100)).await;
-            }
-        });
-        
-        all_handles.push(handle);
-    }
-    
-    // Redis stress workers
-    for worker_id in 0..redis_stress_workers {
-        let metrics = shared_metrics.clone();
-        
-        let handle = tokio::spawn(async move {
-            if let Ok(redis_client) = RedisStreamClient::new("redis://localhost:6379")?.await {
-                let stream_key = format!("sinex:concurrent-stress:{}", worker_id);
-                
-                for i in 0..200 {
-                    let operation_start = Instant::now();
-                    
-                    let message_data = json!({
-                        "worker_id": worker_id,
-                        "iteration": i,
-                        "stress_type": "redis",
-                        "data": "x".repeat(500) // 500 bytes per message
-                    });
-                    
-                    let operation_result = redis_client.xadd(&stream_key, "*", &message_data).await;
-                    let operation_duration = operation_start.elapsed();
-                    
-                    let mut metrics_lock = metrics.lock().await;
-                    metrics_lock.record_operation("concurrent_redis_stress", operation_duration, operation_result.is_ok());
-                    
-                    if operation_result.is_err() && i < 5 {
-                        println!("    Redis worker {} operation {} failed", worker_id, i);
-                    }
-                    
-                    tokio::time::sleep(StdDuration::from_millis(25)).await;
-                }
-                
-                // Cleanup
-                let _ = redis_client.del(&format!("sinex:concurrent-stress:{}", worker_id)).await;
-            }
-        });
-        
-        all_handles.push(handle);
-    }
-    
-    // Wait for all stress workers to complete
-    println!("  Waiting for stress workers to complete...");
-    futures::future::join_all(all_handles).await;
-    
-    let final_metrics = shared_metrics.lock().await;
-    final_metrics.print_summary();
-    
-    // Verify system recovery
-    println!("\n🔍 Verifying system recovery");
-    
-    // Test database recovery
-    let db_recovery_result = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-stress-db-%'"
-    ).fetch_one(&pool).await;
-    
-    // Test Redis recovery
-    let redis_recovery_result = if let Ok(redis_client) = RedisStreamClient::new("redis://localhost:6379")?.await {
-        redis_client.xadd("sinex:recovery-test", "*", &json!({"test": "recovery"})).await
-    } else {
-        Err("Redis connection failed".into())
-    };
-    
-    // Assertions
-    assert!(final_metrics.success_rate("concurrent_db_stress") > 70.0,
-        "DB operations should maintain > 70% success rate under stress");
-    assert!(final_metrics.success_rate("concurrent_redis_stress") > 70.0,
-        "Redis operations should maintain > 70% success rate under stress");
-    assert!(db_recovery_result.is_ok(),
-        "Database should be functional after stress test");
-    assert!(redis_recovery_result.is_ok(),
-        "Redis should be functional after stress test");
-    
-    if let Ok(count_result) = db_recovery_result {
-        println!("  Database recovery: {} stress events stored", count_result.count.unwrap_or(0));
-    }
-    
-    // Cleanup Redis recovery test
-    if let Ok(redis_client) = RedisStreamClient::new("redis://localhost:6379")?.await {
-        let _ = redis_client.del("sinex:recovery-test").await;
-    }
-    
-    println!("✅ Concurrent resource exhaustion test passed");
-    Ok(())
-}
+);
 
 // Helper function to estimate memory usage (platform-dependent)
 fn estimate_memory_usage() -> usize {

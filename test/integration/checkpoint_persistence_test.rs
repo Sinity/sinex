@@ -1,5 +1,6 @@
 use crate::common::prelude::*;
 use crate::common::builders::TestEventBuilder;
+use crate::common::fixtures;
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde_json::json;
@@ -140,20 +141,24 @@ async fn test_checkpoint_persistence_and_restart_recovery(
         "test-consumer".to_string(),
     );
 
-    // Step 1: Inject test events into the hotlog stream
-    info!("Step 1: Injecting test events");
-
-    let test_events = vec![
-        TestEventBuilder::new("test", "test.event")
-            .with_field("test", json!("event1"))
-            .build(),
-        TestEventBuilder::new("test", "test.event")
-            .with_field("test", json!("event2"))
-            .build(),
-        TestEventBuilder::new("test", "test.event")
-            .with_field("test", json!("event3"))
-            .build(),
-    ];
+    // Step 1: Use fixture events and inject them into the hotlog stream
+    info!("Step 1: Using fixture events and injecting into hotlog");
+    
+    // Use standard user session fixture for test events
+    let session = fixtures::standard_user_session(&ctx).await?;
+    info!("Using fixture with {} events", session.event_ids.len());
+    
+    // Fetch first few events from fixture and inject into hotlog
+    let test_events = {
+        let mut events = Vec::new();
+        for event_id in &session.event_ids[..3.min(session.event_ids.len())] {
+            let event_row = sinex_db::events::get_event_by_id(ctx.pool(), *event_id).await?;
+            let event = sinex_events::EventFactory::new(&event_row.source)
+                .create_event(&event_row.event_type, event_row.payload);
+            events.push(event);
+        }
+        events
+    };
 
     // Add events to hotlog stream (simulating ingestd)
     for event in &test_events {
@@ -164,7 +169,7 @@ async fn test_checkpoint_persistence_and_restart_recovery(
     }
 
     info!(
-        "Injected {} test events into hotlog stream",
+        "Injected {} test events from fixture into hotlog stream",
         test_events.len()
     );
 

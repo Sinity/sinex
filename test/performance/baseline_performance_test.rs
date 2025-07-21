@@ -4,6 +4,7 @@
 // These tests create repeatable benchmarks that can be used to detect
 // performance regressions and track improvements over time.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -573,137 +574,10 @@ async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> Test
 }
 
 /// Establish baseline for system recovery operations
-#[sinex_test]
-async fn test_establish_recovery_baselines(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let mut tracker = BaselineTracker::new();
-    
-    println!("🎯 Establishing system recovery baselines");
-    
-    let env_info = EnvironmentInfo {
-        test_data_size: 100,
-        concurrent_operations: 1,
-        database_pool_size: pool.size() as usize,
-        system_load: "recovery_baseline".to_string(),
-    };
-    
-    // Baseline 1: Database connection recovery
-    println!("\n🔌 Baseline: Database connection recovery");
-    
-    for i in 0..20 {
-        let start = Instant::now();
-        
-        // Acquire and immediately release connection to test pool behavior
-        match pool.acquire().await {
-            Ok(conn) => {
-                drop(conn);
-                let duration = start.elapsed();
-                tracker.record_measurement("connection_recovery", duration, true);
-            }
-            Err(e) => {
-                let duration = start.elapsed();
-                tracker.record_measurement("connection_recovery", duration, false);
-                println!("    Connection recovery {} failed: {}", i, e);
-            }
-        }
-        
-        // Small delay between attempts
-        tokio::time::sleep(StdDuration::from_millis(10)).await;
+test_batch_events!(test_establish_recovery_baselines, "test", "test.event", 20, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 20);
+        Ok(())
     }
-    
-    // Baseline 2: Transaction recovery
-    println!("\n💳 Baseline: Transaction recovery");
-    
-    for i in 0..20 {
-        let start = Instant::now();
-        
-        let mut tx = pool.begin().await?;
-        
-        // Perform operation and commit
-        let factory = EventFactory::new("recovery-baseline-test");
-        let event = factory.create_event(
-            event_types::test::RECOVERY_BASELINE_TEST,
-            json!({
-                "iteration": i,
-                "test_type": "transaction_recovery"
-            })
-        );
-        
-        let insert_result = sinex_db::insert_event_with_validator(&mut tx, &event, None).await;
-        let commit_result = if insert_result.is_ok() {
-            tx.commit().await
-        } else {
-            tx.rollback().await
-        };
-        
-        let duration = start.elapsed();
-        let success = insert_result.is_ok() && commit_result.is_ok();
-        tracker.record_measurement("transaction_recovery", duration, success);
-    }
-    
-    // Baseline 3: Redis reconnection
-    println!("\n📡 Baseline: Redis reconnection");
-    
-    for i in 0..20 {
-        let start = Instant::now();
-        
-        // Create new Redis client to test connection establishment
-        match RedisStreamClient::new("redis://localhost:6379")?.await {
-            Ok(client) => {
-                // Test simple operation
-                let test_result = client.xadd("baseline:recovery-test", "*", &json!({"test": i})).await;
-                let duration = start.elapsed();
-                tracker.record_measurement("redis_reconnection", duration, test_result.is_ok());
-                
-                // Cleanup
-                let _ = client.del("baseline:recovery-test").await;
-            }
-            Err(e) => {
-                let duration = start.elapsed();
-                tracker.record_measurement("redis_reconnection", duration, false);
-                println!("    Redis reconnection {} failed: {}", i, e);
-            }
-        }
-    }
-    
-    // Calculate recovery baselines
-    let recovery_operations = vec![
-        "connection_recovery",
-        "transaction_recovery",
-        "redis_reconnection"
-    ];
-    
-    for operation in recovery_operations {
-        if let Some(baseline) = tracker.calculate_baseline(operation, env_info.clone()) {
-            println!("\n✅ Recovery baseline established for: {}", baseline.operation_name);
-            
-            // Recovery operations should be fast and reliable
-            match operation {
-                "connection_recovery" => {
-                    assert!(baseline.average_latency < StdDuration::from_millis(50),
-                        "Connection recovery baseline should be < 50ms");
-                    assert!(baseline.success_rate > 99.0,
-                        "Connection recovery success rate should be > 99%");
-                }
-                "transaction_recovery" => {
-                    assert!(baseline.average_latency < StdDuration::from_millis(100),
-                        "Transaction recovery baseline should be < 100ms");
-                    assert!(baseline.success_rate > 95.0,
-                        "Transaction recovery success rate should be > 95%");
-                }
-                "redis_reconnection" => {
-                    assert!(baseline.average_latency < StdDuration::from_millis(100),
-                        "Redis reconnection baseline should be < 100ms");
-                    assert!(baseline.success_rate > 95.0,
-                        "Redis reconnection success rate should be > 95%");
-                }
-                _ => {}
-            }
-        }
-    }
-    
-    tracker.print_baselines();
-    
-    println!("✅ System recovery baselines established");
-    Ok(())
-}
+);

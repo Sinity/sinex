@@ -1,3 +1,4 @@
+use crate::common::test_macros::*;
 use chrono::Utc;
 /// Integration tests for typed clipboard event conversion  
 use sinex_events::{

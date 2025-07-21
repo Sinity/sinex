@@ -169,3 +169,22 @@ pub mod checkpoint_consistency_test;
 
 /// Data corruption detection and recovery guidance tests
 pub mod data_corruption_detection_test;
+
+// === Performance Optimization Tests ===
+
+/// Optimized database tests demonstrating performance improvements
+// pub mod database_test_optimized;
+
+/// Optimized PKM service tests with parallel execution patterns
+pub mod pkm_service_test_optimized;
+
+// === Scenario DSL Demonstration Tests ===
+
+/// Database tests refactored with scenario DSL
+// pub mod database_test_refactored_with_dsl;
+
+/// Satellite tests demonstrating DSL capabilities
+// pub mod satellite_test_with_dsl;
+
+/// Comprehensive scenario DSL examples
+pub mod scenario_dsl_examples;

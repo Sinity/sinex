@@ -1,5 +1,6 @@
 // Preflight Unit Tests - Comprehensive verification phase testing
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use sinex_preflight::*;

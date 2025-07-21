@@ -150,9 +150,6 @@ async fn test_enhanced_infrastructure(ctx: TestContext) -> TestResult {
         .await?;
     assert!(count >= 1);
 
-    Ok(())
-}
-
 /// Test transaction isolation pattern
 #[sinex_test]
 async fn test_transaction_isolation(ctx: TestContext) -> TestResult {

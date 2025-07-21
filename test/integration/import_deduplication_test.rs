@@ -7,7 +7,9 @@
 // - Time range overlap calculations
 // - Duplicate prevention across different import methods
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
+use crate::common::fixtures;
 
 use crate::common::mocks::EventSourceContext;
 use chrono::{TimeZone, Utc};
@@ -381,6 +383,10 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
     let temp_dir = tempfile::tempdir()?;
+    
+    // Pre-populate database with fixture data to test deduplication against existing events
+    let session = fixtures::standard_user_session(&ctx).await?;
+    println!("Using fixture with {} existing events", session.event_ids.len());
 
     // Create the same command in both Atuin and shell history
     let command = "echo 'test cross deduplication'";

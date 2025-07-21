@@ -20,6 +20,7 @@
 // ```
 
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::database_pool::TestDatabase;
 use crate::common::event_builders::{EventBuilder, GenericEventBuilder};

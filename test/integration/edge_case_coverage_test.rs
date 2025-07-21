@@ -3,6 +3,7 @@
 // This module tests basic edge cases for the dual-mode event sources refactoring
 // without relying on complex APIs that may not be fully implemented yet.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::mocks::EventSourceContext;
@@ -24,9 +25,6 @@ async fn test_version_tracking_no_git(_ctx: TestContext) -> TestResult {
     assert!(!version_info.component_version.is_empty());
     assert!(version_info.component_version.contains("test-component"));
 
-    Ok(())
-}
-
 /// Test version tracking performance
 #[sinex_test]
 async fn test_version_tracking_performance(_ctx: TestContext) -> TestResult {
@@ -46,9 +44,6 @@ async fn test_version_tracking_performance(_ctx: TestContext) -> TestResult {
 
     // Should have valid information
     assert!(!version_info.component_version.is_empty());
-
-    Ok(())
-}
 
 /// Test repeated version info generation
 #[sinex_test]
@@ -254,52 +249,16 @@ async fn test_version_info_memory_usage(_ctx: TestContext) -> TestResult {
 // ============================================================================
 
 /// Test concurrent version info generation
-#[sinex_test]
-async fn test_concurrent_version_info_generation(_ctx: TestContext) -> TestResult {
-    use std::sync::atomic::{AtomicU32, Ordering};
-    use std::sync::Arc;
-
-    let success_count = Arc::new(AtomicU32::new(0));
-    let mut tasks = Vec::new();
-
-    // Generate version info concurrently
-    for i in 0..10 {
-        let success_count = success_count.clone();
-
-        let task = tokio::spawn(async move {
-            let version_info = VersionInfo::current(&format!("concurrent-{}", i));
-
-            // Verify basic fields are populated
-            if !version_info.git_revision.is_empty()
-                && !version_info.binary_hash.is_empty()
-                && !version_info.component_version.is_empty()
-            {
-                success_count.fetch_add(1, Ordering::SeqCst);
-            }
-
-            version_info
-        });
-
-        tasks.push(task);
+test_concurrent_operations!(test_concurrent_version_info_generation, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-
-    // Wait for all tasks
-    let results = futures::future::join_all(tasks).await;
-
-    // All should succeed
-    assert_eq!(results.len(), 10);
-    assert_eq!(success_count.load(Ordering::SeqCst), 10);
-
-    // All should have valid component versions
-    for (i, result) in results.into_iter().enumerate() {
-        let version_info = result?;
-        assert!(version_info
-            .component_version
-            .contains(&format!("concurrent-{}", i)));
-    }
-
-    Ok(())
-}
+);
 
 // ============================================================================
 // Helper Functions

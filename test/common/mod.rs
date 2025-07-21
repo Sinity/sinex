@@ -1180,6 +1180,18 @@ pub mod test_macros;
 /// Performance measurement and optimization utilities
 pub mod performance_utils;
 
+/// Test fixture management system
+pub mod fixtures;
+
+/// Declarative test scenario DSL
+pub mod scenario_dsl;
+
+/// High-level test data factories for common testing scenarios
+pub mod test_factories;
+
+/// Snapshot testing utilities for complex test outputs
+pub mod snapshot_testing;
+
 /// Integration testing patterns for satellite architecture
 pub mod satellite_integration {
     use super::*;

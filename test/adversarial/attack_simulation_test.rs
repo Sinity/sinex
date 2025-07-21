@@ -9,6 +9,7 @@
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use crate::common::prelude::*;
@@ -509,9 +510,6 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult {
         "Should not take too long to serialize"
     );
 
-    Ok(())
-}
-
 /// Test JSON depth bomb attack
 #[sinex_test]
 async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult {
@@ -611,8 +609,6 @@ async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult {
         ulid > current_ulid,
         "Future date ULID should be greater than current ULID"
     );
-    Ok(())
-}
 
 /// Test ULID generation at the same nanosecond
 #[sinex_test]
@@ -653,8 +649,6 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult {
 
     // This might FAIL if random generation has issues
     assert_eq!(ulids.len(), unique.len(), "Found duplicate ULIDs!");
-    Ok(())
-}
 
 /// Test ULID with zero timestamp
 #[sinex_test]
@@ -668,8 +662,6 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult {
 
     // This might fail if implementation assumes positive timestamps
     assert_eq!(ulid.timestamp().timestamp(), 0, "Epoch timestamp corrupted");
-    Ok(())
-}
 
 /// Test ULID collision resistance
 #[sinex_test]

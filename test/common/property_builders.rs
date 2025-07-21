@@ -427,7 +427,7 @@ fn event_types() -> impl Strategy<Value = String> {
         Just(event_types::shell::COMMAND_EXECUTED.to_string()),
         Just(event_types::window_manager::WINDOW_OPENED.to_string()),
         Just(event_types::window_manager::WINDOW_CLOSED.to_string()),
-        Just(event_types::clipboard::CONTENT_COPIED.to_string()),
+        Just(event_types::clipboard::COPIED.to_string()),
         Just(event_types::sinex::AUTOMATON_HEARTBEAT.to_string()),
         Just("test.event".to_string()),
     ]

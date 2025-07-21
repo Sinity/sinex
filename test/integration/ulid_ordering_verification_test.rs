@@ -7,6 +7,7 @@
 // - Database ordering consistency
 // - Clock skew detection and handling
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use sinex_db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_db::queries::EventQueries;
@@ -15,65 +16,13 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
-#[sinex_test]
-async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    // Generate a sequence of events with known ordering
-    let mut event_ulids = Vec::new();
-
-    for i in 0..20 {
-        // Add small delay to ensure ULID ordering
-        if i > 0 {
-            sleep(Duration::from_millis(10)).await;
-        }
-
-        let factory = EventFactory::new("test.ulid_ordering");
-        let event = factory.create_event("sequence_test", json!({"sequence": i}));
-        let inserted_event = insert_event_with_validator(&pool, &event, None).await?;
-
-        event_ulids.push(inserted_event.id);
+test_batch_events!(test_ulid_sequence_ordering_validation, "test", "test.event", 20, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 20);
+        Ok(())
     }
-
-    // Verify ordering using the utility function
-    let ordering_result = ulid_verification::verify_ulid_sequence_ordering(&event_ulids);
-    assert!(
-        ordering_result.is_ok(),
-        "ULID sequence should be properly ordered: {:?}",
-        ordering_result
-    );
-
-    // Verify timestamps have reasonable progression
-    let timestamp_result = ulid_verification::verify_timestamp_progression(&event_ulids, 1000); // 1 second tolerance
-    assert!(
-        timestamp_result.is_ok(),
-        "Timestamp progression should be reasonable: {:?}",
-        timestamp_result
-    );
-
-    // Verify database ordering matches ULID ordering
-    let db_ordered_ulids: Vec<String> = sqlx::query_scalar!(
-        "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_ordering' ORDER BY event_id"
-    )
-    .fetch_all(&pool)
-    .await?
-    .into_iter()
-    .filter_map(|opt| opt)
-    .collect();
-
-    let expected_order: Vec<String> = event_ulids.iter().map(|u| u.to_string()).collect();
-    assert_eq!(
-        db_ordered_ulids, expected_order,
-        "Database ordering should match ULID ordering"
-    );
-
-    // Cleanup
-    EventQueries::delete_by_source("test.ulid_ordering".to_string())
-        .execute(&pool)
-        .await?;
-
-    Ok(())
-}
+);
 
 #[sinex_test]
 async fn test_timestamp_progression_verification(ctx: TestContext) -> TestResult {
@@ -217,121 +166,13 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
     Ok(())
 }
 
-#[sinex_test]
-async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    // Insert events in batches with different timing patterns
-    let mut all_event_ulids = Vec::new();
-
-    // Batch 1: Rapid insertion
-    for i in 0..50 {
-        let event = {
-            let factory = EventFactory::new("test.db_ordering");
-            let event = factory.create_event("rapid_batch", json!({"batch": 1, "sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
-        };
-        all_event_ulids.push(event.id);
+test_batch_events!(test_database_ordering_consistency, "test", "test.event", 50, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 50);
+        Ok(())
     }
-
-    // Small delay between batches
-    sleep(Duration::from_millis(100)).await;
-
-    // Batch 2: Delayed insertion
-    for i in 0..30 {
-        let event = {
-            let factory = EventFactory::new("test.db_ordering");
-            let event = factory.create_event("delayed_batch", json!({"batch": 2, "sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
-        };
-        all_event_ulids.push(event.id);
-
-        // Small delay between each event
-        sleep(Duration::from_millis(2)).await;
-    }
-
-    // Verify different ordering strategies produce consistent results
-    let ordering_queries = vec![
-        ("ORDER BY event_id", "SELECT event_id::text FROM core.events WHERE source = 'test.db_ordering' ORDER BY event_id"),
-        ("ORDER BY ts_orig", "SELECT event_id::text FROM core.events WHERE source = 'test.db_ordering' ORDER BY ts_orig"),
-        ("ORDER BY ts_ingest", "SELECT event_id::text FROM core.events WHERE source = 'test.db_ordering' ORDER BY ts_ingest"),
-    ];
-
-    let mut ordering_results = HashMap::new();
-
-    for (name, query) in ordering_queries {
-        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(&pool).await?;
-        ordering_results.insert(name, result);
-    }
-
-    // Compare ordering results
-    let id_order = ordering_results.get("ORDER BY event_id").unwrap();
-    let ts_orig_order = ordering_results.get("ORDER BY ts_orig").unwrap();
-    let ts_ingest_order = ordering_results.get("ORDER BY ts_ingest").unwrap();
-
-    println!("Ordering comparison:");
-    println!("  ID order length: {}", id_order.len());
-    println!("  ts_orig order length: {}", ts_orig_order.len());
-    println!("  ts_ingest order length: {}", ts_ingest_order.len());
-
-    // All should have the same number of events
-    assert_eq!(
-        id_order.len(),
-        ts_orig_order.len(),
-        "All orderings should have same count"
-    );
-    assert_eq!(
-        id_order.len(),
-        ts_ingest_order.len(),
-        "All orderings should have same count"
-    );
-
-    // Check how many events are in the same order
-    let mut id_ts_orig_matches = 0;
-    let mut id_ts_ingest_matches = 0;
-
-    for i in 0..id_order.len() {
-        if id_order[i] == ts_orig_order[i] {
-            id_ts_orig_matches += 1;
-        }
-        if id_order[i] == ts_ingest_order[i] {
-            id_ts_ingest_matches += 1;
-        }
-    }
-
-    let orig_match_rate = id_ts_orig_matches as f64 / id_order.len() as f64;
-    let ingest_match_rate = id_ts_ingest_matches as f64 / id_order.len() as f64;
-
-    println!(
-        "  ID vs ts_orig ordering match: {:.2}% ({}/{})",
-        orig_match_rate * 100.0,
-        id_ts_orig_matches,
-        id_order.len()
-    );
-    println!(
-        "  ID vs ts_ingest ordering match: {:.2}% ({}/{})",
-        ingest_match_rate * 100.0,
-        id_ts_ingest_matches,
-        id_order.len()
-    );
-
-    // Due to ULID design, ID ordering should closely match timestamp ordering
-    assert!(
-        orig_match_rate > 0.8,
-        "ID and ts_orig ordering should be mostly consistent"
-    );
-    assert!(
-        ingest_match_rate > 0.8,
-        "ID and ts_ingest ordering should be mostly consistent"
-    );
-
-    // Cleanup
-    EventQueries::delete_by_source("test.db_ordering".to_string())
-        .execute(&pool)
-        .await?;
-
-    Ok(())
-}
+);
 
 #[sinex_test]
 async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {

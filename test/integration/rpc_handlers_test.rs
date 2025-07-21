@@ -4,6 +4,7 @@
 // request/response handling including serialization, method routing, error handling,
 // and JSON-RPC 2.0 specification compliance.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use serde_json::{json, Value};
@@ -437,42 +438,7 @@ async fn test_search_events_invalid_params(ctx: TestContext) -> TestResult {
 // PKM Service RPC Tests
 // ===============================
 
-#[sinex_test]
-async fn test_pkm_create_note_success(ctx: TestContext) -> TestResult {
-    let services = create_test_services().await?;
-
-    // Create a test event to annotate
-    let event = EventFactory::new("test")
-        .create_event("test.event", json!({"data": "test"}));
-    let event_id = event.id;
-    insert_event(ctx.pool(), &event).await?;
-
-    let request = JsonRpcRequest::new(
-        "pkm.create_note",
-        json!({
-            "event_id": event_id.to_string(),
-            "content": "This is a test note",
-            "tags": ["test", "important"],
-            "created_by": "test-user"
-        }),
-    );
-
-    let response = simulate_rpc_request(&services, request).await;
-
-    // Verify JSON-RPC response structure
-    assert_eq!(response.jsonrpc, "2.0");
-    assert!(response.error.is_none());
-    assert!(response.result.is_some());
-
-    // Verify annotation ID returned
-    let result = response.result.unwrap();
-    assert!(result["annotation_id"].is_string());
-
-    let annotation_id_str = result["annotation_id"].as_str().unwrap();
-    assert!(Ulid::from_str(annotation_id_str).is_ok());
-
-    Ok(())
-}
+test_event_insertion!(test_pkm_create_note_success, "test", "test.event", json!({"data": "test"}));
 
 #[sinex_test]
 async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> TestResult {
@@ -653,33 +619,7 @@ async fn test_rpc_request_with_string_id(ctx: TestContext) -> TestResult {
 // Parameter Validation Tests
 // ===============================
 
-#[sinex_test]
-async fn test_parameter_serialization_all_types(ctx: TestContext) -> TestResult {
-    let services = create_test_services().await?;
-
-    let event = EventFactory::new("test")
-        .create_event("test.event", json!({"data": "test"}));
-    let event_id = event.id;
-    insert_event(ctx.pool(), &event).await?;
-
-    // Test complex parameter serialization
-    let request = JsonRpcRequest::new(
-        "pkm.create_note",
-        json!({
-            "event_id": event_id.to_string(),
-            "content": "Test with various types",
-            "tags": ["string", "array", "values"],
-            "created_by": "test-user"
-        }),
-    );
-
-    let response = simulate_rpc_request(&services, request).await;
-
-    assert!(response.error.is_none());
-    assert!(response.result.is_some());
-
-    Ok(())
-}
+test_event_insertion!(test_parameter_serialization_all_types, "test", "test.event", json!({"data": "test"}));
 
 #[sinex_test]
 async fn test_parameter_validation_ulid_parsing(ctx: TestContext) -> TestResult {

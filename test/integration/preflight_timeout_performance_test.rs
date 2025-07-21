@@ -1,5 +1,6 @@
 // Preflight Timeout and Performance Tests - Timing, resource usage, and graceful shutdown
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use std::collections::HashMap;
@@ -56,8 +57,6 @@ async fn test_database_connectivity_timeout(_ctx: TestContext) -> TestResult {
         "✓ Database connectivity timeout test completed in {:?}",
         elapsed
     );
-    Ok(())
-}
 
 /// Test extension verification timeout handling
 #[sinex_test]
@@ -94,8 +93,6 @@ async fn test_extensions_timeout_handling(_ctx: TestContext) -> TestResult {
     }
 
     println!("✓ Extensions timeout test completed in {:?}", elapsed);
-    Ok(())
-}
 
 /// Test resource verification performance under load
 #[sinex_test]
@@ -152,9 +149,6 @@ async fn test_resource_verification_performance(_ctx: TestContext) -> TestResult
         "Performance should be consistent across iterations"
     );
 
-    Ok(())
-}
-
 /// Test configuration verification timeout
 #[sinex_test]
 async fn test_configuration_verification_timeout(ctx: TestContext) -> TestResult {
@@ -197,8 +191,6 @@ async fn test_configuration_verification_timeout(ctx: TestContext) -> TestResult
         "✓ Configuration verification timeout test completed in {:?}",
         elapsed
     );
-    Ok(())
-}
 
 /// Test service verification timeout
 #[sinex_test]
@@ -369,9 +361,6 @@ async fn test_benchmark_all_phases(ctx: TestContext) -> TestResult {
         "Resources should be < 3s"
     );
 
-    Ok(())
-}
-
 /// Test concurrent performance
 #[sinex_test]
 async fn test_concurrent_performance(ctx: TestContext) -> TestResult {
@@ -514,9 +503,6 @@ async fn test_graceful_shutdown_handling(_ctx: TestContext) -> TestResult {
         "✓ Graceful shutdown test completed after {} iterations",
         final_iteration
     );
-
-    Ok(())
-}
 
 /// Test timeout with cleanup
 #[sinex_test]

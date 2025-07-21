@@ -1,5 +1,6 @@
 // Preflight Rollback and Recovery Tests - Testing failure recovery, rollback mechanisms, and system resilience
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use std::env;
@@ -49,9 +50,6 @@ async fn test_database_connection_recovery(ctx: TestContext) -> TestResult {
 
     println!("✓ Database connection recovery verified");
 
-    Ok(())
-}
-
 /// Test database extension recovery
 #[sinex_test]
 async fn test_database_extension_recovery(ctx: TestContext) -> TestResult {
@@ -82,9 +80,6 @@ async fn test_database_extension_recovery(ctx: TestContext) -> TestResult {
     assert!(!messages.is_empty());
 
     println!("✓ Database extensions recovery verified");
-
-    Ok(())
-}
 
 /// Test migration recovery scenarios
 #[sinex_test]
@@ -189,9 +184,6 @@ async fn test_configuration_recovery(_ctx: TestContext) -> TestResult {
     assert_eq!(db_url_info.get("present").unwrap(), true);
 
     println!("✓ Configuration recovery verified");
-
-    Ok(())
-}
 
 /// Test TOML configuration file recovery
 #[sinex_test]

@@ -4,6 +4,7 @@
 // This replaces the commented-out EventRegistry tests with equivalent
 // functionality tests for the new architecture.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 
 use sinex_events::{

@@ -5,6 +5,7 @@
 // Tests Redis Consumer Group fault tolerance, PEL recovery, and message
 // redelivery patterns.
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use redis::{cmd, AsyncCommands, RedisResult};
 use std::collections::HashMap;

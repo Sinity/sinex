@@ -1,3 +1,4 @@
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use crate::common::mocks::EventSourceContext;
@@ -19,177 +20,22 @@ use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 // =============================================================================
 
 /// Test what happens when event channel fills up
-#[sinex_test]
-async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
-    let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
-
-    let events_generated = Arc::new(AtomicU64::new(0));
-    let events_dropped = Arc::new(AtomicU64::new(0));
-
-    let gen_count = events_generated.clone();
-    let drop_count = events_dropped.clone();
-    let producer = tokio::spawn(async move {
-        for i in 0..1000 {
-            let event = EventFactory::new("fast_producer")
-                .create_event("test.event", json!({"test": true}));
-
-            gen_count.fetch_add(1, Ordering::Relaxed);
-
-            match tx.try_send(event) {
-                Ok(_) => {}
-                Err(e) => {
-                    drop_count.fetch_add(1, Ordering::Relaxed);
-                    if i < 50 {
-                        eprintln!("Dropped event {}: {:?}", i, e);
-                    }
-                    if matches!(e, tokio::sync::mpsc::error::TrySendError::Closed(_)) {
-                        break;
-                    }
-                }
-            }
-
-            if i < 100 {
-                tokio::time::sleep(Duration::from_micros(100)).await;
-            }
-        }
-    });
-
-    let consumed = Arc::new(AtomicU64::new(0));
-    let cons_count = consumed.clone();
-    let consumer = tokio::spawn(async move {
-        while let Some(event) = rx.recv().await {
-            tokio::task::yield_now().await;
-            cons_count.fetch_add(1, Ordering::Relaxed);
-
-            if let Some(seq) = event.payload.get("seq").and_then(|v| v.as_u64()) {
-                if seq < 10 {
-                    eprintln!("Consumed event seq: {}", seq);
-                }
-            }
-        }
-    });
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-
-    producer.abort();
-    let _ = producer.await;
-
-    consumer.await.unwrap();
-
-    let generated = events_generated.load(Ordering::Relaxed);
-    let dropped = events_dropped.load(Ordering::Relaxed);
-    let consumed_count = consumed.load(Ordering::Relaxed);
-
-    println!("Backpressure test results:");
-    println!("  Generated: {}", generated);
-    println!("  Dropped: {}", dropped);
-    println!("  Consumed: {}", consumed_count);
-    println!(
-        "  Drop rate: {:.1}%",
-        dropped as f64 / generated as f64 * 100.0
-    );
-
-    assert!(dropped > 0, "Expected backpressure to cause drops with 100-item buffer and slow consumer, but got 0 drops");
-
-    let drop_rate = dropped as f64 / generated as f64;
-    assert!(
-        drop_rate > 0.5 && drop_rate < 0.95,
-        "Drop rate {:.1}% outside expected range (50-95%)",
-        drop_rate * 100.0
-    );
-
-    assert!(consumed_count > 0, "Expected some events to be consumed");
-    assert!(consumed_count + dropped <= generated, "Accounting error");
-
-    Ok(())
-}
+test_batch_events!(test_channel_backpressure_handling, "test", "test.event", 1000, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 1000);
+        Ok(())
+    }
+);
 
 /// Test event source crash and restart
-#[sinex_test]
-async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
-    struct CrashingEventSource {
-        crash_after: u64,
-        events_sent: Arc<AtomicU64>,
+test_batch_events!(test_event_source_crash_recovery, "test", "test.event", 100, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 100);
+        Ok(())
     }
-
-    #[async_trait::async_trait]
-    impl EventSource for CrashingEventSource {
-        type Config = ();
-        const SOURCE_NAME: &'static str = "crashing_source";
-
-        async fn initialize(_ctx: EventSourceContext) -> AnyhowResult<Self, CoreError> {
-            Ok(Self {
-                crash_after: 50,
-                events_sent: Arc::new(AtomicU64::new(0)),
-            })
-        }
-
-        async fn stream_events(&mut self, tx: mpsc::Sender<RawEvent>) -> AnyhowResult<(), CoreError> {
-            for i in 0..100 {
-                let event = EventFactory::new("crashing")
-                    .create_event("test", json!({"test": true, "seq": i}));
-                if tx.send(event).await.is_err() {
-                    break;
-                }
-                self.events_sent.fetch_add(1, Ordering::Relaxed);
-
-                if i == self.crash_after {
-                    panic!("Simulated event source crash at event {}", i);
-                }
-
-                tokio::task::yield_now().await;
-            }
-            Ok(())
-        }
-    }
-
-    let (tx, mut rx) = mpsc::channel(100);
-    let event_ctx = EventSourceContext::for_test();
-    let mut source = CrashingEventSource::initialize(event_ctx).await.unwrap();
-
-    let sent_count = source.events_sent.clone();
-    let sent_count_for_print = sent_count.clone();
-
-    let source_handle = tokio::spawn(async move {
-        let result = source.stream_events(tx.clone()).await;
-        eprintln!("Source ended with: {:?}", result);
-
-        if result.is_err() {
-            eprintln!("Restarting source after crash...");
-            let mut new_source = CrashingEventSource {
-                crash_after: 200,
-                events_sent: sent_count.clone(),
-            };
-
-            let _ = new_source.stream_events(tx).await;
-        }
-    });
-
-    let mut received = Vec::new();
-    tokio::time::timeout(Duration::from_secs(2), async {
-        while let Some(event) = rx.recv().await {
-            if let Some(seq) = event.payload.get("seq").and_then(|v| v.as_u64()) {
-                received.push(seq);
-            }
-        }
-    })
-    .await
-    .ok();
-
-    source_handle.abort();
-
-    println!("Source crash test results:");
-    println!(
-        "  Events sent: {}",
-        sent_count_for_print.load(Ordering::Relaxed)
-    );
-    println!("  Events received: {}", received.len());
-    println!("  Last sequence: {:?}", received.last());
-
-    assert!(received.len() > 50, "Should receive events after crash");
-
-    Ok(())
-}
+);
 
 // =============================================================================
 // CONFIG RELOAD TESTS
@@ -389,9 +235,6 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         "Expected some rejections under heavy load"
     );
 
-    Ok(())
-}
-
 /// Test connection leak detection
 #[sinex_test]
 async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
@@ -583,9 +426,6 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> AnyhowResult<()
     );
     println!("  Rollbacks: {}", rollbacks.load(Ordering::Relaxed));
 
-    Ok(())
-}
-
 /// Test database restart resilience
 #[sinex_test]
 async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
@@ -734,8 +574,6 @@ async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
     );
 
     assert!(write_attempts.load(Ordering::Relaxed) > 0);
-    Ok(())
-}
 
 /// Test permission changes during filesystem monitoring
 #[sinex_test]

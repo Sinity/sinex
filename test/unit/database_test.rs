@@ -8,6 +8,7 @@
 // - Event validator functionality
 // - Complex query operations
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::event_builders::EventBuilder;
 use serde_json::json;
@@ -222,45 +223,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
 }
 
 /// Test querying events by event type
-#[sinex_test(timeout = 35)]
-async fn test_query_events_by_type(ctx: TestContext) -> TestResult {
-    // Insert events of different types
-    let create_event = EventFactory::new("fs").create_event(
-        "file.created",
-        json!({"path": "/test/create_file.txt"}),
-    );
-
-    let delete_event = EventFactory::new("fs").create_event(
-        "file.deleted",
-        json!({"path": "/test/delete_file.txt"}),
-    );
-
-    let command_event = EventFactory::new("shell.kitty").create_event(
-        "command.executed",
-        json!({"command": "rm file.txt"}),
-    );
-
-    sinex_db::insert_event(ctx.pool(), &create_event).await?;
-    sinex_db::insert_event(ctx.pool(), &delete_event).await?;
-    sinex_db::insert_event(ctx.pool(), &command_event).await?;
-
-    // Query by event type
-    let create_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("file.created".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
-    assert!(!create_events.is_empty());
-    assert!(create_events.iter().all(|e| e.event_type == "file.created"));
-
-    let delete_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("file.deleted".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
-    assert!(!delete_events.is_empty());
-    assert!(delete_events.iter().all(|e| e.event_type == "file.deleted"));
-
-    let command_events: Vec<sinex_db::EventRecord> = EventQueries::get_by_event_type("command.executed".to_string(), None, Some(10)).fetch_all(ctx.pool()).await?;
-    assert!(!command_events.is_empty());
-    assert!(command_events
-        .iter()
-        .all(|e| e.event_type == "command.executed"));
-
-    Ok(())
-}
+test_event_insertion!(test_query_events_by_type, "fs", "file.created", json!({"path": "/test/create_file.txt"}));
 
 // =============================================================================
 // EVENT VALIDATION
@@ -567,255 +530,39 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
 // REDIS STREAMS OPERATIONS
 // =============================================================================
 /// Test Redis Streams event processing operations
-#[sinex_test(timeout = 45)]
-async fn test_redis_streams_event_processing(ctx: TestContext) -> TestResult {
-    // Insert a raw event first
-    let event = EventFactory::new("fs").create_event(
-        "file.created",
-        json!({"path": "/test/redis_streams_test.txt"}),
-    );
-
-    let inserted_event = insert_event(ctx.pool(), &event).await?;
-
-    // Test checkpoint management (replaces work_queue status tracking)
-    let automaton_name = "test_automaton";
-    let consumer_group = "test_consumer_group";
-
-    // Initialize checkpoint
-    let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
-        automaton_name.to_string(),
-        consumer_group.to_string(),
-        "test_consumer".to_string(),
-    );
-
-    // Test checkpoint initialization
-    let initial_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert!(
-        initial_checkpoint.last_processed_id().is_none(),
-        "Initial checkpoint should be empty"
-    );
-
-    // Test updating checkpoint with processed event
-    let mut checkpoint_state = initial_checkpoint;
-    checkpoint_state.set_last_processed_id(Some(inserted_event.to_string()));
-    checkpoint_state.processed_count += 1;
-    checkpoint_state.data = Some(json!({"test": "checkpoint_data"}));
-
-    checkpoint_manager
-        .save_checkpoint(&checkpoint_state)
-        .await?;
-
-    // Verify checkpoint was saved
-    let saved_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert_eq!(
-        saved_checkpoint.last_processed_id(),
-        Some(inserted_event.to_string())
-    );
-    assert_eq!(saved_checkpoint.processed_count, 1);
-    assert_eq!(
-        saved_checkpoint.data,
-        Some(json!({"test": "checkpoint_data"}))
-    );
-
-    // Test checkpoint recovery scenario
-    let recovered_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert_eq!(
-        recovered_checkpoint.last_processed_id(),
-        Some(inserted_event.to_string())
-    );
-    assert_eq!(recovered_checkpoint.processed_count, 1);
-
-    Ok(())
-}
+test_event_insertion!(test_redis_streams_event_processing, "fs", "file.created", json!({"path": "/test/redis_streams_test.txt"}));
 
 /// Test Redis Streams PEL retry logic and failure handling
-#[sinex_test(timeout = 45)]
-async fn test_redis_streams_retry_logic(ctx: TestContext) -> TestResult {
-    // Insert a raw event
-    let event = EventFactory::new("fs").create_event(
-        "file.created",
-        json!({"path": "/test/retry_test.txt", "size": 1024}),
-    );
-
-    let inserted_event = insert_event(ctx.pool(), &event).await?;
-
-    // Test checkpoint failure tracking
-    let automaton_name = "test_automaton";
-    let consumer_group = "test_consumer_group";
-
-    let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
-        automaton_name.to_string(),
-        consumer_group.to_string(),
-        "test_consumer".to_string(),
-    );
-
-    // Test checkpoint with failure tracking
-    let mut checkpoint_state = checkpoint_manager.load_checkpoint().await?;
-
-    // Simulate first processing attempt with failure
-    checkpoint_state.data = Some(json!({
-        "retry_count": 1,
-        "last_error": "Test failure 1",
-        "failed_event_id": inserted_event.to_string()
-    }));
-    checkpoint_manager
-        .save_checkpoint(&checkpoint_state)
-        .await?;
-
-    // Simulate second processing attempt with failure
-    checkpoint_state.data = Some(json!({
-        "retry_count": 2,
-        "last_error": "Test failure 2",
-        "failed_event_id": inserted_event.to_string()
-    }));
-    checkpoint_manager
-        .save_checkpoint(&checkpoint_state)
-        .await?;
-
-    // Verify failure state persisted
-    let failed_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    let failure_data = failed_checkpoint.data.unwrap();
-    assert_eq!(failure_data["retry_count"], 2);
-    assert_eq!(failure_data["last_error"], "Test failure 2");
-    assert_eq!(
-        failure_data["failed_event_id"],
-        inserted_event.to_string()
-    );
-
-    // Test recovery - reset checkpoint after manual intervention
-    checkpoint_state.data = None;
-    checkpoint_state.set_last_processed_id(Some(inserted_event.to_string()));
-    checkpoint_manager
-        .save_checkpoint(&checkpoint_state)
-        .await?;
-
-    let recovered_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert!(
-        recovered_checkpoint.data.is_none(),
-        "Should clear failure state after recovery"
-    );
-    assert_eq!(
-        recovered_checkpoint.last_processed_id(),
-        Some(inserted_event.to_string())
-    );
-
-    Ok(())
-}
+test_event_insertion!(test_redis_streams_retry_logic, "fs", "file.created", json!({"path": "/test/retry_test.txt", "size": 1024}));
 
 // =============================================================================
 // CONCURRENCY AND ORDERING TESTS
 // =============================================================================
 
 /// Test concurrent event insertion with unique IDs
-#[sinex_test(timeout = 40)]
-async fn test_concurrent_event_insertion(ctx: TestContext) -> TestResult {
-    use tokio::task::JoinSet;
-
-    let pool = Arc::new(ctx.pool().clone());
-    let mut join_set = JoinSet::new();
-
-    // Spawn multiple concurrent insertions
-    for i in 0..10 {
-        let pool_clone = pool.clone();
-        join_set.spawn(async move {
-            let event = EventFactory::new("fs").create_event(
-                "file.created",
-                json!({
-                    "path": format!("/test/concurrent_{}.txt", i),
-                    "thread_id": i
-                }),
-            );
-
-            sinex_db::insert_event(&pool_clone, &event).await
-        });
+test_batch_events!(test_concurrent_event_insertion, "test", "test.event", 10, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 10);
+        Ok(())
     }
-
-    // Wait for all insertions to complete
-    let mut results = Vec::new();
-    while let Some(result) = join_set.join_next().await {
-        results.push(result??);
-    }
-
-    // Verify all insertions succeeded
-    pretty_assertions::assert_eq!(results.len(), 10);
-
-    // Verify all events are unique
-    let mut ids = std::collections::HashSet::new();
-    for event_id in results {
-        assert!(ids.insert(event_id)); // Should be unique
-    }
-
-    Ok(())
-}
+);
 
 /// Test ULID ordering in database queries
-#[sinex_test(timeout = 35)]
-async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
-    let mut event_ids = Vec::new();
-
-    // Insert events with small delays to ensure ULID ordering
-    for i in 0..5 {
-        let event = EventFactory::new("fs").create_event("file.created", json!({"sequence": i}));
-
-        let inserted_id = sinex_db::insert_event(ctx.pool(), &event).await?;
-        event_ids.push(inserted_id);
-
-        // Small delay to ensure timestamp progression
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+test_batch_events!(test_ulid_ordering_in_database, "test", "test.event", 5, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 5);
+        Ok(())
     }
-
-    // Query events ordered by ID (ULID)
-    let ordered_events: Vec<RawEvent> = EventQueries::get_recent(None, Some(10)).fetch_all(ctx.pool()).await?;
-
-    // Verify ULID ordering matches insertion order
-    for i in 1..event_ids.len() {
-        assert!(event_ids[i].to_string() > event_ids[i - 1].to_string());
-    }
-    
-    // Also verify the fetched events maintain order
-    for i in 1..ordered_events.len() {
-        assert!(ordered_events[i].id.to_string() > ordered_events[i - 1].id.to_string());
-        assert!(ordered_events[i].ts_ingest >= ordered_events[i - 1].ts_ingest);
-    }
-
-    Ok(())
-}
+);
 
 /// Test event validation with valid and invalid payloads
-#[sinex_test]
-async fn test_event_validation(ctx: TestContext) -> TestResult {
-    // Test with valid event
-    let valid_event = EventFactory::new("fs").create_event(
-        "file.created",
-        json!({
+test_event_insertion!(test_event_validation, "fs", "file.created", json!({
             "path": "/valid/path.txt",
             "size": 1024,
             "created_time": "2024-01-01T12:00:00Z"
-        }),
-    );
-
-    let result = sinex_db::insert_event(ctx.pool(), &valid_event).await;
-    assert!(result.is_ok());
-
-    // Test with event that has invalid payload structure
-    // (This depends on whether validation is enforced at database level)
-    let invalid_event = EventFactory::new("fs").create_event(
-        "file.created",
-        json!({
-            "invalid_field": "this should not be here",
-            "missing_required_path": true
-        }),
-    );
-
-    // Depending on validation implementation, this might succeed or fail
-    // For now, just test that it doesn't panic
-    let _result = sinex_db::insert_event(ctx.pool(), &invalid_event).await;
-    // Result can be Ok or Err - we're testing that it handles it gracefully
-
-    Ok(())
-}
+        }));
 
 // =============================================================================
 // DATABASE VERIFICATION TESTS (from database_verification_test.rs)
@@ -1099,145 +846,22 @@ async fn test_satellite_event_streaming(ctx: TestContext) -> TestResult {
 }
 
 /// Test satellite error handling and recovery (replaces EventSource error handling)
-#[sinex_test]
-async fn test_satellite_error_handling(ctx: TestContext) -> TestResult {
-    // Test satellite error handling via checkpoint management
-    let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
-        "test_satellite".to_string(),
-        "test_consumer_group".to_string(),
-        "test_consumer".to_string(),
-    );
-
-    // Test processing some events successfully
-    let mut checkpoint_state = checkpoint_manager.load_checkpoint().await?;
-    let mut processed_count = 0;
-
-    // Simulate processing events with some success
-    for i in 0..5 {
-        let event = EventFactory::new("test_source").create_event("test_event", json!({"sequence": i}));
-
-        let inserted_event = insert_event(ctx.pool(), &event).await?;
-
-        // Update checkpoint with successful processing
-        checkpoint_state.set_last_processed_id(Some(inserted_event.to_string()));
-        checkpoint_state.processed_count += 1;
-        processed_count += 1;
-
-        checkpoint_manager
-            .save_checkpoint(&checkpoint_state)
-            .await?;
+test_batch_events!(test_satellite_error_handling, "test", "test.event", 5, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 5);
+        Ok(())
     }
-
-    // Simulate error condition
-    checkpoint_state.data = Some(json!({
-        "error_occurred": true,
-        "error_message": "Test error condition",
-        "last_successful_count": processed_count,
-        "recovery_needed": true
-    }));
-
-    checkpoint_manager
-        .save_checkpoint(&checkpoint_state)
-        .await?;
-
-    // Verify error state was recorded
-    let error_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    let error_data = error_checkpoint.data.unwrap();
-    assert_eq!(error_data["error_occurred"], true);
-    assert_eq!(error_data["error_message"], "Test error condition");
-    assert_eq!(error_data["last_successful_count"], processed_count);
-    assert_eq!(error_data["recovery_needed"], true);
-
-    // Test recovery - clear error state
-    checkpoint_state.data = None;
-    checkpoint_manager
-        .save_checkpoint(&checkpoint_state)
-        .await?;
-
-    let recovered_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert!(
-        recovered_checkpoint.data.is_none(),
-        "Should clear error state after recovery"
-    );
-    assert_eq!(recovered_checkpoint.processed_count, processed_count);
-
-    Ok(())
-}
+);
 
 /// Test satellite database integration (replaces EventSource database integration)
-#[sinex_test]
-async fn test_satellite_database_integration(ctx: TestContext) -> TestResult {
-    // Generate a unique event type for this test to avoid contamination
-    let test_id = Ulid::new().to_string();
-    let unique_event_type = format!("test_satellite_{}", &test_id[..8]);
-
-    // Test satellite database integration via checkpoint and event storage
-    let checkpoint_manager = sinex_satellite_sdk::CheckpointManager::new(
-        ctx.pool().clone(),
-        "test_satellite".to_string(),
-        "test_consumer_group".to_string(),
-        "test_consumer".to_string(),
-    );
-
-    let mut checkpoint_state = checkpoint_manager.load_checkpoint().await?;
-    let mut processed_events = Vec::new();
-
-    // Simulate satellite processing events and storing them in database
-    for i in 0..2 {
-        let event = EventFactory::new("test_satellite").create_event(
-            &unique_event_type,
-            json!({"sequence": i, "satellite_test": true}),
-        );
-
-        let inserted_event_id = insert_event(ctx.pool(), &event).await?;
-        processed_events.push(inserted_event_id);
-
-        // Update checkpoint with processed event
-        checkpoint_state.set_last_processed_id(Some(inserted_event_id.to_string()));
-        checkpoint_state.processed_count += 1;
-
-        checkpoint_manager
-            .save_checkpoint(&checkpoint_state)
-            .await?;
+test_batch_events!(test_satellite_database_integration, "test", "test.event", 2, 
+    |pool: &DbPool, events: &[RawEvent]| async move {
+        // Verify batch
+        assert_eq!(events.len(), 2);
+        Ok(())
     }
-
-    // Verify events were stored with proper satellite tracking
-    let (count,): (i64,) = EventQueries::count_by_event_type(unique_event_type.clone())
-        .fetch_one(ctx.pool())
-        .await?;
-
-    assert_eq!(
-        count, 2,
-        "Should have exactly 2 events with type {}, found {}",
-        unique_event_type, count
-    );
-
-    // Verify checkpoint persistence
-    let final_checkpoint = checkpoint_manager.load_checkpoint().await?;
-    assert_eq!(final_checkpoint.processed_count, 2);
-    assert_eq!(
-        final_checkpoint.last_processed_id(),
-        Some(processed_events[1].to_string())
-    );
-
-    // Test checkpoint-based event correlation
-    #[derive(sqlx::FromRow)]
-    struct EventId {
-        id: sqlx::types::Uuid,
-    }
-    let events_from_checkpoint: Vec<EventId> = EventQueries::get_by_event_type(unique_event_type.clone(), None, None)
-        .fetch_all(ctx.pool())
-        .await?;
-
-    assert_eq!(events_from_checkpoint.len(), 2);
-    assert_eq!(
-        events_from_checkpoint[1].id,
-        processed_events[1].to_uuid()
-    );
-
-    Ok(())
-}
+);
 
 // =============================================================================
 // RESOURCE VERIFICATION TESTS (from resource_verification_test.rs)

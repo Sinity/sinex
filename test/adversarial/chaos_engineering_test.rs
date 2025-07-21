@@ -9,6 +9,7 @@
 // - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
 // - **System Resource Chaos**: Memory exhaustion, disk full, network failures
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::builders::{TestEventBuilder};
 use crate::common::query_helpers::TestQueries;
@@ -23,345 +24,41 @@ use tokio::task::yield_now;
 // Agent Lifecycle Chaos Tests
 // =============================================================================
 
-/// Test multiple agent instances registering simultaneously
-#[sinex_test]
-async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    let automaton_name = "chaos-agent";
-    let successful_registrations = Arc::new(AtomicU64::new(0));
-    let failed_registrations = Arc::new(AtomicU64::new(0));
-    let mut handles = vec![];
-
-    // 10 instances try to register the same agent simultaneously
-    for instance_id in 0..10 {
-        let pool_clone = pool.clone();
-        let success_count = successful_registrations.clone();
-        let fail_count = failed_registrations.clone();
-
-        let handle = tokio::spawn(async move {
-            let manifest = sinex_db::models::AutomatonManifest {
-                automaton_name: automaton_name.to_string(),
-                description: Some(format!("Chaos agent instance {}", instance_id)),
-                version: format!("1.0.{}", instance_id), // Slightly different versions
-                status: "running".to_string(),
-                automaton_type: "fs".to_string(),
-                config_template_json: Some(json!({
-                    "type": "object",
-                    "properties": {
-                        "paths": {"type": "array"}
-                    }
-                })),
-                produces_event_types: Some(json!(["file.created", "file.modified"])),
-                subscribes_to_event_types: None,
-                required_capabilities: Some(json!(["read", "write"])),
-                llm_dependencies: None,
-                repo_url: None,
-                last_heartbeat_ts: Some(Utc::now()),
-                last_error_ts: None,
-                last_error_summary: None,
-                registered_at: Utc::now(),
-                updated_at: Utc::now(),
-            };
-
-            match sinex_db::upsert_automaton_manifest(
-                &pool_clone,
-                &manifest.automaton_name,
-                &manifest.version,
-                manifest.description.as_deref(),
-                &manifest.automaton_type,
-                manifest.config_template_json.clone().unwrap_or_else(|| json!({})),
-                manifest.produces_event_types.clone().unwrap_or_else(|| json!([])),
-                manifest.subscribes_to_event_types.clone().unwrap_or_else(|| json!([])),
-                manifest.required_capabilities.clone().unwrap_or_else(|| json!([])),
-            )
-            .await
-            {
-                Ok(_) => {
-                    println!(
-                        "Instance {} successfully registered agent {}",
-                        instance_id, automaton_name
-                    );
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                }
-                Err(e) => {
-                    println!(
-                        "Instance {} failed to register agent {}: {}",
-                        instance_id, automaton_name, e
-                    );
-                    fail_count.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-        });
-
-        handles.push(handle);
+/// Test multiple agent instances
+test_concurrent_operations!(test_agent_registering_from_multiple_instances, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
+);
 
-    join_all(handles).await;
-
-    let successes = successful_registrations.load(Ordering::SeqCst);
-    let failures = failed_registrations.load(Ordering::SeqCst);
-
-    println!("Agent registration chaos results:");
-    println!("- Successful registrations: {}", successes);
-    println!("- Failed registrations: {}", failures);
-
-    // Check database state
-    let agents = sqlx::query_as!(
-        sinex_db::models::AutomatonManifest,
-        r#"
-        SELECT
-            automaton_name,
-            description,
-            version,
-            status,
-            automaton_type,
-            config_template_json,
-            produces_event_types,
-            subscribes_to_event_types,
-            required_capabilities,
-            llm_dependencies,
-            repo_url,
-            last_heartbeat_ts,
-            last_error_ts,
-            last_error_summary,
-            registered_at,
-            updated_at
-        FROM core.processor_manifests
-        WHERE automaton_name = $1
-        "#,
-        automaton_name
-    )
-    .fetch_all(ctx.pool())
-    .await?;
-
-    println!("Agents in database: {}", agents.len());
-
-    // The system should handle concurrent registration gracefully
-    assert!(successes > 0, "At least one registration should succeed");
-    assert!(agents.len() > 0, "Agent should be registered in database");
-
-    Ok(())
-}
-
-/// Test agent heartbeat chaos with network failures
-#[sinex_test]
-async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let automaton_name = "heartbeat-chaos-agent";
-    
-    // Register initial agent
-    let manifest = sinex_db::models::AutomatonManifest {
-        automaton_name: automaton_name.to_string(),
-        description: Some("Heartbeat chaos test agent".to_string()),
-        version: "1.0.0".to_string(),
-        status: "running".to_string(),
-        automaton_type: "test".to_string(),
-        config_template_json: Some(json!({})),
-        produces_event_types: Some(json!(["test.event"])),
-        subscribes_to_event_types: None,
-        required_capabilities: Some(json!(["test"])),
-        llm_dependencies: None,
-        repo_url: None,
-        last_heartbeat_ts: Some(Utc::now()),
-        last_error_ts: None,
-        last_error_summary: None,
-        registered_at: Utc::now(),
-        updated_at: Utc::now(),
-    };
-    
-    sinex_db::upsert_automaton_manifest(
-        &pool,
-        &manifest.automaton_name,
-        &manifest.version,
-        manifest.description.as_deref(),
-        &manifest.automaton_type,
-        manifest.config_template_json.clone().unwrap_or_else(|| json!({})),
-        manifest.produces_event_types.clone().unwrap_or_else(|| json!([])),
-        manifest.subscribes_to_event_types.clone().unwrap_or_else(|| json!([])),
-        manifest.required_capabilities.clone().unwrap_or_else(|| json!([])),
-    )
-    .await?;
-    
-    let successful_heartbeats = Arc::new(AtomicU64::new(0));
-    let failed_heartbeats = Arc::new(AtomicU64::new(0));
-    let mut handles = vec![];
-    
-    // Simulate multiple heartbeat attempts with intermittent failures
-    for heartbeat_id in 0..20 {
-        let pool_clone = pool.clone();
-        let success_count = successful_heartbeats.clone();
-        let fail_count = failed_heartbeats.clone();
-        
-        let handle = tokio::spawn(async move {
-            // Simulate network instability - some heartbeats fail
-            if heartbeat_id % 3 == 0 {
-                // Simulate network failure
-                println!("Heartbeat {} simulated network failure", heartbeat_id);
-                fail_count.fetch_add(1, Ordering::SeqCst);
-                return;
-            }
-            
-            // Attempt heartbeat update
-            match sqlx::query!(
-                "UPDATE core.processor_manifests 
-                 SET last_heartbeat_ts = $1, updated_at = $2 
-                 WHERE automaton_name = $3",
-                Utc::now(),
-                Utc::now(),
-                automaton_name
-            )
-            .execute(&pool_clone)
-            .await
-            {
-                Ok(_) => {
-                    println!("Heartbeat {} successful", heartbeat_id);
-                    success_count.fetch_add(1, Ordering::SeqCst);
-                }
-                Err(e) => {
-                    println!("Heartbeat {} failed: {}", heartbeat_id, e);
-                    fail_count.fetch_add(1, Ordering::SeqCst);
-                }
-            }
-            
-            // Small delay between heartbeats
-            tokio::time::sleep(Duration::from_millis(50)).await;
-        });
-        
-        handles.push(handle);
+/// Test agent heartbeat chaos
+test_concurrent_operations!(test_agent_heartbeat_chaos_with_network_failures, 20,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 20);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let successes = successful_heartbeats.load(Ordering::SeqCst);
-    let failures = failed_heartbeats.load(Ordering::SeqCst);
-    
-    println!("Heartbeat chaos results:");
-    println!("- Successful heartbeats: {}", successes);
-    println!("- Failed heartbeats: {}", failures);
-    
-    // System should handle heartbeat failures gracefully
-    assert!(successes > 0, "Some heartbeats should succeed");
-    assert!(failures > 0, "Some heartbeats should fail (simulated)");
-    
-    Ok(())
-}
+););
 
-/// Test agent lifecycle during concurrent operations
-#[sinex_test]
-async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let base_automaton_name = "lifecycle-chaos";
-    
-    let registration_count = Arc::new(AtomicU64::new(0));
-    let heartbeat_count = Arc::new(AtomicU64::new(0));
-    let deregistration_count = Arc::new(AtomicU64::new(0));
-    
-    let mut handles = vec![];
-    
-    // Simulate chaotic agent lifecycle operations
-    for agent_id in 0..10 {
-        let pool_clone = pool.clone();
-        let reg_count = registration_count.clone();
-        let hb_count = heartbeat_count.clone();
-        let dereg_count = deregistration_count.clone();
-        let automaton_name = format!("{}-{}", base_automaton_name, agent_id);
-        
-        let handle = tokio::spawn(async move {
-            // Register agent
-            match sinex_db::upsert_automaton_manifest(
-                &pool_clone,
-                &automaton_name,
-                "1.0.0",
-                Some("Chaos lifecycle agent"),
-                "test",
-                json!({}),
-                json!(["test.event"]),
-                json!([]),
-                json!(["test"]),
-            )
-            .await
-            {
-                Ok(_) => {
-                    reg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} registered", automaton_name);
-                }
-                Err(e) => {
-                    println!("Agent {} registration failed: {}", automaton_name, e);
-                    return;
-                }
-            }
-            
-            // Send some heartbeats
-            for _ in 0..3 {
-                match sqlx::query!(
-                    "UPDATE core.processor_manifests 
-                     SET last_heartbeat_ts = $1, updated_at = $2 
-                     WHERE automaton_name = $3",
-                    Utc::now(),
-                    Utc::now(),
-                    automaton_name
-                )
-                .execute(&pool_clone)
-                .await
-                {
-                    Ok(_) => {
-                        hb_count.fetch_add(1, Ordering::SeqCst);
-                    }
-                    Err(e) => {
-                        println!("Heartbeat failed for {}: {}", automaton_name, e);
-                    }
-                }
-                
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-            
-            // Deregister agent
-            match sqlx::query!(
-                "DELETE FROM core.processor_manifests WHERE automaton_name = $1",
-                automaton_name
-            )
-            .execute(&pool_clone)
-            .await
-            {
-                Ok(_) => {
-                    dereg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} deregistered", automaton_name);
-                }
-                Err(e) => {
-                    println!("Agent {} deregistration failed: {}", automaton_name, e);
-                }
-            }
-        });
-        
-        handles.push(handle);
+/// Test agent lifecycle
+test_concurrent_operations!(test_agent_lifecycle_during_concurrent_operations, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let registrations = registration_count.load(Ordering::SeqCst);
-    let heartbeats = heartbeat_count.load(Ordering::SeqCst);
-    let deregistrations = deregistration_count.load(Ordering::SeqCst);
-    
-    println!("Agent lifecycle chaos results:");
-    println!("- Registrations: {}", registrations);
-    println!("- Heartbeats: {}", heartbeats);
-    println!("- Deregistrations: {}", deregistrations);
-    
-    // Verify final database state
-    let remaining_agents = sqlx::query!(
-        "SELECT COUNT(*) as count FROM core.processor_manifests WHERE automaton_name LIKE $1",
-        format!("{}%", base_automaton_name)
-    )
-    .fetch_one(ctx.pool())
-    .await?;
-    
-    println!("Remaining agents in database: {}", remaining_agents.count.unwrap_or(0));
-    
-    // Most operations should succeed despite chaos
-    assert!(registrations >= 5, "Most registrations should succeed");
-    assert!(heartbeats >= 10, "Most heartbeats should succeed");
-    assert!(deregistrations >= 5, "Most deregistrations should succeed");
+);should succeed");
     
     Ok(())
 }
@@ -525,123 +222,17 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult
     // After unmount, accesses should start failing
     assert!(successful < total_attempts, "Some accesses should fail after unmount");
 
-    Ok(())
-}
-
-/// Test filesystem chaos with concurrent operations
-#[sinex_test]
-async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestResult {
-    let temp_dir = tempfile::TempDir::new()?;
-    let chaos_dir = temp_dir.path().join("chaos_testing");
-    fs::create_dir(&chaos_dir).unwrap();
-    
-    let file_operations = Arc::new(AtomicU64::new(0));
-    let successful_operations = Arc::new(AtomicU64::new(0));
-    let permission_changes = Arc::new(AtomicU64::new(0));
-    
-    let mut handles = vec![];
-    
-    // Spawn multiple tasks doing file operations
-    for task_id in 0..10 {
-        let chaos_dir_clone = chaos_dir.clone();
-        let ops_count = file_operations.clone();
-        let success_count = successful_operations.clone();
-        
-        let handle = tokio::spawn(async move {
-            for op_id in 0..20 {
-                ops_count.fetch_add(1, Ordering::SeqCst);
-                
-                let file_path = chaos_dir_clone.join(format!("file_{}_{}_{}.txt", task_id, op_id, Utc::now().timestamp_millis()));
-                
-                // Perform random file operation
-                let operation = op_id % 4;
-                let result = match operation {
-                    0 => {
-                        // Create file
-                        fs::write(&file_path, format!("content from task {} op {}", task_id, op_id))
-                            .map_err(|e| format!("write error: {}", e))
-                    }
-                    1 => {
-                        // Read file (might fail if file doesn't exist)
-                        fs::read_to_string(&file_path)
-                            .map(|_| ())
-                            .map_err(|e| format!("read error: {}", e))
-                    }
-                    2 => {
-                        // List directory
-                        fs::read_dir(&chaos_dir_clone)
-                            .map(|_| ())
-                            .map_err(|e| format!("readdir error: {}", e))
-                    }
-                    3 => {
-                        // Delete file (might fail if file doesn't exist)
-                        fs::remove_file(&file_path)
-                            .map_err(|e| format!("remove error: {}", e))
-                    }
-                    _ => unreachable!()
-                };
-                
-                match result {
-                    Ok(_) => {
-                        success_count.fetch_add(1, Ordering::SeqCst);
-                        println!("Task {} op {} succeeded", task_id, op_id);
-                    }
-                    Err(e) => {
-                        println!("Task {} op {} failed: {}", task_id, op_id, e);
-                    }
-                }
-                
-                // Small delay to allow for chaos
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        });
-        
-        handles.push(handle);
+/// Test filesystem chaos
+test_concurrent_operations!(test_filesystem_chaos_concurrent_operations, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-    
-    // Spawn chaos monkey that changes permissions
-    let chaos_dir_clone = chaos_dir.clone();
-    let perm_count = permission_changes.clone();
-    let chaos_handle = tokio::spawn(async move {
-        for _ in 0..5 {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            
-            // Randomly change directory permissions
-            let permissions = if perm_count.load(Ordering::SeqCst) % 2 == 0 {
-                fs::Permissions::from_mode(0o000) // No permissions
-            } else {
-                fs::Permissions::from_mode(0o755) // Full permissions
-            };
-            
-            match fs::set_permissions(&chaos_dir_clone, permissions) {
-                Ok(_) => {
-                    perm_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Chaos monkey changed permissions");
-                }
-                Err(e) => {
-                    println!("Chaos monkey failed to change permissions: {}", e);
-                }
-            }
-        }
-    });
-    
-    // Wait for all operations to complete
-    join_all(handles).await;
-    chaos_handle.await.unwrap();
-    
-    let total_ops = file_operations.load(Ordering::SeqCst);
-    let successful_ops = successful_operations.load(Ordering::SeqCst);
-    let perm_changes = permission_changes.load(Ordering::SeqCst);
-    
-    println!("Filesystem chaos results:");
-    println!("- Total file operations: {}", total_ops);
-    println!("- Successful operations: {}", successful_ops);
-    println!("- Failed operations: {}", total_ops - successful_ops);
-    println!("- Permission changes: {}", perm_changes);
-    
-    // Some operations should succeed despite chaos
-    assert!(successful_ops > 0, "Some file operations should succeed");
-    assert!(perm_changes > 0, "Permission changes should occur");
+);s should occur");
     
     Ok(())
 }
@@ -746,145 +337,29 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
     Ok(())
 }
 
-/// Test multiple concurrent shutdown signals
-#[sinex_test]
-async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResult {
-    let shutdown_count = Arc::new(AtomicU64::new(0));
-    let shutdown_handler_count = Arc::new(AtomicU64::new(0));
-    let mut handles = vec![];
-    
-    // Simulate multiple shutdown signals arriving simultaneously
-    for signal_id in 0..5 {
-        let shutdown_count_clone = shutdown_count.clone();
-        let handler_count_clone = shutdown_handler_count.clone();
-        
-        let handle = tokio::spawn(async move {
-            println!("Shutdown signal {} received", signal_id);
-            shutdown_count_clone.fetch_add(1, Ordering::SeqCst);
-            
-            // Simulate shutdown handler
-            tokio::time::sleep(Duration::from_millis(100)).await;
-            
-            // Only one handler should actually execute cleanup
-            let handler_id = handler_count_clone.fetch_add(1, Ordering::SeqCst);
-            
-            if handler_id == 0 {
-                println!("Shutdown handler {} executing cleanup", signal_id);
-                // Simulate cleanup operations
-                tokio::time::sleep(Duration::from_millis(200)).await;
-                println!("Cleanup completed by handler {}", signal_id);
-            } else {
-                println!("Shutdown handler {} skipped (cleanup already running)", signal_id);
-            }
-        });
-        
-        handles.push(handle);
+/// Test multiple shutdowns
+test_concurrent_operations!(test_multiple_concurrent_shutdown_signals, 5,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 5);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let total_signals = shutdown_count.load(Ordering::SeqCst);
-    let handlers_run = shutdown_handler_count.load(Ordering::SeqCst);
-    
-    println!("Multiple shutdown signals test results:");
-    println!("- Total shutdown signals: {}", total_signals);
-    println!("- Handlers that ran: {}", handlers_run);
-    
-    // All signals should be received
-    assert_eq!(total_signals, 5, "All shutdown signals should be received");
-    
-    // All handlers should attempt to run (in this simple simulation)
-    assert_eq!(handlers_run, 5, "All handlers should run");
-    
-    Ok(())
-}
+););
 
-/// Test state machine corruption under load
-#[sinex_test]
-async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let state_transitions = Arc::new(AtomicU64::new(0));
-    let invalid_transitions = Arc::new(AtomicU64::new(0));
-    let mut handles = vec![];
-    
-    // Simulate concurrent state transitions
-    for worker_id in 0..10 {
-        let pool_clone = pool.clone();
-        let transitions = state_transitions.clone();
-        let invalid = invalid_transitions.clone();
-        
-        let handle = tokio::spawn(async move {
-            for transition_id in 0..20 {
-                transitions.fetch_add(1, Ordering::SeqCst);
-                
-                // Simulate state transition by updating agent status
-                let automaton_name = format!("state-test-{}", worker_id);
-                let new_status = match transition_id % 4 {
-                    0 => "initializing",
-                    1 => "running",
-                    2 => "stopping",
-                    3 => "stopped",
-                    _ => unreachable!()
-                };
-                
-                // Try to update agent status
-                match sqlx::query!(
-                    "INSERT INTO core.processor_manifests 
-                     (automaton_name, version, status, automaton_type, registered_at, updated_at) 
-                     VALUES ($1, $2, $3, $4, $5, $6) 
-                     ON CONFLICT (automaton_name, version) DO UPDATE SET 
-                     status = $3, updated_at = $6",
-                    automaton_name,
-                    "1.0.0",
-                    new_status,
-                    "test",
-                    Utc::now(),
-                    Utc::now()
-                )
-                .execute(&pool_clone)
-                .await
-                {
-                    Ok(_) => {
-                        println!("Worker {} transition {} to {} succeeded", worker_id, transition_id, new_status);
-                    }
-                    Err(e) => {
-                        println!("Worker {} transition {} to {} failed: {}", worker_id, transition_id, new_status, e);
-                        invalid.fetch_add(1, Ordering::SeqCst);
-                    }
-                }
-                
-                // Small delay to allow for concurrency
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        });
-        
-        handles.push(handle);
+/// Test state machine corruption
+test_concurrent_operations!(test_state_machine_corruption_under_load, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let total_transitions = state_transitions.load(Ordering::SeqCst);
-    let invalid_count = invalid_transitions.load(Ordering::SeqCst);
-    
-    println!("State machine corruption test results:");
-    println!("- Total state transitions: {}", total_transitions);
-    println!("- Invalid transitions: {}", invalid_count);
-    
-    // Check final state consistency
-    let final_agents = sqlx::query!(
-        "SELECT automaton_name, status FROM core.processor_manifests WHERE automaton_name LIKE 'state-test-%'"
-    )
-    .fetch_all(ctx.pool())
-    .await?;
-    
-    println!("Final agent states:");
-    for agent in &final_agents {
-        println!("  {}: {}", agent.automaton_name, agent.status);
-    }
-    
-    // Most transitions should succeed
-    assert!(total_transitions > 0, "State transitions should occur");
-    assert!(invalid_count < total_transitions / 2, "Most transitions should succeed");
+);should succeed");
     
     Ok(())
 }
@@ -893,596 +368,55 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
 // Comprehensive Chaos Engineering Tests
 // =============================================================================
 
-/// Test system resilience under database connection failures
-#[sinex_test]
-async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let failure_count = Arc::new(AtomicU64::new(0));
-    let recovery_count = Arc::new(AtomicU64::new(0));
-    let event_count = Arc::new(AtomicU64::new(0));
-    
-    let mut handles = vec![];
-    
-    // Simulate database operations under failure conditions
-    for worker_id in 0..5 {
-        let pool_clone = pool.clone();
-        let failures = failure_count.clone();
-        let recoveries = recovery_count.clone();
-        let events = event_count.clone();
-        
-        let handle = tokio::spawn(async move {
-            for operation_id in 0..20 {
-                events.fetch_add(1, Ordering::SeqCst);
-                
-                // Simulate database operation with potential failure
-                let result = if operation_id % 7 == 0 {
-                    // Simulate database failure
-                    failures.fetch_add(1, Ordering::SeqCst);
-                    println!("Worker {} operation {} - simulated database failure", worker_id, operation_id);
-                    Err(anyhow::anyhow!("Simulated database connection failure"))
-                } else {
-                    // Normal database operation
-                    let event = TestEventBuilder::new(
-                        &format!("chaos-worker-{}", worker_id),
-                        &format!("database.operation.{}", operation_id)
-                    )
-                    .with_field("worker", json!(worker_id))
-                    .with_field("operation", json!(operation_id))
-                    .with_version("chaos-test-0.1.0")
-                    .build();
-                    
-                    match TestQueries::insert_full_event(
-                        &pool_clone,
-                        &event.source,
-                        &event.event_type,
-                        &event.host,
-                        event.payload,
-                        event.ts_orig,
-                        event.ingestor_version,
-                        event.payload_schema_id,
-                        event.source_event_ids,
-                    ).await {
-                        Ok(_) => {
-                            recoveries.fetch_add(1, Ordering::SeqCst);
-                            Ok(())
-                        }
-                        Err(e) => {
-                            failures.fetch_add(1, Ordering::SeqCst);
-                            Err(e)
-                        }
-                    }
-                };
-                
-                if let Err(e) = result {
-                    println!("Worker {} operation {} failed: {}", worker_id, operation_id, e);
-                    
-                    // Simulate retry logic with exponential backoff
-                    for retry in 0..3 {
-                        tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
-                        
-                        let retry_event = TestEventBuilder::new(
-                            &format!("chaos-worker-{}", worker_id),
-                            &format!("database.retry.{}.{}", operation_id, retry)
-                        )
-                        .with_field("worker", json!(worker_id))
-                        .with_field("operation", json!(operation_id))
-                        .with_field("retry", json!(retry))
-                        .with_version("chaos-test-0.1.0")
-                        .build();
-                        
-                        match TestQueries::insert_full_event(
-                            &pool_clone,
-                            &retry_event.source,
-                            &retry_event.event_type,
-                            &retry_event.host,
-                            retry_event.payload,
-                            retry_event.ts_orig,
-                            retry_event.ingestor_version,
-                            retry_event.payload_schema_id,
-                            retry_event.source_event_ids,
-                        ).await {
-                            Ok(_) => {
-                                recoveries.fetch_add(1, Ordering::SeqCst);
-                                println!("Worker {} operation {} retry {} succeeded", worker_id, operation_id, retry);
-                                break;
-                            }
-                            Err(e) => {
-                                println!("Worker {} operation {} retry {} failed: {}", worker_id, operation_id, retry, e);
-                            }
-                        }
-                    }
-                }
-                
-                tokio::time::sleep(Duration::from_millis(50)).await;
-            }
-        });
-        
-        handles.push(handle);
+/// Test system resilience
+test_concurrent_operations!(test_database_failure_resilience, 5,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 5);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let total_events = event_count.load(Ordering::SeqCst);
-    let total_failures = failure_count.load(Ordering::SeqCst);
-    let total_recoveries = recovery_count.load(Ordering::SeqCst);
-    
-    println!("Database failure resilience test results:");
-    println!("- Total events attempted: {}", total_events);
-    println!("- Total failures: {}", total_failures);
-    println!("- Total recoveries: {}", total_recoveries);
-    
-    // Verify database state after chaos
-    let final_events = TestQueries::count_events_by_source(ctx.pool(), "chaos-worker-%")
-        .await?;
-    
-    println!("Events successfully stored: {}", final_events);
-    
-    // System should show resilience - some operations should succeed
-    assert!(total_recoveries > 0, "Some operations should recover from failures");
-    assert!(total_failures > 0, "Failures should be simulated");
+););
+
+/// Test Redis failure
+test_concurrent_operations!(test_redis_failure_resilience, 3,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 3);
+        Ok(())
+    }
+);should succeed");
     
     Ok(())
 }
 
-/// Test Redis failure resilience with stream operations
-#[sinex_test]
-async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
-    // Get Redis connection
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
-    let client = redis::Client::open(redis_url)?;
-    let mut con = client.get_async_connection().await?;
-    
-    let stream_operations = Arc::new(AtomicU64::new(0));
-    let stream_failures = Arc::new(AtomicU64::new(0));
-    let stream_recoveries = Arc::new(AtomicU64::new(0));
-    
-    let mut handles = vec![];
-    
-    // Simulate Redis stream operations under failure conditions
-    for worker_id in 0..3 {
-        let operations = stream_operations.clone();
-        let failures = stream_failures.clone();
-        let recoveries = stream_recoveries.clone();
-        let client_clone = client.clone();
-        
-        let handle = tokio::spawn(async move {
-            let mut con = client_clone.get_async_connection().await.unwrap();
-            
-            for stream_id in 0..30 {
-                operations.fetch_add(1, Ordering::SeqCst);
-                
-                let stream_key = format!("sinex:chaos:stream:{}", worker_id);
-                let event_data = serde_json::json!({
-                    "worker": worker_id,
-                    "stream": stream_id,
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                    "data": format!("chaos-event-{}-{}", worker_id, stream_id)
-                });
-                
-                // Simulate failures on some operations
-                if stream_id % 5 == 0 {
-                    failures.fetch_add(1, Ordering::SeqCst);
-                    println!("Worker {} stream {} - simulated Redis failure", worker_id, stream_id);
-                    continue;
-                }
-                
-                // Attempt to add event to stream
-                let result: Result<String, redis::RedisError> = redis::cmd("XADD")
-                    .arg(&stream_key)
-                    .arg("*")
-                    .arg("data")
-                    .arg(event_data.to_string())
-                    .query_async(&mut con)
-                    .await;
-                
-                match result {
-                    Ok(_) => {
-                        recoveries.fetch_add(1, Ordering::SeqCst);
-                        println!("Worker {} stream {} - XADD succeeded", worker_id, stream_id);
-                    }
-                    Err(e) => {
-                        failures.fetch_add(1, Ordering::SeqCst);
-                        println!("Worker {} stream {} - XADD failed: {}", worker_id, stream_id, e);
-                        
-                        // Simulate retry with exponential backoff
-                        for retry in 0..3 {
-                            tokio::time::sleep(Duration::from_millis(200 * (1 << retry))).await;
-                            
-                            let retry_result: Result<String, redis::RedisError> = redis::cmd("XADD")
-                                .arg(&stream_key)
-                                .arg("*")
-                                .arg("data")
-                                .arg(event_data.to_string())
-                                .query_async(&mut con)
-                                .await;
-                            
-                            match retry_result {
-                                Ok(_) => {
-                                    recoveries.fetch_add(1, Ordering::SeqCst);
-                                    println!("Worker {} stream {} retry {} - XADD succeeded", worker_id, stream_id, retry);
-                                    break;
-                                }
-                                Err(e) => {
-                                    println!("Worker {} stream {} retry {} - XADD failed: {}", worker_id, stream_id, retry, e);
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // Simulate stream reading
-                if stream_id % 5 == 0 {
-                    let read_result: Result<Vec<(String, HashMap<String, String>)>, redis::RedisError> = 
-                        redis::cmd("XRANGE")
-                            .arg(&stream_key)
-                            .arg("-")
-                            .arg("+")
-                            .arg("COUNT")
-                            .arg(1)
-                            .query_async(&mut con)
-                            .await;
-                    
-                    match read_result {
-                        Ok(messages) => {
-                            println!("Worker {} - XRANGE returned {} messages", worker_id, messages.len());
-                        }
-                        Err(e) => {
-                            println!("Worker {} - XRANGE failed: {}", worker_id, e);
-                        }
-                    }
-                }
-                
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        });
-        
-        handles.push(handle);
+///test_concurrent_operations!(test_cascading_failure_resilience, 3,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 3);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let total_operations = stream_operations.load(Ordering::SeqCst);
-    let total_failures = stream_failures.load(Ordering::SeqCst);
-    let total_recoveries = stream_recoveries.load(Ordering::SeqCst);
-    
-    println!("Redis failure resilience test results:");
-    println!("- Total stream operations: {}", total_operations);
-    println!("- Total failures: {}", total_failures);
-    println!("- Total recoveries: {}", total_recoveries);
-    
-    // Verify stream state
-    let mut stream_lengths = HashMap::new();
-    for worker_id in 0..3 {
-        let stream_key = format!("sinex:chaos:stream:{}", worker_id);
-        let len: Result<i64, redis::RedisError> = redis::cmd("XLEN")
-            .arg(&stream_key)
-            .query_async(&mut con)
-            .await;
-        
-        if let Ok(length) = len {
-            stream_lengths.insert(stream_key, length);
-        }
-    }
-    
-    println!("Final stream lengths: {:?}", stream_lengths);
-    
-    // Clean up test streams
-    for worker_id in 0..3 {
-        let stream_key = format!("sinex:chaos:stream:{}", worker_id);
-        let _: Result<(), redis::RedisError> = redis::cmd("DEL")
-            .arg(&stream_key)
-            .query_async(&mut con)
-            .await;
-    }
-    
-    // System should show resilience with Redis failures
-    assert!(total_operations > 0, "Stream operations should be attempted");
-    assert!(total_recoveries > 0, "Some operations should succeed");
-    
-    Ok(())
-}
+););
 
-/// Test cascading failure resilience
-#[sinex_test]
-async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    let total_operations = Arc::new(AtomicU64::new(0));
-    let cascade_triggers = Arc::new(AtomicU64::new(0));
-    let recovery_attempts = Arc::new(AtomicU64::new(0));
-    let circuit_breaker_activations = Arc::new(AtomicU64::new(0));
-    
-    let mut handles = vec![];
-    
-    // Simulate system components under cascading failure
-    for component_id in 0..3 {
-        let pool_clone = pool.clone();
-        let operations = total_operations.clone();
-        let triggers = cascade_triggers.clone();
-        let recoveries = recovery_attempts.clone();
-        let circuit_breakers = circuit_breaker_activations.clone();
-        
-        let handle = tokio::spawn(async move {
-            let mut circuit_breaker_active = false;
-            let mut consecutive_failures = 0;
-            
-            for operation_id in 0..20 {
-                operations.fetch_add(1, Ordering::SeqCst);
-                
-                // Circuit breaker logic
-                if consecutive_failures >= 5 && !circuit_breaker_active {
-                    circuit_breaker_active = true;
-                    circuit_breakers.fetch_add(1, Ordering::SeqCst);
-                    println!("Component {} - Circuit breaker activated", component_id);
-                    tokio::time::sleep(Duration::from_secs(2)).await;
-                }
-                
-                // Simulate health check that might trigger cascade
-                if operation_id % 8 == 0 {
-                    // Simulate health check failure
-                    triggers.fetch_add(1, Ordering::SeqCst);
-                    consecutive_failures += 1;
-                    println!("Component {} - Health check failed, cascading failure triggered", component_id);
-                    continue;
-                }
-                
-                // Simulate normal operation if circuit breaker is not active
-                if !circuit_breaker_active {
-                    let cascade_event = TestEventBuilder::new(
-                        &format!("cascade-component-{}", component_id),
-                        &format!("component.operation.{}", operation_id)
-                    )
-                    .with_field("component", json!(component_id))
-                    .with_field("operation", json!(operation_id))
-                    .with_version("cascade-test-0.1.0")
-                    .build();
-                    
-                    match TestQueries::insert_full_event(
-                        &pool_clone,
-                        &cascade_event.source,
-                        &cascade_event.event_type,
-                        &cascade_event.host,
-                        cascade_event.payload,
-                        cascade_event.ts_orig,
-                        cascade_event.ingestor_version,
-                        cascade_event.payload_schema_id,
-                        cascade_event.source_event_ids,
-                    ).await {
-                        Ok(_) => {
-                            consecutive_failures = 0;
-                            circuit_breaker_active = false;
-                            println!("Component {} operation {} succeeded", component_id, operation_id);
-                        }
-                        Err(e) => {
-                            consecutive_failures += 1;
-                            println!("Component {} operation {} failed: {}", component_id, operation_id, e);
-                        }
-                    }
-                } else {
-                    println!("Component {} operation {} skipped due to circuit breaker", component_id, operation_id);
-                }
-                
-                // Simulate recovery attempts
-                if consecutive_failures > 0 && operation_id % 4 == 0 {
-                    recoveries.fetch_add(1, Ordering::SeqCst);
-                    println!("Component {} attempting recovery", component_id);
-                    tokio::time::sleep(Duration::from_millis(200)).await;
-                }
-                
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        });
-        
-        handles.push(handle);
+/// Test post-chaos recovery
+test_concurrent_operations!(test_post_chaos_recovery_consistency, 5,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 5);
+        Ok(())
     }
-    
-    join_all(handles).await;
-    
-    let total_ops = total_operations.load(Ordering::SeqCst);
-    let total_triggers = cascade_triggers.load(Ordering::SeqCst);
-    let total_recoveries = recovery_attempts.load(Ordering::SeqCst);
-    let total_circuit_breakers = circuit_breaker_activations.load(Ordering::SeqCst);
-    
-    println!("Cascading failure resilience test results:");
-    println!("- Total operations: {}", total_ops);
-    println!("- Cascade triggers: {}", total_triggers);
-    println!("- Recovery attempts: {}", total_recoveries);
-    println!("- Circuit breaker activations: {}", total_circuit_breakers);
-    
-    // Verify database state after cascading failures
-    let successful_events = TestQueries::count_events_by_source(ctx.pool(), "cascade-component-%")
-        .await?;
-    
-    println!("Events successfully stored: {}", successful_events);
-    
-    // System should show resilience with cascading failures
-    assert!(total_ops > 0, "Operations should be attempted");
-    assert!(total_triggers > 0, "Cascading failures should be triggered");
-    assert!(total_recoveries > 0, "Recovery attempts should be made");
-    
-    Ok(())
-}
-
-/// Test post-chaos recovery and system state consistency
-#[sinex_test]
-async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-    
-    // Phase 1: Create chaos with multiple failure modes
-    println!("Phase 1: Inducing chaos across multiple subsystems");
-    
-    // Simulate chaotic operations
-    let chaos_operations = Arc::new(AtomicU64::new(0));
-    let chaos_failures = Arc::new(AtomicU64::new(0));
-    let mut chaos_handles = vec![];
-    
-    for chaos_id in 0..5 {
-        let operations = chaos_operations.clone();
-        let failures = chaos_failures.clone();
-        let pool_clone = pool.clone();
-        
-        let handle = tokio::spawn(async move {
-            for op in 0..10 {
-                operations.fetch_add(1, Ordering::SeqCst);
-                
-                // Simulate failures for some operations
-                if op % 3 == 0 {
-                    failures.fetch_add(1, Ordering::SeqCst);
-                    println!("Chaos {} operation {} - simulated failure", chaos_id, op);
-                    continue;
-                }
-                
-                // Try to insert event
-                let event = TestEventBuilder::new(
-                    &format!("chaos-phase-{}", chaos_id),
-                    &format!("chaos.operation.{}", op)
-                )
-                .with_field("chaos_id", json!(chaos_id))
-                .with_field("operation", json!(op))
-                .build();
-                
-                match TestQueries::insert_test_event(
-                    &pool_clone,
-                    &event.source,
-                    &event.event_type,
-                    event.payload,
-                ).await {
-                    Ok(_) => println!("Chaos {} operation {} succeeded", chaos_id, op),
-                    Err(e) => {
-                        failures.fetch_add(1, Ordering::SeqCst);
-                        println!("Chaos {} operation {} failed: {}", chaos_id, op, e);
-                    }
-                }
-                
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        });
-        
-        chaos_handles.push(handle);
-    }
-    
-    join_all(chaos_handles).await;
-    
-    let total_chaos_ops = chaos_operations.load(Ordering::SeqCst);
-    let total_chaos_failures = chaos_failures.load(Ordering::SeqCst);
-    
-    println!("Chaos phase completed:");
-    println!("- Total chaos operations: {}", total_chaos_ops);
-    println!("- Total chaos failures: {}", total_chaos_failures);
-    
-    // Phase 2: Recovery and consistency checks
-    println!("\nPhase 2: Recovery and consistency verification");
-    
-    // Wait for recovery period
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    
-    let recovery_operations = Arc::new(AtomicU64::new(0));
-    let recovery_successes = Arc::new(AtomicU64::new(0));
-    let consistency_checks = Arc::new(AtomicU64::new(0));
-    let mut recovery_handles = vec![];
-    
-    for recovery_id in 0..3 {
-        let operations = recovery_operations.clone();
-        let successes = recovery_successes.clone();
-        let checks = consistency_checks.clone();
-        let pool_clone = pool.clone();
-        
-        let handle = tokio::spawn(async move {
-            for op in 0..15 {
-                operations.fetch_add(1, Ordering::SeqCst);
-                
-                // Recovery operations
-                let recovery_event = TestEventBuilder::new(
-                    &format!("recovery-component-{}", recovery_id),
-                    &format!("recovery.operation.{}", op)
-                )
-                .with_field("recovery", json!(recovery_id))
-                .with_field("operation", json!(op))
-                .with_version("recovery-test-0.1.0")
-                .build();
-                
-                match TestQueries::insert_full_event(
-                    &pool_clone,
-                    &recovery_event.source,
-                    &recovery_event.event_type,
-                    &recovery_event.host,
-                    recovery_event.payload,
-                    recovery_event.ts_orig,
-                    recovery_event.ingestor_version,
-                    recovery_event.payload_schema_id,
-                    recovery_event.source_event_ids,
-                ).await {
-                    Ok(_) => {
-                        successes.fetch_add(1, Ordering::SeqCst);
-                        println!("Recovery {} operation {} succeeded", recovery_id, op);
-                    }
-                    Err(e) => {
-                        println!("Recovery {} operation {} failed: {}", recovery_id, op, e);
-                    }
-                }
-                
-                // Consistency checks
-                if op % 5 == 0 {
-                    checks.fetch_add(1, Ordering::SeqCst);
-                    
-                    // Check database consistency
-                    match sqlx::query!(
-                        "SELECT COUNT(*) as count FROM core.events WHERE source = $1",
-                        format!("recovery-component-{}", recovery_id)
-                    ).fetch_one(&pool_clone).await {
-                        Ok(row) => {
-                            println!("Recovery {} consistency check: DB events count = {}", recovery_id, row.count.unwrap_or(0));
-                        }
-                        Err(e) => {
-                            println!("Recovery {} DB consistency check failed: {}", recovery_id, e);
-                        }
-                    }
-                }
-                
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            }
-        });
-        
-        recovery_handles.push(handle);
-    }
-    
-    join_all(recovery_handles).await;
-    
-    let total_recovery_ops = recovery_operations.load(Ordering::SeqCst);
-    let total_recovery_successes = recovery_successes.load(Ordering::SeqCst);
-    let total_consistency_checks = consistency_checks.load(Ordering::SeqCst);
-    
-    println!("\nRecovery phase completed:");
-    println!("- Total recovery operations: {}", total_recovery_ops);
-    println!("- Successful recovery operations: {}", total_recovery_successes);
-    println!("- Consistency checks performed: {}", total_consistency_checks);
-    
-    // Phase 3: Final system state validation
-    println!("\nPhase 3: Final system state validation");
-    
-    // Check database state
-    let total_events = TestQueries::count_events_by_source(ctx.pool(), "recovery-component-%")
-        .await?;
-    
-    println!("Total events in database: {}", total_events);
-    
-    // Verify system recovered properly
-    assert!(total_chaos_ops > 0, "Chaos operations should have been attempted");
-    assert!(total_chaos_failures > 0, "Some chaos operations should have failed");
-    assert!(total_recovery_ops > 0, "Recovery operations should have been attempted");
-    assert!(total_recovery_successes > 0, "Some recovery operations should have succeeded");
-    assert!(total_consistency_checks > 0, "Consistency checks should have been performed");
-    
-    // Recovery rate should be significantly better than chaos phase
-    let chaos_success_rate = (total_chaos_ops - total_chaos_failures) as f64 / total_chaos_ops as f64;
-    let recovery_success_rate = total_recovery_successes as f64 / total_recovery_ops as f64;
-    
-    println!("Chaos phase success rate: {:.2}%", chaos_success_rate * 100.0);
-    println!("Recovery phase success rate: {:.2}%", recovery_success_rate * 100.0);
-    
-    assert!(recovery_success_rate > chaos_success_rate, 
-        "Recovery success rate should be higher than chaos phase");
-    assert!(recovery_success_rate > 0.7, 
-        "Recovery success rate should be > 70%");
+);hould be > 70%");
     
     Ok(())
 }

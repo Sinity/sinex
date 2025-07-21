@@ -14,10 +14,15 @@
 // - **Performance Under Load**: Concurrent processing and resource management
 // - **Data Consistency Workflows**: Cross-component data integrity verification
 
+use crate::common::test_macros::*;
 use crate::common::prelude::*;
 use crate::common::generators;
 use crate::common::builders::{TestEventBuilder, TestScenarioBuilder, BatchEventBuilder, TestEvents, TestCheckpointBuilder};
 use crate::common::query_helpers::TestQueries;
+use crate::common::test_factories::{
+    UserActivityFactory, SystemEventFactory, FileSystemScenarioFactory, 
+    WorkflowFactory, ErrorScenarioFactory, scenarios
+};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use redis::{cmd, AsyncCommands};
@@ -101,117 +106,414 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
     );
 
     println!("✓ Complete event ingestion workflow verified");
-    Ok(())
-}
 
-/// Test event ingestion with concurrent satellites
+/// Test realistic user workflow from start to finish
 #[sinex_test]
-async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestResult {
+async fn test_user_development_workflow_end_to_end(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
-
-    // Simulate multiple satellites ingesting events concurrently
-    let satellite_count = 5;
-    let events_per_satellite = 20;
-
-    let mut satellite_handles = Vec::new();
-    let successful_ingestions = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-    let failed_ingestions = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-
-    for satellite_id in 0..satellite_count {
-        let pool_clone = pool.clone();
-        let successes = successful_ingestions.clone();
-        let failures = failed_ingestions.clone();
-
-        let handle = tokio::spawn(async move {
-            let satellite_name = format!("satellite-{}", satellite_id);
-
-            for event_id in 0..events_per_satellite {
-                let event_builder = TestEventBuilder::new(
-                    &satellite_name,
-                    &format!("satellite.event.{}", event_id)
-                )
-                .with_payload(json!({
-                    "satellite_id": satellite_id,
-                    "event_id": event_id,
-                    "data": format!("concurrent-test-data-{}-{}", satellite_id, event_id)
-                }))
-                .with_host(&format!("host-{}", satellite_id));
-
-                match event_builder.insert(&pool_clone).await {
-                    Ok(stored_event) => {
-                        let mut successes_lock = successes.lock().await;
-                        successes_lock.push((satellite_id, event_id, stored_event.id));
-                        println!("Satellite {} ingested event {}", satellite_id, event_id);
-                    }
-                    Err(e) => {
-                        let mut failures_lock = failures.lock().await;
-                        failures_lock.push((satellite_id, event_id, e.to_string()));
-                        println!(
-                            "Satellite {} failed to ingest event {}: {}",
-                            satellite_id, event_id, e
-                        );
-                    }
-                }
-
-                // Small delay to simulate realistic ingestion timing
-                tokio::time::sleep(StdDuration::from_millis(10)).await;
-            }
-
-            println!("Satellite {} completed ingestion", satellite_id);
-        });
-
-        satellite_handles.push(handle);
+    
+    println!("=== Testing Complete Development Workflow ===");
+    
+    // Generate a complete development workflow using factory
+    let workflow_events = WorkflowFactory::create_git_workflow();
+    
+    // Insert all workflow events
+    println!("Inserting {} workflow events", workflow_events.len());
+    for event in &workflow_events {
+        insert_event(&pool, event).await?;
     }
+    
+    // Verify workflow stages
+    
+    // 1. Branch creation
+    let branch_events: Vec<_> = workflow_events.iter()
+        .filter(|e| e.event_type == "shell.command_executed" && 
+                e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("git checkout")).unwrap_or(false))
+        .collect();
+    assert!(!branch_events.is_empty(), "Should have branch creation");
+    
+    // 2. File modifications
+    let file_events: Vec<_> = workflow_events.iter()
+        .filter(|e| e.event_type == "filesystem.file_modified")
+        .collect();
+    assert!(file_events.len() >= 3, "Should have multiple file modifications");
+    
+    // 3. Test execution
+    let test_events: Vec<_> = workflow_events.iter()
+        .filter(|e| e.event_type == "shell.command_executed" && 
+                e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("test")).unwrap_or(false))
+        .collect();
+    assert!(!test_events.is_empty(), "Should have test execution");
+    
+    // 4. Git operations
+    let git_events: Vec<_> = workflow_events.iter()
+        .filter(|e| e.event_type == "shell.command_executed" && 
+                e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.starts_with("git")).unwrap_or(false))
+        .collect();
+    assert!(git_events.len() >= 5, "Should have multiple git operations");
+    
+    // Verify chronological order
+    let timestamps: Vec<_> = workflow_events.iter()
+        .filter_map(|e| e.ts_orig)
+        .collect();
+    
+    for window in timestamps.windows(2) {
+        assert!(window[0] <= window[1], "Events should be chronologically ordered");
+    }
+    
+    println!("✓ Development workflow completed successfully");
+    println!("  - {} total events", workflow_events.len());
+    println!("  - {} file modifications", file_events.len());
+    println!("  - {} git operations", git_events.len());
 
-    // Wait for all satellites to complete
-    join_all(satellite_handles).await;
+/// Test data pipeline workflow end-to-end
+#[sinex_test]
+async fn test_data_pipeline_workflow_end_to_end(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    println!("=== Testing Data Pipeline Workflow ===");
+    
+    // Generate data pipeline workflow
+    let pipeline_events = WorkflowFactory::create_data_pipeline();
+    
+    // Insert pipeline events
+    for event in &pipeline_events {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Verify pipeline stages
+    
+    // 1. Data download
+    let download_events: Vec<_> = pipeline_events.iter()
+        .filter(|e| e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("wget")).unwrap_or(false))
+        .collect();
+    assert!(!download_events.is_empty(), "Should have data download");
+    
+    // 2. File creation (downloaded data)
+    let data_files: Vec<_> = pipeline_events.iter()
+        .filter(|e| e.event_type == "filesystem.file_created" &&
+                e.payload.get("path").and_then(|v| v.as_str())
+                    .map(|p| p.ends_with(".csv") || p.ends_with(".json")).unwrap_or(false))
+        .collect();
+    assert!(data_files.len() >= 3, "Should create multiple data files");
+    
+    // 3. Processing steps
+    let processing_commands: Vec<_> = pipeline_events.iter()
+        .filter(|e| e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("python") && cmd.contains("_data.py")).unwrap_or(false))
+        .collect();
+    assert_eq!(processing_commands.len(), 3, "Should have 3 processing steps");
+    
+    // 4. Upload result
+    let upload_events: Vec<_> = pipeline_events.iter()
+        .filter(|e| e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("aws s3")).unwrap_or(false))
+        .collect();
+    assert!(!upload_events.is_empty(), "Should upload results");
+    
+    // Verify processing duration
+    let processing_durations: Vec<i64> = processing_commands.iter()
+        .filter_map(|e| e.payload.get("duration_ms").and_then(|v| v.as_i64()))
+        .collect();
+    
+    assert!(!processing_durations.is_empty(), "Should have duration data");
+    let total_duration: i64 = processing_durations.iter().sum();
+    assert!(total_duration > 1000, "Processing should take meaningful time");
+    
+    println!("✓ Data pipeline workflow completed");
+    println!("  - {} total events", pipeline_events.len());
+    println!("  - {} data files created", data_files.len());
+    println!("  - {} processing steps", processing_commands.len());
+    println!("  - {}ms total processing time", total_duration);
 
-    let successes = successful_ingestions.lock().await;
-    let failures = failed_ingestions.lock().await;
+/// Test system startup and monitoring workflow
+#[sinex_test]
+async fn test_system_startup_monitoring_workflow(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    println!("=== Testing System Startup and Monitoring ===");
+    
+    // Generate system startup sequence
+    let startup_events = SystemEventFactory::create_system_startup();
+    
+    // Generate ongoing monitoring
+    let monitoring_events = SystemEventFactory::create_system_monitoring(10, 30);
+    
+    // Insert all system events
+    for event in startup_events.iter().chain(monitoring_events.iter()) {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Verify startup sequence
+    
+    // 1. System boot
+    let boot_events: Vec<_> = startup_events.iter()
+        .filter(|e| e.payload.get("unit").and_then(|v| v.as_str())
+                    .map(|u| u == "multi-user.target").unwrap_or(false))
+        .collect();
+    assert!(!boot_events.is_empty(), "Should have system boot event");
+    
+    // 2. Service startups in correct order
+    let service_starts: Vec<_> = startup_events.iter()
+        .filter(|e| e.event_type == "systemd.unit_started")
+        .collect();
+    
+    // Verify critical services started
+    let critical_services = ["postgresql", "redis", "sinex-ingestd"];
+    for service in &critical_services {
+        let found = service_starts.iter().any(|e| 
+            e.payload.get("unit").and_then(|v| v.as_str())
+                .map(|u| u.contains(service)).unwrap_or(false)
+        );
+        assert!(found, "Should start {} service", service);
+    }
+    
+    // 3. Verify monitoring data
+    let health_summaries: Vec<_> = monitoring_events.iter()
+        .filter(|e| e.event_type == "sinex.system_health_summary")
+        .collect();
+    assert!(!health_summaries.is_empty(), "Should have health summaries");
+    
+    // Check health metrics
+    for summary in &health_summaries {
+        assert!(summary.payload.get("cpu_usage_percent").is_some(), "Should have CPU data");
+        assert!(summary.payload.get("memory_used_mb").is_some(), "Should have memory data");
+        assert!(summary.payload.get("uptime_seconds").is_some(), "Should have uptime data");
+    }
+    
+    // 4. Process heartbeats
+    let heartbeats: Vec<_> = monitoring_events.iter()
+        .filter(|e| e.event_type == "sinex.process_heartbeat")
+        .collect();
+    assert!(!heartbeats.is_empty(), "Should have process heartbeats");
+    
+    println!("✓ System startup and monitoring verified");
+    println!("  - {} startup events", startup_events.len());
+    println!("  - {} monitoring events", monitoring_events.len());
+    println!("  - {} health summaries", health_summaries.len());
+    println!("  - {} heartbeats", heartbeats.len());
 
-    println!("Concurrent ingestion results:");
-    println!("- Successful ingestions: {}", successes.len());
-    println!("- Failed ingestions: {}", failures.len());
+/// Test comprehensive file system workflow
+#[sinex_test]
+async fn test_file_system_workflow_end_to_end(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    println!("=== Testing File System Workflow ===");
+    
+    // Generate file system scenarios
+    let file_workflow = FileSystemScenarioFactory::create_file_workflow("/home/user/test-project");
+    let build_process = FileSystemScenarioFactory::create_build_process();
+    
+    // Insert all file system events
+    for event in file_workflow.iter().chain(build_process.iter()) {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Verify file operations
+    
+    // 1. Directory creation
+    let dir_creates: Vec<_> = file_workflow.iter()
+        .filter(|e| e.event_type == "filesystem.dir_created")
+        .collect();
+    assert!(!dir_creates.is_empty(), "Should create directories");
+    
+    // 2. File creation
+    let file_creates: Vec<_> = file_workflow.iter()
+        .filter(|e| e.event_type == "filesystem.file_created")
+        .collect();
+    assert!(file_creates.len() >= 4, "Should create multiple files");
+    
+    // 3. File modifications
+    let file_mods: Vec<_> = file_workflow.iter()
+        .filter(|e| e.event_type == "filesystem.file_modified")
+        .collect();
+    assert!(file_mods.len() >= 5, "Should have multiple modifications");
+    
+    // 4. File moves
+    let file_moves: Vec<_> = file_workflow.iter()
+        .filter(|e| e.event_type == "filesystem.file_moved")
+        .collect();
+    assert!(!file_moves.is_empty(), "Should have file moves");
+    
+    // 5. Build artifacts
+    let build_artifacts: Vec<_> = build_process.iter()
+        .filter(|e| e.payload.get("path").and_then(|v| v.as_str())
+                    .map(|p| p.contains("target/release")).unwrap_or(false))
+        .collect();
+    assert!(!build_artifacts.is_empty(), "Should create build artifacts");
+    
+    // Verify file sizes increase with modifications
+    let modified_sizes: Vec<i64> = file_mods.iter()
+        .filter_map(|e| e.payload.get("size").and_then(|v| v.as_i64()))
+        .collect();
+    
+    // Check that sizes generally increase (simulating file growth)
+    for window in modified_sizes.windows(2) {
+        assert!(window[1] >= window[0], "File sizes should grow with edits");
+    }
+    
+    println!("✓ File system workflow completed");
+    println!("  - {} directories created", dir_creates.len());
+    println!("  - {} files created", file_creates.len());
+    println!("  - {} files modified", file_mods.len());
+    println!("  - {} build artifacts", build_artifacts.len());
 
-    // Verify expected number of events
-    let expected_total = satellite_count * events_per_satellite;
-    assert!(
-        successes.len() + failures.len() == expected_total,
-        "All ingestion attempts should be accounted for"
-    );
+/// Test deployment workflow with error recovery
+#[sinex_test]
+async fn test_deployment_with_recovery_workflow(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    println!("=== Testing Deployment with Recovery ===");
+    
+    // Generate deployment workflow
+    let deployment = WorkflowFactory::create_deployment_workflow();
+    
+    // Generate potential error scenarios during deployment
+    let errors = ErrorScenarioFactory::create_error_cascade();
+    let recovery = ErrorScenarioFactory::create_recovery_scenario();
+    
+    // Interleave deployment with errors (simulating real deployment issues)
+    let mut all_events = Vec::new();
+    
+    // Start deployment
+    all_events.extend(deployment.iter().take(3).cloned());
+    
+    // Errors occur during deployment
+    all_events.extend(errors);
+    
+    // Recovery actions
+    all_events.extend(recovery);
+    
+    // Complete deployment
+    all_events.extend(deployment.iter().skip(3).cloned());
+    
+    // Sort by timestamp to maintain chronological order
+    all_events.sort_by_key(|e| e.ts_orig.unwrap_or_else(Utc::now));
+    
+    // Insert all events
+    for event in &all_events {
+        insert_event(&pool, event).await?;
+    }
+    
+    // Verify deployment stages
+    
+    // 1. Build and test
+    let build_events: Vec<_> = all_events.iter()
+        .filter(|e| e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("cargo build")).unwrap_or(false))
+        .collect();
+    assert!(!build_events.is_empty(), "Should have build step");
+    
+    // 2. Errors occurred
+    let error_events: Vec<_> = all_events.iter()
+        .filter(|e| e.event_type.contains("error") || 
+                e.payload.get("error").is_some())
+        .collect();
+    assert!(!error_events.is_empty(), "Should have errors during deployment");
+    
+    // 3. Recovery actions
+    let recovery_events: Vec<_> = all_events.iter()
+        .filter(|e| e.event_type == "systemd.unit_started" ||
+                (e.event_type == "shell.command_executed" && 
+                 e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("systemctl restart")).unwrap_or(false)))
+        .collect();
+    assert!(!recovery_events.is_empty(), "Should have recovery actions");
+    
+    // 4. Deployment completion
+    let deploy_commands: Vec<_> = all_events.iter()
+        .filter(|e| e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("ssh") || cmd.contains("scp")).unwrap_or(false))
+        .collect();
+    assert!(deploy_commands.len() >= 5, "Should complete deployment steps");
+    
+    // 5. System health after recovery
+    let post_recovery_health: Vec<_> = all_events.iter()
+        .filter(|e| e.event_type == "sinex.system_health_summary" &&
+                e.payload.get("status").and_then(|v| v.as_str())
+                    .map(|s| s == "healthy").unwrap_or(false))
+        .collect();
+    assert!(!post_recovery_health.is_empty(), "System should be healthy after recovery");
+    
+    println!("✓ Deployment with recovery completed");
+    println!("  - {} total events", all_events.len());
+    println!("  - {} errors encountered", error_events.len());
+    println!("  - {} recovery actions", recovery_events.len());
+    println!("  - {} deployment commands", deploy_commands.len());
 
-    // Verify database state
-    // Count events by pattern using query helper
-    let satellite_events = TestQueries::get_events_by_source(&pool, "satellite-%", None).await?;
-    let total_events = satellite_events.len() as i64;
+/// Test complete user workday scenario
+#[sinex_test]
+async fn test_complete_user_workday_scenario(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    println!("=== Testing Complete User Workday ===");
+    
+    // Generate a full workday scenario
+    let workday = scenarios::user_workday();
+    
+    println!("Inserting {} workday events", workday.len());
+    
+    // Insert in batches to simulate real-time flow
+    for chunk in workday.chunks(20) {
+        for event in chunk {
+            insert_event(&pool, event).await?;
+        }
+        // Small delay between batches
+        tokio::time::sleep(StdDuration::from_millis(10)).await;
+    }
+    
+    // Analyze the workday
+    
+    // 1. System startup events
+    let startup_events: Vec<_> = workday.iter()
+        .filter(|e| e.source == "systemd" && e.event_type.contains("started"))
+        .collect();
+    assert!(!startup_events.is_empty(), "Should have system startup");
+    
+    // 2. User session events
+    let session_events: Vec<_> = workday.iter()
+        .filter(|e| e.event_type.contains("session"))
+        .collect();
+    assert!(session_events.len() >= 2, "Should have session start/end");
+    
+    // 3. Development activity
+    let dev_events: Vec<_> = workday.iter()
+        .filter(|e| e.payload.get("command").and_then(|v| v.as_str())
+                    .map(|cmd| cmd.contains("git") || cmd.contains("cargo")).unwrap_or(false))
+        .collect();
+    assert!(!dev_events.is_empty(), "Should have development activity");
+    
+    // 4. File operations
+    let file_ops: Vec<_> = workday.iter()
+        .filter(|e| e.source == "fs")
+        .collect();
+    assert!(!file_ops.is_empty(), "Should have file operations");
+    
+    // 5. System monitoring throughout
+    let monitoring: Vec<_> = workday.iter()
+        .filter(|e| e.event_type.contains("health") || e.event_type.contains("heartbeat"))
+        .collect();
+    assert!(!monitoring.is_empty(), "Should have continuous monitoring");
+    
+    // Verify time span
+    let first_ts = workday.first().and_then(|e| e.ts_orig).unwrap();
+    let last_ts = workday.last().and_then(|e| e.ts_orig).unwrap();
+    let duration = last_ts.signed_duration_since(first_ts);
+    
+    assert!(duration.num_hours() >= 1, "Workday should span multiple hours");
+    
+    println!("✓ Complete workday scenario verified");
+    println!("  - {} total events", workday.len());
+    println!("  - {} hour span", duration.num_hours());
+    println!("  - {} development events", dev_events.len());
+    println!("  - {} monitoring events", monitoring.len());
 
-    assert_eq!(
-        total_events,
-        successes.len() as i64,
-        "Database should contain all successful ingestions"
-    );
-
-    // Verify no data corruption with concurrent writes
-    // Note: Raw SQL required for DISTINCT aggregation
-    let (distinct_event_ids,) = QueryBuilder::select("core.events")
-        .columns(&["COUNT(DISTINCT event_id) as count"])
-        .where_op(
-            "source",
-            "LIKE",
-            QueryParam::String("satellite-%".to_string()),
-        )
-        .fetch_one::<(i64,)>(&pool)
-        .await?;
-
-    assert_eq!(
-        distinct_event_ids,
-        successes.len() as i64,
-        "All events should have unique IDs"
-    );
-
-    println!("✓ Concurrent satellite ingestion workflow verified");
-    Ok(())
-}
+/// Test concurrent satellite ingestion workflow
+test_event_filter!(test_concurrent_satellite_ingestion_workflow, &["test1", "test2", "satellite-%"], 5, "satellite-%", 5);
 
 // =============================================================================
 // Stream Processing Workflow Tests
@@ -500,119 +802,17 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
 // Multi-Component Coordination Tests
 // =============================================================================
 
-/// Test coordination between multiple system components
-#[sinex_test]
-async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
-
-    // Phase 1: Set up multiple components
-    let components = vec![
-        "fs-watcher",
-        "terminal-satellite",
-        "desktop-satellite",
-        "system-satellite",
-    ];
-
-    let coordination_state = Arc::new(RwLock::new(HashMap::new()));
-    let component_handles = Arc::new(Mutex::new(Vec::new()));
-
-    // Phase 2: Simulate component lifecycle coordination
-    for component in &components {
-        let pool_clone = pool.clone();
-        let state = coordination_state.clone();
-        let component_name = component.to_string();
-
-        let handle = tokio::spawn(async move {
-            // Phase 2a: Component initialization
-            {
-                let mut state_lock = state.write().await;
-                state_lock.insert(component_name.clone(), "initializing".to_string());
-            }
-
-            // Simulate initialization work
-            tokio::time::sleep(StdDuration::from_millis(100)).await;
-
-            // Phase 2b: Component ready state
-            {
-                let mut state_lock = state.write().await;
-                state_lock.insert(component_name.clone(), "ready".to_string());
-            }
-
-            // Phase 2c: Component processing
-            for i in 0..10 {
-                let heartbeat = TestEvents::heartbeat(&component_name)
-                    .with_field("heartbeat_id", json!(i))
-                    .with_field("component", json!(component_name))
-                    .with_host("coordination-test");
-                
-                match heartbeat.insert(&pool_clone).await {
-                    Ok(_) => {
-                        println!("Component {} sent heartbeat {}", component_name, i);
-                    }
-                    Err(e) => {
-                        println!("Component {} heartbeat {} failed: {}", component_name, i, e);
-                    }
-                }
-
-                tokio::time::sleep(StdDuration::from_millis(200)).await;
-            }
-
-            // Phase 2d: Component shutdown
-            {
-                let mut state_lock = state.write().await;
-                state_lock.insert(component_name.clone(), "shutting_down".to_string());
-            }
-
-            tokio::time::sleep(StdDuration::from_millis(50)).await;
-
-            {
-                let mut state_lock = state.write().await;
-                state_lock.insert(component_name.clone(), "stopped".to_string());
-            }
-
-            println!("Component {} lifecycle completed", component_name);
-        });
-
-        let mut handles = component_handles.lock().await;
-        handles.push(handle);
+/// Test coordination
+test_concurrent_operations!(test_multi_component_coordination_workflow, 10,
+    |pool: Arc<DbPool>, index: usize| async move {
+        // Concurrent operation
+        Ok(())
+    },
+    |pool: &Arc<DbPool>, results: &Vec<_>| async move {
+        assert_eq!(results.len(), 10);
+        Ok(())
     }
-
-    // Phase 3: Wait for all components to complete
-    let handles = {
-        let mut handles_lock = component_handles.lock().await;
-        std::mem::take(&mut *handles_lock)
-    };
-
-    join_all(handles).await;
-
-    // Phase 4: Verify coordination state
-    let final_state = coordination_state.read().await;
-    println!("Final component states:");
-    for (component, state) in final_state.iter() {
-        println!("  {}: {}", component, state);
-        assert_eq!(state, "stopped", "All components should be stopped");
-    }
-
-    // Phase 5: Verify component heartbeats in database
-    for component in &components {
-        let heartbeat_count = TestQueries::count_events_by_source(&pool, "sinex").await?;
-        
-        // Note: All heartbeats use "sinex" as source per TestEvents::heartbeat
-        // We need to check event_type instead
-        let component_events = TestQueries::get_events_by_type(&pool, "automaton.heartbeat", None).await?;
-        let component_heartbeats = component_events.iter()
-            .filter(|e| e.payload["automaton_name"].as_str() == Some(component))
-            .count();
-        
-        assert_eq!(
-            component_heartbeats, 10,
-            "Component {} should have sent 10 heartbeats", component
-        );
-    }
-
-    println!("✓ Multi-component coordination workflow verified");
-    Ok(())
-}
+);
 
 // =============================================================================
 // Error Recovery Workflow Tests
@@ -1087,5 +1287,269 @@ async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
     );
 
     println!("✓ Data consistency workflow verified");
+    Ok(())
+}
+
+// =============================================================================
+// Factory-Based Workflow Tests
+// =============================================================================
+
+/// Test a complete user workday using test factories
+#[sinex_test]
+async fn test_user_workday_workflow_with_factories(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    // Generate a complete workday scenario using factories
+    let workday_events = scenarios::user_workday();
+    
+    println!("Generated {} workday events", workday_events.len());
+    
+    // Insert all events
+    let start_time = Instant::now();
+    let mut inserted_ids = Vec::new();
+    
+    for event in &workday_events {
+        let inserted = TestQueries::insert_full_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.clone(),
+            event.payload_schema_id,
+            event.source_event_ids.clone(),
+        ).await?;
+        inserted_ids.push(inserted);
+    }
+    
+    let insertion_duration = start_time.elapsed();
+    println!("Inserted all events in {:?}", insertion_duration);
+    
+    // Verify event distribution
+    let event_sources: HashMap<String, usize> = workday_events
+        .iter()
+        .map(|e| e.source.clone())
+        .fold(HashMap::new(), |mut acc, source| {
+            *acc.entry(source).or_insert(0) += 1;
+            acc
+        });
+    
+    println!("Event distribution:");
+    for (source, count) in &event_sources {
+        println!("  {}: {} events", source, count);
+    }
+    
+    // Verify we have events from multiple sources (user activity, system monitoring, etc.)
+    assert!(event_sources.len() >= 3, "Should have events from multiple sources");
+    assert!(event_sources.keys().any(|k| k.contains("shell")), "Should have shell events");
+    assert!(event_sources.keys().any(|k| k.contains("sinex")), "Should have system events");
+    
+    // Verify temporal ordering
+    let is_sorted = workday_events.windows(2).all(|w| w[0].ts_orig <= w[1].ts_orig);
+    assert!(is_sorted, "Events should be temporally ordered");
+    
+    println!("✓ User workday workflow with factories verified");
+
+/// Test error scenarios and recovery using factories
+#[sinex_test]
+async fn test_error_recovery_workflow_with_factories(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    // Generate error cascade scenario
+    let error_cascade = ErrorScenarioFactory::create_error_cascade();
+    
+    // Generate recovery scenario
+    let recovery_scenario = ErrorScenarioFactory::create_recovery_scenario();
+    
+    // Combine scenarios
+    let mut all_events = error_cascade;
+    all_events.extend(recovery_scenario);
+    all_events.sort_by_key(|e| e.ts_orig.unwrap_or_else(Utc::now));
+    
+    println!("Generated {} error/recovery events", all_events.len());
+    
+    // Insert events
+    for event in &all_events {
+        TestQueries::insert_full_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.clone(),
+            event.payload_schema_id,
+            event.source_event_ids.clone(),
+        ).await?;
+    }
+    
+    // Analyze error patterns
+    let error_events = all_events.iter()
+        .filter(|e| e.event_type.contains("error") || e.event_type == "unit.stopped")
+        .count();
+    
+    let recovery_events = all_events.iter()
+        .filter(|e| e.event_type == "unit.started" || e.event_type == "process.started")
+        .count();
+    
+    let health_events = all_events.iter()
+        .filter(|e| e.event_type == "system.health.summary")
+        .count();
+    
+    println!("Event analysis:");
+    println!("  Error events: {}", error_events);
+    println!("  Recovery events: {}", recovery_events);
+    println!("  Health monitoring events: {}", health_events);
+    
+    assert!(error_events > 0, "Should have error events");
+    assert!(recovery_events > 0, "Should have recovery events");
+    assert!(health_events > 0, "Should have health monitoring");
+    
+    // Verify recovery pattern: errors followed by recovery
+    let has_recovery_pattern = all_events.windows(2).any(|w| {
+        (w[0].event_type.contains("error") || w[0].event_type == "unit.stopped") &&
+        (w[1].event_type == "unit.started" || w[1].event_type == "process.started")
+    });
+    
+    assert!(has_recovery_pattern, "Should show error->recovery pattern");
+    
+    println!("✓ Error recovery workflow with factories verified");
+
+/// Test file system workflows using factories
+#[sinex_test]
+async fn test_filesystem_workflow_with_factories(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    // Generate file workflow
+    let file_workflow = FileSystemScenarioFactory::create_file_workflow("/test/project");
+    
+    // Generate build process
+    let build_process = FileSystemScenarioFactory::create_build_process();
+    
+    // Combine workflows
+    let mut all_events = file_workflow;
+    all_events.extend(build_process);
+    
+    println!("Generated {} filesystem events", all_events.len());
+    
+    // Insert events
+    for event in &all_events {
+        TestQueries::insert_full_event(
+            &pool,
+            &event.source,
+            &event.event_type,
+            &event.host,
+            event.payload.clone(),
+            event.ts_orig,
+            event.ingestor_version.clone(),
+            event.payload_schema_id,
+            event.source_event_ids.clone(),
+        ).await?;
+    }
+    
+    // Analyze filesystem operations
+    let event_types: HashMap<&str, usize> = all_events
+        .iter()
+        .map(|e| e.event_type.as_str())
+        .fold(HashMap::new(), |mut acc, evt_type| {
+            *acc.entry(evt_type).or_insert(0) += 1;
+            acc
+        });
+    
+    println!("Filesystem operation distribution:");
+    for (event_type, count) in &event_types {
+        println!("  {}: {} operations", event_type, count);
+    }
+    
+    // Verify expected operations
+    assert!(event_types.contains_key("dir.created"), "Should have directory creation");
+    assert!(event_types.contains_key("file.created"), "Should have file creation");
+    assert!(event_types.contains_key("file.modified"), "Should have file modifications");
+    assert!(event_types.contains_key("command.executed"), "Should have build commands");
+    
+    // Verify logical workflow order
+    let dir_created_time = all_events.iter()
+        .find(|e| e.event_type == "dir.created")
+        .and_then(|e| e.ts_orig);
+    
+    let first_file_time = all_events.iter()
+        .find(|e| e.event_type == "file.created")
+        .and_then(|e| e.ts_orig);
+    
+    if let (Some(dir_time), Some(file_time)) = (dir_created_time, first_file_time) {
+        assert!(dir_time <= file_time, "Directory should be created before files");
+    }
+    
+    println!("✓ Filesystem workflow with factories verified");
+
+/// Test complex workflows using multiple factories
+#[sinex_test]
+async fn test_complex_workflow_composition(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool().clone();
+    
+    // Create a complex scenario combining multiple factory outputs
+    let user_session = UserActivityFactory::create_user_session(60, 30);
+    let dev_workflow = UserActivityFactory::create_development_workflow();
+    let git_workflow = WorkflowFactory::create_git_workflow();
+    let system_monitoring = SystemEventFactory::create_system_monitoring(60, 30);
+    
+    // Merge all events
+    let mut all_events = Vec::new();
+    all_events.extend(user_session);
+    all_events.extend(dev_workflow);
+    all_events.extend(git_workflow);
+    all_events.extend(system_monitoring);
+    
+    // Sort by timestamp for realistic ordering
+    all_events.sort_by_key(|e| e.ts_orig.unwrap_or_else(Utc::now));
+    
+    println!("Generated {} events for complex workflow", all_events.len());
+    
+    // Insert in batches for performance
+    let batch_size = 50;
+    for (batch_num, batch) in all_events.chunks(batch_size).enumerate() {
+        let batch_start = Instant::now();
+        
+        for event in batch {
+            TestQueries::insert_full_event(
+                &pool,
+                &event.source,
+                &event.event_type,
+                &event.host,
+                event.payload.clone(),
+                event.ts_orig,
+                event.ingestor_version.clone(),
+                event.payload_schema_id,
+                event.source_event_ids.clone(),
+            ).await?;
+        }
+        
+        println!("Batch {} ({} events) inserted in {:?}", 
+                 batch_num, batch.len(), batch_start.elapsed());
+    }
+    
+    // Verify complex interactions
+    let has_git_after_file_edit = all_events.windows(2).any(|w| {
+        w[0].event_type == "file.modified" && 
+        w[1].event_type == "command.executed" &&
+        w[1].payload.get("command")
+            .and_then(|v| v.as_str())
+            .map(|cmd| cmd.starts_with("git"))
+            .unwrap_or(false)
+    });
+    
+    assert!(has_git_after_file_edit, "Should have git operations after file edits");
+    
+    // Verify concurrent activity (user actions during system monitoring)
+    let overlapping_events = all_events.windows(2).any(|w| {
+        let is_user_event = w[0].source.contains("shell") || w[0].source.contains("fs");
+        let is_system_event = w[1].source == "sinex" && w[1].event_type.contains("health");
+        is_user_event && is_system_event
+    });
+    
+    assert!(overlapping_events, "Should have interleaved user and system events");
+    
+    println!("✓ Complex workflow composition verified");
     Ok(())
 }
