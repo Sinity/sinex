@@ -24,9 +24,25 @@ Apply with:
 sudo nixos-rebuild switch --flake .#your-host
 ```
 
-### Recommended Production Setup
+### Production Setup with Hot Standby
 
-Copy and customize `example.nix` for a production-ready configuration:
+For production deployments with zero-downtime upgrades and automatic failover:
+
+```bash
+cp nixos/example-coordination.nix /etc/nixos/sinex.nix
+# Edit targetUser and coordination settings
+sudo nixos-rebuild switch
+```
+
+This enables:
+- **Multiple instances** of each satellite service (hot standby pattern)
+- **Zero-downtime upgrades** via version-based leadership election
+- **Automatic failover** when leader instances fail
+- **Coordination monitoring** with health checks and metrics
+
+### Development/Testing Setup
+
+For simpler single-instance deployment:
 
 ```bash
 cp nixos/example.nix /etc/nixos/sinex.nix
@@ -207,6 +223,68 @@ sudo systemctl start sinex-satellite-filesystem
 sudo systemctl start sinex-satellite-terminal
 sudo systemctl start sinex-satellite-desktop
 sudo systemctl start sinex-satellite-system
+```
+
+### Coordination System Operations
+
+**View coordination status (hot standby deployments):**
+```bash
+# Check which instances are running
+systemctl status 'sinex-*-*'
+
+# View leadership status  
+sudo -u sinex psql sinex_prod -c "
+SELECT service_name, version, acquired_at, last_heartbeat 
+FROM core.service_leadership;
+"
+
+# View all healthy instances
+sudo -u sinex psql sinex_prod -c "
+SELECT service_name, instance_id, version, host_name, last_heartbeat
+FROM core.satellite_instances 
+WHERE last_heartbeat > NOW() - INTERVAL '2 minutes'
+ORDER BY service_name, version DESC;
+"
+```
+
+**Monitor coordination events:**
+```bash
+# Watch coordination activity in logs
+journalctl -f | grep -E "(leadership|handoff|coordination)"
+
+# View recent coordination signals
+sudo -u sinex psql sinex_prod -c "
+SELECT target_instance, signal_type, message, created_at
+FROM core.satellite_signals 
+WHERE created_at > NOW() - INTERVAL '1 hour'
+ORDER BY created_at DESC;
+"
+```
+
+**Force leadership election (emergency):**
+```bash
+# Release current leadership to trigger election
+sudo -u sinex psql sinex_prod -c "
+DELETE FROM core.service_leadership WHERE service_name = 'sinex-fs-watcher';
+"
+# Healthy standby instances will immediately compete for leadership
+```
+
+**Zero-downtime upgrade process:**
+```bash
+# 1. Update configuration with new version
+# 2. Apply configuration (new instances start in standby)
+sudo nixos-rebuild switch
+
+# 3. Verify new instances are healthy standbys
+systemctl status 'sinex-*'
+
+# 4. New instances automatically challenge current leaders
+# 5. Graceful handoff occurs automatically
+# 6. Monitor transition in logs
+journalctl -f | grep -E "(handoff|leadership)"
+
+# 7. Old instances are automatically stopped by systemd
 ```
 
 ### Database Operations

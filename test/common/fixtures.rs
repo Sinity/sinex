@@ -22,6 +22,7 @@ use crate::common::test_context::TestContext;
 use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder};
 use crate::common::builders::EventBuilder;
 use sinex_events::{EventFactory, event_types, sources};
+use sinex_core_utils::ResourceGuard;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
@@ -119,40 +120,8 @@ impl FixtureRegistry {
     }
 }
 
-/// Fixture handle that automatically cleans up on drop
-pub struct FixtureHandle<T: 'static> {
-    data: Arc<T>,
-    key: String,
-    _marker: std::marker::PhantomData<T>,
-}
-
-impl<T: 'static> FixtureHandle<T> {
-    fn new(data: Arc<T>, key: String) -> Self {
-        Self {
-            data,
-            key,
-            _marker: std::marker::PhantomData,
-        }
-    }
-}
-
-impl<T> std::ops::Deref for FixtureHandle<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        &self.data
-    }
-}
-
-impl<T: 'static> Drop for FixtureHandle<T> {
-    fn drop(&mut self) {
-        let key = self.key.clone();
-        tokio::spawn(async move {
-            let registry = get_registry().await;
-            registry.lock().await.release::<T>(key).await;
-        });
-    }
-}
+/// Type alias for fixture handles using generic ResourceGuard
+pub type FixtureHandle<T> = ResourceGuard<T>;
 
 /// Fixture data for a standard user session
 #[derive(Debug, Clone)]
@@ -254,25 +223,26 @@ pub async fn user_session_with_params(
 
 /// Create an empty database fixture (useful for isolation tests)
 pub async fn empty_database(ctx: &TestContext) -> AnyhowResult<FixtureHandle<()>> {
-    let key = format!("empty_database_{}", ctx.test_name());
-    let registry = get_registry().await;
-    
     let pool = ctx.pool().clone();
-    let fixture = registry.lock().await.get_or_create(key.clone(), || {
-        let pool = pool.clone();
-        async move {
-            // Clean any test data
-            sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
-                .execute(pool)
-                .await?;
-            sqlx::query!("DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_%'")
-                .execute(pool)
-                .await?;
-            Ok(())
-        }
-    }).await;
-
-    Ok(FixtureHandle::new(fixture, key))
+    
+    // Create fixture
+    let fixture = {
+        // Clean any test data
+        sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
+            .execute(&pool)
+            .await?;
+        sqlx::query!("DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_%'")
+            .execute(&pool)
+            .await?;
+        ()
+    };
+    
+    // Create ResourceGuard with cleanup
+    let cleanup = |_fixture: ()| async {
+        // No cleanup needed for empty database fixture
+    };
+    
+    Ok(ResourceGuard::new(fixture, cleanup))
 }
 
 /// Create populated checkpoints fixture

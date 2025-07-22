@@ -276,7 +276,7 @@ impl SatelliteCoordination {
         loop {
             // Check database for handoff signals
             let signals = sqlx::query!(
-                "SELECT * FROM core.core.satellite_signals 
+                "SELECT * FROM core.satellite_signals 
                  WHERE (target_instance = $1 OR target_instance = 'ALL')
                  AND signal_type = 'handoff_request'
                  AND created_at > NOW() - INTERVAL '1 minute'
@@ -363,7 +363,7 @@ impl SatelliteCoordination {
             
             // Check if current leader is still healthy via heartbeat
             let leader_health = sqlx::query!(
-                "SELECT last_heartbeat FROM service_leadership 
+                "SELECT last_heartbeat FROM core.service_leadership 
                  WHERE service_name = $1 
                  AND last_heartbeat > NOW() - INTERVAL '30 seconds'",
                 self.instance.service_name

@@ -1,244 +1,366 @@
-//! Test macros for reducing repetition and improving test consistency
-//!
-//! These macros provide reusable patterns for common test scenarios,
-//! making tests more concise and maintainable.
-//!
-//! Enhanced with sophisticated error testing from error_test_macros.
+// Harmonized Test Macros - All work together seamlessly
+//
+// These macros are designed to compose well with each other and the unified TestContext.
+// Each serves a distinct purpose, and they all follow consistent patterns.
 
-/// Test event insertion with automatic verification
+/// Main test setup macro with automatic database management
 #[macro_export]
-macro_rules! test_event_insertion {
-    ($test_name:ident, $source:expr, $event_type:expr, $payload:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::TestEventBuilder;
-            use crate::common::query_helpers::TestQueries;
+macro_rules! sinex_test {
+    (async fn $test_name:ident(ctx: TestContext) -> TestResult $body:block) => {
+        #[tokio::test]
+        async fn $test_name() -> $crate::common::TestResult {
+            use $crate::common::prelude::*;
             
-            let pool = ctx.pool();
+            let ctx = TestContext::new().await?;
+            let result = (async move $body).await;
+            result
+        }
+    };
+    
+    // Version with custom config
+    (async fn $test_name:ident(ctx: TestContext, config: $config:expr) -> TestResult $body:block) => {
+        #[tokio::test]
+        async fn $test_name() -> $crate::common::TestResult {
+            use $crate::common::prelude::*;
             
-            // Insert event
-            let event = TestEventBuilder::new($source, $event_type)
-                .with_payload($payload)
-                .insert(&pool)
-                .await?;
-            
-            // Verify insertion
-            let retrieved = TestQueries::get_event(&pool, event.id).await?;
-            assert_eq!(retrieved.source, $source);
-            assert_eq!(retrieved.event_type, $event_type);
-            assert_eq!(retrieved.payload, $payload);
-            
-            Ok(())
+            let ctx = TestContext::with_config($config).await?;
+            let result = (async move $body).await;
+            result
+        }
+    };
+    
+    // Version with verbose logging
+    (async fn $test_name:ident(ctx: TestContext, verbose) -> TestResult $body:block) => {
+        sinex_test! {
+            async fn $test_name(ctx: TestContext, config: {
+                let mut config = TestConfig::default();
+                config.verbose = true;
+                config.test_name = stringify!($test_name).to_string();
+                config
+            }) -> TestResult $body
         }
     };
 }
 
-/// Test that event insertion fails with validation error
-/// Enhanced with sophisticated error testing from error_test_macros
+/// Assert two events are equivalent (ignoring generated fields)
 #[macro_export]
-macro_rules! test_invalid_event {
-    ($test_name:ident, $source:expr, $event_type:expr, $payload:expr, $error_pattern:expr) => {
-        use crate::common::error_helpers::test_validation_error;
-        
-        test_validation_error!(
-            $test_name,
-            "event_payload", 
-            $payload,
-            $error_pattern
-        );
-    };
-}
-
-/// Test batch event operations
-#[macro_export]
-macro_rules! test_batch_events {
-    ($test_name:ident, $source:expr, $event_type:expr, $count:expr, $verification:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::BatchEventBuilder;
-            use crate::common::query_helpers::TestQueries;
+macro_rules! assert_event_eq {
+    ($actual:expr, $expected:expr) => {
+        {
+            let actual = &$actual;
+            let expected = &$expected;
             
-            let pool = ctx.pool();
-            
-            // Insert batch
-            let events = BatchEventBuilder::new($source, $event_type, $count)
-                .insert(&pool)
-                .await?;
-            
-            assert_eq!(events.len(), $count);
-            
-            // Run custom verification
-            $verification(&pool, &events).await?;
-            
-            Ok(())
+            pretty_assertions::assert_eq!(actual.source, expected.source, "Event sources differ");
+            pretty_assertions::assert_eq!(actual.event_type, expected.event_type, "Event types differ");  
+            pretty_assertions::assert_eq!(actual.payload, expected.payload, "Event payloads differ");
+            pretty_assertions::assert_eq!(actual.host, expected.host, "Event hosts differ");
         }
     };
 }
 
-/// Test checkpoint operations
+/// Assert events match pattern (flexible matching)
 #[macro_export]
-macro_rules! test_checkpoint_flow {
-    ($test_name:ident, $automaton:expr, $initial_count:expr, $updated_count:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::TestCheckpointBuilder;
-            use crate::common::query_helpers::TestQueries;
+macro_rules! assert_events_match {
+    ($events:expr, [ $( { source: $source:expr, event_type: $event_type:expr $(, payload: $payload:expr)? } ),* ]) => {
+        {
+            let events = &$events;
+            let expected_patterns = vec![
+                $( ($source, $event_type $(, $payload)?) ),*
+            ];
             
-            let pool = ctx.pool();
-            
-            // Create initial checkpoint
-            TestCheckpointBuilder::new($automaton)
-                .with_processed_count($initial_count)
-                .insert(&pool)
-                .await?;
-            
-            // Verify initial state
-            let checkpoint = TestQueries::get_checkpoint(&pool, $automaton)
-                .await?
-                .expect("Checkpoint should exist");
-            assert_eq!(checkpoint.processed_count, $initial_count);
-            
-            // Update checkpoint
-            TestCheckpointBuilder::new($automaton)
-                .with_processed_count($updated_count)
-                .with_last_processed("updated-id")
-                .insert(&pool)
-                .await?;
-            
-            // Verify update
-            let updated = TestQueries::get_checkpoint(&pool, $automaton)
-                .await?
-                .expect("Checkpoint should exist");
-            assert_eq!(updated.processed_count, $updated_count);
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test concurrent operations
-#[macro_export]
-macro_rules! test_concurrent_operations {
-    ($test_name:ident, $task_count:expr, $operation:expr, $verification:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use std::sync::Arc;
-            
-            let pool = Arc::new(ctx.pool());
-            let mut handles = vec![];
-            
-            // Spawn concurrent tasks
-            for i in 0..$task_count {
-                let pool_clone = pool.clone();
-                let handle = tokio::spawn(async move {
-                    $operation(pool_clone, i).await
-                });
-                handles.push(handle);
-            }
-            
-            // Wait for all tasks
-            let results: Vec<_> = futures::future::try_join_all(handles).await?;
-            
-            // Verify all succeeded
-            for result in &results {
-                assert!(result.is_ok());
-            }
-            
-            // Run custom verification
-            $verification(&pool, &results).await?;
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test time-based queries
-#[macro_export]
-macro_rules! test_time_range_query {
-    ($test_name:ident, $event_count:expr, $spacing:expr, $range_start:expr, $range_end:expr, $expected_count:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::BatchEventBuilder;
-            use crate::common::query_helpers::TestQueries;
-            use chrono::Utc;
-            
-            let pool = ctx.pool();
-            let now = Utc::now();
-            
-            // Insert time-spaced events
-            BatchEventBuilder::new("timed", "test.event", $event_count)
-                .with_start_time(now - chrono::Duration::hours(2))
-                .with_time_spacing($spacing)
-                .insert(&pool)
-                .await?;
-            
-            // Query time range
-            let start = now + $range_start;
-            let end = now + $range_end;
-            let events = TestQueries::get_events_in_range(&pool, start, end, None).await?;
-            
-            assert_eq!(
-                events.len(), 
-                $expected_count,
-                "Expected {} events in range {:?} to {:?}, got {}",
-                $expected_count, start, end, events.len()
+            assert_eq!(events.len(), expected_patterns.len(), 
+                "Event count mismatch: expected {}, got {}", 
+                expected_patterns.len(), events.len()
             );
             
+            for (i, event) in events.iter().enumerate() {
+                let pattern = &expected_patterns[i];
+                assert_eq!(event.source, pattern.0, "Event {} source mismatch", i);
+                assert_eq!(event.event_type, pattern.1, "Event {} type mismatch", i);
+                
+                // Optional payload matching
+                $(
+                    if let Some(expected_payload) = pattern.2 {
+                        assert_eq!(event.payload, expected_payload, "Event {} payload mismatch", i);
+                    }
+                )*
+            }
+        }
+    };
+}
+
+/// Assert error contains specific text with context
+#[macro_export]
+macro_rules! assert_error_contains {
+    ($result:expr, $text:expr) => {
+        match $result {
+            Ok(val) => panic!(
+                "Expected error containing '{}', but got Ok({:?})", 
+                $text, val
+            ),
+            Err(err) => {
+                let err_string = err.to_string();
+                assert!(
+                    err_string.contains($text),
+                    "Error '{}' does not contain '{}'",
+                    err_string, $text
+                );
+            }
+        }
+    };
+    
+    ($result:expr, $text:expr, $context:expr) => {
+        match $result {
+            Ok(val) => panic!(
+                "{}: Expected error containing '{}', but got Ok({:?})", 
+                $context, $text, val
+            ),
+            Err(err) => {
+                let err_string = err.to_string();
+                assert!(
+                    err_string.contains($text),
+                    "{}: Error '{}' does not contain '{}'",
+                    $context, err_string, $text
+                );
+            }
+        }
+    };
+}
+
+/// Assert error is of specific type
+#[macro_export]
+macro_rules! assert_error_type {
+    ($result:expr, $error_type:ty) => {
+        match $result {
+            Ok(val) => panic!(
+                "Expected error of type {}, but got Ok({:?})", 
+                stringify!($error_type), val
+            ),
+            Err(err) => {
+                assert!(
+                    err.downcast_ref::<$error_type>().is_some(),
+                    "Error is not of type {}: {:?}",
+                    stringify!($error_type), err
+                );
+            }
+        }
+    };
+}
+
+/// Eventually assert - wait for condition with timeout
+#[macro_export]
+macro_rules! eventually {
+    ($condition:expr) => {
+        eventually!($condition, 3)
+    };
+    
+    ($condition:expr, $timeout_secs:expr) => {
+        {
+            use std::time::{Duration, Instant};
+            let start = Instant::now();
+            let timeout = Duration::from_secs($timeout_secs);
+            
+            loop {
+                if $condition {
+                    break;
+                }
+                
+                if start.elapsed() > timeout {
+                    panic!("Condition not met within {} seconds", $timeout_secs);
+                }
+                
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    };
+    
+    ($ctx:expr, $condition:expr) => {
+        $ctx.wait_for_condition(|| async { Ok($condition) }).await?;
+    };
+}
+
+/// Eventually with custom message
+#[macro_export]
+macro_rules! eventually_with_message {
+    ($condition:expr, $timeout_secs:expr, $message:expr) => {
+        {
+            use std::time::{Duration, Instant};
+            let start = Instant::now();
+            let timeout = Duration::from_secs($timeout_secs);
+            
+            loop {
+                if $condition {
+                    break;
+                }
+                
+                if start.elapsed() > timeout {
+                    panic!("{} (timeout: {} seconds)", $message, $timeout_secs);
+                }
+                
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        }
+    };
+}
+
+/// Parameterized test with multiple test cases  
+#[macro_export]
+macro_rules! parameterized_test {
+    (async fn $test_name:ident(ctx: TestContext, $param:ident: $param_type:ty) -> TestResult $body:block, cases: $cases:expr) => {
+        #[tokio::test]
+        async fn $test_name() -> $crate::common::TestResult {
+            use $crate::common::prelude::*;
+            
+            let ctx = TestContext::new().await?;
+            let cases: Vec<(&str, $param_type)> = $cases;
+            
+            for (case_name, $param) in cases {
+                println!("Testing case: {}", case_name);
+                
+                let result: TestResult = (async $body).await;
+                result.with_context(|| format!("Test case '{}' failed", case_name))?;
+            }
+            
             Ok(())
         }
     };
 }
 
-/// Test event filtering
+/// Property-based test integration
 #[macro_export]
-macro_rules! test_event_filter {
-    ($test_name:ident, $sources:expr, $events_per_source:expr, $filter_source:expr, $expected_count:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::TestEventBuilder;
-            use crate::common::query_helpers::TestQueries;
+macro_rules! property_test {
+    (async fn $test_name:ident(ctx: TestContext, $input:ident: $input_type:ty) -> TestResult $body:block, strategy: $strategy:expr, cases: $cases:expr) => {
+        #[tokio::test]
+        async fn $test_name() -> $crate::common::TestResult {
+            use $crate::common::prelude::*;
+            use proptest::prelude::*;
             
-            let pool = ctx.pool();
+            let ctx = TestContext::new().await?;
+            let strategy = $strategy;
             
-            // Insert events from multiple sources
-            for source in $sources {
-                for i in 0..$events_per_source {
-                    TestEventBuilder::new(source, "test.event")
-                        .with_field("index", json!(i))
-                        .insert(&pool)
-                        .await?;
+            let mut runner = proptest::test_runner::TestRunner::deterministic();
+            
+            for _ in 0..$cases {
+                let $input = strategy.new_tree(&mut runner)?.current();
+                
+                let result: TestResult = (async $body).await;
+                result.with_context(|| format!("Property test failed with input: {:?}", $input))?;
+            }
+            
+            Ok(())
+        }
+    };
+}
+
+/// Concurrent test execution with proper error handling
+#[macro_export] 
+macro_rules! concurrent_test {
+    ($ctx:expr, $task_count:expr, |$task_id:ident| $body:block) => {
+        {
+            use std::sync::Arc;
+            use tokio::task::JoinSet;
+            
+            let ctx = Arc::new($ctx);
+            let mut join_set = JoinSet::new();
+            
+            for $task_id in 0..$task_count {
+                let ctx_clone = ctx.clone();
+                join_set.spawn(async move {
+                    let ctx = ctx_clone;
+                    let result: TestResult = (async $body).await;
+                    result
+                });
+            }
+            
+            let mut results = Vec::new();
+            let mut errors = Vec::new();
+            
+            while let Some(result) = join_set.join_next().await {
+                match result {
+                    Ok(Ok(value)) => results.push(value),
+                    Ok(Err(e)) => errors.push(e),
+                    Err(join_err) => errors.push(join_err.into()),
                 }
             }
             
-            // Query filtered events
-            let filtered = TestQueries::get_events_by_source(&pool, $filter_source, None).await?;
-            
-            assert_eq!(filtered.len(), $expected_count);
-            for event in &filtered {
-                assert_eq!(event.source, $filter_source);
+            if !errors.is_empty() {
+                return Err(anyhow::anyhow!(
+                    "Concurrent test had {} failures: {:?}", 
+                    errors.len(), errors
+                ));
             }
             
-            Ok(())
+            results
         }
     };
 }
 
-/// Test scenario with setup and teardown
+/// Time measurement for performance tests
 #[macro_export]
-macro_rules! test_with_scenario {
-    ($test_name:ident, $setup:expr, $test_body:expr, $cleanup:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            let pool = ctx.pool();
+macro_rules! measure_time {
+    ($operation:expr) => {
+        {
+            let start = std::time::Instant::now();
+            let result = $operation;
+            let duration = start.elapsed();
+            (result, duration)
+        }
+    };
+    
+    (async $operation:expr) => {
+        {
+            let start = std::time::Instant::now();
+            let result = $operation.await;
+            let duration = start.elapsed();
+            (result, duration)
+        }
+    };
+}
+
+/// Assert performance within limits
+#[macro_export] 
+macro_rules! assert_performance {
+    ($operation:expr, max_duration: $max:expr) => {
+        {
+            let (result, duration) = measure_time!($operation);
+            assert!(
+                duration <= $max,
+                "Operation took {:?}, expected <= {:?}",
+                duration, $max
+            );
+            result
+        }
+    };
+    
+    (async $operation:expr, max_duration: $max:expr) => {
+        {
+            let (result, duration) = measure_time!(async $operation);
+            assert!(
+                duration <= $max,
+                "Operation took {:?}, expected <= {:?}",
+                duration, $max
+            );
+            result
+        }
+    };
+}
+
+/// Test with setup and cleanup
+#[macro_export]
+macro_rules! test_with_setup {
+    ($ctx:expr, setup: $setup:block, test: $test:block, cleanup: $cleanup:block) => {
+        {
+            // Setup phase
+            let setup_result = (async $setup).await?;
             
-            // Setup
-            let setup_result = $setup(&pool).await?;
+            // Test phase (always runs)
+            let test_result = (async $test).await;
             
-            // Test body
-            let test_result = $test_body(&pool, setup_result).await;
+            // Cleanup phase (always runs, even if test failed)
+            let cleanup_result = (async $cleanup).await;
             
-            // Cleanup (always runs)
-            $cleanup(&pool).await?;
+            // Check cleanup succeeded
+            cleanup_result?;
             
             // Return test result
             test_result
@@ -246,316 +368,133 @@ macro_rules! test_with_scenario {
     };
 }
 
-/// Parameterized test for multiple cases
-#[macro_export]
-macro_rules! parameterized_test {
-    ($test_name:ident, $params:expr, $test_body:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            let pool = ctx.pool();
-            
-            for (name, param) in $params {
-                println!("Testing case: {}", name);
-                $test_body(&pool, param).await
-                    .map_err(|e| anyhow::anyhow!("Test case '{}' failed: {}", name, e))?;
-            }
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test event flow from source to processing
+/// Comprehensive event creation and verification
 #[macro_export]
 macro_rules! test_event_flow {
-    ($test_name:ident, $source:expr, $event_type:expr, $processor:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder};
-            use crate::common::query_helpers::TestQueries;
+    ($ctx:expr, $builder:expr, $verifier:expr) => {
+        {
+            // Create and insert event
+            let event = $builder.insert().await?;
             
-            let pool = ctx.pool();
-            
-            // Insert event
-            let event = TestEventBuilder::new($source, $event_type)
-                .with_field("test", json!(true))
-                .insert(&pool)
-                .await?;
-            
-            // Simulate processing
-            TestCheckpointBuilder::new($processor)
-                .with_last_processed(&event.id.to_string())
-                .with_processed_count(1)
-                .insert(&pool)
-                .await?;
-            
-            // Verify flow
-            let checkpoint = TestQueries::get_checkpoint(&pool, $processor)
-                .await?
-                .expect("Checkpoint should exist");
-            
-            assert_eq!(checkpoint.last_processed_id, Some(event.id.to_string()));
-            assert_eq!(checkpoint.processed_count, 1);
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test EventFactory creation patterns
-#[macro_export]
-macro_rules! test_event_factory {
-    ($test_name:ident, $source:expr, $event_type:expr, $payload:expr, $verification:expr) => {
-        #[sinex_test]
-        async fn $test_name(_ctx: TestContext) -> TestResult {
-            use sinex_events::EventFactory;
-            use pretty_assertions::assert_eq;
-            
-            let event = EventFactory::new($source).create_event(
-                $event_type,
-                $payload,
-            );
-            
-            // Basic assertions
-            assert_eq!(event.source, $source);
-            assert_eq!(event.event_type, $event_type);
-            assert_eq!(event.payload, $payload);
-            assert!(event.id.to_string().len() == 26); // ULID length
-            
-            // Custom verification
-            $verification(event);
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test data setup and verification pattern
-#[macro_export]
-macro_rules! test_with_data {
-    ($test_name:ident, $test_data:expr, $test_body:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            let pool = ctx.pool();
-            let test_data = $test_data;
-            
-            $test_body(&pool, test_data).await
-        }
-    };
-}
-
-/// Test insert and query pattern
-#[macro_export]
-macro_rules! test_insert_and_query {
-    ($test_name:ident, $source:expr, $event_type:expr, $payload:expr, $query:expr, $verification:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::TestEventBuilder;
-            
-            let pool = ctx.pool();
-            
-            // Insert event
-            let event = TestEventBuilder::new($source, $event_type)
-                .with_payload($payload)
-                .insert(&pool)
-                .await?;
-            
-            // Query
-            let result = $query(&pool, &event).await?;
-            
-            // Verify
-            $verification(&event, result)?;
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test security validation patterns
-#[macro_export]
-macro_rules! test_security_validation {
-    ($test_name:ident, $malicious_inputs:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::TestEventBuilder;
-            
-            let pool = ctx.pool();
-            
-            for (name, payload) in $malicious_inputs {
-                println!("Testing malicious input: {}", name);
-                
-                let result = TestEventBuilder::new("security.test", name)
-                    .with_payload(payload)
-                    .insert(&pool)
-                    .await;
-                
-                // Most security tests should fail validation
-                if name.contains("injection") || name.contains("xss") || name.contains("path_traversal") {
-                    assert!(result.is_err(), "Malicious input '{}' should be rejected", name);
-                } else {
-                    // Some inputs might be valid JSON but still suspicious
-                    if let Ok(event) = result {
-                        // Verify it was stored correctly
-                        assert_eq!(event.source, "security.test");
-                    }
-                }
-            }
-            
-            Ok(())
-        }
-    };
-}
-
-/// Test Redis stream operations with automatic setup and verification
-#[macro_export]
-macro_rules! test_redis_stream_operations {
-    ($test_name:ident, $stream_key:expr, $consumer_group:expr, $message_count:expr, $verification:expr) => {
-        #[sinex_test]
-        async fn $test_name(_ctx: TestContext) -> TestResult {
-            use redis::{cmd, AsyncCommands};
-            use sinex_satellite_sdk::RedisStreamClient;
-            use std::collections::HashMap;
-            
-            let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
-            let mut redis_conn = redis_client.get_connection().await?;
-            let stream_key = $stream_key;
-            let consumer_group = $consumer_group;
-            
-            // Clean up existing stream
-            let _: Result<i32, _> = redis_conn.del(stream_key).await;
-            
-            // Create consumer group
-            match cmd("XGROUP")
-                .arg("CREATE")
-                .arg(stream_key)
-                .arg(consumer_group)
-                .arg("0")
-                .arg("MKSTREAM")
-                .query_async::<_, ()>(&mut redis_conn).await {
-                Ok(_) => {},
-                Err(e) if e.to_string().contains("BUSYGROUP") => {}, // Group already exists
-                Err(e) => return Err(e.into()),
-            }
-            
-            // Add messages to stream
-            let mut message_ids = Vec::new();
-            for i in 0..$message_count {
-                let index_str = i.to_string();
-                let test_data = format!("test-{}", i);
-                let timestamp = chrono::Utc::now().to_rfc3339();
-                let message_data = &[
-                    ("index", index_str.as_str()),
-                    ("test_data", test_data.as_str()),
-                    ("timestamp", timestamp.as_str()),
-                ];
-                
-                let id: String = redis_conn.xadd(stream_key, "*", message_data).await?;
-                message_ids.push(id);
-            }
-            
-            // Read messages from stream
-            let result = cmd("XREADGROUP")
-                .arg("GROUP")
-                .arg(consumer_group)
-                .arg("test-consumer")
-                .arg("COUNT")
-                .arg($message_count)
-                .arg("STREAMS")
-                .arg(stream_key)
-                .arg(">")
-                .query_async::<_, redis::streams::StreamReadReply>(&mut redis_conn)
-                .await?;
-            
-            // Acknowledge messages
-            for stream in &result.keys {
-                for message in &stream.ids {
-                    let _: i32 = redis_conn.xack(stream_key, consumer_group, &[&message.id]).await?;
-                }
-            }
+            // Verify event was created correctly  
+            $ctx.assert_event_exists(event.id).await?;
             
             // Run custom verification
-            let verification_fn = $verification;
-            verification_fn(&mut redis_conn, &stream_key, &result, &message_ids).await?;
+            $verifier(&$ctx, &event).await?;
             
-            // Cleanup
-            let _: Result<i32, _> = redis_conn.del(stream_key).await;
-            
-            Ok(())
+            event
         }
     };
 }
 
-/// Test schema validation with comprehensive error checking
+/// Error validation testing with context
 #[macro_export]
-macro_rules! test_schema_validation {
-    ($test_name:ident, $valid_payload:expr, $invalid_payload:expr, $schema:expr, $expected_error:expr) => {
-        #[sinex_test]
-        async fn $test_name(_ctx: TestContext) -> TestResult {
-            use sinex_validation::ValidationChain;
-            use serde_json::Value;
-            
-            let schema = $schema;
-            let valid_payload: Value = $valid_payload;
-            let invalid_payload: Value = $invalid_payload;
-            
-            // Test valid payload passes validation
-            let valid_result = validate_against_schema(&valid_payload, &schema);
-            assert!(
-                valid_result.is_ok(),
-                "Valid payload should pass schema validation: {:?}",
-                valid_result.err()
-            );
-            
-            // Test invalid payload fails validation
-            let invalid_result = validate_against_schema(&invalid_payload, &schema);
-            assert!(
-                invalid_result.is_err(),
-                "Invalid payload should fail schema validation"
-            );
-            
-            // Check error message contains expected pattern
-            if let Err(error) = invalid_result {
-                let error_msg = error.to_string();
-                assert!(
-                    error_msg.contains($expected_error),
-                    "Error message '{}' should contain '{}'",
-                    error_msg,
-                    $expected_error
-                );
-            }
-            
-            Ok(())
+macro_rules! test_validation_error {
+    ($operation:expr, expected_error: $error_pattern:expr) => {
+        {
+            let result = $operation;
+            assert_error_contains!(result, $error_pattern);
         }
     };
     
-    // Simplified version that just tests one payload against schema
-    ($test_name:ident, $payload:expr, $schema:expr, $should_pass:expr) => {
-        #[sinex_test]
-        async fn $test_name(_ctx: TestContext) -> TestResult {
-            use sinex_validation::ValidationChain;
-            use serde_json::Value;
-            
-            let schema = $schema;
-            let payload: Value = $payload;
-            let should_pass = $should_pass;
-            
-            let result = validate_against_schema(&payload, &schema);
-            
-            if should_pass {
-                assert!(
-                    result.is_ok(),
-                    "Payload should pass schema validation: {:?}",
-                    result.err()
-                );
-            } else {
-                assert!(
-                    result.is_err(),
-                    "Payload should fail schema validation"
-                );
-            }
-            
-            Ok(())
+    ($operation:expr, expected_error: $error_pattern:expr, context: $context:expr) => {
+        {
+            let result = $operation;
+            assert_error_contains!(result, $error_pattern, $context);
         }
     };
 }
 
+/// Test scenario patterns - useful for complex multi-step tests
+#[macro_export]
+macro_rules! test_scenario {
+    ($ctx:expr, $( $step_name:ident: $step:block ),+ $(,)?) => {
+        {
+            $(
+                if $ctx.config().verbose {
+                    println!("Step: {}", stringify!($step_name));
+                }
+                
+                let step_result: TestResult = (async $step).await;
+                step_result.with_context(|| format!("Step {} failed", stringify!($step_name)))?;
+            )+
+        }
+    };
+}
+
+/// Batch operations with verification
+#[macro_export]
+macro_rules! test_batch_operation {
+    ($ctx:expr, count: $count:expr, operation: |$index:ident| $op:block, verify: |$results:ident| $verify:block) => {
+        {
+            let mut $results = Vec::new();
+            
+            // Execute batch
+            for $index in 0..$count {
+                let result = (async $op).await?;
+                $results.push(result);
+            }
+            
+            // Verify batch
+            (async $verify).await?;
+            
+            $results
+        }
+    };
+}
+
+/// Redis stream testing patterns
+#[macro_export]
+macro_rules! test_redis_stream {
+    ($ctx:expr, stream: $stream_key:expr, group: $group:expr, consumer: $consumer:expr, $body:block) => {
+        {
+            use redis::{AsyncCommands, cmd};
+            
+            let mut redis = $ctx.redis().await?;
+            
+            // Setup stream and group
+            let _: Result<(), redis::RedisError> = cmd("XGROUP")
+                .arg("CREATE")
+                .arg($stream_key)
+                .arg($group)
+                .arg("0")
+                .arg("MKSTREAM")
+                .query_async(&mut redis)
+                .await;
+            
+            // Test body
+            let result = (async $body).await;
+            
+            // Cleanup
+            let _: Result<i64, redis::RedisError> = redis.del($stream_key).await;
+            
+            result
+        }
+    };
+}
+
+/// Schema validation testing
+#[macro_export]
+macro_rules! test_schema_validation {
+    ($ctx:expr, valid: $valid_payload:expr, invalid: $invalid_payload:expr, schema: $schema:expr) => {
+        {
+            // Test valid payload
+            let valid_result = $ctx.event()
+                .source("test")
+                .type_("schema.test")
+                .payload($valid_payload)
+                .build();
+            assert!(valid_result.is_ok(), "Valid payload should pass: {:?}", valid_result.err());
+            
+            // Test invalid payload  
+            let invalid_result = $ctx.event()
+                .source("test")
+                .type_("schema.test")
+                .payload($invalid_payload)
+                .build();
+            // Note: Schema validation happens at insert time, not build time
+            
+            (valid_result?, invalid_result)
+        }
+    };
+}

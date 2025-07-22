@@ -1,7 +1,7 @@
-// Configuration compatibility testing utilities
+// Deployment scenario testing utilities
 //
-// This module provides tools for testing configuration compatibility
-// across different components, environments, and deployment scenarios.
+// This module provides tools for testing Sinex deployment scenarios
+// across different environments, resource constraints, and failure modes.
 
 use crate::common::prelude::*;
 use sinex_error::ErrorContext;

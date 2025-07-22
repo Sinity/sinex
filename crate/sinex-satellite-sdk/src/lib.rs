@@ -14,10 +14,13 @@ pub mod automaton;
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
+pub mod coordination;
 pub mod examples;
 pub mod grpc_client;
 pub mod heartbeat;
 pub mod lifecycle;
+pub mod version;
+pub mod processor_runner;
 pub mod redis_client;
 pub mod replay;
 pub mod stream_processor;
@@ -39,6 +42,7 @@ pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use redis_client::{RedisStreamClient, StreamMessage};
 pub use replay::ReplayMode;
+pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,

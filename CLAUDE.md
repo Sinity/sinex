@@ -5,22 +5,20 @@
 STARTUP:
 
 - nix develop (ALWAYS first, sets up environment)
-- git status && git pull (check state)
-- just migrate (if DB work planned)
 
 WORKFLOW:
 
 - Research before implementing
-- Save compilation output for analysis (don't recompile)
+- Save compilation output for analysis (don't recompile multiple times in a row)
 - TodoWrite for multi-step work
 - Atomic commits with clear messages
 
 EFFICIENCY:
 
-- compile: cargo check --workspace >/tmp/out 2>&1
-- errors: grep -E "^error\[E[0-9]+\]:" /tmp/out | sort | uniq -c
-- search: rg -t rust "pattern" (avoid multiple greps)
-- git: add -p, stash push -m "WIP: desc", diff --cached
+- compile: cargo check --workspace --all-targets > compilation.log 2>&1
+  - without all-targets, test suite isn't compile and you believe, INCORRECTLY, that things are fine when they're not.
+- errors: rg "^error\[E[0-9]+\]:" compilation.log | sort | uniq -c
+- search: rg -t rust "pattern"
 
 ## ARCHITECTURE
 
@@ -101,46 +99,12 @@ SCHEMA:
 - "no such file" in nix → uncommitted files (git status)
 - "ConnectionRefused" → redis-server not running
 
-## DEBUG CHECKLIST
-
-NO_EVENTS:
-
-1. systemctl status sinex-X
-2. journalctl -u sinex-X -f
-3. ls -la /run/sinex/ingest.sock
-4. RUST_LOG=debug systemctl restart sinex-X
-
-NO_PROCESSING:
-
-1. redis-cli XINFO STREAM sinex:events
-2. redis-cli XINFO GROUPS sinex:events
-3. Check pending messages + automaton service
-
-## RECOVERY
-
-- DB backup: pg_dump sinex_dev >/tmp/backup.sql
-- Redis reset: redis-cli --scan --pattern "sinex:*" | xargs redis-cli DEL
-- Checkpoint reset: UPDATE core.automaton_checkpoints SET last_processed_id=NULL
-- Service stuck: systemctl stop sinex-X && pkill -f sinex-X
-
-## USEFUL QUERIES
-
-```sql
--- Recent events
-SELECT ts_orig, source, event_type FROM core.events ORDER BY ts_orig DESC LIMIT 20;
-
--- Throughput 
-SELECT source, COUNT(*) FROM core.events 
-WHERE ts_ingest > NOW()-'1h'::interval GROUP BY source;
-
--- Checkpoints
-SELECT automaton_name, last_processed_id, processed_count 
-FROM core.automaton_checkpoints;
-```
-
 ## KEY DOCS
 
 - spec/understand/ - top-down description of sinex
 - spec/SADI.md - Architecture overview
 - nixos/README.md - Deployment guide
 
+## OUTPUT GUIDELINES
+
+- Unless asked otherwise, just output reports directly, not into a file. Do not litter with random markdowns.

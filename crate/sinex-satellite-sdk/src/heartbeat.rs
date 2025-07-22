@@ -127,8 +127,16 @@ impl HeartbeatEmitter {
     fn create_heartbeat_metrics(&self, metadata: Option<serde_json::Value>) -> HeartbeatMetrics {
         let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
 
-        let events_processed = self.events_processed.swap(0);
-        let errors_count = self.errors_count.swap(0) as u32;
+        let events_processed = {
+            let old = self.events_processed.get();
+            self.events_processed.reset();
+            old
+        };
+        let errors_count = {
+            let old = self.errors_count.get();
+            self.errors_count.reset();
+            old as u32
+        };
         let last_error = self.last_error.lock().take();
 
         HeartbeatMetrics {

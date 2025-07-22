@@ -5,7 +5,6 @@
 //! It combines both test-specific builders and re-exports from sinex-events.
 
 use crate::common::prelude::*;
-use crate::common::query_helpers::TestQueries;
 use sinex_db::RawEvent;
 use sinex_events::EventFactory;
 use serde_json::Value as JsonValue;
@@ -118,18 +117,21 @@ impl TestEventBuilder {
         let host = self.host.clone()
             .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());
         
-        TestQueries::insert_full_event(
-            pool,
-            &self.source,
-            &self.event_type,
-            &host,
+        // Use production EventQueries directly instead of intermediate TestQueries
+        use sinex_db::queries::EventQueries;
+        EventQueries::insert_event(
+            self.source,
+            self.event_type,
+            host,
             self.payload,
             self.ts_orig,
             self.ingestor_version,
             self.payload_schema_id,
             self.source_event_ids,
         )
+        .fetch_one(pool)
         .await
+        .map_err(Into::into)
     }
 }
 
