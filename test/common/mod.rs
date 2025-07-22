@@ -1182,6 +1182,18 @@ pub mod worker_test_utils;
 
 /// Coverage assurance utilities
 pub mod coverage_assurance;
+/// Property testing helpers
+pub mod property_helpers;
+/// Test macros for common patterns
+pub mod test_macros;
+/// Test data builders
+pub mod builders;
+/// Query helpers for tests
+pub mod query_helpers;
+/// Test fixtures
+pub mod fixtures;
+/// Error handling test helpers
+pub mod error_helpers;
 
 // Satellite architecture test utilities
 pub mod satellite_test_utils;

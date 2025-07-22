@@ -7,7 +7,7 @@
 //! - Concurrent generation safety
 
 use crate::common::prelude::*;
-use sinex_ulid::{Ulid, MonotonicUlidGenerator};
+use sinex_ulid::Ulid;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -129,7 +129,6 @@ async fn test_ulid_timestamp_wraparound_behavior(ctx: TestContext) -> TestResult
 async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> TestResult {
     println!("Testing ULID monotonic generation at extreme rates...");
     
-    let generator = Arc::new(Mutex::new(MonotonicUlidGenerator::new()));
     let generated_ulids = Arc::new(Mutex::new(Vec::new()));
     
     // Generate ULIDs from multiple threads as fast as possible
@@ -140,14 +139,13 @@ async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> TestRe
     let mut handles = vec![];
     
     for thread_id in 0..thread_count {
-        let gen = generator.clone();
         let ulids = generated_ulids.clone();
         
         let handle = std::thread::spawn(move || {
             let mut local_ulids = Vec::with_capacity(ulids_per_thread);
             
             for _ in 0..ulids_per_thread {
-                let ulid = gen.lock().unwrap().generate();
+                let ulid = Ulid::new();
                 local_ulids.push(ulid);
             }
             
@@ -189,9 +187,9 @@ async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> TestRe
     println!("Monotonicity violations: {}", violations);
     println!("Duplicate ULIDs: {}", duplicate_count);
     
-    // With MonotonicUlidGenerator, there should be no violations or duplicates
-    assert_eq!(violations, 0, "MonotonicUlidGenerator should maintain strict ordering");
-    assert_eq!(duplicate_count, 0, "MonotonicUlidGenerator should never produce duplicates");
+    // With monotonic ULID generation, there should be no violations or duplicates
+    assert_eq!(violations, 0, "Ulid::new() should maintain strict ordering");
+    assert_eq!(duplicate_count, 0, "Ulid::new() should never produce duplicates");
     
     Ok(())
 }
@@ -277,18 +275,19 @@ async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> TestResult 
                 let ulid = Ulid::new();
                 task_ulids.push(ulid);
                 
-                // Also test database insertion
-                let event = EventBuilder::new()
-                    .id(ulid)
-                    .source("concurrent_ulid_test")
-                    .event_type("generation.test")
-                    .payload(json!({
+                // Also test database insertion with specific ULID
+                let mut event = crate::common::test_event_with_payload(
+                    "concurrent_ulid_test",
+                    "generation.test",
+                    json!({
                         "task_id": task_id,
                         "sequence": i
-                    }))
-                    .build();
+                    })
+                );
+                event.id = ulid; // Override with our specific ULID for edge case testing
                 
-                if let Err(e) = insert_event(&pool, &event).await {
+                // Use the common insert_event function from test infrastructure
+                if let Err(e) = crate::common::insert_event(&pool, &event).await {
                     return Err(format!("Task {} failed at sequence {}: {}", task_id, i, e));
                 }
             }
@@ -400,28 +399,5 @@ async fn test_ulid_random_component_distribution(ctx: TestContext) -> TestResult
     Ok(())
 }
 
-// =============================================================================
-// Helper Functions
-// =============================================================================
+// Helper functions removed - use common test infrastructure instead
 
-async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), sqlx::Error> {
-    sqlx::query!(
-        r#"
-        INSERT INTO core.events (event_id, source, event_type, payload, ts_orig, ts_ingest)
-        VALUES ($1::uuid, $2, $3, $4, $5, $6)
-        "#,
-        event.id.to_uuid(),
-        event.source,
-        event.event_type,
-        event.payload,
-        event.ts_orig,
-        event.ts_ingest
-    )
-    .execute(pool)
-    .await?;
-    Ok(())
-}
-
-use serde_json::json;
-use sinex_events::{Event, EventBuilder};
-use sqlx::PgPool;

@@ -587,10 +587,3 @@ mod pg_json_functions {
         Ok(None)
     }
 }
-
-use serde_json::json;
-use sinex_events::{Event, EventBuilder};
-use sinex_error::{Error, ErrorContext};
-use sinex_ulid::Ulid;
-use sqlx::PgPool;
-use std::time::Duration;

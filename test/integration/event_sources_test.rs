@@ -1,4 +1,4 @@
-use crate::common::mocks::MockIngestdBuilder;
+use crate::common::mocks::mock_ingestd::MockIngestdBuilder;
 use crate::common::prelude::*;
 use sinex_satellite_sdk::{
     EventSourceConfig, IngestClient, StatefulStreamProcessor, StreamProcessorRunner,

@@ -487,8 +487,3 @@ async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), Error> {
     .context("Failed to insert event")?;
     Ok(())
 }
-
-use serde_json::json;
-use sinex_events::{Event, EventBuilder};
-use sinex_error::ErrorContext;
-use sqlx::PgPool;
