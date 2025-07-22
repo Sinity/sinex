@@ -103,4 +103,7 @@ pub mod ulid_test;
 /// Tests for typed clipboard events
 pub mod typed_clipboard_test;
 
+/// Comprehensive error path testing for production code
+pub mod error_paths_test;
+
 // Infrastructure tests are in test/common/ directory

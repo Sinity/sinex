@@ -82,3 +82,12 @@ mod property;
 
 #[cfg(test)]
 mod adversarial;
+
+#[cfg(test)]
+mod security;
+
+#[cfg(test)]
+mod performance;
+
+#[cfg(test)]
+mod concurrency;

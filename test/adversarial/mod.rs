@@ -22,6 +22,9 @@ pub mod boundary_test;
 // Concurrency and race condition tests
 pub mod concurrency_test;
 
+// ULID edge case and boundary testing
+pub mod ulid_edge_cases_test;
+
 // Other adversarial tests have been consolidated or are being migrated
 
 /// Common utilities for adversarial testing
