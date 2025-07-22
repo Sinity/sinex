@@ -51,6 +51,7 @@ pub mod metrics;
 pub mod operations;
 pub mod processor_manifests;
 pub mod schemas;
+pub mod source_material;
 pub mod validation;
 pub mod verification;
 
@@ -65,5 +66,6 @@ pub use metrics::MetricsQueries;
 pub use operations::OperationQueries;
 pub use processor_manifests::ProcessorManifestQueries;
 pub use schemas::SchemaQueries;
+pub use source_material::SourceMaterialQueries;
 pub use validation::ValidationQueries;
 pub use verification::VerificationQueries;

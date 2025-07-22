@@ -33,6 +33,7 @@ tracing.workspace = true
 # Utilities
 chrono.workspace = true
 uuid.workspace = true
+blake3 = "1.5"
 
 [dev-dependencies]
 sinex-test-macros = { path = "../sinex-test-macros" }

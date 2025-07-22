@@ -29,15 +29,17 @@ impl PkmServiceAutomaton {
     }
 
     /// Handle PKM RPC request
-    async fn handle_pkm_request(&self, request: Value) -> SatelliteResult<Value> {
+    async fn handle_pkm_request(&self, event: &sinex_events::RawEvent, request: Value) -> SatelliteResult<Value> {
         let service = self.service.as_ref().unwrap();
         let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or(json!({}));
 
         match method {
-            "pkm.create_note" => self.handle_create_note(service, params).await,
-            "pkm.create_entities_from_list" => self.handle_create_entities(service, params).await,
+            "pkm.create_note" => self.handle_create_note(service, event.event_id, params).await,
+            "pkm.create_entities" => self.handle_create_entities(service, params).await,
             "pkm.link_entities" => self.handle_link_entities(service, params).await,
+            "pkm.register_source_material" => self.handle_register_source_material(service, params).await,
+            "pkm.get_recent_materials" => self.handle_get_recent_materials(service, params).await,
             _ => Err(SatelliteError::Automaton(format!(
                 "Unknown PKM method: {}",
                 method
@@ -48,14 +50,9 @@ impl PkmServiceAutomaton {
     async fn handle_create_note(
         &self,
         service: &PkmService,
+        event_id: Ulid,
         params: Value,
     ) -> SatelliteResult<Value> {
-        let event_id = params
-            .get("event_id")
-            .and_then(|v| v.as_str())
-            .and_then(|s| s.parse::<Ulid>().ok())
-            .ok_or_else(|| SatelliteError::Automaton("Invalid or missing event_id".to_string()))?;
-
         let content = params
             .get("content")
             .and_then(|v| v.as_str())
@@ -76,8 +73,13 @@ impl PkmServiceAutomaton {
             .and_then(|v| v.as_str())
             .unwrap_or("sinex-pkm-automaton");
 
+        let source_material_id = params
+            .get("source_material_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<Ulid>().ok());
+
         let annotation_id = service
-            .create_note(event_id, content, tags, created_by)
+            .create_note(event_id, content, tags, created_by, source_material_id)
             .await
             .map_err(|e| SatelliteError::Automaton(format!("PKM error: {}", e)))?;
 
@@ -89,11 +91,12 @@ impl PkmServiceAutomaton {
         service: &PkmService,
         params: Value,
     ) -> SatelliteResult<Value> {
-        let event_id = params
-            .get("event_id")
+        // This endpoint now requires source_material_id
+        let source_material_id = params
+            .get("source_material_id")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<Ulid>().ok())
-            .ok_or_else(|| SatelliteError::Automaton("Invalid or missing event_id".to_string()))?;
+            .ok_or_else(|| SatelliteError::Automaton("Invalid or missing source_material_id".to_string()))?;
 
         let entities = params
             .get("entities")
@@ -109,13 +112,22 @@ impl PkmServiceAutomaton {
             })
             .unwrap_or_default();
 
+        let created_by = params
+            .get("created_by")
+            .and_then(|v| v.as_str())
+            .unwrap_or("sinex-pkm-automaton");
+
         let entity_ids = service
-            .create_entities_from_list(event_id, entities)
+            .create_entities_from_source_material(source_material_id, entities, created_by)
             .await
             .map_err(|e| SatelliteError::Automaton(format!("PKM error: {}", e)))?;
 
-        Ok(json!({ "entity_ids": entity_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>() }))
+        Ok(json!({ 
+            "entity_ids": entity_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
+            "source_material_id": source_material_id.to_string()
+        }))
     }
+
 
     async fn handle_link_entities(
         &self,
@@ -149,12 +161,71 @@ impl PkmServiceAutomaton {
             .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
             .unwrap_or_default();
 
+        let source_material_id = params
+            .get("source_material_id")
+            .and_then(|v| v.as_str())
+            .and_then(|s| s.parse::<Ulid>().ok());
+
         let relation_id = service
-            .link_entities(from_entity_id, to_entity_id, relationship_type, properties)
+            .link_entities(from_entity_id, to_entity_id, relationship_type, properties, source_material_id)
             .await
             .map_err(|e| SatelliteError::Automaton(format!("PKM error: {}", e)))?;
 
         Ok(json!({ "relation_id": relation_id.to_string() }))
+    }
+
+    async fn handle_register_source_material(
+        &self,
+        service: &PkmService,
+        params: Value,
+    ) -> SatelliteResult<Value> {
+        let material_type = params
+            .get("material_type")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SatelliteError::Automaton("Missing material_type".to_string()))?;
+
+        let source_uri = params.get("source_uri").and_then(|v| v.as_str());
+
+        let content = params
+            .get("content")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| SatelliteError::Automaton("Missing content".to_string()))?;
+
+        let mime_type = params.get("mime_type").and_then(|v| v.as_str());
+
+        let metadata = params
+            .get("metadata")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+
+        let blob_id = service
+            .register_source_material(
+                material_type,
+                source_uri,
+                content.as_bytes(),
+                mime_type,
+                metadata,
+            )
+            .await
+            .map_err(|e| SatelliteError::Automaton(format!("PKM error: {}", e)))?;
+
+        Ok(json!({ "blob_id": blob_id.to_string() }))
+    }
+
+    async fn handle_get_recent_materials(
+        &self,
+        service: &PkmService,
+        params: Value,
+    ) -> SatelliteResult<Value> {
+        let material_type = params.get("material_type").and_then(|v| v.as_str());
+        let limit = params.get("limit").and_then(|v| v.as_i64());
+
+        let materials = service
+            .get_recent_source_materials(material_type, limit)
+            .await
+            .map_err(|e| SatelliteError::Automaton(format!("PKM error: {}", e)))?;
+
+        Ok(json!({ "materials": materials }))
     }
 }
 
@@ -198,7 +269,7 @@ impl HotlogAutomaton for PkmServiceAutomaton {
 
         // Handle PKM RPC requests
         if event.event.source == "rpc.pkm" && event.event.event_type == "request" {
-            match self.handle_pkm_request(payload.clone()).await {
+            match self.handle_pkm_request(&event.event, payload.clone()).await {
                 Ok(response) => {
                     // Submit response as synthesis event
                     let _ctx = self.context.as_ref().unwrap();

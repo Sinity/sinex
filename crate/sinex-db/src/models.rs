@@ -110,6 +110,26 @@ pub struct BlobRecord {
     pub verification_status: Option<String>,
 }
 
+/// Source Material record for external data provenance
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct SourceMaterialRecord {
+    pub blob_id: Ulid,
+    pub material_type: String,
+    pub source_uri: Option<String>,
+    pub ingestion_time: Timestamp,
+    pub file_size_bytes: Option<i64>,
+    pub checksum_blake3: Option<String>,
+    pub mime_type: Option<String>,
+    pub encoding: Option<String>,
+    pub metadata: JsonValue,
+    pub content_preview: Option<String>,
+    pub is_archived: bool,
+    pub archive_time: OptionalTimestamp,
+    pub retention_policy: Option<String>,
+    pub created_at: Timestamp,
+    pub updated_at: Timestamp,
+}
+
 impl From<&str> for DlqErrorCategory {
     fn from(s: &str) -> Self {
         match s {

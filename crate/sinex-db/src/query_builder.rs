@@ -255,6 +255,7 @@ impl QueryBuilder {
         }
     }
 
+
     /// Create a new INSERT query builder
     pub fn insert(table: &str) -> Self {
         Self {
@@ -384,6 +385,14 @@ impl QueryBuilder {
     /// Add GROUP BY clause
     pub fn group_by(mut self, column: &str) -> Self {
         self.group_by.push(column.to_string());
+        self
+    }
+
+    /// Add multiple GROUP BY columns
+    pub fn group_by_multiple(mut self, columns: &[&str]) -> Self {
+        for column in columns {
+            self.group_by.push(column.to_string());
+        }
         self
     }
 
