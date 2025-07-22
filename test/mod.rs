@@ -64,6 +64,7 @@
 
 
 // Common test infrastructure (always available)
+#[macro_use]
 mod common;
 
 // Test categories organized by scope and resource requirements

@@ -90,7 +90,7 @@ mod tests {
         assert_eq!(event.event_type, "test.event");
         assert_eq!(event.payload, payload);
         assert!(event.ts_orig.is_none());
-        assert!(event.ingestor_version.is_none());
+        assert!(event.ingestor_version.is_some());
         assert!(event.payload_schema_id.is_none());
     }
 

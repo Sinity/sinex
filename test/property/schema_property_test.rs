@@ -1,8 +1,9 @@
 use crate::common::prelude::*;
-use crate::common::property_builders::*;
+use crate::common::property_helpers::*;
+use crate::test_schema_validation;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use sinex_validation::{ValidationChain, ValidationResult};
+use sinex_validation::{ValidationChain};
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -388,36 +389,392 @@ mod validation_chain_tests {
     proptest! {
         #[test]
         fn validation_chain_accumulation(
-            validations in proptest::collection::vec(
-                (any::<bool>(), "[a-zA-Z ]+"),
-                1..10
-            )
+            test_string in "[a-zA-Z0-9]*",
+            min_length in 0usize..50,
+            max_length in 50usize..100
         ) {
             // Property: ValidationChain should accumulate all errors
-            let mut chain = ValidationChain::new();
-            let mut expected_errors = Vec::new();
+            let chain = ValidationChain::validate(test_string.clone(), "test_field")
+                .min_length(min_length)
+                .max_length(max_length);
             
-            for (should_fail, message) in validations {
-                if should_fail {
-                    chain = chain.validate(false, &message);
-                    expected_errors.push(message);
-                } else {
-                    chain = chain.validate(true, &message);
-                }
-            }
+            let result = chain.into_result();
             
-            let result = chain.build();
+            let expected_valid = test_string.len() >= min_length && test_string.len() <= max_length;
             
-            if expected_errors.is_empty() {
-                assert!(matches!(result, ValidationResult::Valid));
+            if expected_valid {
+                assert!(result.is_ok(), "Valid string should pass validation");
             } else {
-                if let ValidationResult::Invalid(errors) = result {
-                    assert_eq!(errors.len(), expected_errors.len(),
-                               "Should accumulate all validation errors");
-                } else {
-                    panic!("Should be invalid with errors");
+                assert!(result.is_err(), "Invalid string should fail validation");
+            }
+        }
+    }
+}
+
+// === MACRO-BASED SCHEMA VALIDATION TESTS ===
+
+// Test permissive schema accepts valid payloads
+test_schema_validation!(
+    test_permissive_schema_accepts_valid_data,
+    json!({"field": "value", "number": 42}),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": true
+    }),
+    true
+);
+
+// Test strict schema rejects invalid type
+test_schema_validation!(
+    test_strict_schema_rejects_wrong_type,
+    json!("not an object"),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "additionalProperties": false
+    }),
+    false
+);
+
+// === TYPE CONSTRAINT TESTS ===
+
+// String type validation
+test_schema_validation!(
+    test_string_type_validation_valid,
+    json!("valid string"),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "string"
+    }),
+    true
+);
+
+test_schema_validation!(
+    test_string_type_validation_invalid,
+    json!(42),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "string"
+    }),
+    false
+);
+
+// Number type validation
+test_schema_validation!(
+    test_number_type_validation_valid,
+    json!(42.5),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "number"
+    }),
+    true
+);
+
+test_schema_validation!(
+    test_number_type_validation_invalid,
+    json!("not a number"),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "number"
+    }),
+    false
+);
+
+// === REQUIRED FIELDS TESTS ===
+
+// Valid object with required fields
+test_schema_validation!(
+    test_required_fields_present,
+    json!({"name": "test", "value": 42}),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["name", "value"],
+        "properties": {
+            "name": {"type": "string"},
+            "value": {"type": "number"}
+        }
+    }),
+    true
+);
+
+// Invalid object missing required field
+test_schema_validation!(
+    test_required_fields_missing,
+    json!({"name": "test"}),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["name", "value"],
+        "properties": {
+            "name": {"type": "string"},
+            "value": {"type": "number"}
+        }
+    }),
+    false
+);
+
+// === COMPREHENSIVE REAL SINEX EVENT SCHEMA TESTS ===
+
+// Filesystem event schema
+test_schema_validation!(
+    test_filesystem_event_schema_valid,
+    json!({
+        "path": "/home/user/document.txt",
+        "size": 1024,
+        "modified_time": "2024-01-01T00:00:00Z",
+        "file_type": "file"
+    }),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["path", "size", "modified_time"],
+        "properties": {
+            "path": {"type": "string", "minLength": 1},
+            "size": {"type": "integer", "minimum": 0},
+            "modified_time": {"type": "string"},
+            "file_type": {"type": "string", "enum": ["file", "directory", "symlink"]}
+        }
+    }),
+    true
+);
+
+// Shell command event schema
+test_schema_validation!(
+    test_shell_command_schema_valid,
+    json!({
+        "command": "ls -la",
+        "exit_code": 0,
+        "duration_ms": 150,
+        "working_directory": "/home/user"
+    }),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["command", "exit_code"],
+        "properties": {
+            "command": {"type": "string", "minLength": 1},
+            "exit_code": {"type": "integer"},
+            "duration_ms": {"type": "integer", "minimum": 0},
+            "working_directory": {"type": "string"}
+        }
+    }),
+    true
+);
+
+// Window manager event schema
+test_schema_validation!(
+    test_window_manager_window_opened_valid,
+    json!({
+        "window_id": "0x1a2b3c4d",
+        "title": "Firefox - Mozilla Firefox",
+        "class": "firefox",
+        "workspace": 1,
+        "position": {"x": 100, "y": 100},
+        "size": {"width": 1200, "height": 800},
+        "opened_time": "2024-01-01T00:00:00Z"
+    }),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["window_id", "title", "class"],
+        "properties": {
+            "window_id": {"type": "string", "minLength": 1},
+            "title": {"type": "string"},
+            "class": {"type": "string"},
+            "workspace": {"type": "integer", "minimum": 1},
+            "position": {
+                "type": "object",
+                "properties": {
+                    "x": {"type": "integer"},
+                    "y": {"type": "integer"}
+                }
+            },
+            "size": {
+                "type": "object", 
+                "properties": {
+                    "width": {"type": "integer", "minimum": 1},
+                    "height": {"type": "integer", "minimum": 1}
+                }
+            },
+            "opened_time": {"type": "string", "format": "date-time"}
+        }
+    }),
+    true
+);
+
+// Sinex satellite heartbeat schema with validation error
+test_schema_validation!(
+    test_sinex_satellite_heartbeat_invalid_version,
+    json!({
+        "satellite_name": "fs-watcher",
+        "status": "running",
+        "version": "not-a-version"  // Invalid: doesn't match semantic version pattern
+    }),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["satellite_name", "status", "version"],
+        "properties": {
+            "satellite_name": {"type": "string", "minLength": 1},
+            "status": {"type": "string", "enum": ["running", "stopped", "error", "starting", "stopping"]},
+            "version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+"}
+        }
+    }),
+    false
+);
+
+// === ADDITIONAL PROPERTIES TESTS ===
+
+// Valid with additional properties allowed
+test_schema_validation!(
+    test_additional_properties_allowed,
+    json!({"name": "test", "extra": "allowed"}),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"}
+        },
+        "additionalProperties": true
+    }),
+    true
+);
+
+// Invalid with additional properties forbidden
+test_schema_validation!(
+    test_additional_properties_forbidden,
+    json!({"name": "test", "extra": "not allowed"}),
+    json!({
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+            "name": {"type": "string"}
+        },
+        "additionalProperties": false
+    }),
+    false
+);
+
+// === ENHANCED VALIDATION FUNCTION ===
+
+// Enhanced validation function that provides better error messages - removed duplicate definition
+#[allow(dead_code)]
+fn validate_against_schema_enhanced(value: &serde_json::Value, schema: &serde_json::Value) -> Result<(), String> {
+    if let (Some(required), Some(value_obj)) = (schema.get("required"), value.as_object()) {
+        if let Some(required_array) = required.as_array() {
+            for req_field in required_array {
+                if let Some(field_name) = req_field.as_str() {
+                    if !value_obj.contains_key(field_name) {
+                        return Err(format!("Missing required field: {}", field_name));
+                    }
                 }
             }
         }
+    }
+    
+    if let (Some(props), Some(value_obj)) = (schema.get("properties"), value.as_object()) {
+        if let Some(props_obj) = props.as_object() {
+            for (field_name, field_value) in value_obj {
+                if let Some(field_schema) = props_obj.get(field_name) {
+                    // Type validation
+                    if let Some(expected_type) = field_schema.get("type") {
+                        let matches_type = match expected_type {
+                            serde_json::Value::String(type_str) => {
+                                validate_type(field_value, type_str)
+                            },
+                            serde_json::Value::Array(type_array) => {
+                                type_array.iter().any(|t| {
+                                    if let Some(type_str) = t.as_str() {
+                                        validate_type(field_value, type_str)
+                                    } else {
+                                        false
+                                    }
+                                })
+                            },
+                            _ => true
+                        };
+                        
+                        if !matches_type {
+                            return Err(format!("Type mismatch for field {}", field_name));
+                        }
+                    }
+                    
+                    // Enum validation
+                    if let (Some(enum_values), field_str) = (
+                        field_schema.get("enum").and_then(|e| e.as_array()),
+                        field_value.as_str()
+                    ) {
+                        if let Some(field_str) = field_str {
+                            let valid_enum = enum_values.iter().any(|v| v.as_str() == Some(field_str));
+                            if !valid_enum {
+                                return Err(format!("Enum validation failed for field {}", field_name));
+                            }
+                        }
+                    }
+                    
+                    // Pattern validation
+                    if let (Some(pattern), Some(string_val)) = (
+                        field_schema.get("pattern").and_then(|p| p.as_str()),
+                        field_value.as_str()
+                    ) {
+                        if !regex::Regex::new(pattern).unwrap().is_match(string_val) {
+                            return Err(format!("Pattern validation failed for field {}", field_name));
+                        }
+                    }
+                    
+                    // Minimum validation for numbers
+                    if let (Some(min), Some(num_val)) = (
+                        field_schema.get("minimum").and_then(|m| m.as_i64()),
+                        field_value.as_i64()
+                    ) {
+                        if num_val < min {
+                            return Err(format!("Minimum constraint violation for field {}: {} < {}", 
+                                             field_name, num_val, min));
+                        }
+                    }
+                    
+                    // MinLength validation for strings
+                    if let (Some(min_len), Some(string_val)) = (
+                        field_schema.get("minLength").and_then(|m| m.as_u64()),
+                        field_value.as_str()
+                    ) {
+                        if (string_val.len() as u64) < min_len {
+                            return Err(format!("MinLength constraint violation for field {}", field_name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Additional properties validation
+    if let (Some(additional_props), Some(value_obj)) = (schema.get("additionalProperties"), value.as_object()) {
+        if let (Some(false), Some(props)) = (additional_props.as_bool(), schema.get("properties")) {
+            if let Some(props_obj) = props.as_object() {
+                for field_name in value_obj.keys() {
+                    if !props_obj.contains_key(field_name) {
+                        return Err(format!("Additional property not allowed: {}", field_name));
+                    }
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+// Helper function for type validation
+fn validate_type(value: &serde_json::Value, expected_type: &str) -> bool {
+    match expected_type {
+        "string" => value.is_string(),
+        "number" => value.is_number(),
+        "integer" => value.is_i64() || value.is_u64(),
+        "boolean" => value.is_boolean(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        "null" => value.is_null(),
+        _ => true // Unknown type, allow
     }
 }

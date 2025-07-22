@@ -110,7 +110,7 @@ impl TimeHorizon {
 /// // Stream checkpoint for Redis processing
 /// let stream = Checkpoint::stream("1234567890-0", Some(event_id));
 /// ```
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Checkpoint {
     /// No checkpoint - start from beginning
     None,

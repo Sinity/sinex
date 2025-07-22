@@ -22,16 +22,18 @@
 
 use crate::common::test_macros::*;
 use crate::common::prelude::*;
-// Database pool module is not available
-// use crate::common::database_pool::TestDatabase;
-use crate::common::event_builders::{EventBuilder, GenericEventBuilder};
+use crate::common::database_pool::{TestDatabase, acquire_test_database};
+use crate::common::satellite_test_utils::{TestIngestdHandle, TestSatelliteHandle, TestAutomatonHandle};
+use crate::common::builders::{EventBuilder, GenericEventBuilder};
 use sinex_core_types::DbPoolRef;
+use sinex_satellite_sdk::StreamMessage;
 // Timing optimization wait_helpers module is not available
 // use crate::common::timing_optimization::wait_helpers::{
 //     wait_for_condition_or_timeout, wait_for_event_count, wait_for_filtered_event_count,
 // };
 use sinex_events::EventFactory;
 use std::time::{Duration, Instant};
+use std::collections::HashMap;
 use tokio::sync::Mutex;
 use redis::aio::MultiplexedConnection;
 // Satellite test utils module is not available
@@ -126,7 +128,7 @@ impl TestContext {
 
     /// Create a new test context with custom configuration
     pub async fn with_config(config: TestConfig) -> AnyhowResult<Self> {
-        let db = crate::common::database_pool::acquire_test_database().await?;
+        let db = acquire_test_database().await?;
 
         Ok(Self {
             db,
@@ -305,7 +307,7 @@ impl TestContext {
             "window.created" => builder.window_created(),
             "window.destroyed" => builder.window_destroyed(),
             "window.focused" => builder.window_focused(),
-            _ => builder.event_type(crate::common::event_builders::HyprlandEventType::Custom(
+            _ => builder.event_type(crate::common::builders::HyprlandEventType::Custom(
                 event_type.to_string(),
             )),
         };
@@ -317,14 +319,30 @@ impl TestContext {
 
     /// Wait for a specific number of events to exist
     pub async fn wait_for_event_count(&self, expected: usize) -> TestResult {
-        wait_for_event_count(
-            self.pool(),
-            expected,
-            self.config.default_timeout.as_secs(),
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!(e))?;
-        Ok(())
+        use sinex_db::queries::EventQueries;
+        
+        let timeout = std::time::Duration::from_secs(self.config.default_timeout.as_secs());
+        let start = std::time::Instant::now();
+        
+        loop {
+            let (count,) = EventQueries::count_all()
+                .fetch_one::<(i64,)>(self.pool())
+                .await?;
+            
+            if count as usize >= expected {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(anyhow::anyhow!(
+                    "Timed out waiting for {} events, got {}",
+                    expected,
+                    count
+                ).into());
+            }
+            
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     /// Wait for events from a specific source
@@ -341,16 +359,28 @@ impl TestContext {
     }
 
     /// Wait for a condition to become true
-    pub async fn wait_for_condition<F, Fut>(&self, condition: F) -> TestResult
+    pub async fn wait_for_condition<F, Fut>(&self, mut condition: F) -> TestResult
     where
         F: FnMut() -> Fut,
         Fut: std::future::Future<Output = AnyhowResult<bool>>,
     {
-        wait_for_condition_or_timeout(condition, self.config.default_timeout.as_secs())
-            .await
-            .map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::TimedOut, e).into()
-            })
+        let timeout = std::time::Duration::from_secs(self.config.default_timeout.as_secs());
+        let start = std::time::Instant::now();
+        
+        loop {
+            if condition().await? {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "Condition timed out"
+                ).into());
+            }
+            
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     /// Wait a short time for processing (replaces arbitrary sleeps)
@@ -498,20 +528,17 @@ impl TestContext {
         let mut messages = Vec::new();
         match result {
             Ok(reply) => {
-                for redis::streams::StreamKey { key: _, ids } in reply.keys {
+                for redis::streams::StreamKey { key, ids } in reply.keys {
                     for redis::streams::StreamId { id, map } in ids {
-                        let mut fields = Vec::new();
+                        let mut fields = HashMap::new();
                         for (k, v) in map {
-                            let v_str = match v {
-                                redis::Value::Data(data) => String::from_utf8_lossy(&data).to_string(),
-                                redis::Value::Okay => "OK".to_string(),
-                                redis::Value::Status(s) => s,
-                                redis::Value::Int(i) => i.to_string(),
-                                _ => format!("{:?}", v),
-                            };
-                            fields.push((k, v_str));
+                            fields.insert(k, v);
                         }
-                        messages.push(StreamMessage { id, fields });
+                        messages.push(StreamMessage { 
+                            stream: key.clone(),
+                            id, 
+                            fields 
+                        });
                     }
                 }
             }
@@ -621,7 +648,8 @@ impl TestContext {
         &self,
         event: &RawEvent,
     ) -> AnyhowResult<Ulid> {
-        assert_event_inserted_with_context(self.pool(), event, &self.config.test_name).await
+        assert_event_inserted_with_context(self.pool(), event, &self.config.test_name).await?;
+        Ok(event.id)
     }
 
     /// Create events with custom time distribution
@@ -710,11 +738,9 @@ impl TestContext {
     /// Start a test ingestd server
     pub async fn start_test_ingestd(&self) -> AnyhowResult<TestIngestdHandle> {
         crate::common::satellite_test_utils::start_test_ingestd_with_config(
-            self,
             crate::common::satellite_test_utils::TestIngestdConfig::default(),
         )
         .await
-        .map_err(|e| anyhow::anyhow!(e))
     }
 
     /// Start a test satellite with configuration
@@ -722,7 +748,8 @@ impl TestContext {
         &self,
         config: sinex_satellite_sdk::config::SatelliteConfig,
     ) -> AnyhowResult<TestSatelliteHandle> {
-        crate::common::satellite_test_utils::TestSatelliteHandle::start(config, self.pool().clone())
+        let config_json = serde_json::to_value(&config)?;
+        crate::common::satellite_test_utils::TestSatelliteHandle::start(config_json, self.pool().clone())
             .await
             .map_err(|e| anyhow::anyhow!(e))
     }
@@ -732,7 +759,7 @@ impl TestContext {
         crate::common::satellite_test_utils::TestAutomatonHandle::start(
             automaton_type,
             self.pool().clone(),
-            self.redis().await?,
+            "redis://localhost:6379",
         )
         .await
         .map_err(|e| anyhow::anyhow!(e))

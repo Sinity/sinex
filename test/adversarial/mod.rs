@@ -16,6 +16,14 @@
 // Adversarial tests have been consolidated or are being migrated
 // Tests are now implemented using the test abstractions framework
 
+// Restored adversarial test modules
+mod attack_simulation_test;
+mod boundary_test;
+mod chaos_engineering_test;
+mod concurrency_test;
+mod enhanced_boundary_test;
+mod security_test;
+
 /// Common utilities for adversarial testing
 pub mod utils {
     use serde_json::json;

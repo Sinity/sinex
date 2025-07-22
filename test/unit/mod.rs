@@ -79,7 +79,12 @@
 // when external resources aren't needed. Use standard `#[test]` for pure unit tests.
 
 
-// === Consolidated Unit Tests ===
+// === Unit Test Modules ===
 
-// Infrastructure tests are in test/common/ directory
-// Other unit tests have been migrated to use test abstractions
+mod api_test;
+mod core_test;
+mod database_test;
+mod event_type_system_test;
+mod preflight_test;
+mod typed_clipboard_test;
+mod ulid_comprehensive_test;

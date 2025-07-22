@@ -3591,6 +3591,7 @@ dependencies = [
  "sinex-services",
  "sinex-test-macros",
  "sinex-ulid",
+ "sinex-utils",
  "sinex-validation",
  "sqlx",
  "tempfile",
@@ -4331,6 +4332,22 @@ dependencies = [
  "thiserror 1.0.69",
  "ulid",
  "uuid",
+]
+
+[[package]]
+name = "sinex-utils"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "rand 0.8.5",
+ "serde",
+ "serde_json",
+ "sinex-db",
+ "sinex-error",
+ "sqlx",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

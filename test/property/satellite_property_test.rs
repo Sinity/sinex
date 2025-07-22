@@ -1,8 +1,9 @@
 use crate::common::prelude::*;
-use crate::common::property_builders::*;
-use crate::common::satellite_test_utils::*;
+use crate::common::property_helpers::*;
+// use crate::common::satellite_test_utils::*; // Module not available
 use proptest::prelude::*;
-use sinex_satellite_sdk::stream_processor::{StatefulStreamProcessor, TimeHorizon, ProcessingResult};
+use sinex_satellite_sdk::stream_processor::{StatefulStreamProcessor, TimeHorizon, Checkpoint};
+use sinex_satellite_sdk::ProcessingResult;
 use chrono::{DateTime, Utc};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -62,7 +63,7 @@ proptest! {
             let final_checkpoint = satellite.get_checkpoint().await.unwrap();
             
             match (checkpoint, final_checkpoint) {
-                (_, Checkpoint::Database { event_id }) => {
+                (_, Checkpoint::Internal { event_id, .. }) => {
                     // Should reflect last processed event
                     if let Some(last_id) = last_event_id {
                         assert_eq!(event_id, last_id, "Checkpoint should reflect last processed event");
@@ -182,7 +183,7 @@ proptest! {
     #[test]
     fn satellite_time_horizon_behavior(
         horizon in prop_oneof![
-            Just(TimeHorizon::Historical),
+            Just(TimeHorizon::Historical { end_time: chrono::Utc::now() }),
             Just(TimeHorizon::Continuous),
             Just(TimeHorizon::Snapshot),
         ],
@@ -215,7 +216,7 @@ proptest! {
             let processed = satellite.get_processed_count().await;
             
             match horizon {
-                TimeHorizon::Historical => {
+                TimeHorizon::Historical { .. } => {
                     // Should process all events
                     assert_eq!(processed, historical_count + recent_count);
                 },
@@ -381,7 +382,7 @@ mod test_satellites {
             satellite
         }
         
-        pub async fn process_event(&self, event: RawEvent) -> Result<Option<RawEvent>> {
+        pub async fn process_event(&self, event: RawEvent) -> AnyhowResult<Option<RawEvent>> {
             if *self.error_mode.lock().await {
                 return Err(anyhow::anyhow!("Simulated error"));
             }
@@ -389,7 +390,7 @@ mod test_satellites {
             self.processed_count.fetch_add(1, Ordering::SeqCst);
             
             // Update checkpoint
-            *self.checkpoint.lock().await = Checkpoint::Database { event_id: event.id };
+            *self.checkpoint.lock().await = Checkpoint::Internal { event_id: event.id, message_count: 0 };
             
             // Simple transformation
             let mut output = event.clone();
@@ -403,17 +404,17 @@ mod test_satellites {
             from: Option<DateTime<Utc>>,
             until: Option<DateTime<Utc>>,
             _args: serde_json::Value,
-        ) -> Result<Vec<RawEvent>> {
+        ) -> AnyhowResult<Vec<RawEvent>> {
             // Mock implementation
             Ok(vec![])
         }
         
-        pub async fn set_checkpoint(&self, checkpoint: Checkpoint) -> Result<()> {
+        pub async fn set_checkpoint(&self, checkpoint: Checkpoint) -> AnyhowResult<()> {
             *self.checkpoint.lock().await = checkpoint;
             Ok(())
         }
         
-        pub async fn get_checkpoint(&self) -> Result<Checkpoint> {
+        pub async fn get_checkpoint(&self) -> AnyhowResult<Checkpoint> {
             Ok(self.checkpoint.lock().await.clone())
         }
         
@@ -433,11 +434,12 @@ mod test_satellites {
             self.processed_count.load(Ordering::SeqCst)
         }
         
-        pub async fn save_state(&self) -> Result<()> {
+        pub async fn save_state(&self) -> AnyhowResult<()> {
             if let Some(path) = &self.state_path {
+                let checkpoint = self.get_checkpoint().await.ok();
                 let state = serde_json::json!({
                     "processed_count": self.get_processed_count().await,
-                    "checkpoint": self.get_checkpoint().await,
+                    "checkpoint": checkpoint,
                 });
                 std::fs::write(path, serde_json::to_string(&state)?)?;
             }

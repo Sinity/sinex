@@ -62,7 +62,7 @@ pub use tempfile::TempDir;
 // Common modules
 // Test context - THE way to write tests
 // Event factory and builders - THE way to create events
-pub use crate::common::event_builders::EventBuilder;
+pub use crate::common::builders::EventBuilder;
 pub use sinex_events::{sources, event_types, EventFactory};
 // Database helpers available in crate::common::database_helpers
 // Test macro - THE way to define tests
@@ -71,6 +71,11 @@ pub use sinex_test_macros::sinex_test;
 #[allow(unused_imports)]
 pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
+pub use sinex_utils::wait_helpers::{
+    wait_for_event_count, wait_for_condition_or_timeout,
+    wait_for_database_ready,
+};
+pub use crate::common::{wait_for_filtered_event_count, assert_event_inserted_with_context};
 // ===== Common Functions =====
 // Event operations
 pub use crate::common::insert_event;
@@ -120,7 +125,7 @@ pub use crate::{
 // Snapshot testing module is not available
 
 // Error testing utilities and patterns
-pub use crate::common::error_test_utils::{
+pub use crate::common::error_helpers::{
     ErrorAssert, CoreErrorVariant, ErrorScenarioBuilder, 
     CommonErrorScenarios, ErrorRecovery, ErrorPropagation
 };

@@ -5,7 +5,7 @@
 //! use exponential backoff and proper timeout handling.
 
 use sinex_error::{CoreError, Result};
-use sinex_db::queries::OperationQueries;
+use sinex_db::queries::{OperationQueries, EventQueries};
 use std::time::{Duration, Instant};
 use sqlx::PgPool;
 
@@ -23,7 +23,8 @@ pub async fn wait_for_database_ready_with_timeout(pool: &DbPool, timeout_secs: u
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        match OperationQueries::health_check(pool)
+        match OperationQueries::health_check()
+            .fetch_one::<(i64,)>(pool)
             .await
         {
             Ok(_) => return Ok(()),
@@ -53,7 +54,8 @@ pub async fn wait_for_event_count(
     let timeout_duration = Duration::from_secs(timeout_secs);
 
     while start.elapsed() < timeout_duration {
-        let count = OperationQueries::count_events(pool)
+        let (count,): (i64,) = EventQueries::count_all()
+            .fetch_one(pool)
             .await
             .map_err(|e| CoreError::Database(format!("Failed to count events: {}", e)))?;
 

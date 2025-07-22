@@ -4,13 +4,11 @@
 // establishment, regression detection, and bottleneck identification.
 // Provides unified reporting and performance tracking capabilities.
 
-use redis::cmd;
-use crate::common::prelude::*;
-
 use crate::common::prelude::*;
 use crate::performance::baseline_performance_test::{BaselineTracker, EnvironmentInfo};
 use crate::performance::regression_detection_test::RegressionDetector;
 use crate::performance::bottleneck_identification_test::BottleneckDetector;
+use redis::cmd;
 use serde_json::json;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};

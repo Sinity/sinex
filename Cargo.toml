@@ -107,6 +107,7 @@ proptest.workspace = true
 tempfile.workspace = true
 rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-test-macros = { path = "crate/sinex-test-macros" }
+sinex-utils = { path = "crate/sinex-utils" }
 criterion.workspace = true
 pretty_assertions = "1.4"
 serial_test = "3.0"

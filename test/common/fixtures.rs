@@ -20,7 +20,7 @@
 use crate::common::prelude::*;
 use crate::common::test_context::TestContext;
 use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder};
-use crate::common::event_builders::EventBuilder;
+use crate::common::builders::EventBuilder;
 use sinex_events::{EventFactory, event_types, sources};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -120,7 +120,7 @@ impl FixtureRegistry {
 }
 
 /// Fixture handle that automatically cleans up on drop
-pub struct FixtureHandle<T> {
+pub struct FixtureHandle<T: 'static> {
     data: Arc<T>,
     key: String,
     _marker: std::marker::PhantomData<T>,
@@ -475,7 +475,8 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> AnyhowResult<ErrorScen
             json!({"test": "error_scenario", "index": i})
         )
         .fetch_one(pool)
-        .await?;
+        .await?
+        .expect("start_operation should return an ID");
 
         let op_id = Ulid::from_str(&op_id_str)?;
         
@@ -511,26 +512,40 @@ async fn create_performance_dataset_fixture(
         sources::WM_HYPRLAND.to_string(),
     ];
     
+    let event_types = vec![
+        event_types::filesystem::FILE_CREATED.to_string(),
+        event_types::shell::COMMAND_EXECUTED.to_string(),
+        event_types::clipboard::COPIED.to_string(),
+        event_types::window_manager::WINDOW_FOCUSED.to_string(),
+    ];
+    
     let mut event_ids = Vec::new();
     
-    // Use batch builder for efficient insertion
-    let batch = BatchEventBuilder::new()
-        .with_time_distribution(start_time, end_time, event_count)
-        .with_sources(&sources)
-        .with_payload_sizes(vec![100, 500, 1000, 5000])
-        .build();
+    // Generate events with time distribution
+    let time_range = end_time - start_time;
+    let time_step = time_range / event_count as i32;
+    
+    let mut batch = Vec::new();
+    for i in 0..event_count {
+        let source = &sources[i % sources.len()];
+        let event_type = &event_types[i % event_types.len()];
+        let payload_size = [100, 500, 1000, 5000][i % 4];
+        
+        let mut builder = TestEventBuilder::new(source, event_type)
+            .with_field("index", json!(i))
+            .with_field("data", json!("x".repeat(payload_size)))
+            .with_timestamp(start_time + time_step * i as i32);
+            
+        batch.push(builder.build());
+    }
 
     // Insert in batches for performance
     let chunk_size = 1000;
     for chunk in batch.chunks(chunk_size) {
-        let mut tx = pool.begin().await?;
-        
         for event in chunk {
-            let inserted = sinex_db::insert_event_with_validator(&mut *tx, event, None).await?;
+            let inserted = sinex_db::insert_event_with_validator(pool, event, None).await?;
             event_ids.push(inserted.id);
         }
-        
-        tx.commit().await?;
     }
 
     Ok(PerformanceDatasetFixture {
@@ -546,7 +561,7 @@ async fn create_performance_dataset_fixture(
 // =============================================================================
 
 /// Composite fixture combining multiple fixtures
-pub struct CompositeFixture<A, B> {
+pub struct CompositeFixture<A: 'static, B: 'static> {
     pub first: FixtureHandle<A>,
     pub second: FixtureHandle<B>,
 }
@@ -584,7 +599,19 @@ where
         .path("/test/transaction/file.txt")
         .created()
         .build();
-    sinex_db::insert_event_with_validator(&mut *tx, &event, None).await?;
+    use sinex_db::queries::EventQueries;
+    let record = EventQueries::insert_event(
+        event.source.clone(),
+        event.event_type.clone(),
+        event.host.clone(),
+        event.payload.clone(),
+        event.ts_orig,
+        event.ingestor_version.clone(),
+        event.payload_schema_id,
+        event.source_event_ids.clone()
+    )
+    .execute_tx(&mut tx)
+    .await?;
     
     let result = fixture_fn(tx).await?;
     
@@ -627,21 +654,23 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> AnyhowResult<PreWarmedFixtu
     let mut total_size_bytes = 0;
 
     // Create events with various sizes
-    let batch = BatchEventBuilder::new()
-        .with_count(event_count)
-        .with_payload_sizes(vec![100, 500, 1000, 5000, 10000])
-        .build();
+    let payload_sizes = vec![100, 500, 1000, 5000, 10000];
+    let mut batch = Vec::new();
+    for i in 0..event_count {
+        let payload_size = payload_sizes[i % payload_sizes.len()];
+        let event = TestEventBuilder::new("performance_test", "test.event")
+            .with_field("index", json!(i))
+            .with_field("data", json!("x".repeat(payload_size)))
+            .build();
+        batch.push(event);
+    }
 
     for chunk in batch.chunks(500) {
-        let mut tx = pool.begin().await?;
-        
         for event in chunk {
             let size = serde_json::to_string(&event.payload)?.len();
             total_size_bytes += size;
-            sinex_db::insert_event_with_validator(&mut *tx, event, None).await?;
+            sinex_db::insert_event_with_validator(pool, event, None).await?;
         }
-        
-        tx.commit().await?;
     }
 
     // Create checkpoints
@@ -673,7 +702,8 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> AnyhowResult<PreWarmedFixtu
             json!({"fixture": "pre_warmed", "index": i})
         )
         .fetch_one(pool)
-        .await?;
+        .await?
+        .expect("start_operation should return an ID");
 
         let op_id = Ulid::from_str(&op_id_str)?;
         

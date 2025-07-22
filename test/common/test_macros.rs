@@ -2,6 +2,8 @@
 //!
 //! These macros provide reusable patterns for common test scenarios,
 //! making tests more concise and maintainable.
+//!
+//! Enhanced with sophisticated error testing from error_test_macros.
 
 /// Test event insertion with automatic verification
 #[macro_export]
@@ -32,33 +34,18 @@ macro_rules! test_event_insertion {
 }
 
 /// Test that event insertion fails with validation error
+/// Enhanced with sophisticated error testing from error_test_macros
 #[macro_export]
 macro_rules! test_invalid_event {
     ($test_name:ident, $source:expr, $event_type:expr, $payload:expr, $error_pattern:expr) => {
-        #[sinex_test]
-        async fn $test_name(ctx: TestContext) -> TestResult {
-            use crate::common::builders::TestEventBuilder;
-            
-            let pool = ctx.pool();
-            
-            // Attempt to insert invalid event
-            let result = TestEventBuilder::new($source, $event_type)
-                .with_payload($payload)
-                .insert(&pool)
-                .await;
-            
-            // Verify it failed with expected error
-            assert!(result.is_err());
-            let error = result.unwrap_err();
-            assert!(
-                error.to_string().contains($error_pattern),
-                "Expected error containing '{}', got: {}",
-                $error_pattern,
-                error
-            );
-            
-            Ok(())
-        }
+        use crate::common::error_helpers::test_validation_error;
+        
+        test_validation_error!(
+            $test_name,
+            "event_payload", 
+            $payload,
+            $error_pattern
+        );
     };
 }
 
@@ -418,3 +405,157 @@ macro_rules! test_security_validation {
         }
     };
 }
+
+/// Test Redis stream operations with automatic setup and verification
+#[macro_export]
+macro_rules! test_redis_stream_operations {
+    ($test_name:ident, $stream_key:expr, $consumer_group:expr, $message_count:expr, $verification:expr) => {
+        #[sinex_test]
+        async fn $test_name(_ctx: TestContext) -> TestResult {
+            use redis::{cmd, AsyncCommands};
+            use sinex_satellite_sdk::RedisStreamClient;
+            use std::collections::HashMap;
+            
+            let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
+            let mut redis_conn = redis_client.get_connection().await?;
+            let stream_key = $stream_key;
+            let consumer_group = $consumer_group;
+            
+            // Clean up existing stream
+            let _: Result<i32, _> = redis_conn.del(stream_key).await;
+            
+            // Create consumer group
+            match cmd("XGROUP")
+                .arg("CREATE")
+                .arg(stream_key)
+                .arg(consumer_group)
+                .arg("0")
+                .arg("MKSTREAM")
+                .query_async::<_, ()>(&mut redis_conn).await {
+                Ok(_) => {},
+                Err(e) if e.to_string().contains("BUSYGROUP") => {}, // Group already exists
+                Err(e) => return Err(e.into()),
+            }
+            
+            // Add messages to stream
+            let mut message_ids = Vec::new();
+            for i in 0..$message_count {
+                let index_str = i.to_string();
+                let test_data = format!("test-{}", i);
+                let timestamp = chrono::Utc::now().to_rfc3339();
+                let message_data = &[
+                    ("index", index_str.as_str()),
+                    ("test_data", test_data.as_str()),
+                    ("timestamp", timestamp.as_str()),
+                ];
+                
+                let id: String = redis_conn.xadd(stream_key, "*", message_data).await?;
+                message_ids.push(id);
+            }
+            
+            // Read messages from stream
+            let result = cmd("XREADGROUP")
+                .arg("GROUP")
+                .arg(consumer_group)
+                .arg("test-consumer")
+                .arg("COUNT")
+                .arg($message_count)
+                .arg("STREAMS")
+                .arg(stream_key)
+                .arg(">")
+                .query_async::<_, redis::streams::StreamReadReply>(&mut redis_conn)
+                .await?;
+            
+            // Acknowledge messages
+            for stream in &result.keys {
+                for message in &stream.ids {
+                    let _: i32 = redis_conn.xack(stream_key, consumer_group, &[&message.id]).await?;
+                }
+            }
+            
+            // Run custom verification
+            let verification_fn = $verification;
+            verification_fn(&mut redis_conn, &stream_key, &result, &message_ids).await?;
+            
+            // Cleanup
+            let _: Result<i32, _> = redis_conn.del(stream_key).await;
+            
+            Ok(())
+        }
+    };
+}
+
+/// Test schema validation with comprehensive error checking
+#[macro_export]
+macro_rules! test_schema_validation {
+    ($test_name:ident, $valid_payload:expr, $invalid_payload:expr, $schema:expr, $expected_error:expr) => {
+        #[sinex_test]
+        async fn $test_name(_ctx: TestContext) -> TestResult {
+            use sinex_validation::ValidationChain;
+            use serde_json::Value;
+            
+            let schema = $schema;
+            let valid_payload: Value = $valid_payload;
+            let invalid_payload: Value = $invalid_payload;
+            
+            // Test valid payload passes validation
+            let valid_result = validate_against_schema(&valid_payload, &schema);
+            assert!(
+                valid_result.is_ok(),
+                "Valid payload should pass schema validation: {:?}",
+                valid_result.err()
+            );
+            
+            // Test invalid payload fails validation
+            let invalid_result = validate_against_schema(&invalid_payload, &schema);
+            assert!(
+                invalid_result.is_err(),
+                "Invalid payload should fail schema validation"
+            );
+            
+            // Check error message contains expected pattern
+            if let Err(error) = invalid_result {
+                let error_msg = error.to_string();
+                assert!(
+                    error_msg.contains($expected_error),
+                    "Error message '{}' should contain '{}'",
+                    error_msg,
+                    $expected_error
+                );
+            }
+            
+            Ok(())
+        }
+    };
+    
+    // Simplified version that just tests one payload against schema
+    ($test_name:ident, $payload:expr, $schema:expr, $should_pass:expr) => {
+        #[sinex_test]
+        async fn $test_name(_ctx: TestContext) -> TestResult {
+            use sinex_validation::ValidationChain;
+            use serde_json::Value;
+            
+            let schema = $schema;
+            let payload: Value = $payload;
+            let should_pass = $should_pass;
+            
+            let result = validate_against_schema(&payload, &schema);
+            
+            if should_pass {
+                assert!(
+                    result.is_ok(),
+                    "Payload should pass schema validation: {:?}",
+                    result.err()
+                );
+            } else {
+                assert!(
+                    result.is_err(),
+                    "Payload should fail schema validation"
+                );
+            }
+            
+            Ok(())
+        }
+    };
+}
+

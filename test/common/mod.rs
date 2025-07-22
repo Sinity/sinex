@@ -24,9 +24,6 @@ pub mod prelude;
 // Unified test context for all tests
 pub mod test_context;
 
-// Event builders for test compatibility
-pub mod event_builders;
-
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
@@ -36,6 +33,67 @@ use sinex_events::{sources, EventFactory};
 pub fn test_database_url() -> String {
     std::env::var("TEST_DATABASE_URL")
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
+}
+
+/// Wait for filtered event count with custom SQL filter
+pub async fn wait_for_filtered_event_count(
+    pool: &DbPool,
+    filter_sql: &str,
+    params: &[&str],
+    expected_count: i64,
+    timeout_secs: u64,
+) -> AnyhowResult<i64> {
+    use std::time::{Duration, Instant};
+    use tokio::time::sleep;
+    
+    let start = Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+    
+    while start.elapsed() < timeout {
+        let query_sql = format!(
+            "SELECT COUNT(*) FROM core.events WHERE {}",
+            filter_sql
+        );
+        let mut query = sqlx::query_scalar(&query_sql);
+        
+        for param in params {
+            query = query.bind(param);
+        }
+        
+        let count: i64 = query.fetch_one(pool).await?;
+        
+        if count >= expected_count {
+            return Ok(count);
+        }
+        
+        sleep(Duration::from_millis(50)).await;
+    }
+    
+    Err(anyhow::anyhow!(
+        "Timeout waiting for filtered event count: expected {}, filter: {}",
+        expected_count, filter_sql
+    ))
+}
+
+/// Assert that an event was inserted with contextual information
+pub async fn assert_event_inserted_with_context(
+    pool: &DbPool,
+    event: &RawEvent,
+    context: &str,
+) -> AnyhowResult<()> {
+    use sinex_db::queries::EventQueries;
+    
+    let stored: Option<RawEvent> = EventQueries::get_by_id(event.id)
+        .fetch_optional(pool)
+        .await?;
+    
+    match stored {
+        Some(_) => Ok(()),
+        None => Err(anyhow::anyhow!(
+            "Event {} not found in database (context: {})",
+            event.id, context
+        )),
+    }
 }
 
 
@@ -1150,42 +1208,42 @@ pub mod query_helpers;
 /// Enhanced test data builders with fluent interfaces
 pub mod builders;
 
-/// Property test builders that integrate proptest with test framework
-pub mod property_builders;
-
-/// Property test macros for ergonomic property testing
-pub mod property_test_macros;
+/// Property testing helpers and strategies
+pub mod property_helpers;
 
 /// Test macros for reducing repetition
+#[macro_use]
 pub mod test_macros;
 
-/// Error testing utilities and patterns
-pub mod error_test_utils;
-
-/// Error testing macros for comprehensive error scenario testing
-pub mod error_test_macros;
+/// Error testing helpers, utilities and macros
+pub mod error_helpers;
 
 /// Test fixture management system
 pub mod fixtures;
 
+/// Database pool management for test isolation
+pub mod database_pool;
+
+/// Satellite testing utilities
+pub mod satellite_test_utils;
+
 /// Integration testing patterns for satellite architecture
 pub mod satellite_integration {
     use super::*;
-    // use crate::common::satellite_test_utils::{
-    //     TestAutomatonHandle, TestIngestdHandle, TestSatelliteHandle,
-    // };
+    use crate::common::satellite_test_utils::{
+        TestAutomatonHandle, TestIngestdHandle, TestSatelliteHandle,
+    };
     use crate::common::test_context::TestContext;
 
     /// Standard satellite test setup
     pub struct SatelliteTestSetup {
         pub ctx: TestContext,
-        // pub ingestd: TestIngestdHandle,
+        pub ingestd: TestIngestdHandle,
         pub redis: redis::aio::MultiplexedConnection,
         pub stream_key: String,
     }
 
-    // Implementation commented out due to missing satellite_test_utils module
-    /*
+    
     impl SatelliteTestSetup {
         /// Create a complete satellite test environment
         pub async fn new(test_name: &str) -> AnyhowResult<Self> {
@@ -1207,10 +1265,11 @@ pub mod satellite_integration {
 
         /// Add a test satellite to the setup
         pub async fn add_satellite(&self, service_name: &str) -> AnyhowResult<TestSatelliteHandle> {
-            let config = crate::common::satellite_test_utils::create_test_satellite_config(
+            let config_json = crate::common::satellite_test_utils::create_test_satellite_config(
                 service_name,
                 &self.ingestd.socket_path,
             );
+            let config: sinex_satellite_sdk::config::SatelliteConfig = serde_json::from_value(config_json)?;
             self.ctx.start_test_satellite(config).await
         }
 
@@ -1261,7 +1320,6 @@ pub mod satellite_integration {
             Ok(())
         }
     }
-    */
 }
 
 /// Event source testing utilities

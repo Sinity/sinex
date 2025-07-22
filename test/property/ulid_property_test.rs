@@ -1,8 +1,9 @@
 use crate::common::prelude::*;
-use crate::common::property_builders::*;
+use crate::common::property_helpers::*;
 use proptest::prelude::*;
 use sinex_ulid::Ulid;
 use std::collections::HashSet;
+use std::str::FromStr;
 
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
@@ -38,19 +39,18 @@ proptest! {
         ulid in arbitrary_ulid()
     ) {
         // Property: Timestamp extraction should be consistent
-        if let Ok(timestamp) = ulid.timestamp() {
-            // Re-create ULID from timestamp and verify it's in the same time range
-            let ts_ms = timestamp.timestamp_millis() as u64;
-            
-            // The timestamp component should match (first 48 bits)
-            let ulid_bytes = ulid.to_bytes();
-            let ts_component = u64::from_be_bytes([
-                ulid_bytes[0], ulid_bytes[1], ulid_bytes[2], ulid_bytes[3],
-                ulid_bytes[4], ulid_bytes[5], 0, 0
-            ]) >> 16;
-            
-            assert_eq!(ts_component, ts_ms, "ULID timestamp component should match extracted timestamp");
-        }
+        let timestamp = ulid.timestamp();
+        // Re-create ULID from timestamp and verify it's in the same time range
+        let ts_ms = timestamp.timestamp_millis() as u64;
+        
+        // The timestamp component should match (first 48 bits)
+        let ulid_bytes = ulid.to_bytes();
+        let ts_component = u64::from_be_bytes([
+            ulid_bytes[0], ulid_bytes[1], ulid_bytes[2], ulid_bytes[3],
+            ulid_bytes[4], ulid_bytes[5], 0, 0
+        ]) >> 16;
+        
+        assert_eq!(ts_component, ts_ms, "ULID timestamp component should match extracted timestamp");
     }
 
     #[test]
@@ -59,7 +59,7 @@ proptest! {
     ) {
         // Property: ULID should survive string serialization roundtrip
         let ulid_string = ulid.to_string();
-        let parsed = Ulid::from_string(&ulid_string);
+        let parsed = Ulid::from_str(&ulid_string);
         
         assert!(parsed.is_ok(), "ULID string should be parseable");
         assert_eq!(parsed.unwrap(), ulid, "Parsed ULID should match original");
@@ -176,20 +176,20 @@ proptest! {
 }
 
 // Helper function for arbitrary ULID generation
-fn arbitrary_ulid() -> impl Strategy<Value = Ulid> {
+pub fn arbitrary_ulid() -> impl Strategy<Value = Ulid> {
     prop_oneof![
         // Most ULIDs should be recent/valid
-        (90, Just(Ulid::new())),
+        90 => Just(Ulid::new()),
         // Some ULIDs with specific byte patterns
-        (5, any::<[u8; 16]>().prop_map(|bytes| {
+        5 => any::<[u8; 16]>().prop_map(|bytes| {
             Ulid::from_bytes(bytes).unwrap_or_else(|_| Ulid::new())
-        })),
+        }),
         // Edge cases
-        (5, prop_oneof![
+        5 => prop_oneof![
             Just(Ulid::nil()),
             Just(Ulid::from_bytes([0xFF; 16]).unwrap_or_else(|_| Ulid::new())),
             Just(Ulid::from_bytes([0x00; 16]).unwrap_or_else(|_| Ulid::new())),
-        ])
+        ]
     ]
 }
 
@@ -207,7 +207,7 @@ mod boundary_tests {
                 Just("max_timestamp"),
             ]
         ) {
-            let ulid = match boundary_type.as_str() {
+            let ulid = match boundary_type {
                 "min" => Ulid::nil(),
                 "max" => Ulid::from_bytes([0xFF; 16]).unwrap_or_else(|_| Ulid::new()),
                 "zero_timestamp" => {
@@ -234,7 +234,7 @@ mod boundary_tests {
             assert_eq!(ulid.to_string().len(), 26);
             
             // Should survive roundtrips
-            let string_roundtrip = Ulid::from_string(&ulid.to_string());
+            let string_roundtrip = Ulid::from_str(&ulid.to_string());
             assert!(string_roundtrip.is_ok());
             
             let bytes_roundtrip = Ulid::from_bytes(ulid.to_bytes());

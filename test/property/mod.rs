@@ -15,6 +15,7 @@ use crate::common::prelude::*;
 // pub mod redis_streams_property_test;
 pub mod automation_property_test;
 pub mod checkpoint_property_test;
+pub mod event_validation_property_test;
 pub mod satellite_property_test;
 pub mod schema_property_test;
 pub mod ulid_property_test;

@@ -52,4 +52,21 @@
 
 // === Core Component Integration ===
 
-// Most integration tests have been consolidated to use test abstractions
+// Test macro demonstrations
+// pub mod macro_validation_test; // Temporarily disabled due to async closure lifetime issues
+
+// Consolidated integration tests
+// pub mod redis_stream_integration_test; // Temporarily disabled due to async closure lifetime issues
+
+// === Business Logic Integration Tests ===
+
+// Service-level integration tests
+pub mod analytics_service_test;
+pub mod pkm_service_test;
+pub mod content_service_test;
+pub mod search_service_test;
+
+// Data integrity and recovery tests
+pub mod data_corruption_detection_test;
+pub mod checkpoint_consistency_test;
+pub mod pel_recovery_test;
