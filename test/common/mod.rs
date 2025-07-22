@@ -1165,7 +1165,6 @@ pub mod resources {
 pub use sinex_db::models::AutomatonManifest;
 // Note: Some query functions may need to be migrated to domain modules
 pub mod channel_test_utils;
-pub mod config_test_utils;
 pub mod enhanced_assertions;
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
