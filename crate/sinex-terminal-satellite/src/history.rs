@@ -11,6 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources};
 
 /// Shell history file watcher
 pub struct HistoryWatcher {

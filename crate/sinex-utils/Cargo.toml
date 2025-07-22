@@ -6,6 +6,7 @@ authors.workspace = true
 
 [dependencies]
 sinex-error = { path = "../sinex-error" }
+sinex-db = { path = "../sinex-db" }
 serde_json.workspace = true
 chrono.workspace = true
 tokio.workspace = true

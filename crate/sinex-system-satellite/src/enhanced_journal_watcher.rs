@@ -13,6 +13,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources};
 
 /// Enhanced journal watcher with historical import and cursor tracking
 pub struct EnhancedJournalWatcher {

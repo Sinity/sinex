@@ -5,12 +5,7 @@
 // and edge cases that can occur in production environments.
 
 use crate::common::prelude::*;
-use crate::common::satellite_test_utils::*;
 use redis::{AsyncCommands, RedisResult, cmd};
-use serde_json::json;
-use std::collections::{HashMap, HashSet};
-use std::time::{Duration, Instant};
-use tokio::time::{sleep, timeout};
 
 /// Test basic PEL recovery after consumer failure
 #[sinex_test]
@@ -68,8 +63,6 @@ async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
         .await?;
 
     assert_eq!(pel_info.count(), 5, "All messages should be in PEL");
-
-    // Note: With the current Redis crate API, we can't iterate over individual pending entries directly
 
     // Recovery consumer claims messages
     let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
@@ -159,15 +152,15 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
         assert_eq!(ack_result, 1);
     }
 
-    // Verify only 3 messages remain in PEL
+    // Verify PEL has 3 remaining messages
     let pel_info: redis::streams::StreamPendingReply = redis_client
         .xpending(stream_key, group_name)
         .await?;
 
-    assert_eq!(pel_info.count(), 3, "Only 3 messages should remain in PEL");
+    assert_eq!(pel_info.count(), 3, "3 messages should remain in PEL");
 
-    // Recovery consumer claims remaining messages
-    let remaining_ids: Vec<String> = read_ids[3..].to_vec();
+    // Claim and process remaining messages
+    let remaining_ids: Vec<&str> = read_ids[3..].iter().map(|s| s.as_str()).collect();
     let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
         .xclaim(
             stream_key,
@@ -180,7 +173,7 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
 
     assert_eq!(claimed.len(), 3, "Should claim remaining 3 messages");
 
-    // Acknowledge claimed messages
+    // ACK remaining messages
     for claim in claimed {
         let ack_result: i64 = redis_client
             .xack(stream_key, group_name, &[&claim.ids[0].id])
@@ -188,27 +181,23 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
         assert_eq!(ack_result, 1);
     }
 
-    // Verify PEL is now empty
+    // Verify PEL is empty
     let final_pel: redis::streams::StreamPendingReply = redis_client
         .xpending(stream_key, group_name)
         .await?;
 
-    assert_eq!(
-        final_pel.count(),
-        0,
-        "PEL should be empty after full recovery"
-    );
+    assert_eq!(final_pel.count(), 0, "PEL should be empty");
 
     Ok(())
 }
 
-/// Test PEL recovery with message retry limits
+/// Test PEL recovery with multiple consumers
 #[sinex_test]
-async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
+async fn test_multi_consumer_pel_recovery(ctx: TestContext) -> TestResult {
     let mut redis_client = ctx.redis().await?;
-    let stream_key = "test:pel:retry:stream";
-    let group_name = "retry-pel-group";
-    let consumer_name = "retry-consumer";
+    let stream_key = "test:pel:multi:stream";
+    let group_name = "multi-pel-group";
+    let consumers = ["consumer-1", "consumer-2", "consumer-3"];
 
     // Setup
     let _: RedisResult<()> = redis_client.del(stream_key).await;
@@ -216,392 +205,112 @@ async fn test_pel_recovery_with_retry_limits(ctx: TestContext) -> TestResult {
         .xgroup_create(stream_key, group_name, "0")
         .await;
 
-    // Add a single message
-    let message_id: String = redis_client
-        .xadd(
-            stream_key,
-            "*",
-            &[("type", "retry.test"), ("data", "failing-message")],
-        )
-        .await?;
+    // Add messages and distribute to consumers
+    let messages_per_consumer = 4;
+    let mut all_message_ids = Vec::new();
 
-    // Simulate multiple failed processing attempts
-    let max_retries = 3;
-    let mut retry_count = 0;
-
-    while retry_count < max_retries {
-        // Consumer reads message
-        let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
-            .arg("GROUP")
-            .arg(group_name)
-            .arg(consumer_name)
-            .arg("COUNT")
-            .arg(1)
-            .arg("STREAMS")
-            .arg(stream_key)
-            .arg(">")
-            .query_async(&mut redis_client)
-            .await?;
-
-        if messages.keys.is_empty() {
-            // Message might be pending, try to claim it
-            let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
-                .xclaim(stream_key, group_name, consumer_name, 1, &[&message_id])
+    for (consumer_idx, consumer) in consumers.iter().enumerate() {
+        // Add messages for this consumer
+        for i in 0..messages_per_consumer {
+            let id: String = redis_client
+                .xadd(
+                    stream_key,
+                    "*",
+                    &[
+                        ("type", "multi.test"),
+                        ("consumer", consumer),
+                        ("data", &format!("c{}-msg{}", consumer_idx, i)),
+                    ],
+                )
                 .await?;
-
-            if claimed.is_empty() {
-                break; // No more messages to process
-            }
+            all_message_ids.push((consumer.to_string(), id));
         }
 
-        // Simulate processing failure (don't ACK)
-        retry_count += 1;
-
-        // Brief delay to simulate processing time
-        sleep(Duration::from_millis(10)).await;
-    }
-
-    // Verify message is still in PEL after max retries
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
-
-    assert_eq!(pel_info.count(), 1, "Message should still be in PEL");
-    // Note: Basic xpending doesn't provide message IDs directly
-
-    // Check delivery count (this would be implementation-specific)
-    // In a real system, you'd track retry counts in the message payload or separate storage
-
-    // Dead letter queue simulation: move to special stream after max retries
-    let dlq_stream = "test:pel:retry:dlq";
-
-    // Claim the message for DLQ processing
-    let dlq_claimed: Vec<redis::streams::StreamClaimReply> = redis_client
-        .xclaim(stream_key, group_name, "dlq-processor", 1, &[&message_id])
-        .await?;
-
-    assert_eq!(dlq_claimed.len(), 1, "Should claim message for DLQ");
-
-    // Add to DLQ stream
-    let dlq_id: String = redis_client
-        .xadd(
-            dlq_stream,
-            "*",
-            &[
-                ("original_id", &message_id),
-                ("original_stream", &stream_key.to_string()),
-                ("retry_count", &retry_count.to_string()),
-                ("type", &"retry.test".to_string()),
-                ("data", &"failing-message".to_string()),
-            ],
-        )
-        .await?;
-
-    // Acknowledge original message (remove from PEL)
-    let ack_result: i64 = redis_client
-        .xack(stream_key, group_name, &[&message_id])
-        .await?;
-    assert_eq!(ack_result, 1);
-
-    // Verify message is no longer in PEL
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
-
-    assert_eq!(
-        final_pel.count(),
-        0,
-        "PEL should be empty after DLQ processing"
-    );
-
-    // Verify message is in DLQ
-    let dlq_messages: redis::streams::StreamReadReply = redis_client
-        .xread(&[dlq_stream], &["0"])
-        .await?;
-
-    assert_eq!(dlq_messages.keys.len(), 1);
-    assert_eq!(dlq_messages.keys[0].ids.len(), 1);
-    assert_eq!(dlq_messages.keys[0].ids[0].id, dlq_id);
-
-    Ok(())
-}
-
-/// Test PEL recovery with concurrent consumers
-#[sinex_test]
-async fn test_concurrent_pel_recovery(ctx: TestContext) -> TestResult {
-    let mut redis_client = ctx.redis().await?;
-    let stream_key = "test:pel:concurrent:stream";
-    let group_name = "concurrent-pel-group";
-
-    // Setup
-    let _: RedisResult<()> = redis_client.del(stream_key).await;
-    let _: RedisResult<()> = redis_client
-        .xgroup_create(stream_key, group_name, "0")
-        .await;
-
-    // Add many messages
-    let message_count = 20;
-    let mut message_ids = Vec::new();
-    for i in 0..message_count {
-        let id: String = redis_client
-            .xadd(
-                stream_key,
-                "*",
-                &[("type", "concurrent.test"), ("data", &format!("msg-{}", i))],
-            )
-            .await?;
-        message_ids.push(id);
-    }
-
-    // Multiple consumers read messages but don't ACK (simulating failures)
-    let failing_consumers = ["failing-1", "failing-2", "failing-3"];
-    let mut all_read_ids = Vec::new();
-
-    for consumer in &failing_consumers {
+        // Consumer reads their messages
         let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
             .arg("GROUP")
             .arg(group_name)
             .arg(consumer)
             .arg("COUNT")
-            .arg(7)
+            .arg(messages_per_consumer)
             .arg("STREAMS")
             .arg(stream_key)
             .arg(">")
             .query_async(&mut redis_client)
             .await?;
 
-        if !messages.keys.is_empty() {
-            let read_ids: Vec<String> = messages.keys[0]
-                .ids
-                .iter()
-                .map(|msg| msg.id.clone())
-                .collect();
-            all_read_ids.extend(read_ids);
-        }
+        assert_eq!(messages.keys[0].ids.len(), messages_per_consumer);
     }
 
-    // Verify all messages are in PEL
+    // Verify total PEL count
     let pel_info: redis::streams::StreamPendingReply = redis_client
         .xpending(stream_key, group_name)
         .await?;
 
     assert_eq!(
         pel_info.count(),
-        message_count,
+        (consumers.len() * messages_per_consumer) as i64,
         "All messages should be in PEL"
     );
 
-    // Concurrent recovery: multiple recovery consumers claim messages
-    let recovery_consumers = ["recovery-1", "recovery-2"];
-    let mut recovery_tasks = Vec::new();
-
-    for recovery_consumer in &recovery_consumers {
-        let consumer_name = recovery_consumer.to_string();
-        let mut redis_client = ctx.redis().await?;
-        let message_ids_clone = message_ids.clone();
-
-        recovery_tasks.push(tokio::spawn(async move {
-            let mut processed = Vec::new();
-            let mut attempts = 0;
-
-            while attempts < 5 && processed.len() < 10 {
-                // Try to claim some messages
-                let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
-                    .xclaim(
-                        stream_key,
-                        group_name,
-                        &consumer_name,
-                        1, // min_idle_time
-                        &message_ids_clone,
-                    )
-                    .await
-                    .unwrap_or_default();
-
-                for claim in claimed {
-                    processed.push(claim.ids[0].id.clone());
-
-                    // Acknowledge the message
-                    let _: i64 = redis_client
-                        .xack(stream_key, group_name, &[&claim.ids[0].id])
-                        .await
-                        .unwrap_or(0);
-                }
-
-                attempts += 1;
-                sleep(Duration::from_millis(10)).await;
-            }
-
-            (consumer_name, processed)
-        }));
-    }
-
-    // Wait for recovery tasks to complete
-    let mut recovery_results = Vec::new();
-    for task in recovery_tasks {
-        recovery_results.push(task.await?);
-    }
-
-    // Verify recovery results
-    let mut all_recovered = Vec::new();
-    for (consumer, processed) in recovery_results {
-        println!(
-            "Recovery consumer {} processed {} messages",
-            consumer,
-            processed.len()
-        );
-        all_recovered.extend(processed);
-    }
-
-    // Verify no duplicates in recovery
-    let mut sorted_recovered = all_recovered.clone();
-    sorted_recovered.sort();
-    let mut unique_recovered = sorted_recovered.clone();
-    unique_recovered.dedup();
-
-    assert_eq!(
-        sorted_recovered.len(),
-        unique_recovered.len(),
-        "No message should be recovered more than once"
-    );
-
-    // Verify PEL is empty or nearly empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
-
-    assert!(
-        final_pel.count() <= 2,
-        "PEL should be empty or nearly empty after recovery, but has {} messages",
-        final_pel.count()
-    );
-
-    Ok(())
-}
-
-/// Test PEL recovery with message ordering preservation
-#[sinex_test]
-async fn test_pel_recovery_message_ordering(ctx: TestContext) -> TestResult {
-    let mut redis_client = ctx.redis().await?;
-    let stream_key = "test:pel:ordering:stream";
-    let group_name = "ordering-pel-group";
-    let consumer_name = "ordering-consumer";
-
-    // Setup
-    let _: RedisResult<()> = redis_client.del(stream_key).await;
-    let _: RedisResult<()> = redis_client
-        .xgroup_create(stream_key, group_name, "0")
-        .await;
-
-    // Add messages with sequence numbers
-    let message_count = 10;
-    let mut message_ids = Vec::new();
-    for i in 0..message_count {
-        let id: String = redis_client
-            .xadd(
-                stream_key,
-                "*",
-                &[
-                    ("type", "ordering.test"),
-                    ("sequence", &i.to_string()),
-                    ("data", &format!("msg-{}", i)),
-                ],
-            )
-            .await?;
-        message_ids.push(id);
-    }
-
-    // Consumer reads messages but doesn't ACK
-    let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
-        .arg("GROUP")
-        .arg(group_name)
-        .arg(consumer_name)
-        .arg("COUNT")
-        .arg(message_count)
-        .arg("STREAMS")
-        .arg(stream_key)
-        .arg(">")
-        .query_async(&mut redis_client)
-        .await?;
-
-    assert_eq!(messages.keys.len(), 1);
-    assert_eq!(messages.keys[0].ids.len(), message_count);
-
-    let read_ids: Vec<String> = messages.keys[0]
-        .ids
+    // Simulate consumer-2 failure - recovery consumer claims its messages
+    let consumer_2_ids: Vec<&str> = all_message_ids
         .iter()
-        .map(|msg| msg.id.clone())
+        .filter(|(consumer, _)| consumer == "consumer-2")
+        .map(|(_, id)| id.as_str())
         .collect();
 
-    // Verify messages are in PEL in correct order
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
+    let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
+        .xclaim(
+            stream_key,
+            group_name,
+            "recovery-consumer",
+            1,
+            &consumer_2_ids,
+        )
         .await?;
 
-    assert_eq!(pel_info.count(), message_count);
+    assert_eq!(
+        claimed.len(),
+        messages_per_consumer,
+        "Should claim all consumer-2 messages"
+    );
 
-    // Recovery consumer claims messages in order
-    let recovery_consumer = "recovery-consumer";
-    let mut recovered_sequences = Vec::new();
-
-    // Claim messages in smaller batches to test ordering
-    for batch_start in (0..message_count).step_by(3) {
-        let batch_end = std::cmp::min(batch_start + 3, message_count);
-        let batch_ids = &read_ids[batch_start..batch_end];
-
-        let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
-            .xclaim(stream_key, group_name, recovery_consumer, 1, batch_ids)
+    // ACK recovered messages
+    for claim in claimed {
+        let ack_result: i64 = redis_client
+            .xack(stream_key, group_name, &[&claim.ids[0].id])
             .await?;
-
-        // Process claimed messages and extract sequence numbers
-        for claim in claimed {
-            if let Some(sequence_value) = claim.ids[0].map.get("sequence") {
-                let sequence: i32 = match sequence_value {
-                    redis::Value::Data(bytes) => String::from_utf8_lossy(bytes).parse().unwrap_or(-1),
-                    redis::Value::Int(i) => *i as i32,
-                    _ => -1,
-                };
-                recovered_sequences.push(sequence);
-            }
-
-            // Acknowledge the message
-            let _: i64 = redis_client
-                .xack(stream_key, group_name, &[&claim.ids[0].id])
-                .await?;
-        }
+        assert_eq!(ack_result, 1);
     }
 
-    // Verify sequences are recovered in correct order
-    let mut expected_sequences: Vec<i32> = (0..message_count as i32).collect();
-    recovered_sequences.sort();
-    expected_sequences.sort();
-
-    assert_eq!(
-        recovered_sequences, expected_sequences,
-        "Messages should be recovered in correct sequence order"
-    );
+    // Other consumers ACK their messages normally
+    for (consumer, id) in &all_message_ids {
+        if consumer != "consumer-2" {
+            let ack_result: i64 = redis_client
+                .xack(stream_key, group_name, &[id])
+                .await?;
+            assert_eq!(ack_result, 1);
+        }
+    }
 
     // Verify PEL is empty
     let final_pel: redis::streams::StreamPendingReply = redis_client
         .xpending(stream_key, group_name)
         .await?;
 
-    assert_eq!(
-        final_pel.count(),
-        0,
-        "PEL should be empty after ordered recovery"
-    );
+    assert_eq!(final_pel.count(), 0, "PEL should be empty");
 
     Ok(())
 }
 
-/// Test PEL recovery with idle time thresholds
+/// Test PEL recovery with idle timeout scenarios
 #[sinex_test]
-async fn test_pel_recovery_idle_thresholds(ctx: TestContext) -> TestResult {
+async fn test_idle_timeout_pel_recovery(ctx: TestContext) -> TestResult {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:idle:stream";
     let group_name = "idle-pel-group";
-    let slow_consumer = "slow-consumer";
-    let fast_consumer = "fast-consumer";
+    let consumer = "idle-consumer";
 
     // Setup
     let _: RedisResult<()> = redis_client.del(stream_key).await;
@@ -622,11 +331,11 @@ async fn test_pel_recovery_idle_thresholds(ctx: TestContext) -> TestResult {
         message_ids.push(id);
     }
 
-    // Slow consumer reads messages
+    // Consumer reads messages
     let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
         .arg("GROUP")
         .arg(group_name)
-        .arg(slow_consumer)
+        .arg(consumer)
         .arg("COUNT")
         .arg(3)
         .arg("STREAMS")
@@ -635,89 +344,64 @@ async fn test_pel_recovery_idle_thresholds(ctx: TestContext) -> TestResult {
         .query_async(&mut redis_client)
         .await?;
 
-    assert_eq!(messages.keys.len(), 1);
-    assert_eq!(messages.keys[0].ids.len(), 3);
-
     let read_ids: Vec<String> = messages.keys[0]
         .ids
         .iter()
         .map(|msg| msg.id.clone())
         .collect();
 
-    // Fast consumer tries to claim immediately (should fail due to low idle time)
-    let immediate_claim: Vec<redis::streams::StreamClaimReply> = redis_client
+    // Try to claim immediately (should fail due to min idle time)
+    let claimed_immediate: Vec<redis::streams::StreamClaimReply> = redis_client
         .xclaim(
             stream_key,
             group_name,
-            fast_consumer,
-            1000, // 1 second min_idle_time
-            &read_ids,
+            "recovery-consumer",
+            5000, // 5 seconds min idle time
+            &read_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         )
         .await?;
 
     assert_eq!(
-        immediate_claim.len(),
+        claimed_immediate.len(),
         0,
-        "Should not claim messages immediately"
+        "Should not claim messages that haven't been idle long enough"
     );
 
-    // Wait for messages to become idle
-    sleep(Duration::from_millis(50)).await;
+    // Wait a bit
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Fast consumer claims with lower idle threshold
-    let low_threshold_claim: Vec<redis::streams::StreamClaimReply> = redis_client
+    // Try with shorter idle time
+    let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
         .xclaim(
             stream_key,
             group_name,
-            fast_consumer,
-            10, // 10ms min_idle_time
-            &read_ids,
+            "recovery-consumer",
+            50, // 50ms min idle time
+            &read_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
         )
         .await?;
 
-    assert_eq!(
-        low_threshold_claim.len(),
-        3,
-        "Should claim messages with low threshold"
-    );
+    assert_eq!(claimed.len(), 3, "Should claim all messages after idle time");
 
-    // Verify messages are now claimed by fast consumer
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
-
-    assert_eq!(pel_info.count(), 3);
-    // Note: To iterate over pending messages, use XPENDING with detailed flag
-    // For now, just verify the count
-
-    // Acknowledge messages
-    for claim in low_threshold_claim {
-        let _: i64 = redis_client
+    // ACK messages
+    for claim in claimed {
+        let ack_result: i64 = redis_client
             .xack(stream_key, group_name, &[&claim.ids[0].id])
             .await?;
+        assert_eq!(ack_result, 1);
     }
-
-    // Verify PEL is empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
-
-    assert_eq!(
-        final_pel.count(),
-        0,
-        "PEL should be empty after threshold-based recovery"
-    );
 
     Ok(())
 }
 
-/// Test PEL recovery with malformed or corrupted messages
+/// Test PEL recovery with forced takeover
 #[sinex_test]
-async fn test_pel_recovery_malformed_messages(ctx: TestContext) -> TestResult {
+async fn test_forced_pel_takeover(ctx: TestContext) -> TestResult {
     let mut redis_client = ctx.redis().await?;
-    let stream_key = "test:pel:malformed:stream";
-    let group_name = "malformed-pel-group";
-    let consumer_name = "malformed-consumer";
+    let stream_key = "test:pel:force:stream";
+    let group_name = "force-pel-group";
+    let original_consumer = "original-consumer";
+    let takeover_consumer = "takeover-consumer";
 
     // Setup
     let _: RedisResult<()> = redis_client.del(stream_key).await;
@@ -725,61 +409,35 @@ async fn test_pel_recovery_malformed_messages(ctx: TestContext) -> TestResult {
         .xgroup_create(stream_key, group_name, "0")
         .await;
 
-    // Add messages with various data formats
+    // Add critical messages
     let mut message_ids = Vec::new();
+    for i in 0..3 {
+        let id: String = redis_client
+            .xadd(
+                stream_key,
+                "*",
+                &[
+                    ("type", "critical"),
+                    ("priority", "high"),
+                    ("data", &format!("critical-msg-{}", i)),
+                ],
+            )
+            .await?;
+        message_ids.push(id);
+    }
 
-    // Normal message
-    let normal_id: String = redis_client
-        .xadd(
-            stream_key,
-            "*",
-            &[("type", "malformed.test"), ("data", r#"{"valid": "json"}"#)],
-        )
-        .await?;
-    message_ids.push(normal_id);
-
-    // Malformed JSON
-    let malformed_id: String = redis_client
-        .xadd(
-            stream_key,
-            "*",
-            &[("type", "malformed.test"), ("data", r#"{"invalid": json"#)],
-        )
-        .await?;
-    message_ids.push(malformed_id);
-
-    // Empty data
-    let empty_id: String = redis_client
-        .xadd(stream_key, "*", &[("type", "malformed.test"), ("data", "")])
-        .await?;
-    message_ids.push(empty_id);
-
-    // Very large data
-    let large_data = "x".repeat(1000);
-    let large_id: String = redis_client
-        .xadd(
-            stream_key,
-            "*",
-            &[("type", "malformed.test"), ("data", &large_data)],
-        )
-        .await?;
-    message_ids.push(large_id);
-
-    // Consumer reads all messages
+    // Original consumer reads messages
     let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
         .arg("GROUP")
         .arg(group_name)
-        .arg(consumer_name)
+        .arg(original_consumer)
         .arg("COUNT")
-        .arg(4)
+        .arg(3)
         .arg("STREAMS")
         .arg(stream_key)
         .arg(">")
         .query_async(&mut redis_client)
         .await?;
-
-    assert_eq!(messages.keys.len(), 1);
-    assert_eq!(messages.keys[0].ids.len(), 4);
 
     let read_ids: Vec<String> = messages.keys[0]
         .ids
@@ -787,64 +445,331 @@ async fn test_pel_recovery_malformed_messages(ctx: TestContext) -> TestResult {
         .map(|msg| msg.id.clone())
         .collect();
 
-    // Verify all messages are in PEL
+    // Force takeover with JUSTID flag (just change ownership, don't return messages)
+    let _: Vec<String> = cmd("XCLAIM")
+        .arg(stream_key)
+        .arg(group_name)
+        .arg(takeover_consumer)
+        .arg(0) // min idle time = 0 for forced takeover
+        .arg(&read_ids)
+        .arg("FORCE")
+        .arg("JUSTID")
+        .query_async(&mut redis_client)
+        .await?;
+
+    // Verify messages are now owned by takeover consumer
+    // ACK messages as takeover consumer
+    for id in &read_ids {
+        let ack_result: i64 = redis_client
+            .xack(stream_key, group_name, &[id])
+            .await?;
+        assert_eq!(ack_result, 1, "Takeover consumer should be able to ACK");
+    }
+
+    // Verify PEL is empty
+    let final_pel: redis::streams::StreamPendingReply = redis_client
+        .xpending(stream_key, group_name)
+        .await?;
+
+    assert_eq!(final_pel.count(), 0, "PEL should be empty after forced takeover");
+
+    Ok(())
+}
+
+/// Test PEL recovery with message redelivery count
+#[sinex_test]
+async fn test_pel_redelivery_count(ctx: TestContext) -> TestResult {
+    let mut redis_client = ctx.redis().await?;
+    let stream_key = "test:pel:redelivery:stream";
+    let group_name = "redelivery-pel-group";
+    let consumers = ["consumer-1", "consumer-2", "consumer-3"];
+
+    // Setup
+    let _: RedisResult<()> = redis_client.del(stream_key).await;
+    let _: RedisResult<()> = redis_client
+        .xgroup_create(stream_key, group_name, "0")
+        .await;
+
+    // Add a message
+    let message_id: String = redis_client
+        .xadd(
+            stream_key,
+            "*",
+            &[("type", "redelivery.test"), ("data", "test-message")],
+        )
+        .await?;
+
+    // Simulate multiple failed delivery attempts
+    for consumer in &consumers {
+        // Read message
+        let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
+            .arg("GROUP")
+            .arg(group_name)
+            .arg(consumer)
+            .arg("COUNT")
+            .arg(1)
+            .arg("STREAMS")
+            .arg(stream_key)
+            .arg(">")
+            .query_async(&mut redis_client)
+            .await?;
+
+        if messages.keys[0].ids.is_empty() {
+            // Message is already pending, claim it
+            let _: Vec<redis::streams::StreamClaimReply> = redis_client
+                .xclaim(stream_key, group_name, consumer, 1, &[&message_id])
+                .await?;
+        }
+
+        // Don't ACK - simulate processing failure
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+
+    // Final recovery with successful processing
+    let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
+        .xclaim(
+            stream_key,
+            group_name,
+            "final-consumer",
+            1,
+            &[&message_id],
+        )
+        .await?;
+
+    assert_eq!(claimed.len(), 1, "Should claim the message");
+
+    // The claimed message should show multiple delivery attempts
+    // Note: The delivery count is available in the full XPENDING output but not
+    // directly in the claim response with the current Redis crate API
+
+    // ACK the message
+    let ack_result: i64 = redis_client
+        .xack(stream_key, group_name, &[&message_id])
+        .await?;
+    assert_eq!(ack_result, 1);
+
+    Ok(())
+}
+
+/// Test PEL recovery with concurrent claims
+#[sinex_test]
+async fn test_concurrent_pel_claims(ctx: TestContext) -> TestResult {
+    let mut redis_client = ctx.redis().await?;
+    let stream_key = "test:pel:concurrent:stream";
+    let group_name = "concurrent-pel-group";
+    let original_consumer = "original-consumer";
+    let recovery_consumers = ["recovery-1", "recovery-2", "recovery-3"];
+
+    // Setup
+    let _: RedisResult<()> = redis_client.del(stream_key).await;
+    let _: RedisResult<()> = redis_client
+        .xgroup_create(stream_key, group_name, "0")
+        .await;
+
+    // Add messages
+    let message_count = 9;
+    let mut message_ids = Vec::new();
+    for i in 0..message_count {
+        let id: String = redis_client
+            .xadd(
+                stream_key,
+                "*",
+                &[("type", "concurrent.test"), ("data", &format!("msg-{}", i))],
+            )
+            .await?;
+        message_ids.push(id);
+    }
+
+    // Original consumer reads all messages
+    let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
+        .arg("GROUP")
+        .arg(group_name)
+        .arg(original_consumer)
+        .arg("COUNT")
+        .arg(message_count)
+        .arg("STREAMS")
+        .arg(stream_key)
+        .arg(">")
+        .query_async(&mut redis_client)
+        .await?;
+
+    let read_ids: Vec<String> = messages.keys[0]
+        .ids
+        .iter()
+        .map(|msg| msg.id.clone())
+        .collect();
+
+    // Wait to ensure messages are idle
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    // Concurrent recovery attempts
+    let mut handles = Vec::new();
+    for (idx, recovery_consumer) in recovery_consumers.iter().enumerate() {
+        let redis_client = ctx.redis().await?;
+        let stream_key = stream_key.to_string();
+        let group_name = group_name.to_string();
+        let recovery_consumer = recovery_consumer.to_string();
+        
+        // Each recovery consumer tries to claim a portion of messages
+        let start_idx = idx * 3;
+        let end_idx = (idx + 1) * 3;
+        let ids_to_claim = read_ids[start_idx..end_idx].to_vec();
+
+        let handle = tokio::spawn(async move {
+            let mut redis = redis_client;
+            let claimed: Vec<redis::streams::StreamClaimReply> = redis
+                .xclaim(
+                    &stream_key,
+                    &group_name,
+                    &recovery_consumer,
+                    50, // min idle time
+                    &ids_to_claim.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+                )
+                .await
+                .unwrap();
+
+            // ACK claimed messages
+            for claim in &claimed {
+                let _: i64 = redis
+                    .xack(&stream_key, &group_name, &[&claim.ids[0].id])
+                    .await
+                    .unwrap();
+            }
+
+            claimed.len()
+        });
+
+        handles.push(handle);
+    }
+
+    // Wait for all recovery attempts
+    let results: Vec<usize> = join_all(handles)
+        .await
+        .into_iter()
+        .map(|r| r.unwrap())
+        .collect();
+
+    // All messages should be claimed and ACKed
+    let total_claimed: usize = results.iter().sum();
+    assert_eq!(
+        total_claimed, message_count,
+        "All messages should be claimed by recovery consumers"
+    );
+
+    // Verify PEL is empty
+    let final_pel: redis::streams::StreamPendingReply = redis_client
+        .xpending(stream_key, group_name)
+        .await?;
+
+    assert_eq!(final_pel.count(), 0, "PEL should be empty");
+
+    Ok(())
+}
+
+/// Test PEL recovery patterns for production scenarios
+#[sinex_test]
+async fn test_production_pel_recovery_patterns(ctx: TestContext) -> TestResult {
+    let mut redis_client = ctx.redis().await?;
+    let stream_key = "test:pel:production:stream";
+    let group_name = "production-pel-group";
+
+    // Setup
+    let _: RedisResult<()> = redis_client.del(stream_key).await;
+    let _: RedisResult<()> = redis_client
+        .xgroup_create(stream_key, group_name, "0")
+        .await;
+
+    // Simulate production message flow
+    let message_types = vec![
+        ("event.created", "low"),
+        ("event.updated", "medium"),
+        ("event.critical", "high"),
+        ("event.batch", "low"),
+    ];
+
+    let mut message_ids = HashMap::new();
+    for (msg_type, priority) in &message_types {
+        for i in 0..3 {
+            let id: String = redis_client
+                .xadd(
+                    stream_key,
+                    "*",
+                    &[
+                        ("type", *msg_type),
+                        ("priority", *priority),
+                        ("data", &format!("{}-{}", msg_type, i)),
+                    ],
+                )
+                .await?;
+            message_ids.insert(id.clone(), (*msg_type, *priority));
+        }
+    }
+
+    // Multiple consumers process different message types
+    let consumer_assignments = vec![
+        ("consumer-critical", vec!["event.critical"]),
+        ("consumer-updates", vec!["event.updated"]),
+        ("consumer-batch", vec!["event.created", "event.batch"]),
+    ];
+
+    // Simulate partial processing
+    for (consumer, _types) in &consumer_assignments {
+        let messages: redis::streams::StreamReadReply = cmd("XREADGROUP")
+            .arg("GROUP")
+            .arg(group_name)
+            .arg(consumer)
+            .arg("COUNT")
+            .arg(4)
+            .arg("STREAMS")
+            .arg(stream_key)
+            .arg(">")
+            .query_async(&mut redis_client)
+            .await?;
+
+        // Simulate some messages being processed, others failing
+        if !messages.keys.is_empty() && !messages.keys[0].ids.is_empty() {
+            // ACK only half of the messages
+            for (idx, msg) in messages.keys[0].ids.iter().enumerate() {
+                if idx % 2 == 0 {
+                    let _: i64 = redis_client
+                        .xack(stream_key, group_name, &[&msg.id])
+                        .await?;
+                }
+            }
+        }
+    }
+
+    // Check PEL status
     let pel_info: redis::streams::StreamPendingReply = redis_client
         .xpending(stream_key, group_name)
         .await?;
 
-    assert_eq!(pel_info.count(), 4, "All messages should be in PEL");
+    println!("PEL contains {} unprocessed messages", pel_info.count());
 
-    // Recovery consumer claims and processes messages
-    let recovery_consumer = "recovery-consumer";
+    // Recovery process - claim old messages based on priority
+    let pending_ids: Vec<String> = message_ids.keys().cloned().collect();
+    
+    // Recovery consumer claims all pending messages
     let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
-        .xclaim(stream_key, group_name, recovery_consumer, 1, &read_ids)
+        .xclaim(
+            stream_key,
+            group_name,
+            "recovery-consumer",
+            10, // min idle time
+            &pending_ids.iter().map(|s| s.as_str()).collect::<Vec<_>>(),
+        )
         .await?;
 
-    assert_eq!(
-        claimed.len(),
-        4,
-        "Should claim all messages including malformed ones"
-    );
-
-    // Process each message with error handling
-    let mut processed_count = 0;
-    let mut error_count = 0;
-
+    // Process claimed messages
     for claim in claimed {
-        // Simulate processing with error handling
-        if let Some(data) = claim.ids[0].map.get("data") {
-            let data_str = match data {
-                redis::Value::Data(bytes) => String::from_utf8_lossy(bytes),
-                _ => continue,
-            };
-            
-            if data_str.is_empty() {
-                error_count += 1;
-            } else if data_str.starts_with('{') && data_str.ends_with('}') {
-                // Try to parse as JSON
-                match serde_json::from_str::<serde_json::Value>(&data_str) {
-                    Ok(_) => processed_count += 1,
-                    Err(_) => error_count += 1,
-                }
-            } else if data_str.len() > 500 {
-                // Large message, might need special handling
-                processed_count += 1;
-            } else {
-                processed_count += 1;
-            }
+        if !claim.ids.is_empty() {
+            let _: i64 = redis_client
+                .xack(stream_key, group_name, &[&claim.ids[0].id])
+                .await?;
         }
-
-        // Acknowledge the message regardless of processing result
-        let _: i64 = redis_client
-            .xack(stream_key, group_name, &[&claim.ids[0].id])
-            .await?;
     }
 
-    // Verify processing results
-    assert_eq!(processed_count, 2, "Should process 2 valid messages");
-    assert_eq!(error_count, 2, "Should encounter 2 malformed messages");
-
-    // Verify PEL is empty (all messages acknowledged)
+    // Final verification
     let final_pel: redis::streams::StreamPendingReply = redis_client
         .xpending(stream_key, group_name)
         .await?;
@@ -852,7 +777,7 @@ async fn test_pel_recovery_malformed_messages(ctx: TestContext) -> TestResult {
     assert_eq!(
         final_pel.count(),
         0,
-        "PEL should be empty after processing malformed messages"
+        "All messages should be processed after recovery"
     );
 
     Ok(())

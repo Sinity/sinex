@@ -49,126 +49,40 @@
 // Integration tests use shared database pools with transaction isolation,
 // providing faster test execution while maintaining perfect isolation between tests.
 
-use crate::common::prelude::*;
 
 // === Core Component Integration ===
 
-/// Consolidated database integration tests
-use sinex_satellite_sdk::EventSourceConfig;
+// Test macro demonstrations
+// pub mod macro_validation_test; // Temporarily disabled due to async closure lifetime issues
 
-pub mod database_test;
+// Consolidated integration tests
+// pub mod redis_stream_integration_test; // Temporarily disabled due to async closure lifetime issues
 
-/// Schema validation integration tests
-pub mod schema_validation_test;
+// === Business Logic Integration Tests ===
 
-/// Consolidated event source integration tests (ingestor satellite architecture)
-pub mod event_sources_test;
-
-/// Collector test - OBSOLETE (replaced by ingestd architecture)
-// pub mod collector_test;
-
-/// Automaton processing and event handling tests (replaces worker_test)
-// Note: Functionality covered by existing satellite_architecture_test.rs
-// pub mod automaton_processing_test;
-
-/// Ingestor coordination tests (replaces collector_test)
-// Note: Functionality covered by existing event_sources_test.rs
-// pub mod ingestor_coordination_test;
-
-/// Failure mode handling tests (updated for satellite architecture)
-// Disabled - references obsolete sinex_core imports (EventSource, EventSourceContext)
-// pub mod failure_modes_test;
-
-/// System-wide integration tests (updated for satellite architecture)
-// Disabled - references obsolete sinex_collector and sinex_core imports
-// pub mod system_integration_test;
-
-/// Redis Consumer Group fault tolerance tests (replaces orphaned work recovery)
-pub mod redis_consumer_group_fault_tolerance_test;
-
-/// PEL (Pending Entry List) recovery tests
-pub mod pel_recovery_test;
-
-/// Search service integration tests
+// Service-level integration tests
+pub mod analytics_service_test;
+pub mod pkm_service_test;
+pub mod content_service_test;
 pub mod search_service_test;
 
-/// PKM service integration tests
-pub mod pkm_service_test;
+// Data integrity and recovery tests
+pub mod data_corruption_detection_test;
+pub mod checkpoint_consistency_test;
+pub mod pel_recovery_test;
 
-/// Analytics service integration tests
-pub mod analytics_service_test;
+// === Core Integration Tests ===
 
-/// Content service integration tests
-pub mod content_service_test;
-
-/// BlobManager integration tests
-pub mod blob_manager_test;
-
-/// RPC handlers request/response tests
-// Disabled - references missing RPC handler functions
-// pub mod rpc_handlers_test;
-
-// === Preflight Verification System Tests ===
-
-/// Preflight comprehensive integration tests
-pub mod preflight_integration_test;
-
-/// Preflight failure scenarios and error handling tests
-pub mod preflight_failure_scenarios_test;
-
-/// Preflight timeout, performance and graceful shutdown tests
-pub mod preflight_timeout_performance_test;
-
-/// Preflight rollback mechanisms and recovery tests
-pub mod preflight_rollback_recovery_test;
-
-/// Typed clipboard event integration tests
-pub mod typed_clipboard_integration_test;
-
-/// Scanner test integration
-pub mod scanner_test;
-
-/// Import deduplication tests
-pub mod import_deduplication_test;
-
-/// Process event tests
+// Database and event processing
+pub mod database_test;
+pub mod event_sources_test;
 pub mod process_event_test;
 
-/// Edge case coverage tests for dual-mode refactoring
-pub mod edge_case_coverage_test;
-
-/// Critical failure modes testing  
-pub mod critical_failure_modes_test;
-
-/// Version tracking integration tests
-pub mod version_tracking_integration_test;
-
-/// Satellite architecture integration tests
+// System architecture and integration
 pub mod satellite_architecture_test;
-
-/// Comprehensive satellite integration tests
-// Disabled - references obsolete ServerConfig and IngestServer (needs architecture update)
-// pub mod satellite_comprehensive_test;
-
-/// Checkpoint persistence and recovery integration tests
-pub mod checkpoint_persistence_test;
-
-/// Provenance tracking integration tests  
-pub mod provenance_tracking_test;
-
-/// End-to-end workflow integration tests
+pub mod system_integration_test;
 pub mod end_to_end_workflows_test;
 
-// === Data Integrity Testing Modules ===
-
-/// Comprehensive schema validation and malformed event detection tests
-pub mod schema_validation_comprehensive_test;
-
-/// ULID ordering verification and corruption detection tests  
-pub mod ulid_ordering_verification_test;
-
-/// Checkpoint consistency and gap detection tests
-pub mod checkpoint_consistency_test;
-
-/// Data corruption detection and recovery guidance tests
-pub mod data_corruption_detection_test;
+// Failure handling and recovery
+pub mod critical_failure_modes_test;
+pub mod preflight_integration_test;

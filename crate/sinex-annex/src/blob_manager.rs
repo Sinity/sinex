@@ -3,17 +3,14 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_db::queries::{ArtifactQueries, EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_db::{DbPool, Timestamp};
+use sinex_db::DbPool;
 use sinex_ulid::Ulid;
-use sinex_events::{event_types, sources};
-use sqlx::Row;
 use std::path::{Path, PathBuf};
-use std::str::FromStr;
 use std::time::Instant;
 use tracing::{debug, info};
 
 use crate::{AnnexConfig, AnnexKey, GitAnnex};
+use sinex_events::constants::{event_types, sources};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobMetadata {

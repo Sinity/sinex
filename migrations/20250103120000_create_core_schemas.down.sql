@@ -1,5 +1,0 @@
--- Down migration for 20250103120000_create_core_schemas
-
-DROP SCHEMA IF EXISTS core CASCADE;
-DROP SCHEMA IF EXISTS sinex_schemas CASCADE;
-DROP SCHEMA IF EXISTS raw CASCADE;

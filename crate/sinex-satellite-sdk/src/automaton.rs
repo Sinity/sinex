@@ -13,6 +13,7 @@ use sinex_db::SqlxPgPool as PgPool;
 use sinex_events::RawEvent;
 use std::collections::HashMap;
 use tracing::{debug, error, info, warn};
+// use sinex_events::constants::{event_types, sources};
 
 /// Result of processing an event
 #[derive(Debug, Clone)]
@@ -117,10 +118,10 @@ impl HotlogAutomatonContext {
 /// Event filter for automaton event selection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EventFilter {
-    /// Filter by event source (e.g., "fs", "shell.kitty")
+    /// Filter by event source (e.g., sources::FS, "shell.kitty")
     pub source: Option<String>,
 
-    /// Filter by event type (e.g., "file.created", "command.executed")
+    /// Filter by event type (e.g., event_types::file::CREATED, "command.executed")
     pub event_type: Option<String>,
 
     /// Filter by host name

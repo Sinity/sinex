@@ -4,12 +4,14 @@
 //! retrieval, and management. All queries automatically handle ULID/UUID
 //! conversion and provide consistent error handling.
 
+use crate::constants::tables;
 use crate::query_builder::{QueryBuilder, QueryParam};
 use crate::query_helpers::{db_error, DbResult};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
+use sinex_events::constants::{event_types};
 
 /// Event query registry with centralized event operations
 pub struct EventQueries;
@@ -20,7 +22,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<RawEvent>(pool)`
     pub fn get_by_id(event_id: Ulid) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -50,7 +52,7 @@ impl EventQueries {
         payload_schema_id: Option<Ulid>,
         source_event_ids: Option<Vec<Ulid>>,
     ) -> QueryBuilder {
-        QueryBuilder::insert("core.events")
+        QueryBuilder::insert(tables::EVENTS)
             .columns(&[
                 "source",
                 "event_type",
@@ -96,7 +98,7 @@ impl EventQueries {
         payload_schema_id: Option<Ulid>,
         source_event_ids: Option<Vec<Ulid>>,
     ) -> QueryBuilder {
-        let mut builder = QueryBuilder::insert("core.events").columns(&[
+        let mut builder = QueryBuilder::insert(tables::EVENTS).columns(&[
             "source",
             "event_type",
             "host",
@@ -140,7 +142,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn count_all() -> QueryBuilder {
-        QueryBuilder::select("core.events").columns(&["COUNT(*) as count"])
+        QueryBuilder::select(tables::EVENTS).columns(&["COUNT(*) as count"])
     }
 
     /// Count events by source
@@ -148,7 +150,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn count_by_source(source: String) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&["COUNT(*) as count"])
             .where_eq("source", QueryParam::String(source))
     }
@@ -158,7 +160,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn count_by_event_type(event_type: String) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&["COUNT(*) as count"])
             .where_eq("event_type", QueryParam::String(event_type))
     }
@@ -172,7 +174,7 @@ impl EventQueries {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&["COUNT(*) as count"])
             .where_eq("source", QueryParam::String(source))
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
@@ -184,7 +186,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn count_by_time_range(start_time: DateTime<Utc>, end_time: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&["COUNT(*) as count"])
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
@@ -195,7 +197,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_recent(limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
-        let mut builder = QueryBuilder::select("core.events")
+        let mut builder = QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -226,7 +228,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_by_source(source: String, limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
-        let mut builder = QueryBuilder::select("core.events")
+        let mut builder = QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -262,7 +264,7 @@ impl EventQueries {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> QueryBuilder {
-        let mut builder = QueryBuilder::select("core.events")
+        let mut builder = QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -294,7 +296,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_by_ids(event_ids: Vec<Ulid>) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -321,7 +323,7 @@ impl EventQueries {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> QueryBuilder {
-        let mut builder = QueryBuilder::select("core.events")
+        let mut builder = QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -354,7 +356,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn update_payload(event_id: Ulid, payload: JsonValue) -> QueryBuilder {
-        QueryBuilder::update("core.events")
+        QueryBuilder::update(tables::EVENTS)
             .set("payload", QueryParam::Json(payload))
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
@@ -364,7 +366,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn update_source_event_ids(event_id: Ulid, source_event_ids: Vec<Ulid>) -> QueryBuilder {
-        QueryBuilder::update("core.events")
+        QueryBuilder::update(tables::EVENTS)
             .set("source_event_ids", QueryParam::UlidArray(source_event_ids))
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
@@ -374,7 +376,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn delete_by_id(event_id: Ulid) -> QueryBuilder {
-        QueryBuilder::delete("core.events").where_eq("event_id", QueryParam::Ulid(event_id))
+        QueryBuilder::delete(tables::EVENTS).where_eq("event_id", QueryParam::Ulid(event_id))
     }
 
     /// Delete events by source
@@ -382,7 +384,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn delete_by_source(source: String) -> QueryBuilder {
-        QueryBuilder::delete("core.events").where_eq("source", QueryParam::String(source))
+        QueryBuilder::delete(tables::EVENTS).where_eq("source", QueryParam::String(source))
     }
 
     /// Delete events older than timestamp
@@ -390,7 +392,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn delete_older_than(timestamp: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::delete("core.events").where_op(
+        QueryBuilder::delete(tables::EVENTS).where_op(
             "ts_ingest",
             "<",
             QueryParam::Timestamp(timestamp),
@@ -402,7 +404,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_with_blobs(limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
-        let mut builder = QueryBuilder::select("core.events")
+        let mut builder = QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "source as \"source!\"",
@@ -439,7 +441,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn attach_blob(event_id: Ulid, blob_id: Ulid) -> QueryBuilder {
-        QueryBuilder::update("core.events")
+        QueryBuilder::update(tables::EVENTS)
             .set("associated_blob_ids", QueryParam::UlidArray(vec![blob_id]))
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
@@ -449,7 +451,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn detach_blob(event_id: Ulid) -> QueryBuilder {
-        QueryBuilder::update("core.events")
+        QueryBuilder::update(tables::EVENTS)
             .set("associated_blob_ids", QueryParam::OptionalUlid(None))
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
@@ -469,7 +471,7 @@ impl EventQueries {
         blob_id: Ulid,
         source_event_ids: Option<Vec<Ulid>>,
     ) -> QueryBuilder {
-        QueryBuilder::insert("core.events")
+        QueryBuilder::insert(tables::EVENTS)
             .columns(&[
                 "source",
                 "event_type",
@@ -602,7 +604,7 @@ impl EventQueries {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_type",
                 "COUNT(*) as count",
@@ -618,7 +620,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<(String, i64)>(pool)`
     pub fn count_by_type_all_time() -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_type",
                 "COUNT(*) as count",
@@ -636,7 +638,7 @@ impl EventQueries {
         end_time: DateTime<Utc>,
         limit: i64,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "payload->>'command' as command",
                 "COUNT(*) as count",
@@ -656,7 +658,7 @@ impl EventQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CommandCountRecord>(pool)`
     pub fn top_commands_all_time(limit: i64) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "payload->>'command' as command",
                 "COUNT(*) as count",
@@ -678,7 +680,7 @@ impl EventQueries {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.events")
+        QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "event_id::uuid as \"id!\"",
                 "ts_ingest as \"timestamp!\"",
@@ -686,9 +688,80 @@ impl EventQueries {
                 "host as \"host!\"",
             ])
             .where_eq("source", QueryParam::String(process_name))
-            .where_eq("event_type", QueryParam::String("process.heartbeat".to_string()))
+            .where_eq("event_type", QueryParam::String(event_types::sinex::PROCESS_HEARTBEAT.to_string()))
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
             .order_by("ts_ingest", "DESC")
     }
+
+    // ========================================================================
+    // Time-series analytics queries (require TimescaleDB)
+    // ========================================================================
+
+    /// Get events over time using time buckets
+    ///
+    /// This uses raw SQL for TimescaleDB time_bucket function
+    pub async fn get_events_over_time(
+        pool: &PgPool,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        interval: sqlx::postgres::types::PgInterval,
+    ) -> DbResult<Vec<TimeBucketRecord>> {
+        let rows = sqlx::query_as!(
+            TimeBucketRecord,
+            r#"
+            SELECT 
+                time_bucket($1::interval, ts_ingest) as "bucket!",
+                COUNT(*) as "count!"
+            FROM core.events
+            WHERE ts_ingest >= $2 AND ts_ingest <= $3
+            GROUP BY time_bucket($1::interval, ts_ingest)
+            ORDER BY time_bucket($1::interval, ts_ingest) ASC
+            "#,
+            interval,
+            start_time,
+            end_time
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| db_error(e, "get events over time"))?;
+
+        Ok(rows)
+    }
+
+    /// Get activity heatmap using time buckets
+    ///
+    /// This uses raw SQL for TimescaleDB time_bucket function
+    pub async fn get_activity_heatmap(
+        pool: &PgPool,
+        interval: sqlx::postgres::types::PgInterval,
+        limit: i64,
+    ) -> DbResult<Vec<TimeBucketRecord>> {
+        let rows = sqlx::query_as!(
+            TimeBucketRecord,
+            r#"
+            SELECT 
+                time_bucket($1::interval, ts_ingest) as "bucket!",
+                COUNT(*) as "count!"
+            FROM core.events
+            GROUP BY time_bucket($1::interval, ts_ingest)
+            ORDER BY COUNT(*) DESC
+            LIMIT $2
+            "#,
+            interval,
+            limit
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| db_error(e, "get activity heatmap"))?;
+
+        Ok(rows)
+    }
+}
+
+/// Record type for time bucket results
+#[derive(Debug, sqlx::FromRow)]
+pub struct TimeBucketRecord {
+    pub bucket: DateTime<Utc>,
+    pub count: i64,
 }

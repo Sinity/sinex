@@ -5,11 +5,8 @@
 // and CPU saturation. Critical for understanding system failure modes.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use serde_json::json;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use sinex_satellite_sdk::RedisStreamClient;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -211,7 +208,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         // Try a simple query with timeout
         let query_result = tokio::time::timeout(
             StdDuration::from_millis(50),
-            sqlx::query("SELECT 1 as test").fetch_one(&pool)
+            sqlx::query("SELECT 1 as test").fetch_one(pool)
         ).await;
         
         let operation_duration = operation_start.elapsed();
@@ -258,7 +255,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
         
         match tokio::time::timeout(
             StdDuration::from_millis(100),
-            sqlx::query("SELECT 2 as test").fetch_one(&pool)
+            sqlx::query("SELECT 2 as test").fetch_one(pool)
         ).await {
             Ok(Ok(_)) => {
                 let operation_duration = operation_start.elapsed();
@@ -396,7 +393,7 @@ async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
         
         let operation_result = sqlx::query!(
             "SELECT COUNT(*) as count FROM core.events WHERE source = 'memory-pressure-test'"
-        ).fetch_one(&pool).await;
+        ).fetch_one(pool).await;
         
         let operation_duration = operation_start.elapsed();
         
@@ -438,7 +435,7 @@ async fn test_memory_pressure_scenarios(ctx: TestContext) -> TestResult {
         
         let operation_result = sqlx::query!(
             "SELECT COUNT(*) as count FROM core.events WHERE source = 'memory-pressure-test'"
-        ).fetch_one(&pool).await;
+        ).fetch_one(pool).await;
         
         let operation_duration = operation_start.elapsed();
         
@@ -808,7 +805,7 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> TestResult {
     // Test database recovery
     let db_recovery_result = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-stress-db-%'"
-    ).fetch_one(&pool).await;
+    ).fetch_one(pool).await;
     
     // Test Redis recovery
     let redis_recovery_result = if let Ok(redis_client) = RedisStreamClient::new("redis://localhost:6379")?.await {

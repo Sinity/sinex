@@ -3,23 +3,24 @@
 ## CORE PRINCIPLES
 
 STARTUP:
+
 - nix develop (ALWAYS first, sets up environment)
 - git status && git pull (check state)
 - just migrate (if DB work planned)
 
 WORKFLOW:
-- Research before implementing (Grep/Read/Task)
+
+- Research before implementing
 - Save compilation output for analysis (don't recompile)
 - TodoWrite for multi-step work
 - Atomic commits with clear messages
-- Branch for uncertain changes
 
 EFFICIENCY:
+
 - compile: cargo check --workspace >/tmp/out 2>&1
 - errors: grep -E "^error\[E[0-9]+\]:" /tmp/out | sort | uniq -c
 - search: rg -t rust "pattern" (avoid multiple greps)
 - git: add -p, stash push -m "WIP: desc", diff --cached
-- automation: >50 items → ast-grep/sed, not manual
 
 ## ARCHITECTURE
 
@@ -28,12 +29,12 @@ SATELLITES: fs-watcher, terminal, desktop, system (ingestors) + command-canonica
 KEY_PATHS: /run/sinex/ingest.sock, postgresql:///sinex_dev?host=/run/postgresql, redis://localhost:6379
 
 MODERN PATTERNS:
-- StatefulStreamProcessor trait: unified interface for all satellites
-- sinex-error: canonical error handling crate (NOT sinex-core-types)
-- OperationQueries + QueryBuilder: database abstraction (never raw SQL)
+
+- sinex-error: canonical error handling crate
+- QueryBuilder: database abstraction (never raw SQL)
 - TestContext + #[sinex_test]: required for all database tests
 - Environment-only config: NixOS→env vars (no file-based config)
-- exo CLI: primary user interface (satellite CLIs are debug-only)
+- exo CLI: primary user interface (satellite CLIs are used only internally)
 
 ## NAVIGATION
 
@@ -47,8 +48,6 @@ error_handling: crate/sinex-error/src/lib.rs (canonical error crate)
 
 ## INVARIANTS
 
-- Events immutable once written
-- ULID for all IDs (use .to_uuid() for SQL)
 - JSON schema validation on all payloads
 - SQLX offline mode (commit .sqlx/)
 
@@ -63,13 +62,15 @@ debug: RUST_LOG=debug command
 ## PATTERNS
 
 RUST:
+
 - ErrorContext over format! for errors
 - #[sinex_test] for DB tests (auto rollback)
-- RawEventBuilder for event creation
+- EventFactory for event creation
 - ValidationChain for input validation
-- ULID→UUID for PostgreSQL (.to_uuid())
+- ULID→UUID for PostgreSQL (ulid_to_uuid(), uuid_to_ulid)
 
 SEARCH:
+
 - rg "impl.*Type" -t rust
 - rg "function\(" -t rust -A 2
 - cargo check 2>&1 | tee /tmp/err
@@ -77,28 +78,24 @@ SEARCH:
 ## CORE ABSTRACTIONS
 
 StatefulStreamProcessor: Unified ingestor/automaton interface
+
 - scan(from, until, args) - Process events in time range
 - TimeHorizon: Historical|Continuous|Snapshot
 
 CheckpointManager: State persistence across restarts
 EventRegistry: Type-safe event definitions
-HotlogAutomaton: Redis stream processing with checkpoints
 
 ## DATABASE
 
 SCHEMA:
+
 - core.events: Main event table (ULID PK, immutable)
 - core.automaton_checkpoints: Processing state
-- source_material_registry: External data tracking
-
-RULES:
-- Always use ULID→UUID conversion
-- Never delete events (archive instead)
-- JSON schema validation required
+- raw.source_material_registry: External data tracking
 
 ## COMMON ERRORS
 
-- "unsupported type ulid" → use .to_uuid()
+- "unsupported type ulid" → use ulid_to_uuid()
 - "SQLX offline" → just sqlx-prepare && git add .sqlx/
 - "socket connection refused" → check ingestd + /run/sinex/ingest.sock
 - "no such file" in nix → uncommitted files (git status)
@@ -107,12 +104,14 @@ RULES:
 ## DEBUG CHECKLIST
 
 NO_EVENTS:
+
 1. systemctl status sinex-X
 2. journalctl -u sinex-X -f
 3. ls -la /run/sinex/ingest.sock
 4. RUST_LOG=debug systemctl restart sinex-X
 
 NO_PROCESSING:
+
 1. redis-cli XINFO STREAM sinex:events
 2. redis-cli XINFO GROUPS sinex:events
 3. Check pending messages + automaton service
@@ -141,7 +140,7 @@ FROM core.automaton_checkpoints;
 
 ## KEY DOCS
 
-- plan.md - Canonical architecture
+- spec/understand/ - top-down description of sinex
 - spec/SADI.md - Architecture overview
 - nixos/README.md - Deployment guide
-- docs/DEVELOPMENT_DEBUGGING.md - Dev workflows
+

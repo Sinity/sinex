@@ -4,18 +4,13 @@
 
 use chrono::{DateTime, Utc};
 use sinex_core_types::{MetricsEntry, MetricsAggregation};
+use sinex_error::CoreError;
 use sqlx::PgPool;
+use sinex_db::queries::MetricsQueries;
+use sinex_db::queries::metrics::{MetricRecord, AggregationRecord};
 
 /// Simple error type for metrics operations
-#[derive(Debug, thiserror::Error)]
-pub enum MetricsError {
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-    #[error("Configuration error: {0}")]
-    Configuration(String),
-}
+pub type MetricsError = CoreError;
 
 // MetricsEntry is now imported from sinex_core_types
 
@@ -32,76 +27,34 @@ impl MetricsStorage {
     /// Initialize the metrics tables
     pub async fn init_schema(&self) -> Result<(), MetricsError> {
         // Create sinex schema if it doesn't exist
-        sqlx::query("CREATE SCHEMA IF NOT EXISTS sinex")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| MetricsError::Database(e))?;
+        MetricsQueries::create_schema(&self.pool).await?;
 
         // Create metrics table
-        sqlx::query(r#"
-            CREATE TABLE IF NOT EXISTS sinex.metrics (
-                id UUID PRIMARY KEY,
-                metric_name TEXT NOT NULL,
-                metric_type TEXT NOT NULL,
-                value DOUBLE PRECISION NOT NULL,
-                labels JSONB NOT NULL DEFAULT '{}',
-                timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                namespace TEXT NOT NULL DEFAULT 'sinex',
-                subsystem TEXT NOT NULL,
-                CONSTRAINT valid_metric_type CHECK (metric_type IN ('counter', 'gauge', 'histogram', 'summary'))
-            )
-        "#)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| MetricsError::Configuration(format!("Failed to create metrics table: {}", e)))?;
+        MetricsQueries::create_table(&self.pool).await?;
 
-        // Create index for efficient queries
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_sinex_metrics_name_time 
-            ON sinex.metrics (metric_name, timestamp DESC)
-        "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            MetricsError::Configuration(format!("Failed to create metrics index: {}", e))
-        })?;
-
-        sqlx::query(
-            r#"
-            CREATE INDEX IF NOT EXISTS idx_sinex_metrics_namespace_subsystem 
-            ON sinex.metrics (namespace, subsystem, timestamp DESC)
-        "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            MetricsError::Configuration(format!("Failed to create namespace index: {}", e))
-        })?;
+        // Create indices for efficient queries
+        MetricsQueries::create_indices(&self.pool).await?;
 
         Ok(())
     }
 
     /// Store a single metrics entry
     pub async fn store_metric(&self, entry: &MetricsEntry) -> Result<(), MetricsError> {
-        sqlx::query!(
-            r#"
-            INSERT INTO sinex.metrics (id, metric_name, metric_type, value, labels, timestamp, namespace, subsystem)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-            "#,
-            entry.id.to_uuid(),
-            entry.metric_name,
-            entry.metric_type,
+        let labels_json = serde_json::to_value(&entry.labels)
+            .map_err(|e| CoreError::Serialization(format!("Failed to serialize labels: {}", e)))?;
+
+        MetricsQueries::insert_metric(
+            entry.id,
+            entry.metric_name.clone(),
+            entry.metric_type.clone(),
             entry.value,
-            serde_json::to_value(&entry.labels).unwrap_or_default(),
+            labels_json,
             entry.timestamp,
-            entry.namespace,
-            entry.subsystem
+            entry.namespace.clone(),
+            entry.subsystem.clone(),
         )
         .execute(&self.pool)
-        .await
-        .map_err(|e| MetricsError::Configuration(format!("Failed to store metric: {}", e)))?;
+        .await?;
 
         Ok(())
     }
@@ -117,30 +70,28 @@ impl MetricsStorage {
 
         // Use a transaction for batch insert
         let mut tx = self.pool.begin().await
-            .map_err(|e| MetricsError::Configuration(format!("Failed to begin transaction: {}", e)))?;
+            .map_err(|e| CoreError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         for entry in &entries {
-            sqlx::query!(
-                r#"
-                INSERT INTO sinex.metrics (id, metric_name, metric_type, value, labels, timestamp, namespace, subsystem)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-                "#,
-                entry.id.to_uuid(),
-                entry.metric_name,
-                entry.metric_type,
+            let labels_json = serde_json::to_value(&entry.labels)
+                .map_err(|e| CoreError::Serialization(format!("Failed to serialize labels: {}", e)))?;
+
+            MetricsQueries::insert_metric(
+                entry.id,
+                entry.metric_name.clone(),
+                entry.metric_type.clone(),
                 entry.value,
-                serde_json::to_value(&entry.labels).unwrap_or_default(),
+                labels_json,
                 entry.timestamp,
-                entry.namespace,
-                entry.subsystem
+                entry.namespace.clone(),
+                entry.subsystem.clone(),
             )
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| MetricsError::Configuration(format!("Failed to store metric in batch: {}", e)))?;
+            .execute_tx(&mut tx)
+            .await?;
         }
 
         tx.commit().await
-            .map_err(|e| MetricsError::Configuration(format!("Failed to commit metrics batch: {}", e)))?;
+            .map_err(|e| CoreError::Database(format!("Failed to commit metrics batch: {}", e)))?;
 
         Ok(())
     }
@@ -155,9 +106,41 @@ impl MetricsStorage {
         end_time: Option<DateTime<Utc>>,
         limit: Option<i64>,
     ) -> Result<Vec<MetricsEntry>, MetricsError> {
-        // For now, return empty vec - proper implementation would require dynamic SQL
-        // TODO: Implement proper dynamic query building
-        Ok(vec![])
+        use sinex_ulid::Ulid;
+        use std::collections::HashMap;
+
+        let records = MetricsQueries::query_metrics(
+            metric_name.map(String::from),
+            namespace.map(String::from),
+            subsystem.map(String::from),
+            start_time,
+            end_time,
+            limit,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        // Convert records to MetricsEntry
+        let entries = records
+            .into_iter()
+            .map(|record: MetricRecord| {
+                let labels: HashMap<String, String> = serde_json::from_value(record.labels)
+                    .unwrap_or_default();
+                
+                MetricsEntry {
+                    id: Ulid::from_uuid(record.id),
+                    metric_name: record.metric_name,
+                    metric_type: record.metric_type,
+                    value: record.value,
+                    labels,
+                    timestamp: record.timestamp,
+                    namespace: record.namespace,
+                    subsystem: record.subsystem,
+                }
+            })
+            .collect();
+
+        Ok(entries)
     }
 
     /// Get aggregated metrics (sum, avg, min, max) for a metric over time
@@ -169,14 +152,23 @@ impl MetricsStorage {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> Result<MetricsAggregation, MetricsError> {
-        // For now, return default aggregation - proper implementation would require complex SQL
-        // TODO: Implement proper aggregation query
+
+        let record: AggregationRecord = MetricsQueries::get_aggregation(
+            metric_name.to_string(),
+            namespace.map(String::from),
+            subsystem.map(String::from),
+            start_time,
+            end_time,
+        )
+        .fetch_one(&self.pool)
+        .await?;
+
         Ok(MetricsAggregation {
-            count: 0,
-            sum: 0.0,
-            avg: 0.0,
-            min: 0.0,
-            max: 0.0,
+            count: record.count as u64,
+            sum: record.sum,
+            avg: record.avg,
+            min: record.min,
+            max: record.max,
         })
     }
 
@@ -185,18 +177,9 @@ impl MetricsStorage {
         &self,
         older_than: DateTime<Utc>,
     ) -> Result<u64, MetricsError> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM sinex.metrics
-            WHERE timestamp < $1
-            "#,
-            older_than
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            MetricsError::Configuration(format!("Failed to cleanup old metrics: {}", e))
-        })?;
+        let result = MetricsQueries::delete_older_than(older_than)
+            .execute(&self.pool)
+            .await?;
 
         Ok(result.rows_affected())
     }

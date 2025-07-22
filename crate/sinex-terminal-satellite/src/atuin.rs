@@ -15,6 +15,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources}; // event_types already imported above
 
 /// Configuration for Atuin watcher
 #[derive(Debug, Clone)]

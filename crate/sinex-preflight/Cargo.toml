@@ -44,6 +44,7 @@ sinex-core-types = { path = "../sinex-core-types" }
 sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
+sinex-events = { path = "../sinex-events" }
 
 [dev-dependencies]
 tempfile = "3.0"

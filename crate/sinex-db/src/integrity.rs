@@ -9,17 +9,17 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::Value;
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
-use crate::queries::{EventQueries, OperationQueries};
-use crate::query_builder::{QueryBuilder, QueryParam};
 use crate::validation::{
     CheckpointInconsistency, DataIntegrityValidator, IntegrityCheckReport, IntegritySeverity,
     SchemaViolation, UlidOrderingViolation,
 };
 use crate::RawEvent;
+use crate::queries::IntegrityQueries;
+use crate::queries::integrity::{find_batch_violations, find_suspicious_events, analyze_checkpoint_gaps};
+use crate::constants::tables;
 use sinex_ulid::Ulid;
 
 /// High-level integrity testing orchestrator
@@ -279,6 +279,7 @@ impl<'a> IntegrityTester<'a> {
         let mut violations = Vec::new();
 
         // Check for events with suspicious payload patterns
+        // This query is complex and specific, keeping it as raw SQL for now
         let suspicious_events = sqlx::query!(
             r#"
             SELECT 
@@ -344,14 +345,14 @@ impl<'a> IntegrityTester<'a> {
             WITH checkpoint_analysis AS (
                 SELECT 
                     ac.automaton_name,
-                    ac.last_processed_id,
+                    ac.last_processed_id::uuid as last_processed_id,
                     ac.processed_count,
                     ac.last_activity,
                     COUNT(e.event_id) as events_after_checkpoint,
                     MIN(e.ts_ingest) as first_unprocessed_event_time,
                     MAX(e.ts_ingest) as last_unprocessed_event_time
                 FROM core.automaton_checkpoints ac
-                LEFT JOIN core.events e ON e.event_id::text > COALESCE(ac.last_processed_id, '00000000000000000000000000')
+                LEFT JOIN core.events e ON e.event_id > COALESCE(ac.last_processed_id, '00000000000000000000000000'::ulid)
                     AND e.ts_ingest > COALESCE(ac.last_activity, NOW() - INTERVAL '1 hour')
                 GROUP BY ac.automaton_name, ac.last_processed_id, ac.processed_count, ac.last_activity
             )
@@ -384,12 +385,10 @@ impl<'a> IntegrityTester<'a> {
                 automaton_name: gap.automaton_name,
                 checkpoint_ulid: gap
                     .last_processed_id
-                    .as_ref()
-                    .and_then(|s| Ulid::from_str(s).ok()),
+                    .map(crate::query_helpers::uuid_to_ulid),
                 last_processed_ulid: gap
                     .last_processed_id
-                    .as_ref()
-                    .and_then(|s| Ulid::from_str(s).ok()),
+                    .map(crate::query_helpers::uuid_to_ulid),
                 inconsistency_type,
                 details: format!(
                     "Deep validation: {} unprocessed events detected",
@@ -422,7 +421,7 @@ impl<'a> IntegrityTester<'a> {
                     "Run data recovery procedures".to_string(),
                     "Implement additional validation checks".to_string(),
                 ],
-                affected_components: vec!["core.events".to_string(), "data ingestion".to_string()],
+                affected_components: vec![tables::EVENTS.to_string(), "data ingestion".to_string()],
             });
         }
 
@@ -742,42 +741,44 @@ pub mod checkpoint_verification {
         let mut issues = Vec::new();
 
         // Get checkpoint info
-        let checkpoint = sqlx::query!(
-            "SELECT last_processed_id, processed_count, last_activity FROM core.automaton_checkpoints WHERE automaton_name = $1",
-            automaton_name
-        )
-        .fetch_optional(pool)
-        .await?;
+        #[derive(sqlx::FromRow)]
+        struct CheckpointDetail {
+            last_processed_id: Option<sqlx::types::Uuid>,
+            processed_count: Option<i64>,
+            last_activity: Option<DateTime<Utc>>,
+        }
+        
+        let checkpoint = IntegrityQueries::get_checkpoint(automaton_name.to_string())
+            .fetch_optional::<CheckpointDetail>(pool)
+            .await?;
 
         match checkpoint {
             Some(cp) => {
                 // Check if checkpoint points to valid event
-                if let Some(last_processed_str) = &cp.last_processed_id {
-                    let event_exists = sqlx::query_scalar!(
-                        "SELECT 1 FROM core.events WHERE event_id::text = $1 LIMIT 1",
-                        last_processed_str
-                    )
-                    .fetch_optional(pool)
-                    .await?
-                    .is_some();
+                if let Some(last_processed_uuid) = &cp.last_processed_id {
+                    let event_exists = IntegrityQueries::event_exists(*last_processed_uuid)
+                        .fetch_optional::<(i32,)>(pool)
+                        .await?
+                        .is_some();
 
                     if !event_exists {
                         issues.push(format!(
                             "Checkpoint references non-existent event: {}",
-                            last_processed_str
+                            last_processed_uuid
                         ));
                     }
                 }
 
                 // Check for stale checkpoints
-                let last_activity = cp.last_activity;
-                let hours_since_update =
-                    Utc::now().signed_duration_since(last_activity).num_hours();
-                if hours_since_update > 2 {
-                    issues.push(format!(
-                        "Checkpoint not updated for {} hours",
-                        hours_since_update
-                    ));
+                if let Some(last_activity) = cp.last_activity {
+                    let hours_since_update =
+                        Utc::now().signed_duration_since(last_activity).num_hours();
+                    if hours_since_update > 2 {
+                        issues.push(format!(
+                            "Checkpoint not updated for {} hours",
+                            hours_since_update
+                        ));
+                    }
                 }
             }
             None => {
@@ -793,11 +794,12 @@ pub mod checkpoint_verification {
 
     /// Get all automatons that should have checkpoints
     pub async fn get_expected_automatons(pool: &sqlx::PgPool) -> Result<Vec<String>> {
-        let automatons = sqlx::query_scalar!(
-            "SELECT DISTINCT processor_name FROM sinex_schemas.processor_manifests WHERE processor_type = 'automaton'"
-        )
-        .fetch_all(pool)
-        .await?;
+        let automatons = IntegrityQueries::get_expected_automatons()
+            .fetch_all::<(String,)>(pool)
+            .await?
+            .into_iter()
+            .map(|(name,)| name)
+            .collect::<Vec<String>>();
 
         Ok(automatons)
     }

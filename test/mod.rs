@@ -62,9 +62,9 @@
 // }
 // ```
 
-use crate::common::prelude::*;
 
 // Common test infrastructure (always available)
+#[macro_use]
 mod common;
 
 // Test categories organized by scope and resource requirements
@@ -82,3 +82,12 @@ mod property;
 
 #[cfg(test)]
 mod adversarial;
+
+#[cfg(test)]
+mod security;
+
+#[cfg(test)]
+mod performance;
+
+#[cfg(test)]
+mod concurrency;

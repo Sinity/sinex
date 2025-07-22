@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::{RawEvent, EventFactory, event_types, sources, services};
+use sinex_events::{RawEvent, EventFactory};
+use sinex_events::constants::{event_types, sources, services};
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,

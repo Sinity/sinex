@@ -84,16 +84,8 @@
 
 // === Complete System Validation ===
 
-/// Consolidated external system integration testing
-pub mod external_test;
-
-// === System Characteristics ===
-
-/// Consolidated performance and load testing
-pub mod performance_test;
-
-/// Consolidated reliability and fault tolerance testing
-pub mod reliability_test;
-
-/// Temporal chaos scenarios and worker idempotency testing
-pub mod temporal_chaos_test;
+mod external_test;
+mod performance_test;
+mod reliability_test;
+mod stress_test;
+mod temporal_chaos_test;

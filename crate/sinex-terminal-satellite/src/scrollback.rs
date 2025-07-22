@@ -12,6 +12,7 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources};
 
 /// Terminal scrollback content
 #[derive(Debug)]

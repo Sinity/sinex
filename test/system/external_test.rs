@@ -19,18 +19,16 @@
 // - **Dependencies**: Git Annex, external command tools, filesystem access
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::resources;
 use sinex_annex::{AnnexConfig, GitAnnex};
 use sqlx::Row;
+use tempfile::TempDir;
 use tokio::fs;
 
 // ==================== GIT ANNEX INTEGRATION TESTS ====================
 
 async fn setup_test_annex(
 ) -> AnyhowResult<(GitAnnex, tempfile::TempDir), Box<dyn std::error::Error + Send + Sync>> {
-    let temp_dir = resources::temp_dir()?;
+    let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path().to_path_buf();
 
     // Initialize git-annex repository
@@ -160,7 +158,7 @@ async fn test_fsck(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_git_annex_configuration(ctx: TestContext) -> TestResult {
-    let temp_dir = resources::temp_dir()?;
+    let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path().to_path_buf();
 
     // Initialize with configuration
@@ -524,7 +522,7 @@ async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestR
         .await?;
 
     // Verify data exists within transaction
-    let result = sqlx::query("SELECT value FROM test_isolation WHERE event_id = 1")
+    let result = sqlx::query("SELECT value FROM test_isolation WHERE id = 1")
         .fetch_one(&mut *tx)
         .await?;
 

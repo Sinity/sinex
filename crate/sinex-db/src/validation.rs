@@ -1,20 +1,21 @@
 use anyhow::Result;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use serde_json::Value;
-use sinex_core_types::ValidationChain;
 use std::collections::HashMap;
-use std::str::FromStr;
 use std::time::{Duration, Instant};
 use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
 
 use crate::query_helpers::uuid_to_ulid;
-use crate::queries::SchemaQueries;
+use crate::queries::{SchemaQueries, ValidationQueries};
+use crate::queries::validation::{find_timestamp_regressions, find_invalid_timestamps};
 use crate::security::{SecurityError, SecurityValidator};
 use crate::{DbPool, RawEvent}; // Re-exported from sinex-events
 use sinex_ulid::Ulid;
 use sqlx::FromRow;
+use sinex_events::constants::{event_types, sources};
+use sinex_validation::ValidationChain;
 
 /// Record structure for active schema queries
 #[derive(Debug, FromRow)]
@@ -366,11 +367,12 @@ impl EventValidator {
         for schema_record in schemas {
             match jsonschema::JSONSchema::compile(&schema_record.schema_content) {
                 Ok(compiled_schema) => {
-                    if let Ok(schema_ulid) = Ulid::from_str(&schema_record.schema_id) {
+                    if let Ok(schema_uuid) = Uuid::parse_str(&schema_record.schema_id) {
+                        let schema_ulid = uuid_to_ulid(schema_uuid);
                         validator.schemas.insert(schema_ulid, compiled_schema);
                     } else {
                         warn!(
-                            "Invalid ULID format for schema {}: {}",
+                            "Invalid UUID format for schema {}: {}",
                             schema_record.schema_id, schema_record.schema_id
                         );
                     }
@@ -476,7 +478,7 @@ impl EventValidator {
 
     fn register_filesystem_rules(&mut self) {
         // file.created validation
-        self.register_rule("filesystem", "file.created", |payload| {
+        self.register_rule("filesystem", event_types::filesystem::FILE_CREATED, |payload| {
             // Required: path (string), size (number >= 0)
             let path = validate_required_string_field(payload, "path")?;
 
@@ -507,7 +509,7 @@ impl EventValidator {
         });
 
         // file.modified validation
-        self.register_rule("filesystem", "file.modified", |payload| {
+        self.register_rule("filesystem", event_types::filesystem::FILE_MODIFIED, |payload| {
             // Required: path
             let path = validate_required_string_field(payload, "path")?;
 
@@ -530,7 +532,7 @@ impl EventValidator {
         });
 
         // file.deleted validation
-        self.register_rule("filesystem", "file.deleted", |payload| {
+        self.register_rule("filesystem", event_types::filesystem::FILE_DELETED, |payload| {
             // Required: path
             let path = validate_required_string_field(payload, "path")?;
 
@@ -546,7 +548,7 @@ impl EventValidator {
         });
 
         // file.renamed validation
-        self.register_rule("filesystem", "file.renamed", |payload| {
+        self.register_rule("filesystem", event_types::filesystem::FILE_RENAMED, |payload| {
             // Required: old_path, new_path
             let old_path = validate_required_string_field(payload, "old_path")?;
             let new_path = validate_required_string_field(payload, "new_path")?;
@@ -600,7 +602,7 @@ impl EventValidator {
 
     fn register_terminal_rules(&mut self) {
         // command.executed validation
-        self.register_rule("terminal.kitty", "command.executed", |payload| {
+        self.register_rule(sources::TERMINAL_KITTY, "command.executed", |payload| {
             // Required: command
             let _command = validate_required_string_field(payload, "command")?;
 
@@ -784,33 +786,9 @@ impl<'a> DataIntegrityValidator<'a> {
         let mut violations = Vec::new();
 
         // Sample recent events to check for schema violations
-        let recent_events = sqlx::query_as!(
-            RawEventRecord,
-            r#"
-            SELECT 
-                event_id::uuid as "id!",
-                source,
-                event_type,
-                ts_orig,
-                ts_ingest,
-                host,
-                payload,
-                source_event_ids::uuid[] as "source_event_ids?",
-                source_material_id::uuid as "source_material_id?",
-                source_material_offset_start,
-                source_material_offset_end,
-                anchor_byte,
-                associated_blob_ids::uuid[] as "associated_blob_ids?",
-                ingestor_version,
-                payload_schema_id::uuid as "payload_schema_id?"
-            FROM core.events 
-            WHERE ts_ingest > NOW() - INTERVAL '1 hour'
-            ORDER BY ts_ingest DESC
-            LIMIT 1000
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        let recent_events = ValidationQueries::get_recent_events(1000)
+            .fetch_all::<RawEventRecord>(self.pool)
+            .await?;
 
         for event_record in recent_events {
             let raw_event = RawEvent::try_from(event_record)?;
@@ -862,31 +840,8 @@ impl<'a> DataIntegrityValidator<'a> {
         let mut violations = Vec::new();
 
         // Check for timestamp regressions in recent events
-        let potential_violations = sqlx::query!(
-            r#"
-            WITH ordered_events AS (
-                SELECT 
-                    event_id::uuid as id,
-                    ts_orig,
-                    ts_ingest,
-                    LAG(event_id::uuid) OVER (ORDER BY event_id) as prev_id,
-                    LAG(ts_orig) OVER (ORDER BY event_id) as prev_ts_orig,
-                    LAG(ts_ingest) OVER (ORDER BY event_id) as prev_ts_ingest
-                FROM core.events
-                WHERE ts_ingest > NOW() - INTERVAL '1 hour'
-                ORDER BY event_id
-                LIMIT 10000
-            )
-            SELECT 
-                id, ts_orig, ts_ingest,
-                prev_id, prev_ts_orig, prev_ts_ingest
-            FROM ordered_events
-            WHERE prev_id IS NOT NULL
-              AND (ts_orig < prev_ts_orig OR ts_ingest < prev_ts_ingest)
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        let start_time = Utc::now() - ChronoDuration::hours(1);
+        let potential_violations = find_timestamp_regressions(self.pool, start_time, 100).await?;
 
         for violation in potential_violations {
             if let (Some(id), Some(prev_id), Some(ts_orig), Some(prev_ts_orig)) = (
@@ -917,26 +872,14 @@ impl<'a> DataIntegrityValidator<'a> {
 
         // Check for invalid timestamps (too far in future/past)
         let _now = Utc::now();
-        let invalid_timestamps = sqlx::query!(
-            r#"
-            SELECT event_id::uuid as id, ts_orig, ts_ingest
-            FROM core.events
-            WHERE ts_orig > NOW() + INTERVAL '1 hour'
-               OR ts_orig < '2020-01-01'::timestamptz
-               OR ts_ingest > NOW() + INTERVAL '1 hour'
-            LIMIT 100
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        let invalid_timestamps = find_invalid_timestamps(self.pool, 100).await?;
 
         for invalid in invalid_timestamps {
-            if let Some(id) = invalid.id {
-                let event_id = Ulid::from_uuid(id);
-                let ts_orig = invalid.ts_orig.unwrap_or_else(|| Utc::now());
-                violations.push(UlidOrderingViolation {
-                    event_id_1: event_id,
-                    event_id_2: event_id,
+            let event_id = Ulid::from_uuid(invalid.id);
+            let ts_orig = invalid.ts_orig.unwrap_or_else(|| Utc::now());
+            violations.push(UlidOrderingViolation {
+                event_id_1: event_id,
+                event_id_2: event_id,
                     timestamp_1: ts_orig,
                     timestamp_2: invalid.ts_ingest,
                     violation_type: OrderingViolationType::InvalidTimestamp,
@@ -945,7 +888,6 @@ impl<'a> DataIntegrityValidator<'a> {
                         ts_orig, invalid.ts_ingest
                     ),
                 });
-            }
         }
 
         Ok(violations)
@@ -956,34 +898,30 @@ impl<'a> DataIntegrityValidator<'a> {
         let mut inconsistencies = Vec::new();
 
         // Get all active automatons and their checkpoints
-        let checkpoints = sqlx::query!(
-            r#"
-            SELECT 
-                automaton_name,
-                last_processed_id,
-                processed_count,
-                last_activity,
-                state_data
-            FROM core.automaton_checkpoints
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        #[derive(sqlx::FromRow)]
+        struct CheckpointRecord {
+            automaton_name: String,
+            last_processed_id: Option<sqlx::types::Uuid>,
+            processed_count: Option<i64>,
+            last_activity: Option<DateTime<Utc>>,
+            state_data: Option<serde_json::Value>,
+        }
+        
+        let checkpoints = ValidationQueries::get_all_checkpoints()
+            .fetch_all::<CheckpointRecord>(self.pool)
+            .await?;
 
         for checkpoint in checkpoints {
             let automaton_name = checkpoint.automaton_name;
 
             // Check if checkpoint refers to valid event
-            if let Some(last_processed_str) = &checkpoint.last_processed_id {
-                if let Ok(last_processed_ulid) = Ulid::from_str(last_processed_str) {
+            if let Some(last_processed_uuid) = &checkpoint.last_processed_id {
+                let last_processed_ulid = crate::query_helpers::uuid_to_ulid(*last_processed_uuid);
                     // Check if this event exists
-                    let event_exists = sqlx::query_scalar!(
-                        "SELECT 1 FROM core.events WHERE event_id::text = $1 LIMIT 1",
-                        last_processed_str
-                    )
-                    .fetch_optional(self.pool)
-                    .await?
-                    .is_some();
+                    let event_exists = ValidationQueries::event_exists(*last_processed_uuid)
+                        .fetch_optional::<(i32,)>(self.pool)
+                        .await?
+                        .is_some();
 
                     if !event_exists {
                         inconsistencies.push(CheckpointInconsistency {
@@ -1001,18 +939,9 @@ impl<'a> DataIntegrityValidator<'a> {
                     }
 
                     // Check if there are newer events that should have been processed
-                    let newer_events_count = sqlx::query_scalar!(
-                        r#"
-                        SELECT COUNT(*)::bigint
-                        FROM core.events
-                        WHERE event_id::text > $1
-                          AND ts_ingest < NOW() - INTERVAL '5 minutes'
-                        "#,
-                        last_processed_str
-                    )
-                    .fetch_one(self.pool)
-                    .await?
-                    .unwrap_or(0);
+                    let (newer_events_count,) = ValidationQueries::count_newer_events(*last_processed_uuid)
+                        .fetch_one::<(i64,)>(self.pool)
+                        .await?;
 
                     if newer_events_count > 0 {
                         inconsistencies.push(CheckpointInconsistency {
@@ -1027,36 +956,20 @@ impl<'a> DataIntegrityValidator<'a> {
                             events_potentially_missed: newer_events_count as u64,
                         });
                     }
-                } else {
-                    // Invalid ULID format in checkpoint
-                    inconsistencies.push(CheckpointInconsistency {
-                        automaton_name: automaton_name.clone(),
-                        checkpoint_ulid: None,
-                        last_processed_ulid: None,
-                        inconsistency_type: CheckpointInconsistencyType::InvalidCheckpointFormat,
-                        details: format!(
-                            "Invalid ULID format in checkpoint: {}",
-                            last_processed_str
-                        ),
-                        events_potentially_missed: 0,
-                    });
-                }
             }
 
             // Check for stale checkpoints (not updated recently)
-            let last_activity = checkpoint.last_activity;
-            let time_since_update = Utc::now().signed_duration_since(last_activity);
-            if time_since_update > ChronoDuration::hours(1) {
-                inconsistencies.push(CheckpointInconsistency {
+            if let Some(last_activity) = checkpoint.last_activity {
+                let time_since_update = Utc::now().signed_duration_since(last_activity);
+                if time_since_update > ChronoDuration::hours(1) {
+                    inconsistencies.push(CheckpointInconsistency {
                     automaton_name: automaton_name.clone(),
                     checkpoint_ulid: checkpoint
                         .last_processed_id
-                        .as_ref()
-                        .and_then(|s| Ulid::from_str(s).ok()),
+                        .map(crate::query_helpers::uuid_to_ulid),
                     last_processed_ulid: checkpoint
                         .last_processed_id
-                        .as_ref()
-                        .and_then(|s| Ulid::from_str(s).ok()),
+                        .map(crate::query_helpers::uuid_to_ulid),
                     inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
                     details: format!(
                         "Checkpoint not updated for {} hours",
@@ -1064,6 +977,7 @@ impl<'a> DataIntegrityValidator<'a> {
                     ),
                     events_potentially_missed: 0,
                 });
+                }
             }
         }
 
@@ -1075,20 +989,20 @@ impl<'a> DataIntegrityValidator<'a> {
         let mut indicators = Vec::new();
 
         // Check for events with null or empty payloads
-        let null_payloads = sqlx::query!(
-            r#"
-            SELECT event_id::uuid as id, source, event_type
-            FROM core.events
-            WHERE payload IS NULL OR payload = 'null'::jsonb
-            LIMIT 100
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        #[derive(sqlx::FromRow)]
+        struct ValidationRecord {
+            id: sqlx::types::Uuid,
+            source: String,
+            event_type: String,
+        }
+        
+        let null_payloads = ValidationQueries::find_null_payloads(100)
+            .fetch_all::<ValidationRecord>(self.pool)
+            .await?;
 
         for null_payload in null_payloads {
             indicators.push(DataCorruptionIndicator {
-                event_id: Ulid::from_uuid(null_payload.id.unwrap()),
+                event_id: Ulid::from_uuid(null_payload.id),
                 corruption_type: DataCorruptionType::NullPayload,
                 details: format!(
                     "Event has null payload: {}/{}",
@@ -1100,16 +1014,16 @@ impl<'a> DataIntegrityValidator<'a> {
         }
 
         // Check for events with invalid ULIDs (should not happen with proper constraints)
-        let invalid_ulids = sqlx::query!(
-            r#"
-            SELECT event_id::text as id_str, source, event_type
-            FROM core.events
-            WHERE LENGTH(event_id::text) != 36  -- UUID string length
-            LIMIT 100
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        #[derive(sqlx::FromRow)]
+        struct InvalidUlidRecord {
+            id_str: String,
+            source: String,
+            event_type: String,
+        }
+        
+        let invalid_ulids = ValidationQueries::find_invalid_ulids(100)
+            .fetch_all::<InvalidUlidRecord>(self.pool)
+            .await?;
 
         for invalid_ulid in invalid_ulids {
             indicators.push(DataCorruptionIndicator {
@@ -1117,7 +1031,7 @@ impl<'a> DataIntegrityValidator<'a> {
                 corruption_type: DataCorruptionType::InvalidUlid,
                 details: format!(
                     "Invalid ULID format: {} for {}/{}",
-                    invalid_ulid.id_str.unwrap_or_default(),
+                    invalid_ulid.id_str,
                     invalid_ulid.source,
                     invalid_ulid.event_type
                 ),
@@ -1127,22 +1041,13 @@ impl<'a> DataIntegrityValidator<'a> {
         }
 
         // Check for potential encoding issues in text fields
-        let encoding_issues = sqlx::query!(
-            r#"
-            SELECT event_id::uuid as id, source, event_type
-            FROM core.events
-            WHERE source ~ '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'
-               OR event_type ~ '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'
-               OR host ~ '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'
-            LIMIT 100
-            "#
-        )
-        .fetch_all(self.pool)
-        .await?;
+        let encoding_issues = ValidationQueries::find_encoding_issues(100)
+            .fetch_all::<ValidationRecord>(self.pool)
+            .await?;
 
         for encoding_issue in encoding_issues {
             indicators.push(DataCorruptionIndicator {
-                event_id: Ulid::from_uuid(encoding_issue.id.unwrap()),
+                event_id: Ulid::from_uuid(encoding_issue.id),
                 corruption_type: DataCorruptionType::EncodingError,
                 details: format!(
                     "Control characters detected in event fields: {}/{}",
@@ -1157,10 +1062,9 @@ impl<'a> DataIntegrityValidator<'a> {
 
     /// Count total events for reporting
     async fn count_total_events(&self) -> Result<u64> {
-        let count: i64 = sqlx::query_scalar!("SELECT COUNT(*)::bigint FROM core.events")
-            .fetch_one(self.pool)
-            .await?
-            .unwrap_or(0);
+        let (count,) = ValidationQueries::count_total_events()
+            .fetch_one::<(i64,)>(self.pool)
+            .await?;
         Ok(count as u64)
     }
 
@@ -1267,7 +1171,7 @@ impl<'a> DataIntegrityValidator<'a> {
 }
 
 // Helper struct for database queries
-#[derive(Debug)]
+#[derive(Debug, sqlx::FromRow)]
 struct RawEventRecord {
     pub id: Uuid,
     pub source: String,

@@ -21,14 +21,14 @@
 //! use sinex_db::query_builder::*;
 //!
 //! // Simple SELECT with ULID parameter
-//! let event = QueryBuilder::select("core.events")
+//! let event = QueryBuilder::select(tables::EVENTS)
 //!     .columns(&["event_id", "source", "event_type", "payload"])
 //!     .where_eq("event_id", QueryParam::Ulid(event_id))
 //!     .fetch_one::<RawEvent>(pool)
 //!     .await?;
 //!
 //! // INSERT with automatic ULID conversion
-//! let inserted = QueryBuilder::insert("core.events")
+//! let inserted = QueryBuilder::insert(tables::EVENTS)
 //!     .columns(&["source", "event_type", "host", "payload"])
 //!     .values(&[
 //!         QueryParam::String("test.source".to_string()),
@@ -41,13 +41,14 @@
 //!     .await?;
 //!
 //! // UPDATE with ULID array parameter
-//! let updated = QueryBuilder::update("core.events")
+//! let updated = QueryBuilder::update(tables::EVENTS)
 //!     .set("source_event_ids", QueryParam::UlidArray(vec![ulid1, ulid2]))
 //!     .where_eq("event_id", QueryParam::Ulid(event_id))
 //!     .execute(pool)
 //!     .await?;
 //! ```
 
+use crate::constants::tables;
 use crate::query_helpers::{db_error, ulid_to_uuid, DbResult};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
@@ -96,6 +97,8 @@ pub enum QueryParam {
     OptionalUuid(Option<Uuid>),
     /// Array of UUIDs
     UuidArray(Vec<Uuid>),
+    /// Raw SQL fragment (use with caution!)
+    Raw(String),
 }
 
 impl QueryParam {
@@ -121,6 +124,7 @@ impl QueryParam {
             QueryParam::Uuid(_) => "uuid",
             QueryParam::OptionalUuid(_) => "uuid",
             QueryParam::UuidArray(_) => "uuid[]",
+            QueryParam::Raw(_) => "",
         }
     }
 
@@ -155,6 +159,7 @@ impl QueryParam {
             QueryParam::Uuid(uuid) => RawQueryParam::Uuid(*uuid),
             QueryParam::OptionalUuid(opt_uuid) => RawQueryParam::OptionalUuid(*opt_uuid),
             QueryParam::UuidArray(uuids) => RawQueryParam::UuidArray(uuids.clone()),
+            QueryParam::Raw(raw) => RawQueryParam::Raw(raw.clone()),
         }
     }
 }
@@ -178,6 +183,7 @@ pub enum RawQueryParam {
     OptionalJson(Option<JsonValue>),
     Timestamp(DateTime<Utc>),
     OptionalTimestamp(Option<DateTime<Utc>>),
+    Raw(String),
 }
 
 /// Query type enumeration
@@ -500,13 +506,21 @@ impl QueryBuilder {
             for condition in &self.conditions {
                 match condition {
                     WhereCondition::Parameterized { column, operator, param, .. } => {
-                        let param_index = params.len() + 1;
-                        let type_hint = param.sql_type_hint();
-                        where_parts.push(format!(
-                            "{} {} ${}::{}",
-                            column, operator, param_index, type_hint
-                        ));
-                        params.push(param.to_raw_value());
+                        match param {
+                            QueryParam::Raw(raw_sql) => {
+                                // Raw SQL fragments are embedded directly
+                                where_parts.push(format!("{} {} {}", column, operator, raw_sql));
+                            }
+                            _ => {
+                                let param_index = params.len() + 1;
+                                let type_hint = param.sql_type_hint();
+                                where_parts.push(format!(
+                                    "{} {} ${}::{}",
+                                    column, operator, param_index, type_hint
+                                ));
+                                params.push(param.to_raw_value());
+                            }
+                        }
                     }
                     WhereCondition::NullCheck { column, is_null } => {
                         if *is_null {
@@ -624,6 +638,21 @@ impl QueryBuilder {
             .await
             .map_err(|e| db_error(e, &format!("execute query: {}", sql)))
     }
+
+    /// Execute query on a transaction and return execution result
+    pub async fn execute_tx(self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> DbResult<sqlx::postgres::PgQueryResult> {
+        let (sql, params) = self.build()?;
+
+        let mut query = sqlx::query(&sql);
+        for param in params {
+            query = bind_param_raw(query, param);
+        }
+
+        query
+            .execute(&mut **tx)
+            .await
+            .map_err(|e| db_error(e, &format!("execute query: {}", sql)))
+    }
 }
 
 /// Helper function to bind parameters to a query
@@ -648,6 +677,9 @@ fn bind_param<T>(
         RawQueryParam::OptionalJson(opt_j) => query.bind(opt_j),
         RawQueryParam::Timestamp(ts) => query.bind(ts),
         RawQueryParam::OptionalTimestamp(opt_ts) => query.bind(opt_ts),
+        RawQueryParam::Raw(_) => {
+            panic!("Raw SQL fragments should not be bound as parameters")
+        }
     }
 }
 
@@ -673,6 +705,9 @@ fn bind_param_raw(
         RawQueryParam::OptionalJson(opt_j) => query.bind(opt_j),
         RawQueryParam::Timestamp(ts) => query.bind(ts),
         RawQueryParam::OptionalTimestamp(opt_ts) => query.bind(opt_ts),
+        RawQueryParam::Raw(_) => {
+            panic!("Raw SQL fragments should not be bound as parameters")
+        }
     }
 }
 
@@ -683,7 +718,7 @@ mod tests {
 
     #[test]
     fn test_select_query_builder() {
-        let builder = QueryBuilder::select("core.events")
+        let builder = QueryBuilder::select(tables::EVENTS)
             .columns(&["event_id", "source", "event_type"])
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()))
             .order_by("ts_ingest", "DESC")
@@ -699,7 +734,7 @@ mod tests {
 
     #[test]
     fn test_insert_query_builder() {
-        let builder = QueryBuilder::insert("core.events")
+        let builder = QueryBuilder::insert(tables::EVENTS)
             .columns(&["source", "event_type", "payload"])
             .values(&[
                 QueryParam::String("test.source".to_string()),
@@ -717,7 +752,7 @@ mod tests {
 
     #[test]
     fn test_update_query_builder() {
-        let builder = QueryBuilder::update("core.events")
+        let builder = QueryBuilder::update(tables::EVENTS)
             .set("source", QueryParam::String("updated.source".to_string()))
             .set("payload", QueryParam::Json(json!({"updated": true})))
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()));
@@ -733,7 +768,7 @@ mod tests {
     #[test]
     fn test_delete_query_builder() {
         let builder =
-            QueryBuilder::delete("core.events").where_eq("event_id", QueryParam::Ulid(Ulid::new()));
+            QueryBuilder::delete(tables::EVENTS).where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
         let (sql, params) = builder.build().unwrap();
         assert!(sql.contains("DELETE FROM core.events"));
@@ -744,7 +779,7 @@ mod tests {
     #[test]
     fn test_ulid_array_parameter() {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
-        let builder = QueryBuilder::select("core.events")
+        let builder = QueryBuilder::select(tables::EVENTS)
             .where_in("event_id", QueryParam::UlidArray(ulids.clone()));
 
         let (sql, params) = builder.build().unwrap();
@@ -761,7 +796,7 @@ mod tests {
 
     #[test]
     fn test_optional_parameters() {
-        let builder = QueryBuilder::select("core.events")
+        let builder = QueryBuilder::select(tables::EVENTS)
             .where_eq(
                 "payload_schema_id",
                 QueryParam::OptionalUlid(Some(Ulid::new())),

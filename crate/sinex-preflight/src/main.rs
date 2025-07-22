@@ -14,6 +14,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use uuid::Uuid;
+use sinex_events::constants::{event_types, sources};
 
 mod configuration;
 mod database;
@@ -415,8 +416,8 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
     });
 
     EventQueries::insert_event(
-        "sinex.process".to_string(),
-        "process.heartbeat".to_string(),
+        sources::SINEX.to_string(),
+        event_types::sinex::PROCESS_HEARTBEAT.to_string(),
         report.system_info.hostname.clone(),
         payload,
         Some(chrono::Utc::now()),
@@ -424,7 +425,7 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         None,
         None,
     )
-    .fetch_one(&pool)
+    .fetch_one::<()>(&pool)
     .await
     .context("Failed to record verification result")?;
 

@@ -7,7 +7,6 @@
 // - Network partitions
 
 use crate::common::prelude::*;
-use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, RedisError, RedisResult};
 use std::collections::HashMap;
 use std::sync::Arc;

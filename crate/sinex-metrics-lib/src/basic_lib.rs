@@ -9,6 +9,7 @@ use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use prometheus::{Counter, Histogram, Gauge};
 use serde::{Deserialize, Serialize};
+use sinex_events::constants::{event_types};
 
 /// Global metrics registry
 static METRICS_REGISTRY: Lazy<RwLock<HashMap<String, MetricInstance>>> = 
@@ -244,7 +245,7 @@ mod tests {
         record_database_operation("SELECT", Duration::from_millis(50), true);
         
         // Test event processing recording
-        record_event_processing("file.created", Duration::from_millis(25), true);
+        record_event_processing(event_types::file::CREATED, Duration::from_millis(25), true);
         
         // Test resource usage recording
         record_resource_usage("test_function", 1024 * 1024, 25.0);

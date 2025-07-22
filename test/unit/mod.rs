@@ -98,9 +98,12 @@ pub mod database_test;
 pub mod preflight_test;
 
 /// ULID comprehensive tests
-pub mod ulid_comprehensive_test;
+pub mod ulid_test;
 
 /// Tests for typed clipboard events
 pub mod typed_clipboard_test;
+
+/// Comprehensive error path testing for production code
+pub mod error_paths_test;
 
 // Infrastructure tests are in test/common/ directory

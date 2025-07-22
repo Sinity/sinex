@@ -53,7 +53,9 @@ sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-error = { path = "../sinex-error" }
 sinex-macros = { path = "../sinex-macros" }
+sinex-db = { path = "../sinex-db" }
 
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = { workspace = true }
+sinex-events = { path = "../sinex-events" }

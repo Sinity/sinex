@@ -37,6 +37,9 @@ pub mod sources {
     // Specialized sources found in codebase
     pub const HEALTH_AGGREGATOR: &str = "health-aggregator";
     pub const BLOB_STORAGE: &str = "blob_storage";
+    
+    // Test sources
+    pub const TEST: &str = "test";
 }
 
 /// Service names for the various Sinex components
@@ -255,6 +258,9 @@ pub mod event_types {
     
     /// Test event types
     pub mod test {
+        // Generic test event
+        pub const GENERIC: &str = "test.generic";
+        
         // Performance testing event types
         pub const BASELINE_INSERTION_TEST: &str = "baseline.insertion.test";
         pub const BASELINE_STREAM_WRITE: &str = "baseline.stream.write";
@@ -265,6 +271,7 @@ pub mod event_types {
         pub const BOTTLENECK_DATABASE_NORMAL: &str = "bottleneck.database.normal";
         pub const BOTTLENECK_DATABASE_LIMITED: &str = "bottleneck.database.limited";
         pub const BOTTLENECK_DATABASE_RECOVERY: &str = "bottleneck.database.recovery";
+        pub const DATABASE_BOTTLENECK_TEST: &str = "database.bottleneck.test";
         pub const MEMORY_BOTTLENECK_TEST: &str = "memory.bottleneck.test";
         pub const CONCURRENT_BOTTLENECK_TEST: &str = "concurrent.bottleneck.test";
         
@@ -290,6 +297,7 @@ pub mod event_types {
         pub const BURST_COOLDOWN_TEST: &str = "burst.cooldown.test";
         
         // Regression testing
+        pub const DATABASE_REGRESSION_TEST: &str = "database.regression.test";
         pub const REGRESSION_BASELINE_TEST: &str = "regression.baseline.test";
         pub const REGRESSION_NORMAL_TEST: &str = "regression.normal.test";
         pub const REGRESSION_DEGRADED_TEST: &str = "regression.degraded.test";
@@ -408,12 +416,13 @@ pub mod git_annex {
 }
 
 // Re-export commonly used constants for convenience (specific imports to avoid conflicts)
-pub use event_types::filesystem::*;
-pub use event_types::shell::*;
-pub use event_types::window_manager::*;
+// NOTE: Commented out to avoid self-referential imports
+// pub use event_types::filesystem::*;
+// pub use event_types::shell::*;
+// pub use event_types::window_manager::*;
 
 // Sources (without HEALTH_AGGREGATOR to avoid conflict)
-pub use sources::{FS, SHELL_KITTY, SHELL_RECORDING, SHELL_ASCIINEMA, SHELL_SCROLLBACK, WM_HYPRLAND, CLIPBOARD, DBUS, JOURNALD, UDEV, SYSTEMD, TERMINAL_KITTY, BLOB_STORAGE, SINEX};
+// pub use sources::{FS, SHELL_KITTY, SHELL_RECORDING, SHELL_ASCIINEMA, SHELL_SCROLLBACK, WM_HYPRLAND, CLIPBOARD, DBUS, JOURNALD, UDEV, SYSTEMD, TERMINAL_KITTY, BLOB_STORAGE, SINEX};
 
 // Services (all service names)
-pub use services::*;
+// pub use services::*;

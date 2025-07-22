@@ -424,7 +424,7 @@ async fn test_consumer_group_scaling_properties(ctx: TestContext) -> TestResult 
 }
 
 /// Test that Redis Streams maintain message ordering within partitions
-#[tokio::test]
+#[sinex_test]
 async fn test_redis_stream_ordering_guarantees() -> AnyhowResult<(), anyhow::Error> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let mut redis = ConnectionManager::new(redis_client).await?;

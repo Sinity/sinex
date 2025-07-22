@@ -14,6 +14,7 @@ pub mod validation;
 pub mod queries;
 pub mod query_builder;
 pub mod query_macros;
+pub mod constants;
 
 #[cfg(test)]
 pub mod query_system_test;

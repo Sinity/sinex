@@ -6,15 +6,15 @@
 //! This module has been migrated to use the centralized query system for better
 //! maintainability and reduced boilerplate.
 use crate::queries::EventQueries;
-use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use crate::query_helpers::uuid_to_ulid;
 use crate::validation::EventValidator;
 use crate::DbPoolRef;
 use anyhow::Result;
+use sinex_error::CoreError;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
-use sqlx::types::Uuid;
 use sqlx::FromRow;
 
 /// Database record structure for events
@@ -64,25 +64,25 @@ impl From<EventRecord> for RawEvent {
 }
 
 /// Simple insert event function for test compatibility
-#[sinex_macros::auto_db_metrics(operation = "insert_event")]
+// #[sinex_macros::auto_db_metrics(operation = "insert_event")]
 pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<Ulid> {
     let inserted = insert_event_with_validator(pool, event, None).await?;
     Ok(inserted.id)
 }
 
 /// Get an event by ID following the exact same pattern as existing correct functions
-#[sinex_macros::auto_db_metrics(operation = "get_event_by_id")]
+// #[sinex_macros::auto_db_metrics(operation = "get_event_by_id")]
 pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawEvent> {
     let record = EventQueries::get_by_id(event_id)
         .fetch_one::<EventRecord>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get event by ID: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to get event by ID: {}", e)))?;
 
     Ok(record.into())
 }
 
 /// Insert an event with validation following the exact same pattern as existing correct functions
-#[sinex_macros::auto_db_metrics(operation = "insert_event_with_validator")]
+// #[sinex_macros::auto_db_metrics(operation = "insert_event_with_validator")]
 pub async fn insert_event_with_validator(
     pool: DbPoolRef<'_>,
     event: &RawEvent,
@@ -105,24 +105,24 @@ pub async fn insert_event_with_validator(
     )
     .fetch_one::<EventRecord>(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to insert event: {}", e))?;
+    .map_err(|e| CoreError::Database(format!("Failed to insert event: {}", e)))?;
 
     Ok(record.into())
 }
 
 /// Count total number of events in the database
-#[sinex_macros::auto_db_metrics(operation = "count_events")]
+// #[sinex_macros::auto_db_metrics(operation = "count_events")]
 pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
     let (count,) = EventQueries::count_all()
         .fetch_one::<(i64,)>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to count events: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to count events: {}", e)))?;
 
     Ok(count)
 }
 
 /// Insert an event with an attached blob
-#[sinex_macros::auto_db_metrics(operation = "insert_event_with_blob")]
+// #[sinex_macros::auto_db_metrics(operation = "insert_event_with_blob")]
 pub async fn insert_event_with_blob(
     pool: DbPoolRef<'_>,
     event: &RawEvent,
@@ -148,7 +148,7 @@ pub async fn insert_event_with_blob(
     )
     .fetch_one::<EventRecord>(pool)
     .await
-    .map_err(|e| anyhow::anyhow!("Failed to insert event with blob: {}", e))?;
+    .map_err(|e| CoreError::Database(format!("Failed to insert event with blob: {}", e)))?;
 
     Ok(RawEvent {
         id: uuid_to_ulid(record.id),
@@ -174,7 +174,7 @@ pub async fn insert_event_with_blob(
 }
 
 /// Get events that have associated blobs
-#[sinex_macros::auto_db_metrics(operation = "get_events_with_blobs")]
+// #[sinex_macros::auto_db_metrics(operation = "get_events_with_blobs")]
 pub async fn get_events_with_blobs(
     pool: DbPoolRef<'_>,
     limit: Option<i64>,
@@ -186,7 +186,7 @@ pub async fn get_events_with_blobs(
     let records = EventQueries::get_with_blobs(Some(limit), Some(offset))
         .fetch_all::<EventRecord>(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to get events with blobs: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to get events with blobs: {}", e)))?;
 
     let events_with_blobs = records
         .into_iter()
@@ -225,7 +225,7 @@ pub async fn get_events_with_blobs(
 }
 
 /// Update an event to attach a blob
-#[sinex_macros::auto_db_metrics(operation = "attach_blob_to_event")]
+// #[sinex_macros::auto_db_metrics(operation = "attach_blob_to_event")]
 pub async fn attach_blob_to_event(
     pool: DbPoolRef<'_>,
     event_id: Ulid,
@@ -234,18 +234,18 @@ pub async fn attach_blob_to_event(
     EventQueries::attach_blob(event_id, blob_id)
         .execute(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to attach blob to event: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to attach blob to event: {}", e)))?;
 
     Ok(())
 }
 
 /// Remove blob attachment from an event
-#[sinex_macros::auto_db_metrics(operation = "detach_blob_from_event")]
+// #[sinex_macros::auto_db_metrics(operation = "detach_blob_from_event")]
 pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<()> {
     EventQueries::detach_blob(event_id)
         .execute(pool)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to detach blob from event: {}", e))?;
+        .map_err(|e| CoreError::Database(format!("Failed to detach blob from event: {}", e)))?;
 
     Ok(())
 }

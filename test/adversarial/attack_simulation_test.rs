@@ -5,24 +5,16 @@
 //
 // ## Test Categories
 // - **Time-based Attacks**: DST changes, clock regression, ULID timing attacks
-// - **Configuration Attacks**: Config file manipulation, symlink attacks
+// - **Configuration Attacks**: Config file manipulation, symlink attacks (deprecated)
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::resources;
-// DEPRECATED: CollectorConfig no longer exists after modernization to environment-only configuration
-// use sinex_collector::config::{CollectorConfig, ConfigManager};
 use sinex_db::validation::EventValidator;
-use chrono::{Duration, FixedOffset, LocalResult, TimeZone, Utc};
-use std::fs;
-use std::os::unix;
+use chrono::{Duration, TimeZone, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration as StdDuration, Instant};
 use std::collections::HashSet;
-use std::process::Command;
 
 // =============================================================================
 // Time-based Attack Tests
@@ -179,209 +171,9 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> TestResult {
 // Configuration Attack Tests
 // =============================================================================
 
-/*
-DEPRECATED: The following configuration attack tests use the old CollectorConfig::load_from_file
-architecture which has been modernized to environment-only configuration. These tests are preserved
-for reference but are commented out as they no longer compile with the current codebase.
-
-/// Test configuration file replaced with symlink attack
-#[sinex_test(timeout_ms = 10000)]
-async fn test_config_file_replaced_with_symlink(ctx: TestContext) -> TestResult {
-    let temp_dir = resources::temp_dir()?;
-    let config_path = temp_dir.path().join("config.toml");
-    let sensitive_file = temp_dir.path().join("secrets.txt");
-
-    // Create sensitive file with content that would be dangerous if loaded as config
-    fs::write(
-        &sensitive_file,
-        r#"["secret_key=very_secret_value", "password=admin123", "DROP TABLE events;"]"#,
-    )
-    .unwrap();
-
-    // Create initial config
-    let initial_config = r#"
-[collector]
-enabled_events = ["file.created"]
-
-[event.files]
-watch_paths = ["/tmp"]
-"#;
-    fs::write(&config_path, initial_config).unwrap();
-
-    let config = CollectorConfig::load_from_file(&config_path).unwrap();
-    let mut manager = ConfigManager::new(config, Some(config_path.clone()));
-
-    // Start watching for config changes
-    let mut update_rx = manager.start_watching().await.unwrap();
-
-    // Replace config file with symlink to sensitive file
-    fs::remove_file(&config_path).unwrap();
-    unix::fs::symlink(&sensitive_file, &config_path).unwrap();
-
-    println!("Replaced config with symlink to: {:?}", sensitive_file);
-
-    // Wait for config reload
-    match timeout(StdDuration::from_secs(3), update_rx.recv()).await {
-        Ok(Some(new_config)) => {
-            println!("SECURITY BREACH: Config reloaded from symlinked file!");
-            println!("Config content might contain sensitive data");
-
-            // Check if sensitive data leaked into config
-            let config_debug = format!("{:?}", new_config);
-            if config_debug.contains("secret") || config_debug.contains("password") {
-                println!(
-                    "CRITICAL: Sensitive data detected in config: {}",
-                    config_debug
-                );
-            }
-        }
-        Ok(None) => {
-            println!("Config watcher closed (expected behavior)");
-        }
-        Err(_) => {
-            println!("Config reload timed out (good - symlink attack blocked)");
-        }
-    }
-    Ok(())
-}
-
-/// Test config reload during partial write attack
-#[sinex_test]
-#[ignore = "Config reload validation not fully implemented yet - TODO: implement atomic config updates"]
-async fn test_config_reload_during_partial_write(ctx: TestContext) -> TestResult {
-    let temp_dir = resources::temp_dir()?;
-    let config_path = temp_dir.path().join("config.toml");
-
-    // Create initial config
-    let initial_config = r#"
-[collector]
-enabled_events = ["file.created"]
-
-[event.files]
-watch_paths = ["/tmp"]
-"#;
-    fs::write(&config_path, initial_config).unwrap();
-
-    let config = CollectorConfig::load_from_file(&config_path).unwrap();
-    let mut manager = ConfigManager::new(config, Some(config_path.clone()));
-
-    let mut update_rx = manager.start_watching().await.unwrap();
-
-    // Create malformed config that gets written byte by byte
-    let malformed_config = r#"
-[collector
-enabled_events = ["file.cre
-# This is incomplete and malformed
-"#;
-
-    // Write config byte by byte to simulate slow write or interrupted write
-    let config_bytes = malformed_config.as_bytes();
-
-    // Clear the file first
-    fs::write(&config_path, "").unwrap();
-
-    // Write byte by byte with delays
-    for (i, &byte) in config_bytes.iter().enumerate() {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(&config_path)
-            .unwrap();
-        
-        use std::io::Write;
-        file.write_all(&[byte]).unwrap();
-        file.flush().unwrap();
-        
-        // Small delay between bytes
-        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
-        
-        // Check if config manager tried to reload partial config
-        if let Ok(Some(attempted_config)) = timeout(StdDuration::from_millis(50), update_rx.recv()).await {
-            println!(
-                "VULNERABILITY: Config reloaded during partial write at byte {}",
-                i
-            );
-            println!("Partial config: {:?}", attempted_config);
-        }
-    }
-
-    Ok(())
-}
-
-/// Test configuration injection through file manipulation
-#[sinex_test]
-async fn test_config_injection_through_file_manipulation(ctx: TestContext) -> TestResult {
-    let temp_dir = resources::temp_dir()?;
-    let config_path = temp_dir.path().join("config.toml");
-    
-    // Create initial legitimate config
-    let initial_config = r#"
-[collector]
-enabled_events = ["file.created"]
-
-[event.files]
-watch_paths = ["/tmp"]
-"#;
-    fs::write(&config_path, initial_config).unwrap();
-    
-    // Test injection attempts
-    let injection_attempts = vec![
-        // Command injection in watch path
-        r#"
-[collector]
-enabled_events = ["file.created"]
-
-[event.files]
-watch_paths = ["/tmp; rm -rf /"]
-"#,
-        // SQL injection in event types
-        r#"
-[collector]
-enabled_events = ["file.created'; DROP TABLE events; --"]
-
-[event.files]
-watch_paths = ["/tmp"]
-"#,
-        // Code injection attempt
-        r#"
-[collector]
-enabled_events = ["file.created"]
-
-[event.files]
-watch_paths = ["/tmp"]
-
-[malicious]
-script = "__import__('os').system('rm -rf /')"
-"#,
-    ];
-    
-    for (i, malicious_config) in injection_attempts.iter().enumerate() {
-        println!("Testing injection attempt {}", i + 1);
-        
-        // Write malicious config
-        fs::write(&config_path, malicious_config).unwrap();
-        
-        // Try to load config
-        let load_result = CollectorConfig::load_from_file(&config_path);
-        
-        match load_result {
-            Ok(config) => {
-                println!("VULNERABILITY: Malicious config accepted: {:?}", config);
-                // Check if malicious content was sanitized
-                let config_debug = format!("{:?}", config);
-                if config_debug.contains("rm -rf") || config_debug.contains("DROP TABLE") {
-                    println!("CRITICAL: Malicious content not sanitized!");
-                }
-            }
-            Err(e) => {
-                println!("Malicious config rejected (good): {}", e);
-            }
-        }
-    }
-    
-    Ok(())
-}
-*/
+// NOTE: Configuration attack tests have been deprecated after the modernization
+// to environment-only configuration. The old tests used CollectorConfig::load_from_file
+// which no longer exists. These tests are preserved as comments for historical reference.
 
 // =============================================================================
 // JSON Attack Tests
@@ -508,7 +300,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult {
         max_serialization_time < StdDuration::from_secs(5),
         "Should not take too long to serialize"
     );
-
+    
     Ok(())
 }
 
@@ -611,6 +403,7 @@ async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult {
         ulid > current_ulid,
         "Future date ULID should be greater than current ULID"
     );
+    
     Ok(())
 }
 
@@ -653,6 +446,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult {
 
     // This might FAIL if random generation has issues
     assert_eq!(ulids.len(), unique.len(), "Found duplicate ULIDs!");
+    
     Ok(())
 }
 
@@ -668,6 +462,7 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult {
 
     // This might fail if implementation assumes positive timestamps
     assert_eq!(ulid.timestamp().timestamp(), 0, "Epoch timestamp corrupted");
+    
     Ok(())
 }
 

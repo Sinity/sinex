@@ -509,7 +509,11 @@ impl TestContext {
                             };
                             fields.push((k, v_str));
                         }
-                        messages.push(StreamMessage { id, fields });
+                        messages.push(StreamMessage { 
+                            stream: stream_key.to_string(),
+                            id, 
+                            fields 
+                        });
                     }
                 }
             }

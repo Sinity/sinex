@@ -5,7 +5,7 @@
 //! conversion and provide consistent error handling.
 
 use crate::query_builder::{QueryBuilder, QueryParam};
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use serde_json::Value as JsonValue;
 use sinex_ulid::Ulid;
 

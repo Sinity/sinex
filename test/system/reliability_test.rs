@@ -21,7 +21,6 @@
 // - **Dependencies**: Full system integration with external services
 
 use crate::common::prelude::*;
-
 use crate::common::database_pool::acquire_test_database;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::EventFactory;
@@ -109,12 +108,13 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Add some existing checkpoint data
         let checkpoint_id = Ulid::new();
+        let last_processed_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)",
+                 VALUES ($1::uuid, $2, $3::uuid, $4)",
             checkpoint_id.to_uuid(),
             "existing_agent",
-            "startup_event_123",
+            last_processed_id.to_uuid(),
             json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
         )
         .execute(pool)
@@ -929,12 +929,13 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Insert test checkpoint data before migration
         let migration_checkpoint_id = Ulid::new();
+        let migration_last_processed_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)",
+                 VALUES ($1::uuid, $2, $3::uuid, $4)",
             migration_checkpoint_id.to_uuid(),
             "migration_test_agent",
-            "migration_event_456",
+            migration_last_processed_id.to_uuid(),
             json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
         )
         .execute(pool)
@@ -1156,12 +1157,13 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     // Create test checkpoint for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
     let degradation_checkpoint_id = Ulid::new();
+    let degradation_last_processed_id = Ulid::new();
     sqlx::query!(
         "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
+         VALUES ($1::uuid, $2, $3::uuid, $4)",
         degradation_checkpoint_id.to_uuid(),
         agent_name,
-        "degradation_test_event",
+        degradation_last_processed_id.to_uuid(),
         json!({"version": "1.0.0", "description": "Graceful degradation test"})
     )
     .execute(&pool)
