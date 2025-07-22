@@ -31,6 +31,7 @@ prost = "0.12"
 # Time and IDs
 chrono.workspace = true
 uuid.workspace = true
+semver = { version = "1.0", features = ["serde"] }
 
 # Configuration
 clap = { workspace = true, features = ["derive"] }
@@ -56,6 +57,7 @@ sinex-error = { path = "../sinex-error" }
 
 [build-dependencies]
 tonic-build = "0.11"
+chrono = "0.4"
 
 [features]
 default = []
