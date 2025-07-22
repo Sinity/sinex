@@ -263,10 +263,10 @@ pub async fn empty_database(ctx: &TestContext) -> AnyhowResult<FixtureHandle<()>
         async move {
             // Clean any test data
             sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
-                .execute(&pool)
+                .execute(pool)
                 .await?;
             sqlx::query!("DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_%'")
-                .execute(&pool)
+                .execute(pool)
                 .await?;
             Ok(())
         }

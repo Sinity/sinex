@@ -885,7 +885,7 @@ async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResu
     // Verify database consistency
     let concurrent_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-bottleneck-worker-%'"
-    ).fetch_one(&pool).await?;
+    ).fetch_one(pool).await?;
     
     println!("    📊 Concurrent events stored: {}", concurrent_events.count.unwrap_or(0));
     

@@ -41,7 +41,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
          VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Create checkpoint pointing to the 5th event
@@ -54,7 +54,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
         Some(format!("{}-group", automaton_name)),
         Some(format!("{}-consumer", automaton_name)),
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Test checkpoint consistency verification
@@ -84,13 +84,13 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> TestResult 
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!(
         "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -108,7 +108,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Insert events in two batches with a gap
@@ -140,7 +140,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         format!("{}-group", automaton_name),
         format!("{}-consumer", automaton_name)
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Wait and insert batch2 (simulating gap)
@@ -196,16 +196,16 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!(
         "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.gap_detection'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -241,7 +241,7 @@ async fn test_multiple_automaton_checkpoint_coordination(ctx: TestContext) -> Te
              VALUES ($1, 'automaton', '1.0.0', 'test-host')",
             name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         // Create checkpoint
@@ -253,7 +253,7 @@ async fn test_multiple_automaton_checkpoint_coordination(ctx: TestContext) -> Te
             Some(format!("{}-group", name)),
             Some(format!("{}-consumer", name)),
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
 
@@ -288,17 +288,17 @@ async fn test_multiple_automaton_checkpoint_coordination(ctx: TestContext) -> Te
             "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
         sqlx::query!(
             "DELETE FROM core.processor_manifests WHERE processor_name = $1",
             name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.coordination'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -328,7 +328,7 @@ async fn test_checkpoint_recovery_detection(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Simulate processing up to event 10
@@ -340,7 +340,7 @@ async fn test_checkpoint_recovery_detection(ctx: TestContext) -> TestResult {
         Some("recovery-group".to_string()),
         Some("recovery-consumer".to_string()),
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Simulate crash and recovery - update checkpoint to earlier state
@@ -352,7 +352,7 @@ async fn test_checkpoint_recovery_detection(ctx: TestContext) -> TestResult {
         Some("recovery-group".to_string()),
         Some("recovery-consumer".to_string()),
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Run integrity check
@@ -389,16 +389,16 @@ async fn test_checkpoint_recovery_detection(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!(
         "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.recovery'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -463,7 +463,7 @@ async fn test_checkpoint_data_integrity(ctx: TestContext) -> TestResult {
              VALUES ($1, 'automaton', '1.0.0', 'test-host')",
             automaton_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         // Create checkpoint with test data
@@ -475,7 +475,7 @@ async fn test_checkpoint_data_integrity(ctx: TestContext) -> TestResult {
             Some(format!("{}-group", automaton_name)),
             Some(format!("{}-consumer", automaton_name)),
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         // Verify checkpoint data integrity
@@ -501,18 +501,18 @@ async fn test_checkpoint_data_integrity(ctx: TestContext) -> TestResult {
             "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             automaton_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
         sqlx::query!(
             "DELETE FROM core.processor_manifests WHERE processor_name = $1",
             automaton_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
 
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.checkpoint_data'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -545,7 +545,7 @@ async fn test_checkpoint_timestamp_consistency(ctx: TestContext) -> TestResult {
          VALUES ($1, 'automaton', '1.0.0', 'test-host')",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Create checkpoint with inconsistent timestamp
@@ -560,7 +560,7 @@ async fn test_checkpoint_timestamp_consistency(ctx: TestContext) -> TestResult {
         6i64,
         base_time + ChronoDuration::hours(1), // Future timestamp!
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     // Verify timestamp consistency
@@ -582,16 +582,16 @@ async fn test_checkpoint_timestamp_consistency(ctx: TestContext) -> TestResult {
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!(
         "DELETE FROM core.processor_manifests WHERE processor_name = $1",
         automaton_name
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.timestamps'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -627,7 +627,7 @@ async fn test_checkpoint_performance_with_many_automata(ctx: TestContext) -> Tes
              VALUES ($1, 'automaton', '1.0.0', 'test-host')",
             automaton_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
         // Create checkpoint at different positions
@@ -641,7 +641,7 @@ async fn test_checkpoint_performance_with_many_automata(ctx: TestContext) -> Tes
                 Some(format!("{}-group", automaton_name)),
                 Some(format!("{}-consumer", automaton_name)),
             )
-            .execute(&pool)
+            .execute(pool)
             .await?;
         }
     }
@@ -671,17 +671,17 @@ async fn test_checkpoint_performance_with_many_automata(ctx: TestContext) -> Tes
             "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
             automaton_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
         sqlx::query!(
             "DELETE FROM core.processor_manifests WHERE processor_name = $1",
             automaton_name
         )
-        .execute(&pool)
+        .execute(pool)
         .await?;
     }
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.performance'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())

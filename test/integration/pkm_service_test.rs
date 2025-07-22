@@ -368,7 +368,7 @@ async fn test_create_and_retrieve_artifact(ctx: TestContext) -> TestResult {
         artifact_type: "document".to_string(),
         content_type: "application/pdf".to_string(),
         original_filename: Some("research_paper.pdf".to_string()),
-        metadata: json!({
+        metadata: Some(json!({
             "title": "Important Research",
             "author": "Dr. Smith",
             "pages": 42
@@ -417,7 +417,7 @@ async fn test_link_artifact_to_entity(ctx: TestContext) -> TestResult {
         artifact_type: "code".to_string(),
         content_type: "text/x-rust".to_string(),
         original_filename: Some("main.rs".to_string()),
-        metadata: json!({"lines": 500}),
+        metadata: Some(json!({"lines": 500}),
     };
     let artifact_id = service.create_artifact(artifact_input).await?;
 
@@ -493,22 +493,22 @@ async fn test_search_artifacts_by_metadata(ctx: TestContext) -> TestResult {
             artifact_type: "document".to_string(),
             content_type: "text/markdown".to_string(),
             original_filename: Some("rust_guide.md".to_string()),
-            metadata: json!({
+            metadata: Some(json!({
                 "title": "Rust Programming Guide",
                 "topic": "programming",
                 "language": "rust"
-            }),
+            })),
         },
         CreateArtifactInput {
             source_event_id: Some(inserted.id),
             artifact_type: "document".to_string(),
             content_type: "text/markdown".to_string(),
             original_filename: Some("python_tutorial.md".to_string()),
-            metadata: json!({
+            metadata: Some(json!({
                 "title": "Python Tutorial",
                 "topic": "programming",
                 "language": "python"
-            }),
+            })),
         },
     ];
 
@@ -569,7 +569,7 @@ async fn test_artifact_validation(ctx: TestContext) -> TestResult {
         artifact_type: "document".to_string(),
         content_type: "".to_string(), // Invalid empty string
         original_filename: None,
-        metadata: json!({}),
+        metadata: Some(json!({})),
     };
 
     let result = service.create_artifact(invalid_artifact).await;
@@ -631,12 +631,12 @@ async fn test_complete_pkm_workflow(ctx: TestContext) -> TestResult {
         artifact_type: "research_paper".to_string(),
         content_type: "application/pdf".to_string(),
         original_filename: Some("ml_paper.pdf".to_string()),
-        metadata: json!({
+        metadata: Some(json!({
             "title": "Advances in Neural Networks",
             "author": "Dr. Smith",
             "institution": "MIT",
             "year": 2024
-        }),
+        })),
     };
     let artifact_id = service.create_artifact(artifact_input).await?;
 

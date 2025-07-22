@@ -412,7 +412,7 @@ mod tests {
     use super::*;
     use tokio::time::{sleep, Duration};
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_permanent_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Permanent {
@@ -427,7 +427,7 @@ mod tests {
         assert!(!injector.should_fail("other").await);
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_probabilistic_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Probabilistic {
@@ -453,7 +453,7 @@ mod tests {
         assert!(failure_rate > 0.4 && failure_rate < 0.6);
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_temporary_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Temporary {
@@ -476,7 +476,7 @@ mod tests {
         assert!(!injector.should_fail("test").await);
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_conditional_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Conditional {
@@ -498,7 +498,7 @@ mod tests {
         assert!(injector.should_fail("test").await);
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_cascade_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Cascade {

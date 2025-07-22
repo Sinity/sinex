@@ -288,7 +288,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
         let count_result = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM core.events"
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await;
         
         assert!(count_result.is_ok(), "Database should still be intact");

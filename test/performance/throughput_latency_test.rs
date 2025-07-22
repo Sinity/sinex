@@ -272,32 +272,32 @@ async fn test_database_query_performance(ctx: TestContext) -> TestResult {
                     let test_id = test_events[0].id.to_uuid();
                     sqlx::query(query)
                         .bind(test_id)
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Source filter" => {
                     sqlx::query(query)
                         .bind(&test_events[0].source)
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Event type filter" => {
                     sqlx::query(query)
                         .bind(&test_events[0].event_type)
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Time range query" => {
                     sqlx::query(query)
                         .bind(Utc::now() - Duration::hours(1))
                         .bind(Utc::now())
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Payload JSON query" => {
                     sqlx::query(query)
                         .bind(serde_json::json!({"test": "value"}))
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Complex filter" => {
@@ -305,7 +305,7 @@ async fn test_database_query_performance(ctx: TestContext) -> TestResult {
                         .bind(&test_events[0].source)
                         .bind(&test_events[0].event_type)
                         .bind(Utc::now() - Duration::hours(1))
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 _ => unreachable!(),
@@ -444,7 +444,7 @@ async fn test_concurrent_access_performance(ctx: TestContext) -> TestResult {
     let total_inserted = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-worker-%'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
     
     println!("Database consistency check: {} events inserted", total_inserted.count.unwrap_or(0));
@@ -625,7 +625,7 @@ async fn test_end_to_end_performance(ctx: TestContext) -> TestResult {
                 "SELECT id, payload FROM core.events WHERE event_id = $1::uuid",
                 event.id.to_uuid()
             )
-            .fetch_optional(&pool)
+            .fetch_optional(pool)
             .await
         } else {
             Ok(None)
@@ -650,7 +650,7 @@ async fn test_end_to_end_performance(ctx: TestContext) -> TestResult {
     let total_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source = 'performance-satellite'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
     
     println!("Database verification: {} events stored", total_events.count.unwrap_or(0));

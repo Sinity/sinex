@@ -925,7 +925,7 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
     drop(connections);
 
     // Verify pool is still functional
-    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(&pool).await?;
+    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(pool).await?;
 
     assert_eq!(final_test.test, Some(1));
 
@@ -939,7 +939,7 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
 
     // Test handling of SQL syntax errors
     let syntax_error = sqlx::query("SELECT * FROM nonexistent_table_12345")
-        .fetch_optional(&pool)
+        .fetch_optional(pool)
         .await;
 
     assert!(syntax_error.is_err());

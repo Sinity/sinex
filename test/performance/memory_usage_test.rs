@@ -391,7 +391,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult {
         "Memory leak detected with large payloads");
     
     // Verify events were stored using centralized query system
-    let stored_events = EventQueries::count_by_source(&pool, "large-payload-test").fetch_one(&pool).await?;
+    let stored_events = EventQueries::count_by_source(&pool, "large-payload-test").fetch_one(pool).await?;
     
     println!("📊 Large payload events stored: {}", stored_events);
     assert!(stored_events > 0,
@@ -507,8 +507,8 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult {
         "Memory should recover to reasonable levels after stress test");
     
     // Verify database consistency using centralized query system
-    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(&pool).await?;
-    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(&pool).await?;
+    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(pool).await?;
+    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(pool).await?;
     let total_stress_events = stress_test_count + sustained_test_count;
     
     println!("📊 Stress test events stored: {}", total_stress_events);

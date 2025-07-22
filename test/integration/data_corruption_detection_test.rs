@@ -110,7 +110,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM core.events WHERE source = 'test.corruption'"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
@@ -162,7 +162,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
             "test-v1",
             None::<Uuid>
         )
-        .fetch_one(&pool)
+        .fetch_one(pool)
         .await;
 
         match result {
@@ -209,7 +209,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.ulid'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -255,7 +255,7 @@ async fn test_foreign_key_integrity(ctx: TestContext) -> TestResult {
             "test-v1",
             None::<Uuid>
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         // Should either fail or create an event with orphaned reference
@@ -293,7 +293,7 @@ async fn test_foreign_key_integrity(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.integrity'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -353,7 +353,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.encoding'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -447,7 +447,7 @@ async fn test_large_scale_corruption_scan(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.scan'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -522,7 +522,7 @@ async fn test_corruption_recovery_suggestions(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'test.recovery'")
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -554,7 +554,7 @@ async fn test_checkpoint_data_corruption(ctx: TestContext) -> TestResult {
             Utc::now(),
             data
         )
-        .execute(&pool)
+        .execute(pool)
         .await;
 
         match result {
@@ -593,7 +593,7 @@ async fn test_checkpoint_data_corruption(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_automaton_%'"
     )
-    .execute(&pool)
+    .execute(pool)
     .await?;
 
     Ok(())
