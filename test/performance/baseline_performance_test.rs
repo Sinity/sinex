@@ -5,12 +5,9 @@
 // performance regressions and track improvements over time.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use redis::cmd;
 use serde_json::json;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
@@ -166,9 +163,17 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
     
     // Pre-populate test data
     println!("  Populating {} test events", test_data_size);
-    let test_events = generators::test_events(test_data_size);
-    for event in &test_events {
-        sinex_db::insert_event_with_validator(pool, event, None).await?;
+    let factory = EventFactory::new("baseline-test");
+    for i in 0..test_data_size {
+        let event = factory.create_event(
+            event_types::test::GENERIC,
+            json!({
+                "test_id": i,
+                "test_type": "baseline_population",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })
+        );
+        sinex_db::insert_event_with_validator(pool, &event, None).await?;
     }
     
     let env_info = EnvironmentInfo {
@@ -213,7 +218,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
         let result = sqlx::query!(
             "SELECT * FROM core.events WHERE event_id = $1::uuid",
             test_event.id.to_uuid()
-        ).fetch_optional(&pool).await;
+        ).fetch_optional(pool).await;
         
         let duration = start.elapsed();
         tracker.record_measurement("primary_key_lookup", duration, result.is_ok());
@@ -228,7 +233,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
         let result = sqlx::query!(
             "SELECT * FROM core.events WHERE source = $1 LIMIT 10",
             test_source
-        ).fetch_all(&pool).await;
+        ).fetch_all(pool).await;
         
         let duration = start.elapsed();
         tracker.record_measurement("source_based_query", duration, result.is_ok());
@@ -246,7 +251,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
             "SELECT * FROM core.events WHERE ts_orig >= $1 AND ts_orig <= $2 LIMIT 50",
             start_time,
             end_time
-        ).fetch_all(&pool).await;
+        ).fetch_all(pool).await;
         
         let duration = start.elapsed();
         tracker.record_measurement("time_range_query", duration, result.is_ok());
@@ -259,7 +264,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
         
         let result = sqlx::query!(
             "SELECT source, COUNT(*) as count FROM core.events GROUP BY source ORDER BY count DESC LIMIT 20"
-        ).fetch_all(&pool).await;
+        ).fetch_all(pool).await;
         
         let duration = start.elapsed();
         tracker.record_measurement("aggregation_query", duration, result.is_ok());
@@ -319,6 +324,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
 #[sinex_test]
 async fn test_establish_redis_stream_baselines(ctx: TestContext) -> TestResult {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
+    let mut redis_conn = redis_client.get_connection().await?;
     let mut tracker = BaselineTracker::new();
     
     println!("🎯 Establishing Redis stream operation baselines");
@@ -383,18 +389,20 @@ async fn test_establish_redis_stream_baselines(ctx: TestContext) -> TestResult {
             .arg("STREAMS")
             .arg(stream_key)
             .arg(">")
-            .query_async::<_, redis::streams::StreamReadReply>(&mut redis_client)
+            .query_async::<_, redis::streams::StreamReadReply>(&mut redis_conn)
             .await {
             Ok(messages) => {
                 let duration = start.elapsed();
                 tracker.record_measurement("stream_read_batch", duration, true);
                 
                 // ACK messages
-                for message in &messages {
-                    let ack_start = Instant::now();
-                    let ack_result = redis_client.xack(stream_key, consumer_group, &message.id).await;
-                    let ack_duration = ack_start.elapsed();
-                    tracker.record_measurement("stream_ack", ack_duration, ack_result.is_ok());
+                for stream in &messages.keys {
+                    for message in &stream.ids {
+                        let ack_start = Instant::now();
+                        let ack_result = redis_client.xack(stream_key, consumer_group, &message.id).await;
+                        let ack_duration = ack_start.elapsed();
+                        tracker.record_measurement("stream_ack", ack_duration, ack_result.is_ok());
+                    }
                 }
                 
                 messages_read += messages.keys.iter().map(|k| k.ids.len()).sum::<usize>();
@@ -648,7 +656,7 @@ async fn test_establish_recovery_baselines(ctx: TestContext) -> TestResult {
         let start = Instant::now();
         
         // Create new Redis client to test connection establishment
-        match RedisStreamClient::new("redis://localhost:6379")?.await {
+        match RedisStreamClient::new("redis://localhost:6379") {
             Ok(client) => {
                 // Test simple operation
                 let test_result = client.xadd("baseline:recovery-test", "*", &json!({"test": i})).await;

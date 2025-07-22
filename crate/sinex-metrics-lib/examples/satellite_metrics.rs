@@ -6,7 +6,6 @@
 use async_trait::async_trait;
 use sinex_macros::auto_satellite_metrics;
 use sinex_metrics_lib::{export_prometheus, init_metrics};
-use std::collections::HashMap;
 use tokio::time::{sleep, Duration};
 
 // Mock types for the example

@@ -10,7 +10,6 @@
 // - Configurable for different scenarios
 // - Compatible with real component interfaces
 
-use crate::common::prelude::*;
 
 pub mod failure_injector;
 pub mod mock_automaton;
@@ -23,15 +22,8 @@ pub mod mock_redis;
 pub mod mock_satellite;
 
 // Re-export main mock types
-pub use failure_injector::{FailureConfig, FailureInjector, FailurePattern};
-pub use mock_automaton::{MockAutomaton, MockAutomatonConfig};
-pub use mock_database::{MockDatabase, MockDatabaseConfig};
+pub use failure_injector::FailurePattern;
 pub use mock_event_sources::{
-    AtuinHistoryImporter, ClipboardMonitor, EventSourceContext, FilesystemMonitor, RedisClient,
-    ShellHistoryMonitor, TerminalMonitor,
+    AtuinHistoryImporter, ClipboardMonitor, EventSourceContext, FilesystemMonitor,
+    RedisClient, ShellHistoryMonitor, TerminalMonitor,
 };
-pub use mock_filesystem::{MockFilesystem, MockFilesystemConfig};
-pub use mock_ingestd::{MockIngestd, MockIngestdBuilder, MockIngestdConfig};
-pub use mock_network::{MockNetwork, MockNetworkConfig};
-pub use mock_redis::{MockRedis, MockRedisConfig};
-pub use mock_satellite::{MockSatellite, MockSatelliteConfig};

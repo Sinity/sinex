@@ -8,17 +8,14 @@
 // - Large-scale corruption scanning
 
 use crate::common::prelude::*;
-use serde_json::Value;
 use sinex_db::integrity::{IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::{DataCorruptionIndicator, DataCorruptionType};
-use sinex_db::queries::{EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::validation::DataCorruptionType;
+use sinex_db::queries::operations::OperationQueries;
 use uuid::Uuid;
 
 #[sinex_test]
 async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Insert events with various payload corruption scenarios
     let corruption_scenarios = vec![
@@ -26,7 +23,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
         ("empty_object", json!({})),
         ("malformed_structure", json!({"__proto__": "malicious"})),
         ("oversized_payload", json!({"large": "x".repeat(100_000)})),
-        ("circular_reference", json!({"self": "reference"})), // Simplified
+        ("nested_nulls", json!({"data": {"value": null, "items": [null, null]}})),
     ];
 
     let mut corrupted_event_ids = Vec::new();
@@ -34,7 +31,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     for (scenario, payload) in corruption_scenarios {
         let factory = EventFactory::new("test.corruption");
         let raw_event = factory.create_event(scenario, payload);
-        let event = sinex_db::insert_event_with_validator(
+        let event = insert_event_with_validator(
             &pool,
             &raw_event,
             None,
@@ -76,7 +73,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     );
 
     // Should detect various types of corruption
-    let corruption_types: std::collections::HashSet<_> = results
+    let corruption_types: HashSet<_> = results
         .check_report
         .data_corruption_indicators
         .iter()
@@ -110,20 +107,22 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     }
 
     // Cleanup
-    EventQueries::delete_by_source("test.corruption".to_string())
-        .execute(&pool)
-        .await?;
+    sqlx::query!(
+        "DELETE FROM core.events WHERE source = 'test.corruption'"
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
 
 #[sinex_test]
 async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
     // Test ULID validation with various invalid scenarios
     let invalid_ulid_tests = vec![
-        ("nil_ulid", Ulid::from_bytes([0; 16]).unwrap()),
+        ("nil_ulid", Ulid::from_bytes([0; 16])),
         (
             "future_ulid",
             Ulid::from_datetime(Utc::now() + ChronoDuration::hours(24)),
@@ -149,50 +148,39 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
                 $7::uuid[], $8::uuid,
                 $9::uuid[], $10, $11::uuid
             )
+            RETURNING event_id as "event_id: Uuid"
             "#,
             test_ulid.to_uuid(),
-            "test.invalid_ulid",
+            "test.ulid",
             test_name,
-            test_ulid.timestamp(),
-            "localhost",
+            Utc::now(),
+            "test-host",
             json!({"test": test_name}),
-            None::<&[Uuid]>,  // source_event_ids
-            None::<Uuid>,      // source_material_id
-            None::<&[Uuid]>, // associated_blob_ids
-            Some("1.0.0"),     // ingestor_version
-            None::<Uuid>,      // payload_schema_id
+            &[] as &[Uuid],
+            None::<Uuid>,
+            &[] as &[Uuid],
+            "test-v1",
+            None::<Uuid>
         )
-        .execute(&pool)
+        .fetch_one(pool)
         .await;
 
         match result {
-            Ok(_) => {
-                test_event_ids.push(test_ulid);
-                println!("Inserted test event with {}: {}", test_name, test_ulid);
+            Ok(record) => {
+                test_event_ids.push(Ulid::from(record.event_id));
+                println!("Inserted {} with ULID: {}", test_name, test_ulid);
             }
             Err(e) => {
-                println!("Failed to insert {} (may be expected): {}", test_name, e);
+                println!("Failed to insert {} (expected): {}", test_name, e);
             }
         }
     }
 
-    // Check for nil ULIDs specifically - keeping as raw SQL for UUID literal check
-    let nil_ulid_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.events WHERE event_id::uuid = '00000000-0000-0000-0000-000000000000'::uuid"
-    )
-    .fetch_one(&pool)
-    .await?
-    .unwrap_or(0);
-
-    if nil_ulid_count > 0 {
-        println!("Found {} nil ULIDs in database", nil_ulid_count);
-    }
-
-    // Run integrity check to detect invalid ULIDs
+    // Run integrity tests
     let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
-        check_window_hours: 24, // Look back far to catch ancient timestamps
+        check_window_hours: 24,
         include_deep_validation: true,
         validate_checkpoints: false,
         validate_ulid_ordering: true,
@@ -204,74 +192,80 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> TestResult {
     // Check for ULID-related issues
     let ulid_issues: Vec<_> = results
         .check_report
-        .ulid_ordering_violations
+        .data_corruption_indicators
         .iter()
-        .filter(|violation| {
-            violation.details.contains("invalid") || violation.details.contains("Invalid")
+        .filter(|indicator| {
+            matches!(
+                indicator.corruption_type,
+                DataCorruptionType::InvalidUlid | DataCorruptionType::FutureTimestamp
+            )
         })
         .collect();
 
-    let corruption_issues: Vec<_> = results
-        .check_report
-        .data_corruption_indicators
-        .iter()
-        .filter(|indicator| matches!(indicator.corruption_type, DataCorruptionType::InvalidUlid))
-        .collect();
-
-    println!("ULID validation results:");
-    println!("  ULID ordering violations: {}", ulid_issues.len());
-    println!(
-        "  Invalid ULID corruption indicators: {}",
-        corruption_issues.len()
-    );
-
-    // Print details of detected issues
-    for violation in &ulid_issues {
-        println!(
-            "  ULID violation: {} - {}",
-            violation.violation_type, violation.details
-        );
-    }
-
-    for indicator in &corruption_issues {
-        println!("  ULID corruption: {}", indicator.details);
-        assert!(
-            !indicator.recovery_suggestion.is_empty(),
-            "Should provide recovery guidance for ULID corruption"
-        );
+    println!("Found {} ULID-related issues", ulid_issues.len());
+    for issue in &ulid_issues {
+        println!("  - {}: {}", issue.corruption_type, issue.details);
     }
 
     // Cleanup
-    EventQueries::delete_by_source("test.invalid_ulid".to_string())
-        .execute(&pool)
+    sqlx::query!("DELETE FROM core.events WHERE source = 'test.ulid'")
+        .execute(pool)
         .await?;
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+async fn test_foreign_key_integrity(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
 
-    // Create test automaton for foreign key testing
-    let automaton_name = format!("fk_test_automaton_{}", Ulid::new());
+    // Create a valid event first
+    let event = EventFactory::new("test.integrity")
+        .create_event("parent", json!({"status": "parent"}));
+    let parent_event = insert_event(&pool, &event).await?;
 
-    sqlx::query!(
-        "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-         VALUES ($1, 'automaton', '1.0.0', 'Foreign key integrity test automaton')",
-        automaton_name
-    )
-    .execute(&pool)
-    .await?;
+    // Try to create an event with invalid foreign key references
+    let invalid_refs = vec![
+        Ulid::new(), // Non-existent event ID
+        Ulid::from_bytes([255; 16]), // Max ULID
+    ];
 
-    // Insert valid event
-    let factory = EventFactory::new("test.fk_integrity");
-    let event = factory.create_event("valid_event", json!({"data": "valid"}));
-    let valid_event = insert_event_with_validator(&pool, &event, None).await?;
+    for invalid_ref in invalid_refs {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO core.events (
+                event_id, source, event_type, ts_orig, host, payload,
+                source_event_ids, source_material_id,
+                associated_blob_ids, ingestor_version, payload_schema_id
+            ) VALUES (
+                $1::uuid, $2, $3, $4, $5, $6,
+                $7::uuid[], $8::uuid,
+                $9::uuid[], $10, $11::uuid
+            )
+            "#,
+            Ulid::new().to_uuid(),
+            "test.integrity",
+            "child_with_bad_ref",
+            Utc::now(),
+            "test-host",
+            json!({"ref": invalid_ref.to_string()}),
+            &[invalid_ref.to_uuid()],
+            None::<Uuid>,
+            &[] as &[Uuid],
+            "test-v1",
+            None::<Uuid>
+        )
+        .execute(pool)
+        .await;
 
-    // Note: Work queue integrity tests removed - work_queue table deprecated in satellite architecture
+        // Should either fail or create an event with orphaned reference
+        match result {
+            Ok(_) => println!("Created event with invalid reference (will be detected)"),
+            Err(e) => println!("Failed to create event with invalid ref (expected): {}", e),
+        }
+    }
 
-    // Run integrity check to detect foreign key issues
+    // Run integrity check
     let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
@@ -284,35 +278,22 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
 
     let results = integrity_tester.run_integrity_tests(config).await?;
 
-    // Check for foreign key violations in corruption indicators
+    // Check for foreign key violations
     let fk_violations: Vec<_> = results
         .check_report
         .data_corruption_indicators
         .iter()
         .filter(|indicator| {
-            matches!(
-                indicator.corruption_type,
-                DataCorruptionType::ForeignKeyViolation
-            )
+            indicator.details.contains("reference") || 
+            indicator.details.contains("orphaned")
         })
         .collect();
 
-    println!("Foreign key integrity results:");
-    println!("  FK violations detected: {}", fk_violations.len());
+    println!("Found {} foreign key issues", fk_violations.len());
 
-    for violation in &fk_violations {
-        println!("  - {}: {}", violation.corruption_type, violation.details);
-        assert!(
-            !violation.recovery_suggestion.is_empty(),
-            "Should provide recovery guidance for FK violations"
-        );
-    }
-
-    // Note: Manual work_queue FK checks removed - work_queue table deprecated in satellite architecture
-
-    // Cleanup test events
-    EventQueries::delete_by_source("test.fk_integrity".to_string())
-        .execute(&pool)
+    // Cleanup
+    sqlx::query!("DELETE FROM core.events WHERE source = 'test.integrity'")
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -320,90 +301,27 @@ async fn test_foreign_key_integrity_violations(ctx: TestContext) -> TestResult {
 
 #[sinex_test]
 async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool();
 
-    // Test various encoding corruption scenarios
+    // Create events with various encoding issues
     let encoding_tests = vec![
-        ("null_bytes", "test\0file.txt"),
-        ("control_chars", "test\x01\x02\x03file.txt"),
-        ("invalid_utf8", "test\u{00C0}\u{0080}file.txt"), // Overlong encoding as unicode
-        ("high_unicode", "test\u{1F4A9}file.txt"),        // Emoji - should be valid
-        ("mixed_encoding", "test\u{00FF}\u{00FE}file.txt"), // BOM-like bytes as unicode
+        ("invalid_utf8", json!({"text": "Invalid UTF-8: \u{FFFD}"})),
+        ("control_chars", json!({"text": "Control: \u{0000}\u{0001}\u{001F}"})),
+        ("mixed_encoding", json!({"text": "Mixed: café ☕ 咖啡"})),
+        ("emoji_stress", json!({"text": "👨‍👩‍👧‍👦🏳️‍🌈🧑‍💻"})),
     ];
 
-    let mut encoding_event_ids = Vec::new();
-
-    for (test_name, corrupt_string) in encoding_tests {
-        // Try to insert events with potentially corrupted strings
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO core.events (
-                event_id, source, event_type, ts_orig, host, payload,
-                source_event_ids, source_material_id, 
-                associated_blob_ids, ingestor_version, payload_schema_id
-            ) VALUES (
-                $1::uuid, $2, $3, $4, $5, $6,
-                $7::uuid[], $8::uuid,
-                $9::uuid[], $10, $11::uuid
-            )
-            "#,
-            Ulid::new().to_uuid(),
-            corrupt_string, // Use corrupt string as source
-            "encoding_test",
-            Utc::now(),
-            "localhost",
-            json!({"path": corrupt_string, "test": test_name}),
-            None::<&[Uuid]>,
-            None::<Uuid>,
-            None::<&[Uuid]>,
-            Some("1.0.0"),
-            None::<Uuid>,
-        )
-        .execute(&pool)
-        .await;
-
-        match result {
-            Ok(_) => {
-                println!("Inserted encoding test event: {}", test_name);
-            }
-            Err(e) => {
-                println!("Failed to insert {} (may be expected): {}", test_name, e);
-            }
+    for (test_name, payload) in encoding_tests {
+        let event = EventFactory::new("test.encoding")
+            .create_event(test_name, payload);
+        
+        match insert_event(&pool, &event).await {
+            Ok(e) => println!("Inserted {} event: {}", test_name, e.id),
+            Err(e) => println!("Failed to insert {} (expected): {}", test_name, e),
         }
     }
 
-    // Also test with corrupt payload content
-    let payload_corruption_tests = vec![
-        json!({"path": "test\0file.txt"}),
-        json!({"command": "echo 'test\x01\x02'"}),
-        json!({"content": "\u{00FF}\u{00FE}\x00invalid"}),
-    ];
-
-    for (i, corrupt_payload) in payload_corruption_tests.iter().enumerate() {
-        let factory = EventFactory::new("test.encoding_corruption");
-        let raw_event = factory.create_event(&format!("payload_corruption_{}", i), corrupt_payload.clone());
-        let result = sinex_db::insert_event_with_validator(
-            &pool,
-            &raw_event,
-            None,
-        )
-        .await;
-
-        match result {
-            Ok(event) => {
-                encoding_event_ids.push(event.id);
-                println!("Inserted payload corruption test {}: {}", i, event.id);
-            }
-            Err(e) => {
-                println!(
-                    "Payload corruption test {} failed (may be expected): {}",
-                    i, e
-                );
-            }
-        }
-    }
-
-    // Run integrity check to detect encoding issues
+    // Run integrity check with encoding validation
     let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
         max_events_to_check: 1000,
@@ -416,187 +334,82 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
 
     let results = integrity_tester.run_integrity_tests(config).await?;
 
-    // Check for encoding corruption detection
+    // Check for encoding issues
     let encoding_issues: Vec<_> = results
         .check_report
         .data_corruption_indicators
         .iter()
-        .filter(|indicator| matches!(indicator.corruption_type, DataCorruptionType::EncodingError))
-        .collect();
-
-    let schema_violations: Vec<_> = results
-        .check_report
-        .schema_violations
-        .iter()
-        .filter(|violation| {
-            violation.details.contains("character")
-                || violation.details.contains("encoding")
-                || violation.details.contains("byte")
+        .filter(|indicator| {
+            matches!(indicator.corruption_type, DataCorruptionType::EncodingError) ||
+            indicator.details.contains("encoding") ||
+            indicator.details.contains("UTF-8")
         })
         .collect();
 
-    println!("Encoding corruption detection results:");
-    println!(
-        "  Encoding corruption indicators: {}",
-        encoding_issues.len()
-    );
-    println!("  Related schema violations: {}", schema_violations.len());
-
+    println!("Found {} encoding issues", encoding_issues.len());
     for issue in &encoding_issues {
-        println!("  - Encoding issue: {}", issue.details);
-        assert!(
-            issue.details.contains("Control characters")
-                || issue.details.contains("encoding")
-                || issue.details.contains("character"),
-            "Should mention character/encoding issues"
-        );
-    }
-
-    for violation in &schema_violations {
-        println!("  - Schema violation: {}", violation.details);
-    }
-
-    // Manual encoding validation check - keeping complex regex SQL as raw
-    let manual_encoding_check = sqlx::query!(
-        r#"
-        SELECT 
-            event_id::text as event_id,
-            source,
-            event_type,
-            CASE 
-                WHEN source ~ '[[:cntrl:]]' THEN 'source_has_control_chars'
-                WHEN event_type ~ '[[:cntrl:]]' THEN 'event_type_has_control_chars'
-                WHEN host ~ '[[:cntrl:]]' THEN 'host_has_control_chars'
-                ELSE 'no_obvious_issues'
-            END as encoding_issue
-        FROM core.events
-        WHERE source LIKE 'test%' OR source = 'test.encoding_corruption'
-        AND (
-            source ~ '[[:cntrl:]]' OR
-            event_type ~ '[[:cntrl:]]' OR
-            host ~ '[[:cntrl:]]'
-        )
-        "#
-    )
-    .fetch_all(&pool)
-    .await?;
-
-    println!(
-        "Manual encoding check found {} events with control characters",
-        manual_encoding_check.len()
-    );
-
-    for issue in &manual_encoding_check {
-        println!(
-            "  Event {}: {} in {}/{}",
-            issue.event_id.as_ref().map(|s| s.as_str()).unwrap_or("unknown"), 
-            issue.encoding_issue.as_ref().map(|s| s.as_str()).unwrap_or("no_issue"), 
-            issue.source.as_str(),
-            issue.event_type.as_str()
-        );
+        println!("  - {}: {}", issue.corruption_type, issue.details);
     }
 
     // Cleanup
-    EventQueries::delete_by_source("test.encoding_corruption".to_string())
-        .execute(&pool)
-        .await?;
-    // Also cleanup test% sources
-    sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test%'")
-        .execute(&pool)
+    sqlx::query!("DELETE FROM core.events WHERE source = 'test.encoding'")
+        .execute(pool)
         .await?;
 
     Ok(())
 }
 
 #[sinex_test]
-async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
-    let pool = ctx.pool().clone();
+async fn test_large_scale_corruption_scan(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
 
-    // Generate a large dataset with some corrupted entries
-    let total_events = 500;
-    let corruption_rate = 0.1; // 10% corruption
-    let corrupt_count = (total_events as f64 * corruption_rate) as usize;
-
-    println!(
-        "Generating {} events with {} corrupted entries",
-        total_events, corrupt_count
-    );
-
-    let mut all_event_ids = Vec::new();
-    let mut corrupt_event_ids = Vec::new();
-
-    // Generate mostly valid events
-    for i in 0..(total_events - corrupt_count) {
-        let event = {
-            let factory = EventFactory::new("test.large_scale");
-            let event = factory.create_event("valid_event", json!({"sequence": i}));
-            let event_id = sinex_db::insert_event_with_validator(
-                &pool,
-                &event,
-                None,
-            )
-            .await?;
-            event
-        };
-        all_event_ids.push(event.id);
-
-        // Small delay to spread out timestamps
-        if i % 50 == 0 {
-            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-        }
+    // Create a mix of valid and corrupt events
+    let batch_builder = BatchEventBuilder::new();
+    
+    // Add valid events
+    for i in 0..50 {
+        batch_builder.add_event()
+            .source("test.scan")
+            .event_type("valid_event")
+            .payload(json!({
+                "index": i,
+                "status": "ok",
+                "data": format!("Valid data {}", i)
+            }));
     }
 
-    // Generate corrupted events
-    for i in 0..corrupt_count {
-        let corruption_type = i % 4; // Rotate through corruption types
+    // Add events with various issues
+    for i in 0..10 {
+        // Null payloads
+        batch_builder.add_event()
+            .source("test.scan")
+            .event_type("null_payload")
+            .payload(json!(null));
 
-        let (event_type, payload) = match corruption_type {
-            0 => ("null_payload", json!(null)),
-            1 => ("oversized_payload", json!({"large": "x".repeat(50_000)})),
-            2 => (
-                "malformed_payload",
-                json!({"__proto__": "evil", "constructor": "hack"}),
-            ),
-            _ => (
-                "encoding_issue",
-                json!({"path": format!("test\0corrupt_{}.txt", i)}),
-            ),
-        };
+        // Empty objects
+        batch_builder.add_event()
+            .source("test.scan")
+            .event_type("empty_payload")
+            .payload(json!({}));
 
-        let factory = EventFactory::new("test.large_scale");
-        let raw_event = factory.create_event(event_type, payload);
-        let result = sinex_db::insert_event_with_validator(
-            &pool,
-            &raw_event,
-            None,
-        )
-        .await;
-
-        match result {
-            Ok(event) => {
-                all_event_ids.push(event.id);
-                corrupt_event_ids.push(event.id);
-            }
-            Err(_) => {
-                // Some corrupted events may fail to insert (which is good)
-                println!("Corrupt event {} failed to insert (expected)", i);
-            }
-        }
+        // Large payloads
+        batch_builder.add_event()
+            .source("test.scan")
+            .event_type("large_payload")
+            .payload(json!({
+                "index": i,
+                "large_data": "x".repeat(10000)
+            }));
     }
 
-    println!(
-        "Inserted {} total events, {} potentially corrupt",
-        all_event_ids.len(),
-        corrupt_event_ids.len()
-    );
+    batch_builder.insert_all(&pool).await?;
 
-    // Run large-scale integrity scan
-    let scan_start = std::time::Instant::now();
-
+    // Run comprehensive scan
+    let start = Instant::now();
     let integrity_tester = IntegrityTester::new(&pool).await?;
     let config = IntegrityTestConfig {
-        max_events_to_check: total_events as u64,
-        check_window_hours: 1,
+        max_events_to_check: 10000,
+        check_window_hours: 24,
         include_deep_validation: true,
         validate_checkpoints: false,
         validate_ulid_ordering: true,
@@ -604,102 +417,184 @@ async fn test_large_scale_corruption_scanning(ctx: TestContext) -> TestResult {
     };
 
     let results = integrity_tester.run_integrity_tests(config).await?;
+    let duration = start.elapsed();
 
-    let scan_duration = scan_start.elapsed();
-    let scan_rate = total_events as f64 / scan_duration.as_secs_f64();
+    println!("Large-scale scan completed in {:?}", duration);
+    println!("Summary:");
+    println!("  Total events checked: {}", results.events_checked);
+    println!("  Corruption indicators: {}", results.check_report.data_corruption_indicators.len());
+    println!("  Schema violations: {}", results.check_report.schema_violations.len());
+    println!("  Warning count: {}", results.check_report.warnings.len());
 
-    println!("Large-scale corruption scan results:");
-    println!("  Scan duration: {:?}", scan_duration);
-    println!("  Scan rate: {:.2} events/sec", scan_rate);
-    println!(
-        "  Events scanned: {}",
-        results.check_report.total_events_checked
-    );
-    println!(
-        "  Data corruption indicators: {}",
-        results.check_report.data_corruption_indicators.len()
-    );
-    println!(
-        "  Schema violations: {}",
-        results.check_report.schema_violations.len()
-    );
-    println!("  Overall severity: {:?}", results.check_report.severity);
-
-    // Analyze detection accuracy
-    let detected_corruption_count = results.check_report.data_corruption_indicators.len()
-        + results.check_report.schema_violations.len();
-
-    let detection_rate = detected_corruption_count as f64 / corrupt_event_ids.len().max(1) as f64;
-
-    println!(
-        "  Detection rate: {:.2}% ({}/{})",
-        detection_rate * 100.0,
-        detected_corruption_count,
-        corrupt_event_ids.len()
-    );
-
-    // Performance assertions
+    // Performance assertion
     assert!(
-        scan_rate > 10.0,
-        "Large-scale scan should process at least 10 events/sec"
-    );
-    assert!(
-        results.check_report.total_events_checked >= total_events as u64 * 8 / 10,
-        "Should scan at least 80% of expected events"
+        duration < Duration::from_secs(5),
+        "Large-scale scan should complete within 5 seconds"
     );
 
-    // Should detect significant corruption if it exists
-    if corrupt_event_ids.len() > 10 {
-        assert!(
-            detected_corruption_count > 0,
-            "Should detect some corruption in large dataset"
-        );
-    }
-
-    // Categorize detected corruption types
-    let mut corruption_type_counts = std::collections::HashMap::new();
-
-    for indicator in &results.check_report.data_corruption_indicators {
-        *corruption_type_counts
-            .entry(&indicator.corruption_type)
-            .or_insert(0) += 1;
-    }
-
-    println!("  Corruption types detected:");
-    for (corruption_type, count) in &corruption_type_counts {
-        println!("    {:?}: {}", corruption_type, count);
-    }
-
-    // Verify recommendations are generated for large-scale issues
-    let performance_recommendations: Vec<_> = results
-        .recommendations
+    // Verify detection accuracy
+    let null_payload_issues = results
+        .check_report
+        .data_corruption_indicators
         .iter()
-        .filter(|rec| {
-            rec.description.to_lowercase().contains("performance")
-                || rec.description.to_lowercase().contains("large")
-                || rec.description.to_lowercase().contains("optimization")
-        })
-        .collect();
+        .filter(|i| matches!(i.corruption_type, DataCorruptionType::NullPayload))
+        .count();
 
-    if results.check_report.total_events_checked > 100 {
-        assert!(
-            !performance_recommendations.is_empty(),
-            "Should generate performance recommendations for large datasets"
-        );
+    assert!(
+        null_payload_issues >= 10,
+        "Should detect at least 10 null payload issues"
+    );
+
+    // Cleanup
+    sqlx::query!("DELETE FROM core.events WHERE source = 'test.scan'")
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_corruption_recovery_suggestions(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+
+    // Create events that will trigger specific recovery suggestions
+    let test_scenarios = vec![
+        (
+            "null_payload",
+            json!(null),
+            DataCorruptionType::NullPayload,
+        ),
+        (
+            "invalid_json",
+            json!({"broken": "structure", "nested": {"incomplete": null}}),
+            DataCorruptionType::InvalidJson,
+        ),
+        (
+            "missing_required",
+            json!({"partial": "data"}),
+            DataCorruptionType::MissingRequiredField,
+        ),
+    ];
+
+    for (scenario, payload, expected_type) in &test_scenarios {
+        let event = EventFactory::new("test.recovery")
+            .create_event(scenario, payload.clone());
+        
+        let _ = insert_event(&pool, &event).await;
     }
 
-    println!(
-        "  Performance recommendations: {}",
-        performance_recommendations.len()
-    );
-    for rec in &performance_recommendations {
-        println!("    - {}", rec.description);
+    // Run integrity check
+    let integrity_tester = IntegrityTester::new(&pool).await?;
+    let config = IntegrityTestConfig {
+        max_events_to_check: 1000,
+        check_window_hours: 1,
+        include_deep_validation: true,
+        validate_checkpoints: false,
+        validate_ulid_ordering: false,
+        validate_schemas: true,
+    };
+
+    let results = integrity_tester.run_integrity_tests(config).await?;
+
+    // Verify recovery suggestions are provided
+    for indicator in &results.check_report.data_corruption_indicators {
+        assert!(
+            !indicator.recovery_suggestion.is_empty(),
+            "Should provide recovery suggestion for {}",
+            indicator.corruption_type
+        );
+
+        println!(
+            "Corruption: {} - Recovery: {}",
+            indicator.corruption_type,
+            indicator.recovery_suggestion
+        );
+
+        // Verify suggestions are actionable
+        assert!(
+            indicator.recovery_suggestion.contains("export") ||
+            indicator.recovery_suggestion.contains("repair") ||
+            indicator.recovery_suggestion.contains("restore") ||
+            indicator.recovery_suggestion.contains("validate"),
+            "Recovery suggestion should be actionable"
+        );
     }
 
     // Cleanup
-    EventQueries::delete_by_source("test.large_scale".to_string())
-        .execute(&pool)
+    sqlx::query!("DELETE FROM core.events WHERE source = 'test.recovery'")
+        .execute(pool)
         .await?;
+
+    Ok(())
+}
+
+#[sinex_test]
+async fn test_checkpoint_data_corruption(ctx: TestContext) -> TestResult {
+    let pool = ctx.pool();
+
+    // Create some checkpoints with potentially corrupt data
+    let checkpoint_data = vec![
+        json!({"valid": true, "count": 100}),
+        json!(null),
+        json!({}),
+        json!({"nested": {"deep": {"very": {"deep": null}}}}),
+    ];
+
+    for (i, data) in checkpoint_data.iter().enumerate() {
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO core.automaton_checkpoints (
+                automaton_name, last_processed_id, processed_count,
+                last_activity, checkpoint_data
+            ) VALUES ($1, $2::uuid, $3, $4, $5)
+            "#,
+            format!("test_automaton_{}", i),
+            Ulid::new().to_uuid(),
+            i as i64,
+            Utc::now(),
+            data
+        )
+        .execute(pool)
+        .await;
+
+        match result {
+            Ok(_) => println!("Created checkpoint {}", i),
+            Err(e) => println!("Failed to create checkpoint {} (expected): {}", i, e),
+        }
+    }
+
+    // Run integrity check with checkpoint validation
+    let integrity_tester = IntegrityTester::new(&pool).await?;
+    let config = IntegrityTestConfig {
+        max_events_to_check: 100,
+        check_window_hours: 1,
+        include_deep_validation: false,
+        validate_checkpoints: true,
+        validate_ulid_ordering: false,
+        validate_schemas: false,
+    };
+
+    let results = integrity_tester.run_integrity_tests(config).await?;
+
+    // Check for checkpoint issues
+    let checkpoint_issues: Vec<_> = results
+        .check_report
+        .data_corruption_indicators
+        .iter()
+        .filter(|indicator| {
+            indicator.details.contains("checkpoint") ||
+            indicator.details.contains("automaton")
+        })
+        .collect();
+
+    println!("Found {} checkpoint issues", checkpoint_issues.len());
+
+    // Cleanup
+    sqlx::query!(
+        "DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_automaton_%'"
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

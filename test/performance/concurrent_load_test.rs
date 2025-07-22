@@ -5,11 +5,8 @@
 // when multiple operations are running simultaneously.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use serde_json::json;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use std::collections::HashMap;
@@ -272,9 +269,17 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> TestResult {
     
     // Pre-populate some data for queries
     println!("🔄 Pre-populating database for mixed workload test");
-    let seed_events = generators::test_events(500);
-    for event in &seed_events {
-        sinex_db::insert_event_with_validator(pool, event, None).await?;
+    let factory = EventFactory::new("mixed-workload-seed");
+    for i in 0..500 {
+        let event = factory.create_event(
+            event_types::test::MIXED_WORKLOAD_TEST,
+            json!({
+                "seed_id": i,
+                "test_type": "mixed_workload_seed",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })
+        );
+        sinex_db::insert_event_with_validator(pool, &event, None).await?;
     }
     
     println!("🔄 Testing mixed concurrent workload");

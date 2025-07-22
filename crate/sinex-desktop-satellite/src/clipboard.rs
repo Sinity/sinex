@@ -21,6 +21,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+use sinex_events::constants::{sources};
 
 /// Rich clipboard content information
 #[derive(Debug, Clone)]

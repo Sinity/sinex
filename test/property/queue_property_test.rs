@@ -617,7 +617,7 @@ async fn test_redis_streams_scalability_properties(ctx: TestContext) -> TestResu
 }
 
 /// Test that Redis Stream IDs maintain ordering guarantees
-#[tokio::test]
+#[sinex_test]
 async fn test_redis_stream_ordering_properties() -> AnyhowResult<(), anyhow::Error> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let mut redis = ConnectionManager::new(redis_client).await?;

@@ -15,7 +15,8 @@ sinex-ulid = { path = "../sinex-ulid", features = ["sqlx"] }
 sinex-core-types = { path = "../sinex-core-types" }
 sinex-events = { path = "../sinex-events" }
 sinex-macros = { path = "../sinex-macros" }
-sinex-metrics-lib = { path = "../sinex-metrics-lib" }
+sinex-validation = { path = "../sinex-validation" }
+sinex-error = { path = "../sinex-error" }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

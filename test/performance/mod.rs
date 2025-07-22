@@ -50,3 +50,6 @@ pub mod regression_detection_test;
 /// System bottleneck identification tools
 pub mod bottleneck_identification_test;
 
+/// Large payload performance tests
+pub mod large_payload_test;
+

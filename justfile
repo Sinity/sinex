@@ -173,6 +173,22 @@ test-fast-profile *ARGS:
     @echo "🏃 Running tests with fast profile (60s timeout, 4 threads)..."
     cargo nextest run -P fast -- {{ARGS}}
 
+# 🚀 Run tests with maximum parallelism for speed
+test-parallel *ARGS:
+    @echo "🚀 Running tests with maximum parallelism ($(nproc) cores)..."
+    cargo nextest run --profile parallel -- {{ARGS}}
+
+# 🏃 Run all tests in parallel with optimized settings
+test-all-parallel:
+    @echo "🏃 Running all tests in parallel for maximum speed..."
+    @echo "Using $(nproc) CPU cores for test execution"
+    cargo nextest run --profile parallel
+
+# 📊 Run tests and show parallelism statistics
+test-parallel-stats *ARGS:
+    @echo "📊 Running tests with parallelism statistics..."
+    NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run --profile parallel --reporter libtest-json -- {{ARGS}} | jq -r 'select(.type == "suite") | "\(.event): \(.exec_time // 0)s' || cargo nextest run --profile parallel -- {{ARGS}}
+
 # 🛡️ Run tests with reliable profile (180s timeout, 2 threads, 3 retries)
 test-reliable-profile *ARGS:
     @echo "🛡️ Running tests with reliable profile (180s timeout, 2 threads, 3 retries)..."

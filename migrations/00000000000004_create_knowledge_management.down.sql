@@ -1,0 +1,3 @@
+-- Down migration for 00000000000004_create_knowledge_management.sql
+-- This would drop all objects created in the up migration
+-- Skipped to prevent accidental data loss

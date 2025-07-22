@@ -1,0 +1,43 @@
+name: Check Abstractions
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+jobs:
+  check-abstractions:
+    name: Abstraction Checks
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Install ripgrep
+        run: |
+          curl -LO https://github.com/BurntSushi/ripgrep/releases/download/13.0.0/ripgrep_13.0.0_amd64.deb
+          sudo dpkg -i ripgrep_13.0.0_amd64.deb
+          
+      - name: Run abstraction checks
+        run: |
+          chmod +x ./scripts/check-abstractions.sh
+          ./scripts/check-abstractions.sh
+        
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+          
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          
+      - name: Run Clippy
+        run: cargo clippy --all-targets --all-features -- -D warnings

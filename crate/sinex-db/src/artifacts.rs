@@ -28,7 +28,7 @@ pub struct ArtifactRecord {
 }
 
 /// Create a new artifact following the exact same pattern as add_to_work_queue
-#[sinex_macros::auto_db_metrics(operation = "create_artifact")]
+// #[sinex_macros::auto_db_metrics(operation = "create_artifact")]
 pub async fn create_artifact(pool: DbPoolRef<'_>, input: CreateArtifactInput) -> Result<Artifact> {
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
 

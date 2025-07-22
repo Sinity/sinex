@@ -1,7 +1,7 @@
 // Mock satellite implementation for testing
 
 use crate::common::prelude::*;
-use sinex_events::{RawEvent, EventFactory, sources, event_types};
+use sinex_events::{RawEvent, EventFactory};
 use sinex_satellite_sdk::config::SatelliteConfig;
 use std::sync::Arc;
 use tokio::sync::Mutex;

@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::{interval, Instant};
 use tracing::{debug, info, warn};
+use sinex_events::constants::{event_types};
 
 /// Health status levels
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,7 +157,7 @@ impl ProcessHeartbeatEmitter {
 
         // Create RawEvent
         let factory = EventFactory::new(&self.source_name);
-        let event = factory.create_event("process.heartbeat", payload);
+        let event = factory.create_event(event_types::sinex::PROCESS_HEARTBEAT, payload);
         
         Ok(event)
     }
@@ -300,7 +301,7 @@ mod tests {
         let event = emitter.create_heartbeat_event(1).unwrap();
         
         assert_eq!(event.source, "test_service");
-        assert_eq!(event.event_type, "process.heartbeat");
+        assert_eq!(event.event_type, event_types::sinex::PROCESS_HEARTBEAT);
         assert!(event.payload.get("sequence").is_some());
         assert!(event.payload.get("timestamp").is_some());
     }

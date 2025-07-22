@@ -6,7 +6,6 @@
 // - Simulate various failure scenarios
 
 use crate::common::prelude::*;
-use redis::aio::MultiplexedConnection;
 use sinex_events::RawEvent;
 use std::sync::Arc;
 use tokio::sync::Mutex;

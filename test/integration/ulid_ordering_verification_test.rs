@@ -55,7 +55,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
     let db_ordered_ulids: Vec<String> = sqlx::query_scalar!(
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_ordering' ORDER BY event_id"
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?
     .into_iter()
     .filter_map(|opt| opt)
@@ -69,7 +69,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> TestResult 
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_ordering".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -211,7 +211,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> TestResul
 
     // Cleanup
     EventQueries::delete_by_source("test.concurrent_ulid".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -260,7 +260,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
     let mut ordering_results = HashMap::new();
 
     for (name, query) in ordering_queries {
-        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(&pool).await?;
+        let result: Vec<String> = sqlx::query_scalar(query).fetch_all(pool).await?;
         ordering_results.insert(name, result);
     }
 
@@ -327,7 +327,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.db_ordering".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -404,7 +404,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> TestResult {
 
     // Cleanup
     EventQueries::delete_by_source("test.clock_skew".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())
@@ -461,7 +461,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
     let ordered_ids: Vec<String> = sqlx::query_scalar!(
         "SELECT event_id::text FROM core.events WHERE source = 'test.ulid_performance' ORDER BY event_id"
     )
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?
     .into_iter()
     .filter_map(|opt| opt)
@@ -520,7 +520,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> TestResult
 
     // Cleanup
     EventQueries::delete_by_source("test.ulid_performance".to_string())
-        .execute(&pool)
+        .execute(pool)
         .await?;
 
     Ok(())

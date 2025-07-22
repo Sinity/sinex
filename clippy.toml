@@ -1,0 +1,83 @@
+# Sinex Clippy Configuration
+# Enforces use of proper abstractions over raw implementations
+
+# Disallow methods that bypass our abstractions
+disallowed-methods = [
+    # SQL Query Methods - Use QueryBuilder instead
+    { path = "sqlx::query", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "sqlx::query_as", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "sqlx::query_scalar", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "sqlx::query_file", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "sqlx::query_file_as", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    
+    # Error Handling - Use CoreError instead
+    { path = "anyhow::anyhow", reason = "Use CoreError from sinex-error instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "anyhow::bail", reason = "Use CoreError from sinex-error instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "anyhow::ensure", reason = "Use CoreError from sinex-error instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    
+    # Avoid in production code
+    { path = "std::thread::sleep", reason = "Use tokio::time::sleep for async code" },
+    { path = "std::fs::read", reason = "Use tokio::fs for async I/O" },
+    { path = "std::fs::write", reason = "Use tokio::fs for async I/O" },
+]
+
+# Warn on common anti-patterns
+warn-on-all-wildcard-imports = true
+enum-variant-name-threshold = 3
+single-char-lifetime-names = ["'a", "'b", "'c"]
+
+# Enforce documentation
+missing-docs-in-private-items = false
+missing-errors-doc = true
+missing-panics-doc = true
+missing-safety-doc = true
+
+# Complexity thresholds
+cognitive-complexity-threshold = 30
+too-many-arguments-threshold = 7
+type-complexity-threshold = 250
+too-many-lines-threshold = 100
+
+# Style preferences
+module-name-repetitions = true
+mod-module-files = false
+
+[lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+# Error handling
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unimplemented = "warn"
+todo = "warn"
+unreachable = "warn"
+
+# Best practices
+await_holding_lock = "deny"
+await_holding_refcell_ref = "deny"
+large_futures = "warn"
+mutex_atomic = "warn"
+redundant_allocation = "warn"
+
+# Performance
+inefficient_to_string = "warn"
+large_types_passed_by_value = "warn"
+trivially_copy_pass_by_ref = "warn"
+unnecessary_wraps = "warn"
+
+# Correctness
+correctness = "deny"
+suspicious = "deny"
+
+# Style
+needless_pass_by_value = "warn"
+redundant_clone = "warn"
+unnecessary_cast = "warn"
+wildcard_imports = "warn"
+
+# Specific to Sinex patterns
+string_lit_as_bytes = "warn"  # Use constants
+manual_string_new = "warn"    # Consistent string creation

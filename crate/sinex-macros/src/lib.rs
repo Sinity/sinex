@@ -39,14 +39,14 @@
 //! ```rust
 //! event_registry! {
 //!     sources {
-//!         FILESYSTEM => "fs",
+//!         FILESYSTEM => sources::FS,
 //!         SHELL => "shell",
 //!     }
 //!     
 //!     events {
 //!         filesystem => FILESYSTEM {
-//!             FILE_CREATED => "file.created" with FileCreatedPayload,
-//!             FILE_MODIFIED => "file.modified" with FileModifiedPayload,
+//!             FILE_CREATED => event_types::file::CREATED with FileCreatedPayload,
+//!             FILE_MODIFIED => event_types::file::MODIFIED with FileModifiedPayload,
 //!         },
 //!     }
 //! }
@@ -114,14 +114,14 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// event_registry! {
 ///     sources {
-///         FILESYSTEM => "fs",
+///         FILESYSTEM => sources::FS,
 ///         SHELL => "shell",
 ///     }
 ///     
 ///     events {
 ///         filesystem => FILESYSTEM {
-///             FILE_CREATED => "file.created" with FileCreatedPayload,
-///             FILE_MODIFIED => "file.modified" with FileModifiedPayload,
+///             FILE_CREATED => event_types::file::CREATED with FileCreatedPayload,
+///             FILE_MODIFIED => event_types::file::MODIFIED with FileModifiedPayload,
 ///         },
 ///     }
 /// }
@@ -414,7 +414,7 @@ pub fn auto_db_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
 /// ```rust
 /// use sinex_macros::auto_event_metrics;
 ///
-/// #[auto_event_metrics(event_type = "file.created")]
+/// #[auto_event_metrics(event_type = event_types::file::CREATED)]
 /// async fn handle_file_created(event: &str) -> Result<(), Box<dyn std::error::Error>> {
 ///     // function body
 /// }

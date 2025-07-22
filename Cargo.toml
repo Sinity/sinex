@@ -33,6 +33,7 @@ members = [
     "crate/sinex-core-runtime",
     "crate/sinex-core-fs",
     "crate/sinex-metrics-lib",
+    # Test infrastructure
 ]
 resolver = "2"
 
@@ -107,6 +108,7 @@ proptest.workspace = true
 tempfile.workspace = true
 rusqlite = { version = "0.30", features = ["bundled"] }
 sinex-test-macros = { path = "crate/sinex-test-macros" }
+sinex-utils = { path = "crate/sinex-utils" }
 criterion.workspace = true
 pretty_assertions = "1.4"
 serial_test = "3.0"
@@ -132,6 +134,12 @@ tokio-stream.workspace = true
 # Additional test-specific dependencies
 sinex-services = { path = "crate/sinex-services" }
 sinex-ingestd = { path = "crate/sinex-ingestd" }
+# Snapshot testing dependencies
+similar = "2.3"
+regex = "1.10"
+# Unicode testing dependencies
+unicode-normalization = "0.1"
+unicode-script = "0.5"
 
 [workspace.package]
 version = "0.4.2"

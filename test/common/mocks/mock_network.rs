@@ -12,8 +12,7 @@ use crate::common::prelude::*;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
-use tokio::net::TcpListener;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use tokio::time::{Duration, Instant};
 
 /// Configuration for MockNetwork behavior

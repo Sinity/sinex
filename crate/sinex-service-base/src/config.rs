@@ -315,7 +315,7 @@ impl ConfigManager {
             ServiceError::Configuration(format!("Service {} not found", service_name))
         })?;
 
-        let mut reloaded_keys = Vec::new();
+        let reloaded_keys = Vec::new();
 
         // Reload environment variables for hot-reloadable entries
         let env_entries: Vec<String> = config

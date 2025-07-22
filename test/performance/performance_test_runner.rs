@@ -4,13 +4,11 @@
 // establishment, regression detection, and bottleneck identification.
 // Provides unified reporting and performance tracking capabilities.
 
-use redis::cmd;
-use crate::common::prelude::*;
-
 use crate::common::prelude::*;
 use crate::performance::baseline_performance_test::{BaselineTracker, EnvironmentInfo};
 use crate::performance::regression_detection_test::RegressionDetector;
 use crate::performance::bottleneck_identification_test::BottleneckDetector;
+use redis::cmd;
 use serde_json::json;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
@@ -389,7 +387,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> TestResult {
             // Keep as raw SQL for timing measurement
             let query_result = sqlx::query!(
                 "SELECT COUNT(*) as count FROM core.events WHERE source = 'comprehensive-test'"
-            ).fetch_one(&pool).await;
+            ).fetch_one(pool).await;
             let query_duration = query_start.elapsed();
             
             runner.record_operation("database_query", query_duration, query_result.is_ok());

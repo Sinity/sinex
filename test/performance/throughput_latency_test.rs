@@ -4,13 +4,10 @@
 // under various conditions. These tests establish performance baselines and verify
 // that the system meets performance requirements.
 
+use crate::common::prelude::*;
 use redis::cmd;
-use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use chrono::{Duration, Utc};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -101,19 +98,30 @@ async fn test_event_ingestion_throughput(ctx: TestContext) -> TestResult {
     
     println!("Testing event ingestion throughput with {} events", event_count);
     
-    // Generate test events
-    let test_events = generators::test_events(event_count);
+    // Generate and process test events in batches
+    let factory = EventFactory::new("throughput-test");
     
     // Process events in batches for better throughput
-    for batch in test_events.chunks(batch_size) {
+    for batch_idx in 0..(event_count / batch_size) {
         let batch_start = Instant::now();
         let mut batch_success = 0;
         let mut batch_failures = 0;
         
-        for event in batch {
+        for i in 0..batch_size {
+            let event_id = batch_idx * batch_size + i;
+            let event = factory.create_event(
+                event_types::test::PERFORMANCE_TEST,
+                json!({
+                    "event_id": event_id,
+                    "batch_id": batch_idx,
+                    "test_type": "throughput",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                })
+            );
+            
             let operation_start = Instant::now();
             
-            match sinex_db::insert_event_with_validator(pool, event, None).await {
+            match sinex_db::insert_event_with_validator(pool, &event, None).await {
                 Ok(_) => {
                     batch_success += 1;
                     metrics.record_operation(operation_start.elapsed(), true);
@@ -163,12 +171,22 @@ async fn test_event_ingestion_latency_scaling(ctx: TestContext) -> TestResult {
         println!("\nTesting load level: {} events", load_level);
         
         let mut metrics = PerformanceMetrics::new();
-        let test_events = generators::test_events(load_level);
+        let factory = EventFactory::new("latency-test");
         
-        for event in &test_events {
+        for i in 0..load_level {
+            let event = factory.create_event(
+                event_types::test::PERFORMANCE_TEST,
+                json!({
+                    "event_id": i,
+                    "load_level": load_level,
+                    "test_type": "latency_scaling",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                })
+            );
+            
             let operation_start = Instant::now();
             
-            match sinex_db::insert_event_with_validator(pool, event, None).await {
+            match sinex_db::insert_event_with_validator(pool, &event, None).await {
                 Ok(_) => {
                     metrics.record_operation(operation_start.elapsed(), true);
                 }
@@ -215,12 +233,20 @@ async fn test_database_query_performance(ctx: TestContext) -> TestResult {
     
     // Pre-populate database with test data
     let event_count = 1000;
-    let test_events = generators::test_events(event_count);
+    let factory = EventFactory::new("query-test-seed");
     
     println!("Populating database with {} test events", event_count);
     
-    for event in &test_events {
-        sinex_db::insert_event_with_validator(pool, event, None).await?;
+    for i in 0..event_count {
+        let event = factory.create_event(
+            event_types::test::PERFORMANCE_TEST,
+            json!({
+                "event_id": i,
+                "test_type": "query_test_seed",
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            })
+        );
+        sinex_db::insert_event_with_validator(pool, &event, None).await?;
     }
     
     // Test different query patterns
@@ -246,32 +272,32 @@ async fn test_database_query_performance(ctx: TestContext) -> TestResult {
                     let test_id = test_events[0].id.to_uuid();
                     sqlx::query(query)
                         .bind(test_id)
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Source filter" => {
                     sqlx::query(query)
                         .bind(&test_events[0].source)
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Event type filter" => {
                     sqlx::query(query)
                         .bind(&test_events[0].event_type)
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Time range query" => {
                     sqlx::query(query)
                         .bind(Utc::now() - Duration::hours(1))
                         .bind(Utc::now())
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Payload JSON query" => {
                     sqlx::query(query)
                         .bind(serde_json::json!({"test": "value"}))
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 "Complex filter" => {
@@ -279,7 +305,7 @@ async fn test_database_query_performance(ctx: TestContext) -> TestResult {
                         .bind(&test_events[0].source)
                         .bind(&test_events[0].event_type)
                         .bind(Utc::now() - Duration::hours(1))
-                        .fetch_all(&pool)
+                        .fetch_all(pool)
                         .await
                 }
                 _ => unreachable!(),
@@ -418,7 +444,7 @@ async fn test_concurrent_access_performance(ctx: TestContext) -> TestResult {
     let total_inserted = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-worker-%'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
     
     println!("Database consistency check: {} events inserted", total_inserted.count.unwrap_or(0));
@@ -599,7 +625,7 @@ async fn test_end_to_end_performance(ctx: TestContext) -> TestResult {
                 "SELECT id, payload FROM core.events WHERE event_id = $1::uuid",
                 event.id.to_uuid()
             )
-            .fetch_optional(&pool)
+            .fetch_optional(pool)
             .await
         } else {
             Ok(None)
@@ -624,7 +650,7 @@ async fn test_end_to_end_performance(ctx: TestContext) -> TestResult {
     let total_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source = 'performance-satellite'"
     )
-    .fetch_one(&pool)
+    .fetch_one(pool)
     .await?;
     
     println!("Database verification: {} events stored", total_events.count.unwrap_or(0));

@@ -5,12 +5,9 @@
 // statistical significance testing, and automated alerting capabilities.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use crate::performance::baseline_performance_test::{PerformanceBaseline, BaselineTracker, EnvironmentInfo};
 use serde_json::json;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
 

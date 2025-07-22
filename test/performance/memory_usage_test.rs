@@ -5,11 +5,8 @@
 // These tests help identify memory bottlenecks and optimization opportunities.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use serde_json::json;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use std::sync::Arc;
@@ -168,22 +165,28 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> TestResult {
         
         metrics.record_measurement(&format!("Before batch {}", batch_size));
         
-        let test_events = generators::test_events(batch_size);
+        let factory = EventFactory::new("memory-test");
         
         // Process events and measure memory at different stages
-        for (i, event) in test_events.iter().enumerate() {
+        for i in 0..batch_size {
             if i % 100 == 0 {
                 metrics.record_measurement(&format!("Processing event {} in batch {}", i, batch_size));
             }
             
-            sinex_db::insert_event_with_validator(pool, event, None).await?;
+            let event = factory.create_event(
+                event_types::test::GENERIC,
+                json!({
+                    "batch_size": batch_size,
+                    "event_id": i,
+                    "test_type": "memory_usage",
+                    "timestamp": chrono::Utc::now().to_rfc3339()
+                })
+            );
+            
+            sinex_db::insert_event_with_validator(pool, &event, None).await?;
         }
         
         metrics.record_measurement(&format!("After batch {}", batch_size));
-        
-        // Force garbage collection hint (if available)
-        // This is a hint to the runtime, actual GC depends on the allocator
-        std::hint::black_box(&test_events);
         
         // Small delay to allow potential cleanup
         tokio::time::sleep(StdDuration::from_millis(100)).await;
@@ -388,7 +391,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> TestResult {
         "Memory leak detected with large payloads");
     
     // Verify events were stored using centralized query system
-    let stored_events = EventQueries::count_by_source(&pool, "large-payload-test").fetch_one(&pool).await?;
+    let stored_events = EventQueries::count_by_source(&pool, "large-payload-test").fetch_one(pool).await?;
     
     println!("📊 Large payload events stored: {}", stored_events);
     assert!(stored_events > 0,
@@ -504,8 +507,8 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> TestResult {
         "Memory should recover to reasonable levels after stress test");
     
     // Verify database consistency using centralized query system
-    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(&pool).await?;
-    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(&pool).await?;
+    let stress_test_count = EventQueries::count_by_source(&pool, "memory-stress-test").fetch_one(pool).await?;
+    let sustained_test_count = EventQueries::count_by_source(&pool, "sustained-memory-test").fetch_one(pool).await?;
     let total_stress_events = stress_test_count + sustained_test_count;
     
     println!("📊 Stress test events stored: {}", total_stress_events);

@@ -5,11 +5,8 @@
 // Provides automated bottleneck detection and performance optimization guidance.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
-use crate::common::{events, generators};
 use serde_json::json;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{EventFactory, sources, event_types};
 use sinex_satellite_sdk::RedisStreamClient;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -888,7 +885,7 @@ async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResu
     // Verify database consistency
     let concurrent_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-bottleneck-worker-%'"
-    ).fetch_one(&pool).await?;
+    ).fetch_one(pool).await?;
     
     println!("    📊 Concurrent events stored: {}", concurrent_events.count.unwrap_or(0));
     

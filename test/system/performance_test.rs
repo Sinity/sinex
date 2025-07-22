@@ -21,7 +21,6 @@
 // - **Baseline performance**: 1000+ events/second insertion rate
 
 use crate::common::prelude::*;
-
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::{EventFactory, services, event_types};
 use sqlx::Row;

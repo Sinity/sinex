@@ -156,6 +156,11 @@ impl Ulid {
     pub fn is_nil(&self) -> bool {
         self.0.to_bytes().iter().all(|&b| b == 0)
     }
+
+    /// Create a nil/zero ULID (all zeros)
+    pub fn nil() -> Self {
+        Self::from_bytes([0; 16]).expect("nil ULID should always be valid")
+    }
 }
 
 impl Default for Ulid {

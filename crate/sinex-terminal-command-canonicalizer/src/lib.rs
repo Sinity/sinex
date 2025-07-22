@@ -21,6 +21,7 @@ use sinex_satellite_sdk::{
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use tracing::{debug, info};
+// use sinex_events::constants::{event_types, sources}; // already imported above
 
 /// Terminal command canonicalizer automaton
 pub struct TerminalCommandCanonicalizer {

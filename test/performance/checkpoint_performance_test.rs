@@ -5,8 +5,6 @@
 // Critical for automaton reliability and system recovery.
 
 use crate::common::prelude::*;
-
-use crate::common::prelude::*;
 use serde_json::json;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use sinex_satellite_sdk::stream_processor::Checkpoint;
@@ -204,7 +202,7 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
                 consumer_group,
                 checkpoint_state.last_processed_id(),
                 checkpoint_state.data
-            ).execute(&pool).await;
+            ).execute(pool).await;
             
             let save_duration = save_start.elapsed();
             let operation_key = format!("save_{}", size_label);
@@ -222,7 +220,7 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
                 "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1 AND consumer_group = $2",
                 automaton_name,
                 consumer_group
-            ).fetch_optional(&pool).await;
+            ).fetch_optional(pool).await;
             
             let load_duration = load_start.elapsed();
             let load_operation_key = format!("load_{}", size_label);
@@ -332,7 +330,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
             consumer_group,
             format!("event-id-{}", i * 100),
             checkpoint_data
-        ).execute(&pool).await?;
+        ).execute(pool).await?;
     }
     
     println!("  Testing individual checkpoint recovery");
@@ -347,7 +345,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
             "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1 AND consumer_group = $2",
             automaton_name,
             consumer_group
-        ).fetch_optional(&pool).await;
+        ).fetch_optional(pool).await;
         
         let recovery_duration = recovery_start.elapsed();
         metrics.record_recovery_time(recovery_duration);
@@ -397,7 +395,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
     let bulk_result = sqlx::query!(
         "SELECT automaton_name, last_processed_id, state_data FROM core.automaton_checkpoints WHERE consumer_group = $1",
         consumer_group
-    ).fetch_all(&pool).await;
+    ).fetch_all(pool).await;
     
     let bulk_recovery_duration = bulk_recovery_start.elapsed();
     
@@ -646,7 +644,7 @@ async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> TestResult 
     
     let all_checkpoints = sqlx::query!(
         "SELECT automaton_name, last_processed_id, state_data FROM core.automaton_checkpoints WHERE consumer_group = 'high-frequency-group'"
-    ).fetch_all(&pool).await?;
+    ).fetch_all(pool).await?;
     
     let recovery_duration = recovery_start.elapsed();
     
