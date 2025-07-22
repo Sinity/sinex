@@ -158,6 +158,24 @@ systemctl status sinex-fs-watcher
 ### Configuration
 Configuration is managed through the NixOS module system. Each satellite can be enabled/disabled independently. See `nixos/example.nix` for example configuration.
 
+## 🧪 Testing
+
+The Sinex test suite is optimized for parallel execution, achieving 50%+ faster test runs:
+
+- **Parallel Execution**: Automatically uses all available CPU cores
+- **Database Isolation**: 64-database pool with PostgreSQL advisory locks
+- **Fast Testing**: `just test-parallel` for maximum speed
+- **Comprehensive Coverage**: Unit, integration, property, and adversarial tests
+
+See [`docs/PARALLEL_TESTING.md`](docs/PARALLEL_TESTING.md) for detailed testing guide.
+
+Quick commands:
+```bash
+just test-fast      # Fast tests only (~30s)
+just test-parallel  # All tests with max parallelism
+just test-dev       # Quick dev cycle (<2 min)
+```
+
 ## 📚 Documentation
 
 ### Core Documentation

@@ -1,6 +1,7 @@
 [profile.default]
-# Run tests in parallel
-test-threads = 12
+# Run tests in parallel - optimized for 24-core system
+# Use num-cpus to dynamically adapt to the system
+test-threads = "num-cpus"
 
 # Show output for failed tests immediately with full context
 failure-output = "immediate-final"
@@ -41,3 +42,25 @@ failure-output = "immediate-final"
 success-output = "immediate-final"
 retries = 0
 slow-timeout = { period = "300s", terminate-after = 1 }
+
+# Parallel profile - maximum parallelism for speed
+[profile.parallel]
+# Use all available CPUs for maximum speed
+test-threads = "num-cpus"
+# Minimize output for speed
+failure-output = "final"
+success-output = "never"
+# No retries for speed
+retries = 0
+# Shorter timeout for parallel execution
+slow-timeout = { period = "60s", terminate-after = 1 }
+
+# CI parallel profile - balanced for reliability with good parallelism
+[profile.ci-parallel]
+# Use 75% of CPUs to leave headroom for system
+test-threads = 18
+failure-output = "immediate-final"
+success-output = "never"
+# One retry for flaky tests
+retries = 1
+slow-timeout = { period = "120s", terminate-after = 1 }
