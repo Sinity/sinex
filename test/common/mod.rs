@@ -14,6 +14,7 @@
 // - `worker_test_utils` - Worker and work queue testing
 // - `schema_test_utils` - JSON schema validation testing
 
+use crate::common::prelude::*;
 
 #[allow(dead_code)] // Test utilities may not all be used
 #[allow(unused_variables)] // Test patterns
@@ -21,12 +22,21 @@
 // Test prelude for standardized imports
 pub mod prelude;
 
+// Pre-initialized database pool with clean-before-use
+pub mod database_pool;
+
 // Unified test context for all tests
 pub mod test_context;
 
+// Event builders for test compatibility
+pub mod event_builders;
+
 // Re-export the procedural macros from sinex-test-macros crate and make them public
 pub use crate::common::prelude::*;
+use sinex_db::events as db_events;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_db::query_helpers::uuid_to_ulid;
 use sinex_events::{sources, EventFactory};
 
 /// Get test database URL with fallback
@@ -35,67 +45,7 @@ pub fn test_database_url() -> String {
         .unwrap_or_else(|_| "postgres://sinex_test:testpass@localhost:5433/sinex_test".to_string())
 }
 
-/// Wait for filtered event count with custom SQL filter
-pub async fn wait_for_filtered_event_count(
-    pool: &DbPool,
-    filter_sql: &str,
-    params: &[&str],
-    expected_count: i64,
-    timeout_secs: u64,
-) -> AnyhowResult<i64> {
-    use std::time::{Duration, Instant};
-    use tokio::time::sleep;
-    
-    let start = Instant::now();
-    let timeout = Duration::from_secs(timeout_secs);
-    
-    while start.elapsed() < timeout {
-        let query_sql = format!(
-            "SELECT COUNT(*) FROM core.events WHERE {}",
-            filter_sql
-        );
-        let mut query = sqlx::query_scalar(&query_sql);
-        
-        for param in params {
-            query = query.bind(param);
-        }
-        
-        let count: i64 = query.fetch_one(pool).await?;
-        
-        if count >= expected_count {
-            return Ok(count);
-        }
-        
-        sleep(Duration::from_millis(50)).await;
-    }
-    
-    Err(anyhow::anyhow!(
-        "Timeout waiting for filtered event count: expected {}, filter: {}",
-        expected_count, filter_sql
-    ))
-}
-
-/// Assert that an event was inserted with contextual information
-pub async fn assert_event_inserted_with_context(
-    pool: &DbPool,
-    event: &RawEvent,
-    context: &str,
-) -> AnyhowResult<()> {
-    use sinex_db::queries::EventQueries;
-    
-    let stored: Option<RawEvent> = EventQueries::get_by_id(event.id)
-        .fetch_optional(pool)
-        .await?;
-    
-    match stored {
-        Some(_) => Ok(()),
-        None => Err(anyhow::anyhow!(
-            "Event {} not found in database (context: {})",
-            event.id, context
-        )),
-    }
-}
-
+use tokio::net::UnixListener;
 
 
 /// Count events from a specific satellite source
@@ -112,10 +62,8 @@ pub async fn count_events_from_source(
 
 /// Create a test database pool with high concurrency settings
 pub async fn create_test_db_pool() -> AnyhowResult<DbPool> {
-    // Temporarily disabled due to missing database_pool module
-    // let test_db = database_pool::acquire_test_database().await?;
-    // Ok(test_db.pool().clone())
-    Err(anyhow::anyhow!("database_pool module not available"))
+    let test_db = database_pool::acquire_test_database().await?;
+    Ok(test_db.pool().clone())
 }
 
 /// Insert any event into database (renamed for clarity)
@@ -658,7 +606,30 @@ pub async fn get_events_in_time_range(
     Ok(events)
 }
 
-// Macros moved to test_macros.rs to avoid duplication
+/// Macros for common test patterns
+#[macro_export]
+macro_rules! test_event_insertion {
+    ($test_name:ident, $event_builder:expr) => {
+        #[sinex_test]
+        async fn $test_name(pool: DbPool) -> TestResult {
+            let event = $event_builder;
+            $crate::common::assertions::assert_event_inserted(&pool, &event).await?;
+            Ok(())
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! test_invalid_event_insertion {
+    ($test_name:ident, $event_builder:expr) => {
+        #[sinex_test]
+        async fn $test_name(pool: DbPool) -> TestResult {
+            let event = $event_builder;
+            $crate::common::assertions::assert_event_insertion_fails(&pool, &event).await?;
+            Ok(())
+        }
+    };
+}
 
 /// Test environment utilities
 #[allow(dead_code)]
@@ -1193,39 +1164,34 @@ pub mod resources {
 // Re-export commonly used items for convenience
 pub use sinex_db::models::AutomatonManifest;
 // Note: Some query functions may need to be migrated to domain modules
-// pub mod channel_test_utils;
-// pub mod config_test_utils;
-// pub mod enhanced_assertions;
+pub mod channel_test_utils;
+pub mod config_test_utils;
+pub mod enhanced_assertions;
 /// Timing optimization utilities to reduce test flakiness
 pub mod timing_optimization;
+
+/// Validation test utilities
+pub mod validation_test_utils;
+
+// Re-export the final pool as the default - used directly from database_pool module
+
+/// Schema test utilities
+pub mod schema_test_utils;
+
+/// Worker test utilities
+pub mod worker_test_utils;
+
+/// Coverage assurance utilities
+pub mod coverage_assurance;
+
+// Satellite architecture test utilities
+pub mod satellite_test_utils;
 
 /// Mock implementations for testing
 pub mod mocks;
 
-/// Test-specific query helpers using centralized query builders
-pub mod query_helpers;
-
-/// Enhanced test data builders with fluent interfaces
-pub mod builders;
-
-/// Property testing helpers and strategies
-pub mod property_helpers;
-
-/// Test macros for reducing repetition
-#[macro_use]
-pub mod test_macros;
-
-/// Error testing helpers, utilities and macros
-pub mod error_helpers;
-
-/// Test fixture management system
-pub mod fixtures;
-
-/// Database pool management for test isolation
-pub mod database_pool;
-
-/// Satellite testing utilities
-pub mod satellite_test_utils;
+/// Configuration compatibility testing utilities
+pub mod config_compatibility_tester;
 
 /// Integration testing patterns for satellite architecture
 pub mod satellite_integration {
@@ -1243,7 +1209,6 @@ pub mod satellite_integration {
         pub stream_key: String,
     }
 
-    
     impl SatelliteTestSetup {
         /// Create a complete satellite test environment
         pub async fn new(test_name: &str) -> AnyhowResult<Self> {
@@ -1265,11 +1230,10 @@ pub mod satellite_integration {
 
         /// Add a test satellite to the setup
         pub async fn add_satellite(&self, service_name: &str) -> AnyhowResult<TestSatelliteHandle> {
-            let config_json = crate::common::satellite_test_utils::create_test_satellite_config(
+            let config = crate::common::satellite_test_utils::create_test_satellite_config(
                 service_name,
                 &self.ingestd.socket_path,
             );
-            let config: sinex_satellite_sdk::config::SatelliteConfig = serde_json::from_value(config_json)?;
             self.ctx.start_test_satellite(config).await
         }
 
@@ -1327,7 +1291,7 @@ pub mod satellite_integration {
 pub mod event_sources {
     use super::*;
     use sinex_events::RawEvent;
-    use sinex_satellite_sdk::EventSourceConfig;
+    use sinex_satellite_sdk::{EventSourceConfig, StatefulStreamProcessor};
     use tokio::time::{timeout, Duration};
 
     /// Trait for event sources in testing

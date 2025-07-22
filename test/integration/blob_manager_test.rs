@@ -405,7 +405,7 @@ async fn test_annex_key_parsing(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_blob_manager_creation_without_git_annex(ctx: TestContext) -> TestResult {
+async fn test_blob_manager_creation_without_git_annex() -> TestResult {
     // This test runs when git-annex is NOT available
     if BlobManagerTest::is_git_annex_available().await {
         eprintln!("Skipping test: git-annex is available");

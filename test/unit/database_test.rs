@@ -9,14 +9,18 @@
 // - Complex query operations
 
 use crate::common::prelude::*;
-use crate::common::assertions::assert_events_equivalent;
 use serde_json::json;
+use sinex_error::ErrorContext;
 // Sources and event types now in sinex_events
-use sinex_events::{EventFactory, event_types, sources};
-use sinex_db::queries::EventQueries;
+use sinex_events::{EventFactory, services as event_sources, event_types, sources};
+use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_db::query_helpers::ulid_to_uuid;
 use sinex_db::validation::EventValidator;
-use sinex_validation::validation_chains::{ValidationChain, JsonType};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32},
+    Arc,
+};
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
@@ -34,8 +38,10 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
         .size(1024)
         .build();
 
-    // Insert the event
-    let event_id = insert_event(ctx.pool(), &event).await?;
+    // Insert using enhanced assertion with error context
+    let event_id =
+        assert_event_inserted_with_context(ctx.pool(), &event, "basic_event_insertion_test")
+            .await?;
 
     // Retrieve the inserted event
     let inserted_event = sinex_db::get_event_by_id(ctx.pool(), event_id)
@@ -49,23 +55,23 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
         })?;
 
     // Verify using enhanced event equivalence assertion
-    assert_events_equivalent(&inserted_event, &event);
+    assert_events_equivalent(&inserted_event, &event)?;
 
     // Use ValidationChain to validate the event structure
-    ValidationChain::validate(inserted_event.source.clone(), "event_source")
-        .not_empty()
-        .into_result()?;
+    let source_validation = ValidationChain::validate(inserted_event.source.clone(), "event_source")
+        .not_empty();
+    assert_validation_passes(source_validation)?;
     
-    ValidationChain::validate(inserted_event.event_type.clone(), "event_type")
-        .not_empty()
-        .into_result()?;
+    let event_type_validation = ValidationChain::validate(inserted_event.event_type.clone(), "event_type")
+        .not_empty();
+    assert_validation_passes(event_type_validation)?;
     
-    ValidationChain::validate(inserted_event.payload.clone(), "payload")
-        .json_type(JsonType::Object)
-        .into_result()?;
+    let payload_validation = ValidationChain::validate(inserted_event.payload.clone(), "payload")
+        .json_type(sinex_validation::validation_chains::JsonType::Object);
+    assert_validation_passes(payload_validation)?;
 
     // Validate specific payload fields using ValidationChain
-    ValidationChain::validate(
+    let path_validation = assert_with_validation(
         inserted_event.payload["path"]
             .as_str()
             .unwrap_or("")
@@ -76,8 +82,9 @@ async fn test_basic_event_insertion(ctx: TestContext) -> TestResult {
     .custom(
         |path| path.starts_with("/test/"),
         "should be in test directory",
-    )
-    .into_result()?;
+    );
+
+    assert_validation_passes(path_validation)?;
     Ok(())
 }
 
@@ -94,25 +101,39 @@ async fn test_multiple_event_insertion(ctx: TestContext) -> TestResult {
         EventBuilder::clipboard().text("test clipboard").build(),
     ];
 
+    let mut assertion_batch = TestAssertionBatch::new("multi_event_insertion_test");
     let mut event_ids = Vec::new();
 
     // Insert all events and collect results
     for (i, event) in events.iter().enumerate() {
-        let event_id = insert_event(ctx.pool(), event).await?;
+        let event_id =
+            assert_event_inserted_with_context(ctx.pool(), event, &format!("multi_event_{}", i))
+                .await?;
         event_ids.push(event_id);
     }
 
-    // Validate all events
+    // Use batch assertions to validate all events
     for (i, (event, event_id)) in events.iter().zip(event_ids.iter()).enumerate() {
-        assert!(
-            event_id.to_string().len() == 26,
-            "ULID should be 26 characters for event_{}_ulid_check", i
+        assertion_batch.assert_that(
+            || {
+                assert_with_context(
+                    event_id.to_string().len() == 26,
+                    "ULID should be 26 characters",
+                    &format!("event_{}_ulid_check", i),
+                )
+            },
+            &format!("event {} ULID validation", i),
         );
 
-        ValidationChain::validate(event.source.clone(), &format!("event_{}_source", i))
-            .not_empty()
-            .into_result()?;
+        assertion_batch.assert_validation(
+            ValidationChain::validate(event.source.clone(), &format!("event_{}_source", i))
+                .not_empty(),
+            &format!("event {} source validation", i),
+        );
     }
+
+    // Execute all batched assertions
+    assertion_batch.execute()?;
     Ok(())
 }
 
@@ -286,15 +307,17 @@ async fn test_event_validation_creation(_ctx: TestContext) -> TestResult {
     let invalid_result = validator.validate(&invalid_event);
 
     // Use enhanced assertions with context
-    assert!(
+    assert_with_context(
         valid_result.is_ok(),
-        "Valid event should pass validation"
-    );
+        "Valid event should pass validation",
+        "event_validator_creation_test",
+    )?;
 
-    assert!(
+    assert_with_context(
         invalid_result.is_err(),
-        "Invalid event should fail validation"
-    );
+        "Invalid event should fail validation",
+        "event_validator_creation_test",
+    )?;
 
     Ok(())
 }
@@ -373,10 +396,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
 
     for (event, case_name) in test_cases {
         let result = validator.validate(&event);
-        assert!(
+        assert_with_context(
             result.is_err(),
-            "Event should fail validation for case: {}", case_name
-        );
+            &format!("Event should fail validation for case: {}", case_name),
+            "comprehensive_event_validation_test",
+        )?;
     }
 
     // Test valid event
@@ -386,10 +410,11 @@ async fn test_comprehensive_event_validation(_ctx: TestContext) -> TestResult {
         .build();
 
     let result = validator.validate(&valid_event);
-    assert!(
+    assert_with_context(
         result.is_ok(),
-        "Valid event should pass validation"
-    );
+        "Valid event should pass validation",
+        "comprehensive_event_validation_test",
+    )?;
 
     Ok(())
 }
@@ -417,7 +442,7 @@ async fn test_model_serialization(_ctx: TestContext) -> TestResult {
         .map_err(|e| format!("Failed to deserialize event: {}", e))?;
 
     // Verify equivalence
-    assert_events_equivalent(&event, &deserialized);
+    assert_events_equivalent(&event, &deserialized)?;
 
     // Test specific fields
     pretty_assertions::assert_eq!(event.id, deserialized.id);
@@ -497,10 +522,11 @@ async fn test_schema_validation_success(_ctx: TestContext) -> TestResult {
 
     for event in test_events {
         let result = validator.validate(&event);
-        assert!(
+        assert_with_context(
             result.is_ok(),
-            "Event of type {} should pass validation", event.event_type
-        );
+            &format!("Event of type {} should pass validation", event.event_type),
+            "schema_validation_success_test",
+        )?;
     }
 
     Ok(())
@@ -534,10 +560,11 @@ async fn test_schema_validation_failure(_ctx: TestContext) -> TestResult {
     };
 
     let result = validator.validate(&invalid_event);
-    assert!(
+    assert_with_context(
         result.is_err(),
-        "Event with invalid payload should fail validation"
-    );
+        "Event with invalid payload should fail validation",
+        "schema_validation_failure_test",
+    )?;
 
     Ok(())
 }
@@ -925,7 +952,7 @@ async fn test_database_connection_pool_health(ctx: TestContext) -> TestResult {
     drop(connections);
 
     // Verify pool is still functional
-    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(pool).await?;
+    let final_test = sqlx::query!("SELECT 1 as test").fetch_one(&pool).await?;
 
     assert_eq!(final_test.test, Some(1));
 
@@ -939,10 +966,10 @@ async fn test_database_error_handling(ctx: TestContext) -> TestResult {
 
     // Test handling of SQL syntax errors
     let syntax_error = sqlx::query("SELECT * FROM nonexistent_table_12345")
-        .fetch_optional(pool)
+        .fetch_optional(&pool)
         .await;
 
-    assert!(syntax_error.is_err());
+    assert!(syntax_error.is_err(), "Should fail with syntax/table error");
 
     // Test handling of constraint violations by creating an event and trying to insert a duplicate
     let event = EventFactory::new("unit-test-error").create_event(
@@ -1060,7 +1087,7 @@ async fn test_satellite_event_streaming(ctx: TestContext) -> TestResult {
     }
 
     // Verify heartbeats were sent
-    assert!(heartbeat_count >= 2);
+    assert!(heartbeat_count >= 2, "Should have sent multiple heartbeats");
 
     // Verify heartbeat events are in database
     let heartbeat_events = sqlx::query!(
@@ -1260,7 +1287,7 @@ async fn test_memory_availability_check(_ctx: TestContext) -> TestResult {
 
     // Available memory should be positive
     let available_gb = memory_info["available_gb"].as_f64().unwrap();
-    assert!(available_gb > 0.0);
+    assert!(available_gb > 0.0, "Available memory should be positive");
 
     Ok(())
 }
@@ -1309,11 +1336,11 @@ async fn test_cpu_capacity_check(_ctx: TestContext) -> TestResult {
 
     // CPU count should be positive
     let cpu_count = cpu_info["cpu_count"].as_u64().unwrap();
-    assert!(cpu_count > 0);
+    assert!(cpu_count > 0, "CPU count should be positive");
 
     // Load average should be non-negative
     let load_avg = cpu_info["load_average_1min"].as_f64().unwrap();
-    assert!(load_avg >= 0.0);
+    assert!(load_avg >= 0.0, "Load average should be non-negative");
 
     Ok(())
 }
@@ -1399,7 +1426,7 @@ async fn test_raw_event_validation(_ctx: TestContext) -> TestResult {
         !event_id.to_string().is_empty(),
         "Event ID should be valid ULID"
     );
-    assert!(payload.is_object());
+    assert!(payload.is_object(), "Payload should be valid JSON object");
 
     // Validate payload contains expected structure
     assert!(
@@ -1480,10 +1507,11 @@ async fn test_streamlined_validation_demo(_ctx: TestContext) -> TestResult {
 
     // Also test with EventValidator
     let validator_result = validator.validate(&event);
-    assert!(
+    assert_with_context(
         validator_result.is_ok(),
-        "Streamlined event should pass EventValidator"
-    );
+        "Streamlined event should pass EventValidator",
+        "streamlined_validation_demo_test",
+    )?;
 
     Ok(())
 }

@@ -1,0 +1,385 @@
+// Enhanced test assertions using new abstractions
+//
+// This module provides assertion helpers that leverage ValidationChain, ErrorContext,
+// and other new abstractions to provide richer test failures and better debugging experience.
+
+use crate::common::prelude::*;
+use sinex_error::{CoreError, ErrorContext};
+use std::fmt::Debug;
+use std::future::Future;
+
+/// Enhanced assertion that uses ValidationChain for rich error reporting
+pub fn assert_with_validation<T>(value: T, field_name: &str) -> ValidationChain<T> {
+    ValidationChain::validate(value, field_name)
+}
+
+/// Assert that two values are equal with rich error context
+pub fn assert_eq_with_context<T>(left: &T, right: &T, context: &str) -> TestResult
+where
+    T: Debug + PartialEq,
+{
+    if left != right {
+        let error = sinex_core_types::CoreError::Validation(format!(
+            "Assertion failed: expected {:?}, got {:?} (context: {})",
+            right, left, context
+        ));
+
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Assert that a condition is true with error context
+pub fn assert_with_context(condition: bool, message: &str, context: &str) -> TestResult {
+    if !condition {
+        let error = sinex_core_types::CoreError::Validation(format!(
+            "{} (context: {})",
+            message, context
+        ));
+
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Assert event insertion succeeds and return ID with context
+pub async fn assert_event_inserted_with_context(
+    pool: &DbPool,
+    event: &RawEvent,
+    test_context: &str,
+) -> AnyhowResult<Ulid> {
+    match insert_event(pool, event).await {
+        Ok(id) => Ok(id),
+        Err(e) => {
+            let error = sinex_core_types::CoreError::Database(format!(
+                "Event insertion failed: {} (test_context: {}, event_id: {}, source: {}, event_type: {})",
+                e, test_context, event.id, event.source, event.event_type
+            ));
+
+            Err(error.into())
+        }
+    }
+}
+
+/// Assert that an async operation completes within timeout with context
+pub async fn assert_completes_within<F, T>(
+    operation: F,
+    timeout: Duration,
+    operation_name: &str,
+) -> AnyhowResult<T>
+where
+    F: Future<Output = Result<T, anyhow::Error>>,
+{
+    match tokio::time::timeout(timeout, operation).await {
+        Ok(result) => result,
+        Err(_) => {
+            let error = CoreError::Unknown(format!("Operation '{}' timed out after {:?}", operation_name, timeout));
+
+            Err(error.into())
+        }
+    }
+}
+
+/// Assert that a validation chain passes with helpful failure information
+pub fn assert_validation_passes<T>(chain: ValidationChain<T>) -> TestResult
+where
+    T: Debug,
+{
+    if !chain.is_valid() {
+        let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
+        let error = sinex_core_types::CoreError::Validation(format!(
+            "Validation chain failed with {} errors: {}",
+            errors.len(), errors.join("; ")
+        ));
+
+        return Err(error.into());
+    }
+    Ok(())
+}
+
+/// Assert that a validation chain fails with specific error content
+pub fn assert_validation_fails<T>(
+    chain: ValidationChain<T>,
+    expected_error_substring: &str,
+) -> TestResult
+where
+    T: Debug,
+{
+    if chain.is_valid() {
+        let error = sinex_core_types::CoreError::Validation(format!(
+            "Expected validation to fail but it passed (expected error: {})",
+            expected_error_substring
+        ));
+
+        return Err(error.into());
+    }
+
+    let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
+    let combined_errors = errors.join("; ");
+
+    if !combined_errors.contains(expected_error_substring) {
+        let error = sinex_core_types::CoreError::Validation(format!(
+            "Validation failed but with unexpected error. Expected substring: '{}', actual errors: '{}'",
+            expected_error_substring, combined_errors
+        ));
+
+        return Err(error.into());
+    }
+
+    Ok(())
+}
+
+/// Assert channel operations work correctly using ChannelSenderExt
+pub async fn assert_channel_send_success<T>(
+    sender: &impl ChannelSenderExt<T>,
+    value: T,
+    context: &str,
+) -> TestResult
+where
+    T: Send,
+{
+    sender.send_or_log(value, context).await.map_err(|e| {
+        let error = CoreError::Unknown(format!("Channel send failed in context '{}': {}", context, e));
+
+        error.into()
+    })
+}
+
+/// Assert channel operations timeout appropriately
+pub async fn assert_channel_send_timeout<T>(
+    sender: &impl ChannelSenderExt<T>,
+    value: T,
+    timeout: Duration,
+    should_timeout: bool,
+) -> TestResult
+where
+    T: Send,
+{
+    let result = sender.send_timeout(value, timeout).await;
+
+    match (result.is_err(), should_timeout) {
+        (true, true) => Ok(()),   // Expected timeout
+        (false, false) => Ok(()), // Expected success
+        (false, true) => {
+            let error = sinex_core_types::CoreError::Validation(format!(
+                "Expected channel send to timeout but it succeeded (timeout: {:?})",
+                timeout
+            ));
+
+            Err(error.into())
+        }
+        (true, false) => {
+            let error = sinex_core_types::CoreError::Validation(format!(
+                "Expected channel send to succeed but it failed (timeout: {:?})",
+                timeout
+            ));
+
+            Err(error.into())
+        }
+    }
+}
+
+/// Assert configuration validation - DEPRECATED (was used for file-based config)
+pub fn assert_config_valid(
+    config: &ConfigValue,
+    validator: impl Fn(&ConfigValue) -> AnyhowResult<()>,
+    config_name: &str,
+) -> TestResult {
+    validator(config).map_err(|e| {
+        let error = CoreError::Configuration(format!(
+            "Configuration validation failed for '{}': {}",
+            config_name, e
+        ));
+
+        error.into()
+    })
+}
+
+/// Assert that configuration extraction succeeds
+pub fn assert_config_extraction<T>(
+    extraction_result: anyhow::Result<T>,
+    field_path: &str,
+) -> AnyhowResult<T>
+where
+    T: Debug,
+{
+    extraction_result.map_err(|e| {
+        let error = CoreError::Configuration(format!(
+            "Configuration extraction failed for field '{}': {}",
+            field_path, e
+        ));
+
+        error.into()
+    })
+}
+
+/// Assert database state matches expectations with rich context
+pub async fn assert_database_state<F, T>(
+    pool: &DbPool,
+    checker: F,
+    description: &str,
+) -> AnyhowResult<T>
+where
+    F: Future<Output = Result<T, sqlx::Error>>,
+{
+    checker.await.map_err(|e| {
+        let error = sinex_core_types::CoreError::Database(format!(
+            "Database state assertion failed ({}): {}",
+            description, e
+        ));
+
+        error.into()
+    })
+}
+
+/// Multi-assertion helper that accumulates all errors using MultiValidator pattern
+pub struct TestAssertionBatch {
+    errors: Vec<String>,
+    context: String,
+}
+
+impl TestAssertionBatch {
+    pub fn new(context: &str) -> Self {
+        Self {
+            errors: Vec::new(),
+            context: context.to_string(),
+        }
+    }
+
+    /// Add an assertion that should pass
+    pub fn assert_that<F>(&mut self, check: F, description: &str) -> &mut Self
+    where
+        F: FnOnce() -> TestResult,
+    {
+        if let Err(e) = check() {
+            self.errors.push(format!("{}: {}", description, e));
+        }
+        self
+    }
+
+    /// Add a validation chain to the batch
+    pub fn assert_validation<T>(
+        &mut self,
+        chain: ValidationChain<T>,
+        description: &str,
+    ) -> &mut Self
+    where
+        T: Debug,
+    {
+        if !chain.is_valid() {
+            let errors: Vec<String> = chain.errors().iter().map(|e| e.to_string()).collect();
+            self.errors
+                .push(format!("{}: {}", description, errors.join("; ")));
+        }
+        self
+    }
+
+    /// Execute all assertions and return combined result
+    pub fn execute(self) -> TestResult {
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            let error = sinex_core_types::CoreError::Validation(format!(
+                "Multiple assertions failed in '{}': {} failures: {}",
+                self.context, self.errors.len(), self.errors.join(" | ")
+            ));
+
+            Err(error.into())
+        }
+    }
+}
+
+/// Assert events are equivalent using enhanced comparison
+pub fn assert_events_equivalent(left: &RawEvent, right: &RawEvent) -> TestResult {
+    let mut batch = TestAssertionBatch::new("event_equivalence");
+
+    batch
+        .assert_that(
+            || assert_eq_with_context(&left.source, &right.source, "event source"),
+            "source comparison",
+        )
+        .assert_that(
+            || assert_eq_with_context(&left.event_type, &right.event_type, "event type"),
+            "event_type comparison",
+        )
+        .assert_that(
+            || assert_eq_with_context(&left.payload, &right.payload, "event payload"),
+            "payload comparison",
+        )
+        .assert_that(
+            || assert_eq_with_context(&left.host, &right.host, "event host"),
+            "host comparison",
+        );
+
+    batch.execute()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validation_chain_assertions() {
+        // Test passing validation
+        let chain = ValidationChain::validate("valid_value".to_string(), "test_field")
+            .not_empty()
+            .min_length(5);
+
+        assert!(assert_validation_passes(chain).is_ok());
+
+        // Test failing validation
+        let chain = ValidationChain::validate("".to_string(), "test_field").not_empty();
+
+        assert!(assert_validation_fails(chain, "cannot be empty").is_ok());
+    }
+
+    #[test]
+    fn test_assertion_batch() {
+        let mut batch = TestAssertionBatch::new("test_batch");
+
+        batch.assert_that(|| Ok(()), "should pass").assert_that(
+            || assert_with_context(false, "test failure", "test context"),
+            "should fail",
+        );
+
+        let result = batch.execute();
+        assert!(result.is_err());
+
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Multiple assertions failed"));
+        assert!(error_msg.contains("should fail"));
+    }
+
+    #[tokio::test]
+    async fn test_channel_assertions() {
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
+
+        // Test successful send
+        assert!(
+            assert_channel_send_success(&tx, "test".to_string(), "test context")
+                .await
+                .is_ok()
+        );
+
+        // Verify message was received
+        let received = rx.recv().await.unwrap();
+        assert_eq!(received, "test");
+
+        // Test timeout behavior
+        let (tx2, _rx2) = tokio::sync::mpsc::channel::<String>(1); // Minimal capacity (tokio requires > 0)
+
+        // Fill the channel first to ensure it's at capacity
+        tx2.send("fill".to_string()).await.unwrap();
+
+        // Now this should timeout quickly since channel is full
+        let result = assert_channel_send_timeout(
+            &tx2,
+            "test".to_string(),
+            Duration::from_millis(10),
+            true, // expect timeout
+        )
+        .await;
+
+        assert!(result.is_ok());
+    }
+}

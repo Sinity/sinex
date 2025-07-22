@@ -21,7 +21,6 @@
 // - **Dependencies**: Full system integration with external services
 
 use crate::common::prelude::*;
-
 use crate::common::database_pool::acquire_test_database;
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::EventFactory;
@@ -109,12 +108,13 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Add some existing checkpoint data
         let checkpoint_id = Ulid::new();
+        let last_processed_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)",
+                 VALUES ($1::uuid, $2, $3::uuid, $4)",
             checkpoint_id.to_uuid(),
             "existing_agent",
-            "startup_event_123",
+            last_processed_id.to_uuid(),
             json!({"version": "1.0.0", "description": "Pre-existing agent for startup test"})
         )
         .execute(pool)
@@ -421,7 +421,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let pool = ctx.pool().clone();
 
             // Database should still be responsive
-            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(pool).await?;
+            let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
             let partial_events =
@@ -929,12 +929,13 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Insert test checkpoint data before migration
         let migration_checkpoint_id = Ulid::new();
+        let migration_last_processed_id = Ulid::new();
         sqlx::query!(
             "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-                 VALUES ($1::uuid, $2, $3, $4)",
+                 VALUES ($1::uuid, $2, $3::uuid, $4)",
             migration_checkpoint_id.to_uuid(),
             "migration_test_agent",
-            "migration_event_456",
+            migration_last_processed_id.to_uuid(),
             json!({"version": "1.0.0", "description": "Agent for testing data preservation"})
         )
         .execute(pool)
@@ -1156,15 +1157,16 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     // Create test checkpoint for degradation testing
     let agent_name = format!("degradation_test_{}", Ulid::new());
     let degradation_checkpoint_id = Ulid::new();
+    let degradation_last_processed_id = Ulid::new();
     sqlx::query!(
         "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
-         VALUES ($1::uuid, $2, $3, $4)",
+         VALUES ($1::uuid, $2, $3::uuid, $4)",
         degradation_checkpoint_id.to_uuid(),
         agent_name,
-        "degradation_test_event",
+        degradation_last_processed_id.to_uuid(),
         json!({"version": "1.0.0", "description": "Graceful degradation test"})
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     println!("Testing graceful degradation under database connectivity issues...");
@@ -1213,7 +1215,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn health_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
-            .fetch_one(pool)
+            .fetch_one(&pool)
             .await
             .map_err(anyhow::Error::from)?
             .unwrap_or(0);
@@ -1223,7 +1225,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _checkpoint_check =
             sqlx::query!("SELECT automaton_name FROM core.automaton_checkpoints LIMIT 1")
-                .fetch_one(pool)
+                .fetch_one(&pool)
                 .await
                 .map_err(anyhow::Error::from)?;
         Ok(())
@@ -1332,14 +1334,14 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'degradation.test'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
     sqlx::query!(
         "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
         agent_name
     )
-    .execute(pool)
+    .execute(&pool)
     .await?;
 
     Ok(())
@@ -1598,7 +1600,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'resource.monitoring'")
-        .execute(pool)
+        .execute(&pool)
         .await
         .ok();
 
@@ -1765,7 +1767,7 @@ async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
     sqlx::query!(
         "DELETE FROM core.events WHERE source LIKE 'exhaustion%' OR source LIKE 'concurrent%'"
     )
-    .execute(pool)
+    .execute(&pool)
     .await
     .ok();
 

@@ -1,4 +1,4 @@
-// typed_clipboard_test.rs - Tests for clipboard type handling
+use crate::common::prelude::*;
 /// Unit tests for typed clipboard implementation
 use sinex_events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 

@@ -6,6 +6,9 @@ use std::path::PathBuf;
 use tokio::process::{Child, Command};
 use tokio::sync::Mutex;
 
+// Re-export StreamMessage for convenience
+pub use sinex_satellite_sdk::StreamMessage;
+
 /// Configuration for test ingestd instance
 #[derive(Debug, Clone)]
 pub struct TestIngestdConfig {

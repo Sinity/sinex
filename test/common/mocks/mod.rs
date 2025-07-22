@@ -24,6 +24,6 @@ pub mod mock_satellite;
 // Re-export main mock types
 pub use failure_injector::FailurePattern;
 pub use mock_event_sources::{
-    AtuinHistoryImporter, EventSourceContext, FilesystemMonitor,
-    ShellHistoryMonitor,
+    AtuinHistoryImporter, ClipboardMonitor, EventSourceContext, FilesystemMonitor,
+    RedisClient, ShellHistoryMonitor, TerminalMonitor,
 };

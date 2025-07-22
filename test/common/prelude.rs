@@ -28,7 +28,7 @@ pub use std::collections::{HashMap, HashSet};
 pub use std::fmt::Debug;
 pub use std::str::FromStr;
 pub use std::sync::{
-    atomic::{AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
     Arc,
 };
 pub use std::time::{Duration, Instant};
@@ -36,8 +36,10 @@ pub use std::time::{Duration, Instant};
 pub use anyhow::Result as AnyhowResult;
 /// Standard error type for test functions
 pub type TestResult = AnyhowResult<()>;
-pub use sinex_error::{CoreError, ValidationError};
+pub use sinex_core_types::CoreError;
+pub use sinex_validation::Result as ValidationResult;
 // ===== Serialization =====
+pub use serde::{Deserialize, Serialize};
 pub use serde_json::{json, Value};
 // ===== Time and Date =====
 pub use chrono::{DateTime, Duration as ChronoDuration, Utc};
@@ -62,7 +64,7 @@ pub use tempfile::TempDir;
 // Common modules
 // Test context - THE way to write tests
 // Event factory and builders - THE way to create events
-pub use crate::common::builders::EventBuilder;
+pub use crate::common::event_builders::EventBuilder;
 pub use sinex_events::{sources, event_types, EventFactory};
 // Database helpers available in crate::common::database_helpers
 // Test macro - THE way to define tests
@@ -71,71 +73,30 @@ pub use sinex_test_macros::sinex_test;
 #[allow(unused_imports)]
 pub use crate::common::test_context::TestContext;
 // ===== Timing Helpers =====
-pub use sinex_utils::wait_helpers::{
-    wait_for_event_count, wait_for_condition_or_timeout,
-    wait_for_database_ready,
-};
-pub use crate::common::{wait_for_filtered_event_count, assert_event_inserted_with_context};
+pub use crate::common::timing_optimization::wait_helpers::wait_for_filtered_event_count;
 // ===== Common Functions =====
 // Event operations
 pub use crate::common::insert_event;
 // Query shortcuts
-pub use sinex_db::{events::get_event_by_id, insert_event_with_validator};
+pub use sinex_db::{events, events::get_event_by_id, insert_event_with_validator};
 // Test helper functions from common/mod.rs
+pub use crate::common::{get_events_by_type, get_events_in_time_range, get_recent_events};
 // Satellite architecture testing utilities
+pub use crate::common::count_events_from_source;
 // ===== Enhanced Assertions =====
-// Enhanced assertions module is not available
+pub use crate::common::enhanced_assertions::{
+    assert_channel_send_success, assert_eq_with_context, assert_event_inserted_with_context,
+    assert_events_equivalent, assert_validation_passes, assert_with_context,
+    assert_with_validation, TestAssertionBatch,
+};
 // ===== Mock Types for Testing =====
 pub use crate::common::mocks::{
-    AtuinHistoryImporter, EventSourceContext, FilesystemMonitor,
-    ShellHistoryMonitor,
+    AtuinHistoryImporter, ClipboardMonitor, EventSourceContext, FilesystemMonitor, RedisClient,
+    ShellHistoryMonitor, TerminalMonitor,
 };
 // ===== Worker Test Utilities =====
-// Worker test utilities module is not available
+pub use crate::common::worker_test_utils::{
+    claim_work_queue_items, clear_work_queue, complete_work_queue_item, create_work_item,
+    ensure_work_queue_table, get_work_queue_status, WorkQueueItem,
+};
 // ===== Constants =====
-
-// ===== Test Query Helpers and Builders =====
-// Query helpers for test-friendly database operations
-pub use crate::common::query_helpers::{TestQueries, CheckpointRecord, OperationRecord};
-
-// Test data builders with fluent interfaces
-pub use crate::common::builders::{
-    TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder, 
-    TestScenarioBuilder, TestEvents
-};
-
-// Test fixtures for reusable test data
-pub use crate::common::fixtures::{
-    FixtureHandle, UserSessionFixture, PopulatedCheckpointsFixture,
-    ErrorScenariosFixture, PerformanceDatasetFixture, PreWarmedFixture,
-    // Common fixture functions
-    standard_user_session, user_session_with_params, empty_database,
-    populated_checkpoints, error_scenarios, performance_dataset,
-    performance_dataset_with_size, pre_warmed_database,
-};
-
-// Test macros for common patterns
-pub use crate::{
-    test_event_insertion, test_invalid_event, test_batch_events,
-    test_checkpoint_flow, test_concurrent_operations, test_time_range_query,
-    test_event_filter, test_with_scenario, parameterized_test, test_event_flow,
-};
-
-// Snapshot testing utilities
-// Snapshot testing module is not available
-
-// Error testing utilities and patterns
-pub use crate::common::error_helpers::{
-    ErrorAssert, CoreErrorVariant, ErrorScenarioBuilder, 
-    CommonErrorScenarios, ErrorRecovery, ErrorPropagation
-};
-
-// Error testing macros - import specific macros as needed
-pub use crate::{
-    assert_error_type, assert_error_contains, assert_error_context,
-    test_error_case, test_error_propagation, test_recovery,
-    test_validation_error, test_concurrent_errors, test_error_context,
-    test_constraint_violation, test_timeout_error, test_error_transformation,
-    test_error_idempotency, test_error_with_rollback, test_event_processing_error,
-    test_cascading_errors, test_partial_failure,
-};

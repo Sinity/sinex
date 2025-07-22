@@ -70,3 +70,19 @@ pub mod search_service_test;
 pub mod data_corruption_detection_test;
 pub mod checkpoint_consistency_test;
 pub mod pel_recovery_test;
+
+// === Core Integration Tests ===
+
+// Database and event processing
+pub mod database_test;
+pub mod event_sources_test;
+pub mod process_event_test;
+
+// System architecture and integration
+pub mod satellite_architecture_test;
+pub mod system_integration_test;
+pub mod end_to_end_workflows_test;
+
+// Failure handling and recovery
+pub mod critical_failure_modes_test;
+pub mod preflight_integration_test;

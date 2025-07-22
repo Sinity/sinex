@@ -5,7 +5,11 @@
 // functionality tests for the new architecture.
 
 use crate::common::prelude::*;
-use sinex_events::{sources, EventFactory, event_types};
+
+use crate::common::prelude::*;
+use sinex_events::{
+    sources, strongly_typed_events::*, EventEnvelope, EventFactory, RawEvent, event_types,
+};
 use std::collections::HashSet;
 
 // =============================================================================

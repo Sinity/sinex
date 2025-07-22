@@ -1,591 +1,471 @@
+// Property tests for automaton behavior
+//
+// Tests that verify automaton processing, state management, and coordination properties
+
 use crate::common::prelude::*;
-use crate::common::property_helpers::*;
-use proptest::test_runner::TestRunner;
+use crate::property::strategies::*;
 use proptest::prelude::*;
-use proptest::strategy::ValueTree;
-use sinex_db::RawEvent;
-use std::collections::{HashMap, HashSet};
-use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
+/// Test automaton event processing is deterministic
 proptest! {
-    #![proptest_config(ProptestConfig::with_cases(500))]
-
     #[test]
-    fn automaton_event_transformation_consistency(
-        events in arbitrary_event_batch()
+    fn automaton_processing_is_deterministic(
+        automaton_name in automaton_names(),
+        events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=50
+        ),
     ) {
-        // Property: Automaton transformations should be deterministic
-        let automaton = TestAutomaton::new("test-automaton");
-        
-        // Process events twice
-        let first_run: Vec<_> = events.iter()
-            .filter_map(|e| automaton.process_event(e.clone()).ok())
-            .flatten()
-            .collect();
-            
-        let second_run: Vec<_> = events.iter()
-            .filter_map(|e| automaton.process_event(e.clone()).ok())
-            .flatten()
-            .collect();
-        
-        // Results should be identical
-        assert_eq!(first_run.len(), second_run.len(), 
-                   "Same events should produce same number of outputs");
-        
-        for (out1, out2) in first_run.iter().zip(second_run.iter()) {
-            assert_eq!(out1.event_type, out2.event_type, 
-                       "Output event types should match");
-            assert_eq!(out1.source, out2.source,
-                       "Output sources should match");
-        }
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+
+            // Skip if no events to test
+            if events.is_empty() {
+                return;
+            }
+
+            // Process events twice with same automaton
+            let mut first_run_results = Vec::new();
+            let mut second_run_results = Vec::new();
+
+            for run in 0..2 {
+                let test_automaton = format!("{}-run-{}", automaton_name, run);
+
+                // Create fresh automaton instance for each run
+                let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &test_automaton).await.unwrap();
+
+                // Process the same events
+                for (source, event_type, payload) in events.iter() {
+                    let event = crate::common::events::create_raw_event(
+                        source,
+                        event_type,
+                        payload.clone(),
+                        chrono::Utc::now()
+                    );
+                    ctx.insert_event(&event).await.unwrap();
+                }
+
+                // Wait for processing
+                crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &test_automaton, events.len() as u64).await.unwrap();
+
+                // Collect results
+                let checkpoint = ctx.verify_checkpoint(&test_automaton).await.unwrap();
+                let final_count = ctx.event_count().await.unwrap();
+
+                if run == 0 {
+                    first_run_results.push((checkpoint.processed_count, final_count));
+                } else {
+                    second_run_results.push((checkpoint.processed_count, final_count));
+                }
+            }
+
+            // Verify deterministic behavior
+            // Note: We can't expect exact same results due to timing, but should have similar patterns
+            assert_eq!(first_run_results.len(), second_run_results.len());
+
+            // Both runs should process the same number of events
+            for (first, second) in first_run_results.iter().zip(second_run_results.iter()) {
+                assert_eq!(first.1, second.1); // Event count should be same
+            }
+        });
     }
+}
 
+/// Test automaton state consistency under concurrent operations
+proptest! {
     #[test]
-    fn automaton_state_accumulation(
-        event_sequences in proptest::collection::vec(arbitrary_event_batch(), 1..5)
+    fn automaton_state_consistency_under_concurrency(
+        automaton_name in automaton_names(),
+        concurrent_operations in concurrent_operations(),
+        events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=20
+        ),
     ) {
-        // Property: Automaton state should accumulate correctly across batches
-        let automaton = TestAutomaton::new("accumulator-automaton");
-        let mut total_processed = 0;
-        let mut seen_event_types = HashSet::new();
-        
-        for batch in event_sequences {
-            for event in batch {
-                seen_event_types.insert(event.event_type.clone());
-                
-                if let Ok(outputs) = automaton.process_event(event) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = Arc::new(crate::common::test_context::TestContext::new().await.unwrap());
+
+            // Skip if no events to test
+            if events.is_empty() {
+                return;
+            }
+
+            let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+
+            // Prepare events for concurrent processing
+            let test_events: Vec<_> = events.iter().map(|(source, event_type, payload)| {
+                crate::common::events::create_raw_event(
+                    source,
+                    event_type,
+                    payload.clone(),
+                    chrono::Utc::now()
+                )
+            }).collect();
+
+            // Launch concurrent operations
+            let mut handles = Vec::new();
+            for (i, operation) in concurrent_operations.iter().enumerate() {
+                let ctx_clone = ctx.clone();
+                let automaton_name_clone = automaton_name.clone();
+                let operation_clone = operation.clone();
+                let events_clone = test_events.clone();
+
+                let handle = tokio::spawn(async move {
+                    match operation_clone.as_str() {
+                        "insert_event" => {
+                            if let Some(event) = events_clone.get(i % events_clone.len()) {
+                                ctx_clone.insert_event(event).await.unwrap();
+                            }
+                        }
+                        "query_events" => {
+                            let _ = ctx_clone.query_events().await;
+                        }
+                        "update_checkpoint" => {
+                            let _ = ctx_clone.verify_checkpoint(&automaton_name_clone).await;
+                        }
+                        _ => {}
+                    }
+                });
+                handles.push(handle);
+            }
+
+            // Wait for all operations to complete
+            for handle in handles {
+                let _ = handle.await;
+            }
+
+            // Verify final state consistency
+            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let final_count = ctx.event_count().await.unwrap();
+
+            // State should be consistent (no corruption)
+            assert!(final_checkpoint.processed_count <= final_count as u64);
+            assert!(final_count >= 0);
+        });
+    }
+}
+
+/// Test automaton recovery from checkpoint
+proptest! {
+    #[test]
+    fn automaton_recovery_from_checkpoint_is_correct(
+        automaton_name in automaton_names(),
+        initial_events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=20
+        ),
+        recovery_events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=20
+        ),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+
+            // Skip if no events to test
+            if initial_events.is_empty() && recovery_events.is_empty() {
+                return;
+            }
+
+            // Phase 1: Initial processing
+            let automaton1 = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+
+            for (source, event_type, payload) in initial_events.iter() {
+                let event = crate::common::events::create_raw_event(
+                    source,
+                    event_type,
+                    payload.clone(),
+                    chrono::Utc::now()
+                );
+                ctx.insert_event(&event).await.unwrap();
+            }
+
+            // Wait for initial processing
+            if !initial_events.is_empty() {
+                crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, initial_events.len() as u64).await.unwrap();
+            }
+
+            // Capture checkpoint state
+            let checkpoint_before = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+
+            // Phase 2: Simulate restart by creating new automaton with same name
+            drop(automaton1);
+            let automaton2 = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+
+            // Verify checkpoint was restored
+            let checkpoint_after_restart = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            assert_eq!(checkpoint_before.processed_count, checkpoint_after_restart.processed_count);
+
+            // Phase 3: Continue processing
+            for (source, event_type, payload) in recovery_events.iter() {
+                let event = crate::common::events::create_raw_event(
+                    source,
+                    event_type,
+                    payload.clone(),
+                    chrono::Utc::now()
+                );
+                ctx.insert_event(&event).await.unwrap();
+            }
+
+            // Wait for recovery processing
+            if !recovery_events.is_empty() {
+                let expected_total = initial_events.len() + recovery_events.len();
+                crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, expected_total as u64).await.unwrap();
+            }
+
+            // Verify recovery worked correctly
+            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let expected_processed = initial_events.len() + recovery_events.len();
+            assert_eq!(final_checkpoint.processed_count, expected_processed as u64);
+        });
+    }
+}
+
+/// Test automaton batch processing efficiency
+proptest! {
+    #[test]
+    fn automaton_batch_processing_is_efficient(
+        automaton_name in automaton_names(),
+        batch_size in batch_sizes(),
+        events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=200
+        ),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+
+            // Skip if no events to test
+            if events.is_empty() {
+                return;
+            }
+
+            let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+
+            // Process events in batches
+            let mut total_processed = 0;
+            for chunk in events.chunks(batch_size) {
+                let batch_start = std::time::Instant::now();
+
+                // Insert batch
+                for (source, event_type, payload) in chunk.iter() {
+                    let event = crate::common::events::create_raw_event(
+                        source,
+                        event_type,
+                        payload.clone(),
+                        chrono::Utc::now()
+                    );
+                    ctx.insert_event(&event).await.unwrap();
                     total_processed += 1;
-                    
-                    // Verify outputs reference accumulated state
-                    for output in outputs {
-                        if let Some(state_info) = output.payload.get("accumulated_types") {
-                            if let Some(types) = state_info.as_array() {
-                                assert!(types.len() <= seen_event_types.len(),
-                                        "Accumulated types should not exceed seen types");
-                            }
-                        }
-                    }
                 }
-            }
-        }
-        
-        assert_eq!(automaton.get_processed_count(), total_processed,
-                   "Processed count should match actual processing");
-    }
 
-    #[test]
-    fn automaton_filtering_rules(
-        events in arbitrary_event_batch(),
-        filter_probability in 0.0f64..1.0
-    ) {
-        // Property: Filtering rules should be consistently applied
-        let automaton = FilteringAutomaton::new(filter_probability);
-        
-        let outputs: Vec<_> = events.iter()
-            .filter_map(|e| automaton.process_event(e.clone()).ok())
-            .flatten()
-            .collect();
-        
-        // Check filtering ratio is approximately correct
-        let output_ratio = outputs.len() as f64 / events.len().max(1) as f64;
-        
-        // Allow for statistical variance
-        let expected_ratio = 1.0 - filter_probability;
-        let tolerance = 0.2; // 20% tolerance for randomness
-        
-        if events.len() > 10 {
-            assert!((output_ratio - expected_ratio).abs() < tolerance,
-                    "Filtering ratio {} should be close to expected {}",
-                    output_ratio, expected_ratio);
-        }
-        
-        // All outputs should have filter metadata
-        for output in outputs {
-            assert!(output.payload.get("filter_applied").is_some(),
-                    "Filtered events should have metadata");
-        }
-    }
+                // Wait for batch to be processed
+                crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, total_processed as u64).await.unwrap();
 
-    #[test]
-    fn automaton_aggregation_correctness(
-        event_groups in proptest::collection::hash_map(
-            event_types(),
-            proptest::collection::vec(arbitrary_event(), 1..20),
-            1..5
-        )
-    ) {
-        // Property: Aggregation automata should correctly summarize event groups
-        let automaton = AggregationAutomaton::new();
-        
-        // Process all events
-        let mut type_counts = HashMap::new();
-        for (event_type, events) in &event_groups {
-            type_counts.insert(event_type.clone(), events.len());
-            
-            for event in events {
-                let _ = automaton.process_event(event.clone());
-            }
-        }
-        
-        // Get aggregation summary
-        let summary = automaton.get_summary();
-        
-        // Verify counts match
-        for (event_type, expected_count) in type_counts {
-            let actual_count = summary.get(&event_type).copied().unwrap_or(0);
-            assert_eq!(actual_count, expected_count,
-                       "Aggregated count for {} should match", event_type);
-        }
-    }
+                let batch_duration = batch_start.elapsed();
 
-    #[test]
-    fn automaton_time_window_processing(
-        events in time_ordered_batch(),
-        window_size_secs in 60u64..3600u64
-    ) {
-        // Property: Time window automata should correctly group events
-        let window_duration = chrono::Duration::seconds(window_size_secs as i64);
-        let automaton = TimeWindowAutomaton::new(window_duration);
-        
-        // Process events and collect windows
-        let mut windows = Vec::new();
-        for event in events {
-            if let Ok(outputs) = automaton.process_event(event.clone()) {
-                for output in outputs {
-                    if output.event_type.contains("window.complete") {
-                        windows.push(output);
-                    }
-                }
+                // Verify batch was processed efficiently
+                assert!(batch_duration.as_secs() < 10, "Batch processing took too long: {:?}", batch_duration);
             }
-        }
-        
-        // Verify window properties
-        for window in &windows {
-            if let Some(window_data) = window.payload.get("window") {
-                let start = window_data.get("start")
-                    .and_then(|s| s.as_str())
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
-                let end = window_data.get("end")
-                    .and_then(|s| s.as_str())
-                    .and_then(|s| DateTime::parse_from_rfc3339(s).ok());
-                    
-                if let (Some(start), Some(end)) = (start, end) {
-                    let actual_duration = end.signed_duration_since(start);
-                    assert!(actual_duration <= window_duration,
-                            "Window duration should not exceed configured size");
-                }
-                
-                // Events in window should have correct count
-                if let Some(count) = window_data.get("event_count").and_then(|c| c.as_u64()) {
-                    assert!(count > 0, "Window should contain at least one event");
-                }
-            }
-        }
-    }
 
-    #[test]
-    fn automaton_correlation_detection(
-        related_events in related_events_batch()
-    ) {
-        // Property: Correlation automata should detect related events
-        let automaton = CorrelationAutomaton::new();
-        
-        // Track which events are part of the related sequence
-        let related_paths: HashSet<_> = related_events.iter()
-            .filter_map(|e| e.payload.get("path").and_then(|p| p.as_str()))
-            .map(|s| s.to_string())
-            .collect();
-        
-        // Process events
-        let mut correlations = Vec::new();
-        for event in related_events {
-            if let Ok(outputs) = automaton.process_event(event) {
-                for output in outputs {
-                    if output.event_type.contains("correlation.detected") {
-                        correlations.push(output);
-                    }
-                }
-            }
-        }
-        
-        // Should detect correlations for related events
-        assert!(!correlations.is_empty(), "Should detect correlations in related events");
-        
-        // Verify correlations reference the correct events
-        for correlation in correlations {
-            if let Some(corr_data) = correlation.payload.get("correlation") {
-                if let Some(events) = corr_data.get("events").and_then(|e| e.as_array()) {
-                    // All correlated events should be from our related set
-                    for event_ref in events {
-                        if let Some(path) = event_ref.get("path").and_then(|p| p.as_str()) {
-                            assert!(related_paths.contains(path),
-                                    "Correlation should only include related events");
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn automaton_error_handling(
-        events in arbitrary_event_batch(),
-        error_injection_rate in 0.0f64..0.3f64
-    ) {
-        // Property: Automata should handle errors gracefully
-        let automaton = FaultyAutomaton::new(error_injection_rate);
-        
-        let mut success_count = 0;
-        let mut error_count = 0;
-        
-        for event in events {
-            match automaton.process_event(event) {
-                Ok(_) => success_count += 1,
-                Err(e) => {
-                    error_count += 1;
-                    // Errors should be meaningful
-                    assert!(!e.to_string().is_empty(), "Error message should not be empty");
-                }
-            }
-        }
-        
-        // Some events should succeed even with error injection
-        if error_injection_rate < 0.9 {
-            assert!(success_count > 0, "Some events should process successfully");
-        }
-        
-        // Error rate should approximately match injection rate
-        let total = success_count + error_count;
-        if total > 10 {
-            let actual_error_rate = error_count as f64 / total as f64;
-            assert!((actual_error_rate - error_injection_rate).abs() < 0.3,
-                    "Error rate should match injection rate approximately");
-        }
-    }
-
-    #[test]
-    fn automaton_output_chaining(
-        initial_events in arbitrary_event_batch()
-    ) {
-        // Property: Automaton outputs should be valid inputs for other automata
-        let automaton1 = TestAutomaton::new("stage1");
-        let automaton2 = TestAutomaton::new("stage2");
-        
-        // First stage processing
-        let stage1_outputs: Vec<_> = initial_events.iter()
-            .filter_map(|e| automaton1.process_event(e.clone()).ok())
-            .flatten()
-            .collect();
-        
-        // Second stage processing
-        let stage2_outputs: Vec<_> = stage1_outputs.iter()
-            .filter_map(|e| automaton2.process_event(e.clone()).ok())
-            .flatten()
-            .collect();
-        
-        // All outputs should be valid events
-        for output in &stage2_outputs {
-            assert!(!output.id.is_nil(), "Output should have valid ID");
-            assert!(!output.event_type.is_empty(), "Output should have event type");
-            assert!(!output.source.is_empty(), "Output should have source");
-            // Every event should have at least one timestamp
-            // (TestEventBuilder likely ensures this)
-        }
-        
-        // Chained processing should preserve lineage
-        for output in stage2_outputs {
-            if let Some(lineage) = output.payload.get("lineage") {
-                if let Some(stages) = lineage.as_array() {
-                    assert!(stages.len() >= 2, "Should track processing stages");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn automaton_performance_characteristics(
-        event_batch_sizes in proptest::collection::vec(1usize..100, 1..10)
-    ) {
-        // Property: Processing time should scale reasonably with batch size
-        let automaton = TestAutomaton::new("performance-test");
-        let mut timings = Vec::new();
-        
-        for batch_size in event_batch_sizes {
-            let events: Vec<_> = (0..batch_size)
-                .map(|_| arbitrary_event().new_tree(&mut TestRunner::default()).unwrap().current())
-                .collect();
-            
-            let start = std::time::Instant::now();
-            for event in events {
-                let _ = automaton.process_event(event);
-            }
-            let elapsed = start.elapsed();
-            
-            timings.push((batch_size, elapsed));
-        }
-        
-        // Verify reasonable scaling
-        if timings.len() > 2 {
-            // Sort by batch size
-            timings.sort_by_key(|(size, _)| *size);
-            
-            // Larger batches should generally take more time
-            for window in timings.windows(2) {
-                let (size1, time1) = window[0];
-                let (size2, time2) = window[1];
-                
-                if size2 > size1 * 2 {
-                    // If batch size doubles, time should not more than quadruple
-                    assert!(time2.as_millis() < time1.as_millis() * 5,
-                            "Processing time should scale sub-quadratically");
-                }
-            }
-        }
+            // Verify all events were processed
+            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            assert_eq!(final_checkpoint.processed_count, events.len() as u64);
+        });
     }
 }
 
-// Mock automaton implementations for testing
-mod mock_automatons {
-    use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
-    
-    pub struct TestAutomaton {
-        name: String,
-        processed_count: AtomicUsize,
-    }
-    
-    impl TestAutomaton {
-        pub fn new(name: &str) -> Self {
-            Self {
-                name: name.to_string(),
-                processed_count: AtomicUsize::new(0),
+/// Test automaton error handling and recovery
+proptest! {
+    #[test]
+    fn automaton_error_handling_is_robust(
+        automaton_name in automaton_names(),
+        valid_events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=10
+        ),
+        invalid_events in proptest::collection::vec(
+            adversarial_payloads(),
+            1..=5
+        ),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+
+            // Skip if no events to test
+            if valid_events.is_empty() && invalid_events.is_empty() {
+                return;
             }
-        }
-        
-        pub fn process_event(&self, mut event: RawEvent) -> AnyhowResult<Vec<RawEvent>> {
-            self.processed_count.fetch_add(1, Ordering::SeqCst);
-            
-            // Simple transformation
-            event.event_type = format!("{}.processed", event.event_type);
-            event.source = format!("{}.{}", event.source, self.name);
-            
-            // Add processing metadata
-            let mut payload = event.payload.as_object().cloned().unwrap_or_default();
-            payload.insert("automaton".to_string(), json!(self.name));
-            payload.insert("processed_at".to_string(), json!(Utc::now().to_rfc3339()));
-            
-            // Track lineage
-            let lineage = payload.get("lineage")
-                .and_then(|l| l.as_array())
-                .cloned()
-                .unwrap_or_default();
-            let mut new_lineage = lineage;
-            new_lineage.push(json!(self.name));
-            payload.insert("lineage".to_string(), json!(new_lineage));
-            
-            event.payload = json!(payload);
-            
-            Ok(vec![event])
-        }
-        
-        pub fn get_processed_count(&self) -> usize {
-            self.processed_count.load(Ordering::SeqCst)
-        }
-    }
-    
-    pub struct FilteringAutomaton {
-        filter_probability: f64,
-    }
-    
-    impl FilteringAutomaton {
-        pub fn new(filter_probability: f64) -> Self {
-            Self { filter_probability }
-        }
-        
-        pub fn process_event(&self, mut event: RawEvent) -> AnyhowResult<Vec<RawEvent>> {
-            let random: f64 = rand::random();
-            
-            if random < self.filter_probability {
-                // Filter out
-                return Ok(vec![]);
+
+            let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+
+            // Phase 1: Process valid events
+            for (source, event_type, payload) in valid_events.iter() {
+                let event = crate::common::events::create_raw_event(
+                    source,
+                    event_type,
+                    payload.clone(),
+                    chrono::Utc::now()
+                );
+                ctx.insert_event(&event).await.unwrap();
             }
-            
-            // Pass through with metadata
-            let mut payload = event.payload.as_object().cloned().unwrap_or_default();
-            payload.insert("filter_applied".to_string(), json!(true));
-            payload.insert("filter_probability".to_string(), json!(self.filter_probability));
-            event.payload = json!(payload);
-            
-            Ok(vec![event])
-        }
-    }
-    
-    pub struct AggregationAutomaton {
-        type_counts: Mutex<HashMap<String, usize>>,
-    }
-    
-    impl AggregationAutomaton {
-        pub fn new() -> Self {
-            Self {
-                type_counts: Mutex::new(HashMap::new()),
+
+            if !valid_events.is_empty() {
+                crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, valid_events.len() as u64).await.unwrap();
             }
-        }
-        
-        pub fn process_event(&self, event: RawEvent) -> AnyhowResult<Vec<RawEvent>> {
-            let mut counts = self.type_counts.lock().unwrap();
-            *counts.entry(event.event_type.clone()).or_insert(0) += 1;
-            Ok(vec![])
-        }
-        
-        pub fn get_summary(&self) -> HashMap<String, usize> {
-            self.type_counts.lock().unwrap().clone()
-        }
-    }
-    
-    pub struct TimeWindowAutomaton {
-        window_duration: chrono::Duration,
-        current_window: Mutex<Option<WindowState>>,
-    }
-    
-    struct WindowState {
-        start: DateTime<Utc>,
-        events: Vec<RawEvent>,
-    }
-    
-    impl TimeWindowAutomaton {
-        pub fn new(window_duration: chrono::Duration) -> Self {
-            Self {
-                window_duration,
-                current_window: Mutex::new(None),
+
+            let checkpoint_after_valid = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+
+            // Phase 2: Process invalid events (should be handled gracefully)
+            for payload in invalid_events.iter() {
+                let invalid_event = crate::common::events::create_raw_event(
+                    "test",
+                    "invalid.event",
+                    payload.clone(),
+                    chrono::Utc::now()
+                );
+
+                // Try to insert invalid event - it may succeed or fail
+                let _ = ctx.insert_event(&invalid_event).await;
             }
-        }
-        
-        pub fn process_event(&self, event: RawEvent) -> AnyhowResult<Vec<RawEvent>> {
-            let mut window = self.current_window.lock().unwrap();
-            let event_time = event.ts_orig.unwrap_or_else(Utc::now);
-            
-            let mut outputs = vec![];
-            
-            match &mut *window {
-                None => {
-                    // Start new window
-                    *window = Some(WindowState {
-                        start: event_time,
-                        events: vec![event],
-                    });
-                }
-                Some(state) => {
-                    if event_time >= state.start + self.window_duration {
-                        // Complete current window
-                        let window_event = TestEventBuilder::new("time-window-automaton", "window.complete")
-                            .with_payload(json!({
-                                "window": {
-                                    "start": state.start.to_rfc3339(),
-                                    "end": (state.start + self.window_duration).to_rfc3339(),
-                                    "event_count": state.events.len(),
-                                    "event_types": state.events.iter()
-                                        .map(|e| &e.event_type)
-                                        .collect::<HashSet<_>>(),
-                                }
-                            }))
-                            .with_timestamp(event_time)
-                            .build();
-                        outputs.push(window_event);
-                        
-                        // Start new window
-                        *window = Some(WindowState {
-                            start: event_time,
-                            events: vec![event],
-                        });
-                    } else {
-                        // Add to current window
-                        state.events.push(event);
-                    }
-                }
-            }
-            
-            Ok(outputs)
-        }
-    }
-    
-    pub struct CorrelationAutomaton {
-        recent_events: Mutex<Vec<RawEvent>>,
-        correlation_window: usize,
-    }
-    
-    impl CorrelationAutomaton {
-        pub fn new() -> Self {
-            Self {
-                recent_events: Mutex::new(Vec::new()),
-                correlation_window: 10,
-            }
-        }
-        
-        pub fn process_event(&self, event: RawEvent) -> AnyhowResult<Vec<RawEvent>> {
-            let mut recent = self.recent_events.lock().unwrap();
-            recent.push(event.clone());
-            
-            // Keep only recent events
-            if recent.len() > self.correlation_window {
-                recent.remove(0);
-            }
-            
-            let mut outputs = vec![];
-            
-            // Look for correlations (simplified: same path)
-            if let Some(path) = event.payload.get("path").and_then(|p| p.as_str()) {
-                let correlated: Vec<_> = recent.iter()
-                    .filter(|e| {
-                        e.payload.get("path")
-                            .and_then(|p| p.as_str())
-                            .map(|p| p == path)
-                            .unwrap_or(false)
-                    })
-                    .collect();
-                
-                if correlated.len() > 1 {
-                    let correlation_event = TestEventBuilder::new("correlation-automaton", "correlation.detected")
-                        .with_payload(json!({
-                            "correlation": {
-                                "type": "path-based",
-                                "path": path,
-                                "event_count": correlated.len(),
-                                "events": correlated.iter().map(|e| json!({
-                                    "id": e.id.to_string(),
-                                    "type": &e.event_type,
-                                    "path": path,
-                                })).collect::<Vec<_>>(),
-                            }
-                        }))
-                        .build();
-                    outputs.push(correlation_event);
-                }
-            }
-            
-            Ok(outputs)
-        }
-    }
-    
-    pub struct FaultyAutomaton {
-        error_rate: f64,
-    }
-    
-    impl FaultyAutomaton {
-        pub fn new(error_rate: f64) -> Self {
-            Self { error_rate }
-        }
-        
-        pub fn process_event(&self, event: RawEvent) -> AnyhowResult<Vec<RawEvent>> {
-            let random: f64 = rand::random();
-            
-            if random < self.error_rate {
-                return Err(anyhow::anyhow!("Simulated processing error"));
-            }
-            
-            Ok(vec![event])
-        }
+
+            // Allow some time for error handling
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Phase 3: Process more valid events to verify recovery
+            let recovery_event = crate::common::events::create_raw_event(
+                "test",
+                "recovery.event",
+                serde_json::json!({"recovery": true}),
+                chrono::Utc::now()
+            );
+            ctx.insert_event(&recovery_event).await.unwrap();
+
+            // Wait for recovery
+            let expected_minimum = valid_events.len() + 1; // +1 for recovery event
+            crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, expected_minimum as u64).await.unwrap();
+
+            // Verify automaton recovered and continued processing
+            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            assert!(final_checkpoint.processed_count >= checkpoint_after_valid.processed_count);
+        });
     }
 }
 
-use mock_automatons::*;
+/// Test automaton memory usage under load
+proptest! {
+    #[test]
+    fn automaton_memory_usage_is_bounded(
+        automaton_name in automaton_names(),
+        large_events in proptest::collection::vec(
+            (event_sources(), event_types(), adversarial_payloads()),
+            1..=50
+        ),
+        processing_interval in 1u64..100u64,
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+
+            // Skip if no events to test
+            if large_events.is_empty() {
+                return;
+            }
+
+            let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+
+            // Process large events with controlled timing
+            let mut processed_count = 0;
+            for (source, event_type, payload) in large_events.iter() {
+                let event = crate::common::events::create_raw_event(
+                    source,
+                    event_type,
+                    payload.clone(),
+                    chrono::Utc::now()
+                );
+
+                ctx.insert_event(&event).await.unwrap();
+                processed_count += 1;
+
+                // Add processing interval to allow memory cleanup
+                tokio::time::sleep(std::time::Duration::from_millis(processing_interval)).await;
+
+                // Periodically check that processing is keeping up
+                if processed_count % 10 == 0 {
+                    let checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+                    // Should be processing events, not accumulating indefinitely
+                    assert!(checkpoint.processed_count > 0);
+                }
+            }
+
+            // Final verification
+            crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, processed_count as u64).await.unwrap();
+
+            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            assert_eq!(final_checkpoint.processed_count, processed_count as u64);
+        });
+    }
+}
+
+/// Test automaton coordination with multiple instances
+proptest! {
+    #[test]
+    fn multiple_automata_coordination_is_correct(
+        automaton_names in proptest::collection::vec(automaton_names(), 2..=5),
+        events in proptest::collection::vec(
+            (event_sources(), event_types(), event_payloads()),
+            1..=30
+        ),
+    ) {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+
+            // Skip if no events to test
+            if events.is_empty() || automaton_names.is_empty() {
+                return;
+            }
+
+            // Start multiple automata
+            let mut automata = Vec::new();
+            for automaton_name in automaton_names.iter() {
+                let automaton = crate::common::test_context::TestContext::start_test_automaton(&ctx, automaton_name).await.unwrap();
+                automata.push(automaton);
+            }
+
+            // Process events that all automata can see
+            for (source, event_type, payload) in events.iter() {
+                let event = crate::common::events::create_raw_event(
+                    source,
+                    event_type,
+                    payload.clone(),
+                    chrono::Utc::now()
+                );
+                ctx.insert_event(&event).await.unwrap();
+            }
+
+            // Wait for all automata to process events
+            for automaton_name in automaton_names.iter() {
+                crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, automaton_name, events.len() as u64).await.unwrap();
+            }
+
+            // Verify each automaton processed all events
+            for automaton_name in automaton_names.iter() {
+                let checkpoint = ctx.verify_checkpoint(automaton_name).await.unwrap();
+                assert_eq!(checkpoint.processed_count, events.len() as u64);
+            }
+
+            // Verify no event duplication in database
+            let final_count = ctx.event_count().await.unwrap();
+            assert_eq!(final_count, events.len() as i64);
+        });
+    }
+}

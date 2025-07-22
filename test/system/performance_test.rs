@@ -21,7 +21,6 @@
 // - **Baseline performance**: 1000+ events/second insertion rate
 
 use crate::common::prelude::*;
-
 use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::{EventFactory, services, event_types};
 use sqlx::Row;
@@ -100,7 +99,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'load_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -192,7 +191,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'concurrent_load_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -296,7 +295,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
                     FOR UPDATE SKIP LOCKED
                     "#,
                 )
-                .fetch_optional(pool)
+                .fetch_optional(&pool)
                 .await?;
 
                 if let Some((event_id,)) = maybe_event {
@@ -449,7 +448,7 @@ async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'memory_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())
@@ -578,7 +577,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
 
         // Cleanup for next test
         sqlx::query!("DELETE FROM core.events WHERE source = 'scaling_test'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
     }
 
@@ -697,7 +696,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
 
         // Cleanup
         sqlx::query!("DELETE FROM core.events WHERE source = 'large_payload_test'")
-            .execute(pool)
+            .execute(&pool)
             .await?;
     }
 
@@ -761,7 +760,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!("DELETE FROM core.events WHERE source = 'burst_test'")
-        .execute(pool)
+        .execute(&pool)
         .await?;
 
     Ok(())

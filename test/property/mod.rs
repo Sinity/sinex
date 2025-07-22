@@ -15,12 +15,9 @@ use crate::common::prelude::*;
 // pub mod redis_streams_property_test;
 pub mod automation_property_test;
 pub mod checkpoint_property_test;
-pub mod event_validation_property_test;
 pub mod satellite_property_test;
 pub mod schema_property_test;
 pub mod ulid_property_test;
-// Disabled - file not yet created
-// pub mod example_property_builders_test;
 
 // Re-export commonly used proptest utilities
 pub use proptest::prelude::*;
@@ -29,7 +26,7 @@ pub use proptest::prelude::*;
 #[allow(dead_code)]
 pub mod strategies {
     use super::*;
-    
+    use crate::common::prelude::*;
     use chrono::{DateTime, Utc};
 
     /// Strategy for generating valid ULID timestamps

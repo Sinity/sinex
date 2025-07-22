@@ -84,5 +84,8 @@
 
 // === Complete System Validation ===
 
-// System tests have been consolidated to use test abstractions
-// Specific system tests are implemented in the integration test suite
+mod external_test;
+mod performance_test;
+mod reliability_test;
+mod stress_test;
+mod temporal_chaos_test;
