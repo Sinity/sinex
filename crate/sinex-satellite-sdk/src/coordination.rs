@@ -14,7 +14,8 @@ use sinex_db::distributed_locking::{DistributedCoordination, LeadershipGuard};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, error, debug, instrument};
+use serde_json::json;
 
 /// Instance mode determines satellite behavior
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -85,17 +86,43 @@ impl SatelliteCoordination {
                         self.current_mode = InstanceMode::Transitioning;
                         
                         if let Some(leadership) = self.try_acquire_leadership().await? {
+                            // 📊 COORDINATION EVENT: Leadership Acquired
+                            info!(
+                                event = "coordination.leadership_acquired",
+                                service = %self.instance.service_name,
+                                instance_id = %self.instance.instance_id,
+                                version = %self.instance.version,
+                                transition = "standby_to_leader",
+                                "🏆 Leadership acquired successfully"
+                            );
+                            
                             self.current_mode = InstanceMode::Leader;
                             self.run_as_leader(leadership, &process_events).await?;
                         } else {
-                            warn!("Failed to acquire leadership - reverting to standby");
+                            // 📊 COORDINATION EVENT: Leadership Acquisition Failed
+                            warn!(
+                                event = "coordination.leadership_acquisition_failed",
+                                service = %self.instance.service_name,
+                                instance_id = %self.instance.instance_id,
+                                version = %self.instance.version,
+                                reason = "advisory_lock_unavailable",
+                                "⚠️ Failed to acquire leadership - reverting to standby"
+                            );
                             self.current_mode = InstanceMode::Standby;
                         }
                     }
                 }
                 InstanceMode::Standby => {
                     if self.current_mode != InstanceMode::Standby {
-                        info!("Transitioning to STANDBY mode");
+                        // 📊 COORDINATION EVENT: Standby Mode
+                        info!(
+                            event = "coordination.standby_mode_entered",
+                            service = %self.instance.service_name,
+                            instance_id = %self.instance.instance_id,
+                            version = %self.instance.version,
+                            previous_mode = ?self.current_mode,
+                            "⏸️ Entering standby mode - monitoring for leadership opportunities"
+                        );
                         self.current_mode = InstanceMode::Standby;
                     }
                     self.run_as_standby().await?;
@@ -193,14 +220,31 @@ impl SatelliteCoordination {
             // Handle handoff requests
             handoff_result = handoff_monitor => {
                 if let Ok(request) = handoff_result {
-                    info!("Received handoff request from {}", request.from_instance);
+                    // 📊 COORDINATION EVENT: Handoff Request Received
+                    info!(
+                        event = "coordination.handoff_request_received",
+                        service = %self.instance.service_name,
+                        current_instance = %self.instance.instance_id,
+                        requesting_instance = %request.from_instance,
+                        current_version = %self.instance.version,
+                        requesting_version = %request.to_version.version,
+                        "🔄 Received handoff request - initiating graceful transfer"
+                    );
                     self.handle_graceful_handoff(request).await?;
                 }
             }
             
             // Handle critical failures
             _ = failure_monitor => {
-                error!("Critical failure detected - signaling for immediate takeover");
+                // 📊 COORDINATION EVENT: Critical Failure
+                error!(
+                    event = "coordination.critical_failure_detected",
+                    service = %self.instance.service_name,
+                    instance_id = %self.instance.instance_id,
+                    mode = "leader",
+                    action = "immediate_takeover_signal",
+                    "🚨 Critical failure detected - signaling for immediate takeover"
+                );
                 self.signal_critical_failure("Critical system failure").await?;
                 return Err(CoreError::InvalidState("Critical failure detected".to_string()));
             }
@@ -300,11 +344,24 @@ impl SatelliteCoordination {
     }
     
     /// Handle graceful handoff to newer version
+    #[instrument(skip(self, request), fields(
+        service = %self.instance.service_name,
+        from_version = %request.from_version.version,
+        to_version = %request.to_version.version
+    ))]
     async fn handle_graceful_handoff(&self, request: HandoffRequest) -> Result<()> {
-        info!("Handling graceful handoff from {} to {}", 
-              request.from_version.version, request.to_version.version);
+        // 📊 COORDINATION EVENT: Handoff Started
+        info!(
+            event = "coordination.handoff_started",
+            service = %self.instance.service_name,
+            current_instance = %self.instance.instance_id,
+            target_instance = %request.from_instance,
+            from_version = %request.from_version.version,
+            to_version = %request.to_version.version,
+            "🔄 Starting graceful handoff process"
+        );
         
-        // TODO: Finish current critical work
+        // Finish current critical work
         self.finish_critical_work().await?;
         
         // Signal ready for handoff
@@ -317,7 +374,15 @@ impl SatelliteCoordination {
         .execute(&self.pool)
         .await?;
         
-        info!("Signaled ready for handoff - will release leadership");
+        // 📊 COORDINATION EVENT: Handoff Ready
+        info!(
+            event = "coordination.handoff_ready",
+            service = %self.instance.service_name,
+            current_instance = %self.instance.instance_id,
+            target_instance = %request.from_instance,
+            "✅ Signaled ready for handoff - releasing leadership"
+        );
+        
         Ok(())
     }
     
