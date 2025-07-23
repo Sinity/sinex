@@ -392,8 +392,8 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     runner.run_service().await?;
                 } else {
                     use crate::coordination::SatelliteCoordination;
-                    use crate::version::SatelliteInstance;
-                    use crate::version::satellite_version;
+                    
+                    
                     use uuid::Uuid;
                     use std::sync::Arc;
                     use tokio::sync::Mutex;

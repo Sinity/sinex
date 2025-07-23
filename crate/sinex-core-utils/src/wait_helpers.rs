@@ -215,7 +215,7 @@ where
 /// This is useful for coordinating multiple service dependencies or health checks.
 /// All conditions must return true for the function to succeed.
 pub async fn wait_for_multiple_conditions<F, Fut>(
-    mut conditions: Vec<(&str, F)>,
+    conditions: Vec<(&str, F)>,
     timeout_secs: u64,
 ) -> Result<()>
 where

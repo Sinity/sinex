@@ -9,8 +9,8 @@
 
 use crate::version::{SatelliteVersion, SatelliteInstance};
 use sinex_core_types::{CoreError, Result, DbPool};
-use sinex_core_utils::{ResourceGuard, CoordinationPrimitive};
-use sinex_db::distributed_locking::{AdvisoryLock, DistributedCoordination, LeadershipGuard};
+use sinex_core_utils::CoordinationPrimitive;
+use sinex_db::distributed_locking::{DistributedCoordination, LeadershipGuard};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
@@ -160,7 +160,7 @@ impl SatelliteCoordination {
     }
     
     /// Run as leader with event processing and handoff monitoring
-    async fn run_as_leader<F, Fut>(&mut self, mut leadership: LeadershipGuard, process_events: &F) -> Result<()>
+    async fn run_as_leader<F, Fut>(&mut self, leadership: LeadershipGuard, process_events: &F) -> Result<()>
     where
         F: Fn() -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,

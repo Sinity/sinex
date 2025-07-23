@@ -3,7 +3,6 @@
 //! This module provides a unified RAII wrapper that can be used for any resource
 //! requiring cleanup, including advisory locks, test fixtures, file handles, etc.
 
-use sinex_core_types::Result;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 

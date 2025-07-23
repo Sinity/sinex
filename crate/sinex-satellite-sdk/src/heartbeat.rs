@@ -7,7 +7,6 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_core_utils::CoordinationPrimitive;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::time::{interval, Duration};

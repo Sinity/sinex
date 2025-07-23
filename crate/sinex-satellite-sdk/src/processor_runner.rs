@@ -5,8 +5,7 @@
 
 use crate::{
     checkpoint::{CheckpointManager, CheckpointState},
-    stream_processor::{ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon},
-    SatelliteError, SatelliteResult,
+    stream_processor::{ProcessorType, ScanArgs, StatefulStreamProcessor, TimeHorizon}, SatelliteResult,
 };
 use chrono::Utc;
 use std::sync::Arc;
@@ -166,7 +165,10 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
         // Load last checkpoint
         let last_checkpoint = self.checkpoint_manager.load_checkpoint().await?;
 
-        info!("Starting continuous processing from last checkpoint");
+        info!("Automaton starting continuous processing from last checkpoint");
+        
+        // Automata go directly to continuous mode - no snapshot or gap-fill needed
+        // Their "world" is the event stream which is already complete in the database
         self.run_continuous_with_checkpointing().await
     }
 

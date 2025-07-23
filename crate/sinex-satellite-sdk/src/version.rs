@@ -8,7 +8,7 @@ use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 /// Complete satellite version information
 #[derive(Debug, Clone, Serialize, Deserialize)]
