@@ -35,7 +35,7 @@ impl PkmServiceAutomaton {
         let params = request.get("params").cloned().unwrap_or(json!({}));
 
         match method {
-            "pkm.create_note" => self.handle_create_note(service, event.event_id, params).await,
+            "pkm.create_note" => self.handle_create_note(service, event.id, params).await,
             "pkm.create_entities" => self.handle_create_entities(service, params).await,
             "pkm.link_entities" => self.handle_link_entities(service, params).await,
             "pkm.register_source_material" => self.handle_register_source_material(service, params).await,

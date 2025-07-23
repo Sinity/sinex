@@ -181,12 +181,13 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
 
             // Start continuous processing
             let scan_future = {
-                let mut processor = self.processor.lock().await;
-                processor.scan(
-                    checkpoint_state.checkpoint.clone(),
-                    TimeHorizon::Continuous,
-                    self.config.scan_args.clone(),
-                )
+                let processor = self.processor.clone();
+                let checkpoint = checkpoint_state.checkpoint.clone();
+                let args = self.config.scan_args.clone();
+                async move {
+                    let mut processor = processor.lock().await;
+                    processor.scan(checkpoint, TimeHorizon::Continuous, args).await
+                }
             };
 
             // Run with checkpoint timer and shutdown handling

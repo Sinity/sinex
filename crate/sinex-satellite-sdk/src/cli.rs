@@ -395,6 +395,8 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     use crate::version::SatelliteInstance;
                     use crate::version::satellite_version;
                     use uuid::Uuid;
+                    use std::sync::Arc;
+                    use tokio::sync::Mutex;
                     
                     // Create coordination with generated instance ID
                     let instance_id = Uuid::new_v4().to_string();
@@ -405,12 +407,19 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         db_pool
                     );
                     
+                    // Wrap runner in Arc<Mutex<>> for sharing
+                    let runner = Arc::new(Mutex::new(runner));
+                    
                     // Run with coordination (hot standby pattern)
-                    coordination.run_coordination_loop(move || async {
-                        // Only leader processes events
-                        runner.run_service().await.map_err(|e| {
-                            sinex_core_types::CoreError::Service(format!("Satellite error: {}", e))
-                        })
+                    coordination.run_coordination_loop(move || {
+                        let runner = runner.clone();
+                        async move {
+                            // Only leader processes events
+                            let mut runner = runner.lock().await;
+                            runner.run_service().await.map_err(|e| {
+                                sinex_core_types::CoreError::Service(format!("Satellite error: {}", e))
+                            })
+                        }
                     }).await?;
                 }
             }

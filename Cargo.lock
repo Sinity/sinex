@@ -4069,6 +4069,7 @@ dependencies = [
  "sinex-core-types",
  "sinex-core-utils",
  "sinex-db",
+ "sinex-events",
  "sinex-satellite-sdk",
  "sinex-services",
  "sinex-ulid",
