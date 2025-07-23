@@ -163,7 +163,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
     /// Direct continuous mode for automata
     async fn run_automaton_service(&mut self) -> SatelliteResult<()> {
         // Load last checkpoint
-        let last_checkpoint = self.checkpoint_manager.load_checkpoint().await?;
+        let _last_checkpoint = self.checkpoint_manager.load_checkpoint().await?;
 
         info!("Automaton starting continuous processing from last checkpoint");
         

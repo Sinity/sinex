@@ -48,7 +48,6 @@
 //!     .await?;
 //! ```
 
-use crate::constants::tables;
 use crate::query_helpers::{db_error, ulid_to_uuid, DbResult};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;

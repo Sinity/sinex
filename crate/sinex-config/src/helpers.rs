@@ -1,6 +1,5 @@
 //! Configuration helper types and utilities
 
-use crate::validators::ValidationReport;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -18,26 +17,6 @@ impl Default for DatabaseConfig {
     }
 }
 
-// DEPRECATED: CollectorConfig is no longer used after modernization to environment-only configuration
-// This struct is preserved for backward compatibility but should not be used in new code
-#[deprecated(note = "Use environment-only configuration instead")]
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct CollectorConfig {
-    pub enabled_events: Vec<String>,
-    pub annex_repo_path: Option<String>,
-    pub database: DatabaseConfig,
-}
-
-#[allow(deprecated)]
-impl CollectorConfig {
-    pub fn get_validation_report(&self) -> ValidationReport {
-        ValidationReport::default()
-    }
-
-    pub fn cross_validate(&self) -> Result<(), String> {
-        Ok(())
-    }
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservabilityConfig {

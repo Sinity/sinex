@@ -43,6 +43,7 @@ tower = "0.4"
 sd-notify = "0.4"
 gethostname.workspace = true
 parking_lot = "0.12"
+blake3 = "1.5"
 
 # Local dependencies
 sinex-core-types = { path = "../sinex-core-types" }

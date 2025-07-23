@@ -57,7 +57,7 @@ impl AdvisoryLock {
         let lock_id = hash_key_to_i64(key);
         
         // Use tokio timeout for the blocking call
-        let acquired = tokio::time::timeout(timeout, async {
+        let _acquired = tokio::time::timeout(timeout, async {
             sqlx::query("SELECT pg_advisory_lock($1)")
                 .bind(lock_id)
                 .execute(pool)
@@ -172,6 +172,7 @@ impl DistributedCoordination {
 
 /// Leadership guard that provides additional leadership-specific functionality
 pub struct LeadershipGuard {
+    #[allow(dead_code)]
     lock_guard: ResourceGuard<AdvisoryLock>,
     service_name: String,
     instance_id: String,

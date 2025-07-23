@@ -19,9 +19,6 @@ pub use helpers::{
     ObservabilityConfig, SourcesConfig,
 };
 
-// DEPRECATED: CollectorConfig is deprecated, use environment-only configuration instead
-#[deprecated(note = "Use environment-only configuration instead")]
-pub use helpers::CollectorConfig;
 pub use validation_framework::{
     create_sinex_validator, ConfigurationValidator, CrossFieldCondition, CrossFieldRule,
     EnvironmentRule, RuleType, Severity, ValidatedConfigBuilder, ValidationIssue, ValidationResult,

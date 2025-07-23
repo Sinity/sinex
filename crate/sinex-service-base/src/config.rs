@@ -318,7 +318,7 @@ impl ConfigManager {
         let reloaded_keys = Vec::new();
 
         // Reload environment variables for hot-reloadable entries
-        let env_entries: Vec<String> = config
+        let _env_entries: Vec<String> = config
             .entries
             .values()
             .filter_map(|entry| {

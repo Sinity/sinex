@@ -472,10 +472,15 @@ impl BlobManager {
         struct StorageStats {
             total_blobs: i64,
             total_size_bytes: Option<i64>,
+            #[allow(dead_code)]
             unique_files: i64,
+            #[allow(dead_code)]
             avg_file_size: Option<f64>,
+            #[allow(dead_code)]
             max_file_size: Option<i64>,
+            #[allow(dead_code)]
             oldest_blob: chrono::DateTime<chrono::Utc>,
+            #[allow(dead_code)]
             newest_blob: chrono::DateTime<chrono::Utc>,
         }
         

@@ -18,7 +18,6 @@ use crate::validation::{
 };
 use crate::RawEvent;
 use crate::queries::IntegrityQueries;
-use crate::queries::integrity::{find_batch_violations, find_suspicious_events, analyze_checkpoint_gaps};
 use crate::constants::tables;
 use sinex_ulid::Ulid;
 
@@ -744,6 +743,7 @@ pub mod checkpoint_verification {
         #[derive(sqlx::FromRow)]
         struct CheckpointDetail {
             last_processed_id: Option<sqlx::types::Uuid>,
+            #[allow(dead_code)]
             processed_count: Option<i64>,
             last_activity: Option<DateTime<Utc>>,
         }
