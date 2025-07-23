@@ -142,7 +142,7 @@ impl HeartbeatEmitter {
         HeartbeatMetrics {
             service_name: self.service_name.clone(),
             status: self.get_current_status(),
-            events_processed,
+            events_processed: events_processed as u64,
             uptime_seconds: uptime,
             memory_usage_mb: self.get_memory_usage_mb(),
             cpu_usage_percent: self.get_cpu_usage_percent(),

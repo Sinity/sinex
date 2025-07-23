@@ -396,18 +396,21 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     use crate::version::satellite_version;
                     use uuid::Uuid;
                     
-                    // Create satellite instance for coordination
-                    let instance = SatelliteInstance::new(
-                        &service_name,
-                        satellite_version()
+                    // Create coordination with generated instance ID
+                    let instance_id = Uuid::new_v4().to_string();
+                    
+                    let mut coordination = SatelliteCoordination::new(
+                        service_name.clone(),
+                        instance_id,
+                        db_pool
                     );
                     
-                    let mut coordination = SatelliteCoordination::new(instance, db_pool);
-                    
                     // Run with coordination (hot standby pattern)
-                    coordination.run_coordination_loop(|| async {
+                    coordination.run_coordination_loop(move || async {
                         // Only leader processes events
-                        runner.run_service().await
+                        runner.run_service().await.map_err(|e| {
+                            sinex_core_types::CoreError::Service(format!("Satellite error: {}", e))
+                        })
                     }).await?;
                 }
             }
