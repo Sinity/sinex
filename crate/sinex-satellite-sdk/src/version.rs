@@ -7,6 +7,7 @@
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use std::cmp::Ordering;
+use std::fmt;
 use std::str::FromStr;
 use std::time::SystemTime;
 
@@ -99,6 +100,12 @@ impl Ord for SatelliteVersion {
             }
             other => other,
         }
+    }
+}
+
+impl fmt::Display for SatelliteVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.full_version)
     }
 }
 

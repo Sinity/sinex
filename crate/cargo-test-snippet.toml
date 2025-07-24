@@ -1,0 +1,6 @@
+# Add this to each crate's Cargo.toml to guide test writing:
+
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils" }
+# For writing tests, use #[sinex_test] macro and TestContext
+# See /TESTING.md for test writing guide

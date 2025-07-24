@@ -5,9 +5,10 @@
 
 use crate::{
     checkpoint::{CheckpointManager, CheckpointState},
-    stream_processor::{ProcessorType, ScanArgs, StatefulStreamProcessor, TimeHorizon}, SatelliteResult,
+    stream_processor::{ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon}, SatelliteResult,
 };
 use chrono::Utc;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
@@ -345,14 +346,17 @@ mod tests {
             };
 
             Ok(ScanReport {
-                events_processed,
-                final_checkpoint: Some(Checkpoint::Internal {
+                events_processed: events_processed as u64,
+                duration: std::time::Duration::from_secs(1),
+                final_checkpoint: Checkpoint::Internal {
                     event_id: sinex_ulid::Ulid::new(),
                     message_count: events_processed as u64,
-                }),
-                checkpoint_data: None,
-                scan_duration: std::time::Duration::from_secs(1),
-                metadata: None,
+                },
+                time_range: None,
+                processor_stats: HashMap::new(),
+                successful_targets: Vec::new(),
+                failed_targets: Vec::new(),
+                warnings: Vec::new(),
             })
         }
 

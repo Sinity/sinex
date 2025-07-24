@@ -36,4 +36,4 @@ uuid.workspace = true
 blake3 = "1.5"
 
 [dev-dependencies]
-sinex-test-macros = { path = "../sinex-test-macros" }
+sinex-test-utils = { path = "../sinex-test-utils" }

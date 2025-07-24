@@ -198,43 +198,6 @@ macro_rules! insert_schema {
     };
 }
 
-/// Macro for getting artifact by ID
-///
-/// Usage:
-/// ```rust
-/// let artifact = get_artifact_by_id!(pool, artifact_id).await?;
-/// ```
-#[macro_export]
-macro_rules! get_artifact_by_id {
-    ($pool:expr, $artifact_id:expr) => {
-        $crate::queries::ArtifactQueries::get_by_id($artifact_id)
-            .fetch_one::<$crate::ArtifactRecord>($pool)
-    };
-}
-
-/// Macro for inserting artifact
-///
-/// Usage:
-/// ```rust
-/// let artifact = insert_artifact!(pool, {
-///     blob_id: blob_id,
-///     title: "My Artifact".to_string(),
-///     description: Some("Description".to_string()),
-///     metadata: json!({"key": "value"}),
-/// }).await?;
-/// ```
-#[macro_export]
-macro_rules! insert_artifact {
-    ($pool:expr, {
-        blob_id: $blob_id:expr,
-        title: $title:expr,
-        description: $description:expr,
-        metadata: $metadata:expr,
-    }) => {
-        $crate::queries::ArtifactQueries::insert_artifact($blob_id, $title, $description, $metadata)
-            .fetch_one::<$crate::ArtifactRecord>($pool)
-    };
-}
 
 /// Macro for getting health metrics
 ///
@@ -439,9 +402,10 @@ macro_rules! aggregate_query {
 
 #[cfg(test)]
 mod tests {
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_macro_compilation() {
+    #[sinex_test]
+    async fn test_macro_compilation() {
         // These tests just verify the macros compile correctly
         // They don't execute because we don't have a real database in tests
 

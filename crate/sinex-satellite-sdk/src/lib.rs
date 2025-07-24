@@ -40,6 +40,10 @@ pub use grpc_client::IngestClient;
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use redis_client::{RedisStreamClient, StreamMessage};
+pub use crate::redis_stream_consumer::{
+    BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,
+    RedisConsumerConfig, RedisStreamConsumer,
+};
 pub use replay::ReplayMode;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use stream_processor::{

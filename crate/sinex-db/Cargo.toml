@@ -38,3 +38,4 @@ strum = { version = "0.26", features = ["derive"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
+sinex-test-utils = { path = "../sinex-test-utils" }

@@ -1,9 +1,8 @@
-//! Content service for managing event content and artifacts
+//! Content service for managing event content and source material
 
 use crate::error::{ServiceError, ServiceResult};
 use sinex_annex::BlobManager;
-use sinex_db::models::CreateArtifactInput;
-use sinex_db::{artifacts, DbPool};
+use sinex_db::DbPool;
 use std::sync::Arc;
 
 pub struct ContentService {
@@ -16,42 +15,23 @@ impl ContentService {
         Self { pool, blob_manager }
     }
 
-    /// Store large content as blob and return artifact reference
+    /// Store large content as blob and return source material reference
     pub async fn store_large_content(
         &self,
         content: &[u8],
         filename: &str,
         content_type: &str,
-        source: &str,
+        _source: &str,
     ) -> ServiceResult<String> {
-        // Store in git-annex
+        // Store in git-annex (blob manager handles source material registration automatically)
         let blob_metadata = self
             .blob_manager
             .ingest_from_bytes(content, filename, content_type)
             .await
             .map_err(|e| ServiceError::OperationFailed(format!("Blob storage failed: {}", e)))?;
 
-        // Create artifact record
-        let _artifact = artifacts::create_artifact(
-            &self.pool,
-            CreateArtifactInput {
-                artifact_type: "blob".to_string(),
-                title: filename.to_string(),
-                source_url: None,
-                original_path: Some(filename.to_string()),
-                mime_type: Some(content_type.to_string()),
-                size_bytes: Some(blob_metadata.size_bytes),
-                checksum: Some(blob_metadata.checksum_sha256.clone()),
-                metadata: Some(serde_json::json!({
-                    "annex_key": blob_metadata.annex_key,
-                    "source": source,
-                })),
-                created_from_event_id: None,
-                blob_id: Some(blob_metadata.blob_id),
-            },
-        )
-        .await?;
-
+        // The blob manager has already created the source material record
+        // Return the annex key for referencing the stored content
         Ok(blob_metadata.annex_key)
     }
 
@@ -61,9 +41,9 @@ impl ContentService {
         content: &[u8],
         filename: &str,
         content_type: &str,
-        source: &str,
+        _source: &str,
     ) -> ServiceResult<String> {
-        self.store_large_content(content, filename, content_type, source)
+        self.store_large_content(content, filename, content_type, _source)
             .await
     }
 

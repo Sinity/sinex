@@ -232,7 +232,6 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
                     "offset_start": offset_start,
                     "offset_end": offset_end,
                     "source_material_id": source_material_id.to_string(),
-                    "checksum": checksum.clone(),
                     "source_uri": source_uri,
                 }));
 

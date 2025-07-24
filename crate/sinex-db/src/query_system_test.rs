@@ -5,15 +5,15 @@
 
 #[cfg(test)]
 mod tests {
-
     use crate::queries::EventQueries;
     use crate::query_builder::{QueryBuilder, QueryParam};
     use chrono::Utc;
     use serde_json::json;
     use sinex_ulid::Ulid;
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_query_builder_select() {
+    #[sinex_test]
+    async fn test_query_builder_select() {
         let builder = QueryBuilder::select("core.events")
             .columns(&["event_id", "source", "event_type"])
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()))
@@ -29,8 +29,8 @@ mod tests {
         assert_eq!(params.len(), 1);
     }
 
-    #[test]
-    fn test_query_builder_insert() {
+    #[sinex_test]
+    async fn test_query_builder_insert() {
         let builder = QueryBuilder::insert("core.events")
             .columns(&["source", "event_type", "payload"])
             .values(&[
@@ -48,8 +48,8 @@ mod tests {
         assert_eq!(params.len(), 3);
     }
 
-    #[test]
-    fn test_query_builder_update() {
+    #[sinex_test]
+    async fn test_query_builder_update() {
         let builder = QueryBuilder::update("core.events")
             .set("source", QueryParam::String("updated.source".to_string()))
             .set("payload", QueryParam::Json(json!({"updated": true})))
@@ -64,8 +64,8 @@ mod tests {
         assert_eq!(params.len(), 3);
     }
 
-    #[test]
-    fn test_query_builder_delete() {
+    #[sinex_test]
+    async fn test_query_builder_delete() {
         let builder =
             QueryBuilder::delete("core.events").where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
@@ -76,8 +76,8 @@ mod tests {
         assert_eq!(params.len(), 1);
     }
 
-    #[test]
-    fn test_query_param_ulid_conversion() {
+    #[sinex_test]
+    async fn test_query_param_ulid_conversion() {
         use crate::query_builder::RawQueryParam;
 
         let ulid = Ulid::new();
@@ -93,8 +93,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_query_param_ulid_array_conversion() {
+    #[sinex_test]
+    async fn test_query_param_ulid_array_conversion() {
         use crate::query_builder::RawQueryParam;
 
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
@@ -112,8 +112,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_event_queries_builder_patterns() {
+    #[sinex_test]
+    async fn test_event_queries_builder_patterns() {
         let event_id = Ulid::new();
 
         // Test get_by_id query
@@ -145,8 +145,8 @@ mod tests {
         assert_eq!(params.len(), 0);
     }
 
-    #[test]
-    fn test_query_param_types() {
+    #[sinex_test]
+    async fn test_query_param_types() {
         let test_cases = vec![
             (QueryParam::String("test".to_string()), "text"),
             (QueryParam::OptionalString(Some("test".to_string())), "text"),
@@ -177,8 +177,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_complex_query_building() {
+    #[sinex_test]
+    async fn test_complex_query_building() {
         let start_time = Utc::now() - chrono::Duration::hours(1);
         let end_time = Utc::now();
         let event_ids = vec![Ulid::new(), Ulid::new()];
@@ -202,8 +202,8 @@ mod tests {
         assert_eq!(params.len(), 3);
     }
 
-    #[test]
-    fn test_query_error_handling() {
+    #[sinex_test]
+    async fn test_query_error_handling() {
         // Test that build() returns appropriate errors for invalid queries
         let builder = QueryBuilder::insert("core.events")
             .columns(&["source", "event_type"])
@@ -219,10 +219,10 @@ mod tests {
         assert!(sql.contains("SELECT * FROM"));
     }
 
-    #[test]
-    fn test_query_registry_organization() {
+    #[sinex_test]
+    async fn test_query_registry_organization() {
         use crate::queries::{
-            ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+            CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
         };
 
         // Test that all query registries are accessible
@@ -233,15 +233,14 @@ mod tests {
             "consumer".to_string(),
         );
         let _schema_builder = SchemaQueries::get_latest_for_event_type("test_event".to_string());
-        let _artifact_builder = ArtifactQueries::count_all();
         let _operation_builder = OperationQueries::get_health_metrics();
 
         // Just verify they compile and are accessible
         assert!(true);
     }
 
-    #[test]
-    fn test_migration_benefits() {
+    #[sinex_test]
+    async fn test_migration_benefits() {
         // Before: Manual ULID/UUID conversion
         let ulid = Ulid::new();
         let uuid = crate::query_helpers::ulid_to_uuid(ulid);

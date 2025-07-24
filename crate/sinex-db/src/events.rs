@@ -9,8 +9,7 @@ use crate::queries::EventQueries;
 use crate::query_helpers::uuid_to_ulid;
 use crate::validation::EventValidator;
 use crate::DbPoolRef;
-use anyhow::Result;
-use sinex_error::CoreError;
+use crate::query_helpers::{DbResult, DbError};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sinex_events::RawEvent;
@@ -65,18 +64,17 @@ impl From<EventRecord> for RawEvent {
 
 /// Simple insert event function for test compatibility
 // #[sinex_macros::auto_db_metrics(operation = "insert_event")]
-pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> Result<Ulid> {
+pub async fn insert_event(pool: DbPoolRef<'_>, event: &RawEvent) -> DbResult<Ulid> {
     let inserted = insert_event_with_validator(pool, event, None).await?;
     Ok(inserted.id)
 }
 
 /// Get an event by ID following the exact same pattern as existing correct functions
 // #[sinex_macros::auto_db_metrics(operation = "get_event_by_id")]
-pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<RawEvent> {
+pub async fn get_event_by_id(pool: DbPoolRef<'_>, event_id: Ulid) -> DbResult<RawEvent> {
     let record = EventQueries::get_by_id(event_id)
         .fetch_one::<EventRecord>(pool)
-        .await
-        .map_err(|e| CoreError::Database(format!("Failed to get event by ID: {}", e)))?;
+        .await?;
 
     Ok(record.into())
 }
@@ -87,10 +85,10 @@ pub async fn insert_event_with_validator(
     pool: DbPoolRef<'_>,
     event: &RawEvent,
     validator: Option<&EventValidator>,
-) -> Result<RawEvent> {
+) -> DbResult<RawEvent> {
     // Validate if validator provided
     if let Some(validator) = validator {
-        validator.validate(event)?;
+        validator.validate(event).map_err(|e| DbError::Transaction(format!("Validation failed: {}", e)))?;
     }
 
     let record = EventQueries::insert_event_with_source_ids(
@@ -104,19 +102,17 @@ pub async fn insert_event_with_validator(
         event.source_event_ids.clone(),
     )
     .fetch_one::<EventRecord>(pool)
-    .await
-    .map_err(|e| CoreError::Database(format!("Failed to insert event: {}", e)))?;
+    .await?;
 
     Ok(record.into())
 }
 
 /// Count total number of events in the database
 // #[sinex_macros::auto_db_metrics(operation = "count_events")]
-pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64> {
+pub async fn count_events(pool: DbPoolRef<'_>) -> DbResult<i64> {
     let (count,) = EventQueries::count_all()
         .fetch_one::<(i64,)>(pool)
-        .await
-        .map_err(|e| CoreError::Database(format!("Failed to count events: {}", e)))?;
+        .await?;
 
     Ok(count)
 }
@@ -128,10 +124,10 @@ pub async fn insert_event_with_blob(
     event: &RawEvent,
     blob_id: Ulid,
     validator: Option<&EventValidator>,
-) -> Result<RawEvent> {
+) -> DbResult<RawEvent> {
     // Validate if validator provided
     if let Some(validator) = validator {
-        validator.validate(event)?;
+        validator.validate(event).map_err(|e| DbError::Transaction(format!("Validation failed: {}", e)))?;
     }
 
 
@@ -147,8 +143,7 @@ pub async fn insert_event_with_blob(
         event.source_event_ids.clone(),
     )
     .fetch_one::<EventRecord>(pool)
-    .await
-    .map_err(|e| CoreError::Database(format!("Failed to insert event with blob: {}", e)))?;
+    .await?;
 
     Ok(RawEvent {
         id: uuid_to_ulid(record.id),
@@ -179,14 +174,13 @@ pub async fn get_events_with_blobs(
     pool: DbPoolRef<'_>,
     limit: Option<i64>,
     offset: Option<i64>,
-) -> Result<Vec<(RawEvent, Ulid)>> {
+) -> DbResult<Vec<(RawEvent, Ulid)>> {
     let limit = limit.unwrap_or(100);
     let offset = offset.unwrap_or(0);
 
     let records = EventQueries::get_with_blobs(Some(limit), Some(offset))
         .fetch_all::<EventRecord>(pool)
-        .await
-        .map_err(|e| CoreError::Database(format!("Failed to get events with blobs: {}", e)))?;
+        .await?;
 
     let events_with_blobs = records
         .into_iter()
@@ -230,22 +224,95 @@ pub async fn attach_blob_to_event(
     pool: DbPoolRef<'_>,
     event_id: Ulid,
     blob_id: Ulid,
-) -> Result<()> {
+) -> DbResult<()> {
     EventQueries::attach_blob(event_id, blob_id)
         .execute(pool)
-        .await
-        .map_err(|e| CoreError::Database(format!("Failed to attach blob to event: {}", e)))?;
+        .await?;
 
     Ok(())
 }
 
 /// Remove blob attachment from an event
 // #[sinex_macros::auto_db_metrics(operation = "detach_blob_from_event")]
-pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> Result<()> {
+pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> DbResult<()> {
     EventQueries::detach_blob(event_id)
         .execute(pool)
-        .await
-        .map_err(|e| CoreError::Database(format!("Failed to detach blob from event: {}", e)))?;
+        .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{TestContext, TestConfig, database_pool};
+    use serde_json::json;
+    use chrono::Utc;
+
+    #[sinex_test]
+    async fn test_insert_event_basic(ctx: TestContext) -> TestResult {
+        let event = RawEvent {
+            id: Ulid::new(),
+            source: "test.source".to_string(),
+            event_type: "test.event".to_string(),
+            ts_ingest: Utc::now(),
+            ts_orig: None,
+            host: "localhost".to_string(),
+            ingestor_version: Some("1.0.0".to_string()),
+            payload_schema_id: None,
+            payload: json!({"test": "data"}),
+            source_event_ids: None,
+            anchor_byte: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            associated_blob_ids: None,
+        };
+
+        let result = insert_event(ctx.pool(), &event).await?;
+        assert_eq!(result.event_id, event.id);
+        assert_eq!(result.source, event.source);
+        assert_eq!(result.event_type, event.event_type);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_get_event_by_id(ctx: TestContext) -> TestResult {
+        // Insert a test event first
+        let event = ctx.event()
+            .source("get.test")
+            .type_("test.get")
+            .field("data", "test")
+            .insert()
+            .await?;
+
+        // Retrieve it by ID
+        let retrieved = get_event_by_id(ctx.pool(), event.id).await?;
+        assert!(retrieved.is_some());
+        
+        let retrieved_event = retrieved.unwrap();
+        assert_eq!(retrieved_event.id, event.id);
+        assert_eq!(retrieved_event.source, "get.test");
+        assert_eq!(retrieved_event.event_type, "test.get");
+        assert_eq!(retrieved_event.payload["data"], "test");
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_count_events(ctx: TestContext) -> TestResult {
+        // Insert multiple events  
+        for i in 0..5 {
+            ctx.event()
+                .source("count.test")
+                .type_("test.count")
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+
+        let count = count_events(ctx.pool()).await?;
+        assert!(count >= 5, "Should have at least 5 events");
+        Ok(())
+    }
 }

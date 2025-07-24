@@ -209,6 +209,10 @@ pub enum WhereCondition {
         column: String,
         is_null: bool,
     },
+    /// Raw WHERE condition (e.g., "ts_server > NOW() - INTERVAL '1 hour'")
+    Raw {
+        condition: String,
+    },
 }
 
 /// ORDER BY clause
@@ -216,6 +220,14 @@ pub enum WhereCondition {
 pub struct OrderBy {
     pub column: String,
     pub direction: String,
+}
+
+/// JOIN clause
+#[derive(Debug, Clone)]
+pub struct Join {
+    pub join_type: String,
+    pub table: String,
+    pub condition: String,
 }
 
 /// Main query builder struct
@@ -233,6 +245,7 @@ pub struct QueryBuilder {
     offset: Option<i64>,
     set_clauses: Vec<(String, QueryParam)>,
     values: Vec<QueryParam>,
+    joins: Vec<Join>,
 }
 
 impl QueryBuilder {
@@ -251,6 +264,7 @@ impl QueryBuilder {
             offset: None,
             set_clauses: Vec::new(),
             values: Vec::new(),
+            joins: Vec::new(),
         }
     }
 
@@ -270,6 +284,7 @@ impl QueryBuilder {
             offset: None,
             set_clauses: Vec::new(),
             values: Vec::new(),
+            joins: Vec::new(),
         }
     }
 
@@ -288,6 +303,7 @@ impl QueryBuilder {
             offset: None,
             set_clauses: Vec::new(),
             values: Vec::new(),
+            joins: Vec::new(),
         }
     }
 
@@ -306,6 +322,7 @@ impl QueryBuilder {
             offset: None,
             set_clauses: Vec::new(),
             values: Vec::new(),
+            joins: Vec::new(),
         }
     }
 
@@ -372,6 +389,29 @@ impl QueryBuilder {
         self
     }
 
+    /// Add raw WHERE clause (for complex conditions)
+    pub fn where_clause(mut self, condition: &str) -> Self {
+        self.conditions.push(WhereCondition::Raw {
+            condition: condition.to_string(),
+        });
+        self
+    }
+
+    /// Convenience method for WHERE column >= param
+    pub fn where_gte(self, column: &str, param: QueryParam) -> Self {
+        self.where_op(column, ">=", param)
+    }
+
+    /// Add INNER JOIN clause
+    pub fn inner_join(mut self, table_with_condition: &str, condition: &str) -> Self {
+        self.joins.push(Join {
+            join_type: "INNER".to_string(),
+            table: table_with_condition.to_string(),
+            condition: condition.to_string(),
+        });
+        self
+    }
+
     /// Add ORDER BY clause
     pub fn order_by(mut self, column: &str, direction: &str) -> Self {
         self.order_by.push(OrderBy {
@@ -384,6 +424,12 @@ impl QueryBuilder {
     /// Add GROUP BY clause
     pub fn group_by(mut self, column: &str) -> Self {
         self.group_by.push(column.to_string());
+        self
+    }
+
+    /// Add HAVING clause (placeholder for future implementation)
+    pub fn having(self, _condition: &str) -> Self {
+        // TODO: Implement HAVING clause support
         self
     }
 
@@ -507,6 +553,11 @@ impl QueryBuilder {
             }
         }
 
+        // Add JOINs
+        for join in &self.joins {
+            sql.push_str(&format!(" {} JOIN {} ON {}", join.join_type, join.table, join.condition));
+        }
+
         // Add WHERE conditions
         if !self.conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -536,6 +587,9 @@ impl QueryBuilder {
                         } else {
                             where_parts.push(format!("{} IS NOT NULL", column));
                         }
+                    }
+                    WhereCondition::Raw { condition } => {
+                        where_parts.push(condition.clone());
                     }
                 }
             }
@@ -722,10 +776,15 @@ fn bind_param_raw(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::constants::tables;
     use serde_json::json;
+    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{TestContext, TestConfig, database_pool};
+    use sinex_ulid::Ulid;
+    use chrono::Utc;
 
-    #[test]
-    fn test_select_query_builder() {
+    #[sinex_test]
+    async fn test_select_query_builder(ctx: TestContext) -> TestResult {
         let builder = QueryBuilder::select(tables::EVENTS)
             .columns(&["event_id", "source", "event_type"])
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()))
@@ -738,10 +797,11 @@ mod tests {
         assert!(sql.contains("ORDER BY ts_ingest DESC"));
         assert!(sql.contains("LIMIT 10"));
         assert_eq!(params.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn test_insert_query_builder() {
+    #[sinex_test]
+    async fn test_insert_query_builder(ctx: TestContext) -> TestResult {
         let builder = QueryBuilder::insert(tables::EVENTS)
             .columns(&["source", "event_type", "payload"])
             .values(&[
@@ -756,10 +816,11 @@ mod tests {
         assert!(sql.contains("VALUES ($1, $2, $3)"));
         assert!(sql.contains("RETURNING event_id"));
         assert_eq!(params.len(), 3);
+        Ok(())
     }
 
-    #[test]
-    fn test_update_query_builder() {
+    #[sinex_test]
+    async fn test_update_query_builder(ctx: TestContext) -> TestResult {
         let builder = QueryBuilder::update(tables::EVENTS)
             .set("source", QueryParam::String("updated.source".to_string()))
             .set("payload", QueryParam::Json(json!({"updated": true})))
@@ -771,10 +832,11 @@ mod tests {
         assert!(sql.contains("payload = $2"));
         assert!(sql.contains("WHERE event_id = $3::uuid"));
         assert_eq!(params.len(), 3);
+        Ok(())
     }
 
-    #[test]
-    fn test_delete_query_builder() {
+    #[sinex_test]
+    async fn test_delete_query_builder(ctx: TestContext) -> TestResult {
         let builder =
             QueryBuilder::delete(tables::EVENTS).where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
@@ -782,10 +844,11 @@ mod tests {
         assert!(sql.contains("DELETE FROM core.events"));
         assert!(sql.contains("WHERE event_id = $1::uuid"));
         assert_eq!(params.len(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn test_ulid_array_parameter() {
+    #[sinex_test]
+    async fn test_ulid_array_parameter(ctx: TestContext) -> TestResult {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_in("event_id", QueryParam::UlidArray(ulids.clone()));
@@ -800,10 +863,11 @@ mod tests {
             }
             _ => panic!("Expected UuidArray parameter"),
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_optional_parameters() {
+    #[sinex_test]
+    async fn test_optional_parameters(ctx: TestContext) -> TestResult {
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_eq(
                 "payload_schema_id",
@@ -815,5 +879,190 @@ mod tests {
         assert!(sql.contains("WHERE payload_schema_id = $1::uuid"));
         assert!(sql.contains("AND ingestor_version = $2::text"));
         assert_eq!(params.len(), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_complex_select_with_conditions(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .columns(&["event_id", "source", "event_type"])
+            .where_eq("source", QueryParam::String("test".to_string()))
+            .where_op("ts_server", ">=", QueryParam::Timestamp(Utc::now()))
+            .order_by("ts_server", "DESC")
+            .limit(10)
+            .offset(5);
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("SELECT event_id, source, event_type"));
+        assert!(sql.contains("WHERE source = $1"));
+        assert!(sql.contains("ORDER BY ts_server DESC"));
+        assert!(sql.contains("LIMIT"));
+        assert!(sql.contains("OFFSET"));
+        assert_eq!(params.len(), 2);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_ulid_to_uuid_conversion(ctx: TestContext) -> TestResult {
+        let test_ulid = Ulid::new();
+        let expected_uuid = crate::query_helpers::ulid_to_uuid(test_ulid);
+        
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .where_eq("event_id", QueryParam::Ulid(test_ulid));
+
+        let (_sql, params) = builder.build().unwrap();
+        
+        match &params[0] {
+            RawQueryParam::Uuid(uuid) => {
+                assert_eq!(*uuid, expected_uuid);
+            }
+            _ => panic!("Expected UUID parameter after ULID conversion"),
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_json_parameter_handling(ctx: TestContext) -> TestResult {
+        let test_json = serde_json::json!({
+            "test": "value",
+            "number": 42,
+            "nested": {
+                "inner": "data"
+            }
+        });
+
+        let builder = QueryBuilder::insert(tables::EVENTS)
+            .columns(&["source", "payload"])
+            .values(&[
+                QueryParam::String("test".to_string()),
+                QueryParam::Json(test_json.clone())
+            ]);
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("INSERT INTO core.events"));
+        assert_eq!(params.len(), 2);
+        
+        match &params[1] {
+            RawQueryParam::Json(json_val) => {
+                assert_eq!(*json_val, test_json);
+            }
+            _ => panic!("Expected JSON parameter"),
+        }
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_bulk_insert(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::insert(tables::EVENTS)
+            .columns(&["source", "event_type", "host", "payload"])
+            .values(&[
+                QueryParam::String("bulk_test".to_string()),
+                QueryParam::String("test.bulk".to_string()),
+                QueryParam::String("localhost".to_string()),
+                QueryParam::Json(serde_json::json!({"index": 1}))
+            ])
+            .values(&[
+                QueryParam::String("bulk_test".to_string()),
+                QueryParam::String("test.bulk".to_string()),
+                QueryParam::String("localhost".to_string()),
+                QueryParam::Json(serde_json::json!({"index": 2}))
+            ]);
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("INSERT INTO core.events"));
+        assert!(sql.contains("VALUES ($1, $2, $3, $4), ($5, $6, $7, $8)"));
+        assert_eq!(params.len(), 8);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_where_in_query(ctx: TestContext) -> TestResult {
+        let ulids = vec![Ulid::new(), Ulid::new()];
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .where_in("event_id", QueryParam::UlidArray(ulids.clone()));
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("WHERE event_id = ANY($1::uuid[])"));
+        assert_eq!(params.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_count_query(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .columns(&["COUNT(*)"])
+            .where_eq("source", QueryParam::String("test".to_string()));
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("SELECT COUNT(*)"));
+        assert!(sql.contains("WHERE source = $1"));
+        assert_eq!(params.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_update_with_multiple_sets(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::update(tables::EVENTS)
+            .set("source", QueryParam::String("updated_source".to_string()))
+            .set("payload", QueryParam::Json(serde_json::json!({"updated": true})))
+            .set("ts_server", QueryParam::Timestamp(Utc::now()))
+            .where_eq("event_id", QueryParam::Ulid(Ulid::new()));
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("UPDATE core.events"));
+        assert!(sql.contains("SET source = $1, payload = $2, ts_server = $3"));
+        assert!(sql.contains("WHERE event_id = $4::uuid"));
+        assert_eq!(params.len(), 4);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_raw_condition(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .where_op("ts_server", ">", QueryParam::String("NOW() - INTERVAL '1 hour'".to_string()));
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("WHERE ts_server >"));
+        assert_eq!(params.len(), 1);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_parameter_type_coercion(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .where_eq("payload_schema_id", QueryParam::OptionalUlid(None))
+            .where_eq("source_event_ids", QueryParam::OptionalUlidArray(None))
+            .where_eq("ingestor_version", QueryParam::OptionalString(Some("v1.0.0".to_string())));
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("WHERE payload_schema_id = $1::uuid"));
+        assert!(sql.contains("AND source_event_ids = $2::uuid[]"));
+        assert!(sql.contains("AND ingestor_version = $3::text"));
+        assert_eq!(params.len(), 3);
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_complex_aggregation_query(ctx: TestContext) -> TestResult {
+        let builder = QueryBuilder::select(tables::EVENTS)
+            .columns(&[
+                "source",
+                "COUNT(*) as event_count",
+                "MAX(ts_server) as latest_event",
+                "MIN(ts_server) as earliest_event"
+            ])
+            .where_op("ts_server", ">=", QueryParam::Timestamp(Utc::now() - chrono::Duration::days(7)))
+            .group_by("source")
+            .order_by("event_count", "DESC")
+            .limit(100);
+
+        let (sql, params) = builder.build().unwrap();
+        assert!(sql.contains("SELECT source, COUNT(*) as event_count"));
+        assert!(sql.contains("WHERE ts_server >="));
+        assert!(sql.contains("GROUP BY source"));
+        assert!(sql.contains("ORDER BY event_count DESC"));
+        assert!(sql.contains("LIMIT"));
+        assert_eq!(params.len(), 2);
+        Ok(())
     }
 }
