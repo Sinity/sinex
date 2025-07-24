@@ -7,6 +7,9 @@ test-threads = "num-cpus"
 failure-output = "immediate-final"
 success-output = "never"
 
+# Status output - show progress
+status-level = "pass"
+
 # Retry flaky tests once
 retries = 1
 

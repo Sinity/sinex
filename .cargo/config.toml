@@ -1,6 +1,21 @@
 [build]
 # Build configuration for Sinex
 
+[alias]
+# Make 'cargo test' use nextest for better performance
+# This prevents accidentally running the slow built-in test runner
+test = ["nextest", "run"]
+
+# Provide escape hatch if built-in test is really needed
+test-builtin = ["test"]
+
+# Quick test aliases
+t = ["nextest", "run"]
+tf = ["nextest", "run", "-E", "test(unit::) or test(property::)"]  # Fast tests
+tu = ["nextest", "run", "-E", "test(unit::)"]                      # Unit tests only
+ti = ["nextest", "run", "-E", "test(integration::)"]               # Integration tests
+tp = ["nextest", "run", "-E", "test(property::)"]                  # Property tests
+
 [env]
 # Environment variables for coverage and testing
 CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
