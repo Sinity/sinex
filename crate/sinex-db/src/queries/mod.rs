@@ -11,7 +11,6 @@
 //! - `schemas`: Schema validation and metadata
 //! - `operations`: System operations and health checks
 //! - `processor_manifests`: Processor registration and management
-//! - `artifacts`: Blob and artifact management
 //! - `metrics`: Metrics storage and aggregation
 //! - `verification`: Preflight and integration testing
 //! - `knowledge_graph`: Entity and relation management
@@ -42,7 +41,6 @@
 //! - **Performant**: Prepared statements and connection pooling
 
 pub mod annotations;
-pub mod artifacts;
 pub mod checkpoints;
 pub mod events;
 pub mod integrity;
@@ -57,7 +55,6 @@ pub mod verification;
 
 // Re-export query structs for easier access
 pub use annotations::AnnotationQueries;
-pub use artifacts::ArtifactQueries;
 pub use checkpoints::CheckpointQueries;
 pub use events::EventQueries;
 pub use integrity::IntegrityQueries;
