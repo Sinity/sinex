@@ -11,7 +11,6 @@ pub use sinex_validation::*;
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::time::Duration;
-use thiserror::Error;
 
 // Re-export common types
 pub type JsonValue = serde_json::Value;
@@ -227,96 +226,8 @@ pub mod redis {
     pub const BLOCK_TIMEOUT_MS: u64 = 1000;
 }
 
-/// Error types for the Sinex system
-#[derive(Debug, Error)]
-pub enum CoreError {
-    #[error("Database error: {0}")]
-    Database(String),
-
-    #[error("Validation error: {0}")]
-    Validation(String),
-
-    #[error("IO error: {0}")]
-    Io(String),
-
-    #[error("Serialization error: {0}")]
-    Serialization(String),
-
-    #[error("Configuration error: {0}")]
-    Configuration(String),
-
-    #[error("Service error: {0}")]
-    Service(String),
-
-    #[error("Channel send error: {0}")]
-    ChannelSend(String),
-
-    #[error("Channel receive error: {0}")]
-    ChannelReceive(String),
-
-    #[error("Timeout error: {0}")]
-    Timeout(String),
-
-    #[error("Resource exhausted: {0}")]
-    ResourceExhausted(String),
-
-    #[error("Invalid state: {0}")]
-    InvalidState(String),
-
-    #[error("Not found: {0}")]
-    NotFound(String),
-
-    #[error("Already exists: {0}")]
-    AlreadyExists(String),
-
-    #[error("Permission denied: {0}")]
-    PermissionDenied(String),
-
-    #[error("Cancelled: {0}")]
-    Cancelled(String),
-
-    #[error("Max retries exceeded: {0}")]
-    MaxRetriesExceeded(String),
-
-    #[error("Parse error: {0}")]
-    Parse(String),
-
-    #[error("Network error: {0}")]
-    Network(String),
-
-    #[error("Unknown error: {0}")]
-    Unknown(String),
-}
-
-impl From<std::io::Error> for CoreError {
-    fn from(err: std::io::Error) -> Self {
-        CoreError::Io(err.to_string())
-    }
-}
-
-impl From<serde_json::Error> for CoreError {
-    fn from(err: serde_json::Error) -> Self {
-        CoreError::Serialization(err.to_string())
-    }
-}
-
-impl From<sqlx::Error> for CoreError {
-    fn from(err: sqlx::Error) -> Self {
-        CoreError::Database(err.to_string())
-    }
-}
-
-impl<T> From<tokio::sync::mpsc::error::SendError<T>> for CoreError {
-    fn from(err: tokio::sync::mpsc::error::SendError<T>) -> Self {
-        CoreError::ChannelSend(err.to_string())
-    }
-}
-
-impl From<tokio::sync::oneshot::error::RecvError> for CoreError {
-    fn from(err: tokio::sync::oneshot::error::RecvError) -> Self {
-        CoreError::ChannelReceive(err.to_string())
-    }
-}
+// Re-export the canonical CoreError from sinex-error
+pub use sinex_error::CoreError;
 
 /// Result type alias for CoreError
 pub type Result<T> = std::result::Result<T, CoreError>;

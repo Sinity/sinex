@@ -136,9 +136,10 @@ mod tests {
     use super::*;
     use serde_json::json;
     use sinex_events::EventFactory;
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_path_traversal_sanitization() {
+    #[sinex_test]
+    async fn test_path_traversal_sanitization() {
         let factory = EventFactory::new("../../../etc/passwd");
         let mut event = factory.create_event(
             "security.test",
@@ -157,8 +158,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_null_byte_sanitization() {
+    #[sinex_test]
+    async fn test_null_byte_sanitization() {
         let factory = EventFactory::new("test\0source");
         let mut event = factory.create_event(
             "security.test",
@@ -172,8 +173,8 @@ mod tests {
         assert!(!event.source.contains('\0'));
     }
 
-    #[test]
-    fn test_sql_injection_preserved() {
+    #[sinex_test]
+    async fn test_sql_injection_preserved() {
         let factory = EventFactory::new("security.test");
         let mut event = factory.create_event(
             "sql.injection",

@@ -13,6 +13,7 @@ description = "Database connection and query utilities for Sinex"
 [dependencies]
 sinex-ulid = { path = "../sinex-ulid", features = ["sqlx"] }
 sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-events = { path = "../sinex-events" }
 sinex-macros = { path = "../sinex-macros" }
 sinex-validation = { path = "../sinex-validation" }
@@ -37,3 +38,4 @@ strum = { version = "0.26", features = ["derive"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
+sinex-test-utils = { path = "../sinex-test-utils" }

@@ -6,7 +6,7 @@
 //! - Wraparound behavior
 //! - Concurrent generation safety
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -276,7 +276,7 @@ async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> TestResult 
                 task_ulids.push(ulid);
                 
                 // Also test database insertion with specific ULID
-                let mut event = crate::common::test_event_with_payload(
+                let mut event = crate::sinex_test_utils::test_event_with_payload(
                     "concurrent_ulid_test",
                     "generation.test",
                     json!({
@@ -287,7 +287,7 @@ async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> TestResult 
                 event.id = ulid; // Override with our specific ULID for edge case testing
                 
                 // Use the common insert_event function from test infrastructure
-                if let Err(e) = crate::common::insert_event(&pool, &event).await {
+                if let Err(e) = crate::sinex_test_utils::insert_event(&pool, &event).await {
                     return Err(format!("Task {} failed at sequence {}: {}", task_id, i, e));
                 }
             }

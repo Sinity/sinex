@@ -10,22 +10,24 @@
 //! - State persistence and checkpointing
 //! - Historical replay capabilities
 
-pub mod automaton;
+// pub mod automaton; // REMOVED - use StatefulStreamProcessor instead
 pub mod checkpoint;
 pub mod cli;
 pub mod config;
+pub mod coordination;
 pub mod examples;
 pub mod grpc_client;
 pub mod heartbeat;
 pub mod lifecycle;
+pub mod version;
+pub mod processor_runner;
 pub mod redis_client;
+pub mod redis_stream_consumer;
 pub mod replay;
+pub mod stage_as_you_go;
 pub mod stream_processor;
 
-pub use automaton::{
-    EventFilter, FilterOperation, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
-    HotlogAutomatonRunner, PayloadFilter, ProcessingResult,
-};
+// Legacy automaton exports removed - use StatefulStreamProcessor instead
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 // Legacy EventSource types removed - use StatefulStreamProcessor instead
@@ -38,7 +40,12 @@ pub use grpc_client::IngestClient;
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use redis_client::{RedisStreamClient, StreamMessage};
+pub use crate::redis_stream_consumer::{
+    BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,
+    RedisConsumerConfig, RedisStreamConsumer,
+};
 pub use replay::ReplayMode;
+pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,

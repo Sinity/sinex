@@ -1,4 +1,4 @@
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;

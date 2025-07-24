@@ -5,8 +5,8 @@
 // Tests Redis Consumer Group fault tolerance, PEL recovery, and message
 // redelivery patterns.
 
-use crate::common::prelude::*;
-use crate::common::satellite_test_utils::*;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::satellite_test_utils::*;
 use redis::{cmd, AsyncCommands, RedisResult};
 use serde_json::json;
 use std::collections::HashMap;

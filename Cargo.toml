@@ -9,7 +9,6 @@ members = [
     "crate/sinex-annex",
     "crate/sinex-health-aggregator",
     "crate/sinex-preflight",
-    "crate/sinex-test-macros",
     "crate/sinex-macros",
     "crate/sinex-services",
     "crate/sinex-config",
@@ -21,6 +20,7 @@ members = [
     "crate/sinex-terminal-satellite",
     "crate/sinex-desktop-satellite",
     "crate/sinex-system-satellite",
+    "crate/sinex-document-ingestor",
     # Service automata (Phase 4: Gateway dissolution)
     "crate/sinex-analytics-automaton",
     "crate/sinex-pkm-automaton",
@@ -34,6 +34,7 @@ members = [
     "crate/sinex-core-fs",
     "crate/sinex-metrics-lib",
     # Test infrastructure
+    "crate/sinex-test-utils",
 ]
 resolver = "2"
 
@@ -107,7 +108,7 @@ metrics = []
 proptest.workspace = true
 tempfile.workspace = true
 rusqlite = { version = "0.30", features = ["bundled"] }
-sinex-test-macros = { path = "crate/sinex-test-macros" }
+sinex-test-utils = { path = "crate/sinex-test-utils" }
 sinex-utils = { path = "crate/sinex-utils" }
 criterion.workspace = true
 pretty_assertions = "1.4"

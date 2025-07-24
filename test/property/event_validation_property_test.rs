@@ -1,6 +1,6 @@
-use crate::common::prelude::*;
-use crate::common::property_helpers::*;
-use crate::common::error_helpers::*;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::property_helpers::*;
+use sinex_test_utils::error_helpers::*;
 use proptest::prelude::*;
 // EventValidator doesn't exist, using ValidationChain instead
 use sinex_validation::ValidationChain;

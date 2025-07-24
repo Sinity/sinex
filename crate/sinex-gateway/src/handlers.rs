@@ -69,17 +69,17 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .unwrap_or("sinex-host");
 
     let annotation_id = service
-        .create_note(event_id, content, tags, created_by)
+        .create_note(event_id, content, tags, created_by, None)
         .await?;
     Ok(json!({ "annotation_id": annotation_id.to_string() }))
 }
 
 pub async fn handle_create_entities(service: &PkmService, params: Value) -> Result<Value> {
-    let event_id = params
-        .get("event_id")
+    let source_material_id = params
+        .get("source_material_id")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<Ulid>().ok())
-        .context("Invalid or missing event_id")?;
+        .context("Invalid or missing source_material_id")?;
 
     let entities = params
         .get("entities")
@@ -95,8 +95,13 @@ pub async fn handle_create_entities(service: &PkmService, params: Value) -> Resu
         })
         .unwrap_or_default();
 
+    let created_by = params
+        .get("created_by")
+        .and_then(|v| v.as_str())
+        .unwrap_or("sinex-gateway");
+
     let entity_ids = service
-        .create_entities_from_list(event_id, entities)
+        .create_entities_from_source_material(source_material_id, entities, created_by)
         .await?;
     Ok(json!({ "entity_ids": entity_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>() }))
 }
@@ -126,7 +131,7 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
         .unwrap_or_default();
 
     let relation_id = service
-        .link_entities(from_entity_id, to_entity_id, relationship_type, properties)
+        .link_entities(from_entity_id, to_entity_id, relationship_type, properties, None)
         .await?;
 
     Ok(json!({ "relation_id": relation_id.to_string() }))

@@ -7,7 +7,7 @@
 // - Cross-automaton checkpoint validation
 // - Recovery scenarios and data loss detection
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
 use sinex_events::{event_types, services, EventFactory};

@@ -23,6 +23,9 @@ sinex-events = { path = "../sinex-events" }
 # For validation types
 sinex-validation = { path = "../sinex-validation" }
 
+# For error types
+sinex-error = { path = "../sinex-error" }
+
 # For async types
 tokio = { workspace = true }
 async-trait = { workspace = true }

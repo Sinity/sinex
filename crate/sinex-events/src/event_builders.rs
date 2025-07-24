@@ -4,7 +4,7 @@
 //! Based on proven patterns from the test infrastructure, these builders eliminate
 //! manual RawEvent construction and ensure consistency across all event sources.
 
-use crate::{event_types, sources};
+use crate::event_types;
 use crate::raw_event::RawEvent;
 use crate::JsonValue;
 use chrono::{DateTime, Utc};

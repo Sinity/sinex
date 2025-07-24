@@ -133,7 +133,7 @@ pub fn auto_satellite_metrics(attr: TokenStream, item: TokenStream) -> TokenStre
     
     // Parse attributes to extract processor_type and labels
     let attr_str = attr.to_string();
-    let processor_type = if let Some(start) = attr_str.find("processor_type = \"") {
+    let _processor_type = if let Some(start) = attr_str.find("processor_type = \"") {
         let start_pos = start + "processor_type = \"".len();
         if let Some(end) = attr_str[start_pos..].find('"') {
             attr_str[start_pos..start_pos + end].to_string()

@@ -31,6 +31,7 @@ prost = "0.12"
 # Time and IDs
 chrono.workspace = true
 uuid.workspace = true
+semver = { version = "1.0", features = ["serde"] }
 
 # Configuration
 clap = { workspace = true, features = ["derive"] }
@@ -42,6 +43,7 @@ tower = "0.4"
 sd-notify = "0.4"
 gethostname.workspace = true
 parking_lot = "0.12"
+blake3 = "1.5"
 
 # Local dependencies
 sinex-core-types = { path = "../sinex-core-types" }
@@ -53,9 +55,11 @@ sinex-events = { path = "../sinex-events" }
 sinex-macros = { path = "../sinex-macros" }
 sinex-metrics-lib = { path = "../sinex-metrics-lib" }
 sinex-error = { path = "../sinex-error" }
+sinex-preflight = { path = "../sinex-preflight" }
 
 [build-dependencies]
 tonic-build = "0.11"
+chrono = "0.4"
 
 [features]
 default = []

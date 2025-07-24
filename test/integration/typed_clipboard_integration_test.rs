@@ -1,4 +1,4 @@
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use chrono::Utc;
 /// Integration tests for typed clipboard event conversion  
 use sinex_events::{

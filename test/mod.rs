@@ -52,7 +52,7 @@
 // ## Quick Reference
 //
 // ```rust
-// use crate::common::prelude::*;
+// use sinex_test_utils::prelude::*;
 //
 // #[sinex_test]
 // async fn my_test(ctx: TestContext) -> TestResult {
@@ -61,11 +61,6 @@
 //     Ok(())
 // }
 // ```
-
-
-// Common test infrastructure (always available)
-#[macro_use]
-mod common;
 
 // Test categories organized by scope and resource requirements
 #[cfg(test)]

@@ -17,6 +17,7 @@ use sinex_satellite_sdk::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
         MissingItem, SourceState,
     },
+    stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -106,6 +107,9 @@ pub struct FilesystemProcessor {
 
     /// Checkpoint manager for state persistence
     checkpoint_manager: Option<CheckpointManager>,
+
+    /// Stage-as-you-go context for real-time provenance
+    stage_context: Option<StageAsYouGoContext>,
 }
 
 impl FilesystemProcessor {
@@ -118,6 +122,7 @@ impl FilesystemProcessor {
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
+            stage_context: None,
         }
     }
 
@@ -130,6 +135,7 @@ impl FilesystemProcessor {
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
+            stage_context: None,
         }
     }
 
@@ -473,6 +479,7 @@ impl FilesystemProcessor {
                                     rename_tracker: rename_tracker.clone(),
                                     last_state: None,
                                     checkpoint_manager: None,
+                                    stage_context: None, // TODO: Pass stage context for real-time provenance
                                 };
 
                                 // Convert the notify event to our Event type
@@ -643,6 +650,103 @@ impl FilesystemProcessor {
         // For now, return empty to focus on the architectural changes
         Ok(vec![])
     }
+
+    /// Process file with stage-as-you-go pattern for real-time provenance
+    async fn process_file_with_staging(
+        &self,
+        file_path: &Path,
+        event_kind: &str,
+    ) -> SatelliteResult<()> {
+        if let Some(ref stage_context) = self.stage_context {
+            // Step 1: Register in-flight source material immediately
+            let material_type = "file".to_string();
+            let file_path_str = file_path.to_string_lossy().to_string();
+            let source_uri = Some(file_path_str.as_str());
+            let initial_metadata = json!({
+                "file_path": file_path_str,
+                "event_kind": event_kind,
+                "registered_at": Utc::now(),
+                "status": "in_flight"
+            });
+
+            let source_material_id = stage_context.register_in_flight(
+                &material_type,
+                source_uri,
+                initial_metadata,
+            ).await?;
+
+            // Step 2: Create and emit filesystem event with provenance
+            let factory = EventFactory::new(sources::FS);
+            let event = factory.create_event(
+                &format!("file.{}", event_kind),
+                json!({
+                    "path": file_path.to_string_lossy(),
+                    "event_kind": event_kind,
+                    "source_material_id": source_material_id.to_string(),
+                    "timestamp": Utc::now(),
+                }),
+            );
+
+            stage_context.emit_event_with_provenance(
+                event,
+                source_material_id,
+                None, // No byte offsets for filesystem events
+                None,
+            ).await?;
+
+            // Step 3: If file exists and is readable, finalize with content details
+            if file_path.exists() && file_path.is_file() {
+                match tokio::fs::read(file_path).await {
+                    Ok(content) => {
+                        let mime_type = mime_guess::from_path(file_path)
+                            .first_or_octet_stream()
+                            .essence_str()
+                            .to_string();
+                        
+                        stage_context.finalize_source_material(
+                            source_material_id,
+                            &content,
+                            Some(&mime_type),
+                            Some("utf-8"), // Default encoding
+                        ).await?;
+                        
+                        debug!(
+                            file_path = %file_path.display(),
+                            source_material_id = %source_material_id,
+                            size_bytes = content.len(),
+                            "Finalized file source material with content"
+                        );
+                    },
+                    Err(e) => {
+                        warn!(
+                            file_path = %file_path.display(),
+                            error = %e,
+                            "Could not read file content for finalization, leaving as in-flight"
+                        );
+                    }
+                }
+            } else {
+                // File doesn't exist or isn't readable, finalize with minimal info
+                stage_context.finalize_source_material(
+                    source_material_id,
+                    &[],
+                    Some("application/octet-stream"),
+                    None,
+                ).await?;
+            }
+
+            info!(
+                file_path = %file_path.display(),
+                event_kind = event_kind,
+                source_material_id = %source_material_id,
+                "Processed file with stage-as-you-go provenance"
+            );
+        } else {
+            debug!("Stage-as-you-go context not available, skipping provenance tracking");
+        }
+
+        Ok(())
+    }
 }
 
 impl Default for FilesystemProcessor {
@@ -663,6 +767,13 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
         // Initialize checkpoint manager
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
+
+        // Initialize stage-as-you-go context for real-time provenance
+        self.stage_context = Some(StageAsYouGoContext::new(
+            ctx.db_pool.clone(),
+            ctx.ingest_client.clone(),
+        ));
+        info!("Stage-as-you-go context initialized for filesystem processor");
 
         // Parse configuration from processor context
         if let Some(config_json) = ctx.config.get("filesystem") {

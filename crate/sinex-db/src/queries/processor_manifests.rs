@@ -3,7 +3,6 @@
 //! This module provides all database queries related to processor manifests,
 //! including automatons, ingestors, and other processor types.
 
-use crate::constants::tables;
 use crate::query_builder::{QueryBuilder, QueryParam};
 use chrono::{DateTime, Utc};
 

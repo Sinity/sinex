@@ -14,8 +14,8 @@
 // - **Performance Under Load**: Concurrent processing and resource management
 // - **Data Consistency Workflows**: Cross-component data integrity verification
 
-use crate::common::prelude::*;
-use crate::common::{events, generators, satellite_test_utils};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{events, generators, satellite_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use redis::{cmd, AsyncCommands};

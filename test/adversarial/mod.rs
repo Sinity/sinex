@@ -64,7 +64,7 @@ pub mod utils {
     pub fn generate_adversarial_events(count: usize, attack_pattern: &str) -> Vec<RawEvent> {
         (0..count)
             .map(|_i| {
-                crate::common::events::generic_adversarial_event(
+                crate::sinex_test_utils::events::generic_adversarial_event(
                     "adversarial_test",
                     &format!("{}.attack", attack_pattern),
                     create_malicious_payload(attack_pattern),

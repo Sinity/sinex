@@ -7,7 +7,7 @@
 //! - Zero-width character injection
 //! - Encoding-based attacks
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::sanitization::EventSanitizer;
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;
@@ -469,7 +469,7 @@ fn analyze_unicode_attacks(s: &str) -> HashMap<String, bool> {
     vectors
 }
 
-async fn insert_event(pool: &PgPool, event: &Event) -> Result<(), Error> {
+async fn insert_event(pool: &DbPool, event: &RawEvent) -> Result<(), anyhow::Error> {
     sqlx::query!(
         r#"
         INSERT INTO core.events (event_id, source, event_type, payload, ts_orig, ts_ingest)

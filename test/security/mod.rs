@@ -7,7 +7,7 @@
 //! - Authentication and authorization edge cases
 //! - Cryptographic edge cases
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
 /// Unicode security testing including homograph attacks, normalization exploits, etc.
 pub mod unicode_attack_test;

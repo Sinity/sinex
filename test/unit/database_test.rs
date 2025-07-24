@@ -13,9 +13,9 @@
 // - Smart builders and fixtures
 // - Concurrent testing patterns
 
-use crate::common::prelude::*;
-use crate::common::property_helpers::*;
-use crate::common::test_macros::*;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::property_helpers::*;
+use sinex_test_utils::test_macros::*;
 use proptest::prelude::*;
 use sinex_events::{sources, event_types};
 

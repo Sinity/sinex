@@ -2,7 +2,6 @@
 
 use crate::error::ServiceResult;
 use sinex_db::queries::{OperationQueries, EventQueries};
-use sinex_db::queries::events::TimeBucketRecord;
 use sinex_db::DbPool;
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};

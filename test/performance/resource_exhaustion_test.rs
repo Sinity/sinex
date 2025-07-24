@@ -4,7 +4,7 @@
 // memory pressure, connection pool exhaustion, disk space limits,
 // and CPU saturation. Critical for understanding system failure modes.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_events::{EventFactory, sources, event_types};
 use sinex_satellite_sdk::RedisStreamClient;

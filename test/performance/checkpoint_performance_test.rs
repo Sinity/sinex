@@ -4,7 +4,7 @@
 // recovery time, and checkpoint consistency under load.
 // Critical for automaton reliability and system recovery.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use sinex_satellite_sdk::stream_processor::Checkpoint;

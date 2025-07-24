@@ -5,7 +5,6 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_ulid::Ulid;
-use crate::{event_types, sources};
 
 // Type aliases for timestamp and JSON handling
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
@@ -96,6 +95,8 @@ mod tests {
 
     #[test]
     fn test_event_factory_with_optional_fields() {
+        use crate::{event_types, sources};
+        
         let payload = json!({"data": 42});
         let test_id = Ulid::new();
         let test_schema_id = Ulid::new();

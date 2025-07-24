@@ -4,9 +4,9 @@
 // This replaces the commented-out EventRegistry tests with equivalent
 // functionality tests for the new architecture.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{
     sources, strongly_typed_events::*, EventEnvelope, EventFactory, RawEvent, event_types,
 };

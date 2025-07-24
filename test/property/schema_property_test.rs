@@ -1,4 +1,4 @@
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::json;

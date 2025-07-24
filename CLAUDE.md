@@ -5,22 +5,50 @@
 STARTUP:
 
 - nix develop (ALWAYS first, sets up environment)
-- git status && git pull (check state)
-- just migrate (if DB work planned)
 
 WORKFLOW:
 
 - Research before implementing
-- Save compilation output for analysis (don't recompile)
+- ALWAYS use `just` commands (not raw cargo commands)
 - TodoWrite for multi-step work
 - Atomic commits with clear messages
 
-EFFICIENCY:
+MAGIC WORKFLOW (TRUE BACKGROUND COMPILATION):
 
-- compile: cargo check --workspace >/tmp/out 2>&1
-- errors: grep -E "^error\[E[0-9]+\]:" /tmp/out | sort | uniq -c
-- search: rg -t rust "pattern" (avoid multiple greps)
-- git: add -p, stash push -m "WIP: desc", diff --cached
+THE ULTIMATE SETUP:
+1. `cd project/sinex` - Daemon starts automatically via .envrc
+2. Edit files - Daemon detects and compiles in background
+3. `just tf` - Tests run instantly (already compiled!)
+
+BACKGROUND DAEMON:
+- Starts automatically when entering directory
+- Watches all Rust files every 2 seconds
+- Compiles changes immediately in background
+- No manual compilation ever needed!
+
+DAEMON COMMANDS:
+- `just ds` - Show daemon status
+- `just de` - Show current errors  
+- `just dl` - Watch daemon logs
+- `just daemon-start` - Start manually if needed
+- `just daemon-stop` - Stop daemon
+
+HOW IT WORKS:
+- Daemon runs: `cargo check --workspace --all-targets`
+- Keeps compilation fresh at all times
+- Tests/runs start instantly - no compile delay
+- Errors available immediately via `just de`
+
+WORKFLOW EFFICIENCY:
+1. Edit code
+2. Run tests/commands - they start instantly!
+3. Check errors if needed with `just de`
+4. That's it - compilation is never a concern
+
+STATUS AT A GLANCE:
+- On directory entry: Shows if compilation has issues
+- `just ds`: Current compilation status
+- `/tmp/sinex-daemon.log`: Full compilation history
 
 ## ARCHITECTURE
 
@@ -101,46 +129,12 @@ SCHEMA:
 - "no such file" in nix → uncommitted files (git status)
 - "ConnectionRefused" → redis-server not running
 
-## DEBUG CHECKLIST
-
-NO_EVENTS:
-
-1. systemctl status sinex-X
-2. journalctl -u sinex-X -f
-3. ls -la /run/sinex/ingest.sock
-4. RUST_LOG=debug systemctl restart sinex-X
-
-NO_PROCESSING:
-
-1. redis-cli XINFO STREAM sinex:events
-2. redis-cli XINFO GROUPS sinex:events
-3. Check pending messages + automaton service
-
-## RECOVERY
-
-- DB backup: pg_dump sinex_dev >/tmp/backup.sql
-- Redis reset: redis-cli --scan --pattern "sinex:*" | xargs redis-cli DEL
-- Checkpoint reset: UPDATE core.automaton_checkpoints SET last_processed_id=NULL
-- Service stuck: systemctl stop sinex-X && pkill -f sinex-X
-
-## USEFUL QUERIES
-
-```sql
--- Recent events
-SELECT ts_orig, source, event_type FROM core.events ORDER BY ts_orig DESC LIMIT 20;
-
--- Throughput 
-SELECT source, COUNT(*) FROM core.events 
-WHERE ts_ingest > NOW()-'1h'::interval GROUP BY source;
-
--- Checkpoints
-SELECT automaton_name, last_processed_id, processed_count 
-FROM core.automaton_checkpoints;
-```
-
 ## KEY DOCS
 
 - spec/understand/ - top-down description of sinex
 - spec/SADI.md - Architecture overview
 - nixos/README.md - Deployment guide
 
+## OUTPUT GUIDELINES
+
+- Unless asked otherwise, just output reports directly, not into a file. Do not litter with random markdowns.

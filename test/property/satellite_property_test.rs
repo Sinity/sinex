@@ -2,9 +2,9 @@
 //
 // Tests that verify satellite communication, lifecycle, and coordination properties
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use crate::property::strategies::*;
 use proptest::prelude::*;
 use sinex_satellite_sdk::config::SatelliteConfig;
@@ -61,8 +61,8 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let setup = crate::common::satellite_integration::SatelliteTestSetup::new("order_test")
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
+            let setup = crate::sinex_test_utils::satellite_integration::SatelliteTestSetup::new("order_test")
                 .await
                 .unwrap();
 
@@ -72,7 +72,7 @@ proptest! {
             }
 
             // Create test satellite with specified batch size
-            let satellite_config = crate::common::satellite_test_utils::create_test_satellite_config(
+            let satellite_config = crate::sinex_test_utils::satellite_test_utils::create_test_satellite_config(
                 "order-test-satellite",
                 &setup.ingestd.socket_path,
             );
@@ -118,8 +118,8 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let setup = crate::common::satellite_integration::SatelliteTestSetup::new("fault_test")
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
+            let setup = crate::sinex_test_utils::satellite_integration::SatelliteTestSetup::new("fault_test")
                 .await
                 .unwrap();
 
@@ -139,14 +139,14 @@ proptest! {
 
                 if should_fail {
                     // Simulate failure by creating invalid event
-                    let invalid_event = crate::common::events::invalid_event();
+                    let invalid_event = crate::sinex_test_utils::events::invalid_event();
                     let result = ctx.insert_event(&invalid_event).await;
                     if result.is_err() {
                         failed_events += 1;
                     }
                 } else {
                     // Process normal event
-                    let event = crate::common::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
+                    let event = crate::sinex_test_utils::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
                     ctx.insert_event(&event).await.unwrap();
                     successful_events += 1;
                 }
@@ -177,8 +177,8 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let setup = crate::common::satellite_integration::SatelliteTestSetup::new("resource_test")
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
+            let setup = crate::sinex_test_utils::satellite_integration::SatelliteTestSetup::new("resource_test")
                 .await
                 .unwrap();
 
@@ -232,8 +232,8 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let setup = crate::common::satellite_integration::SatelliteTestSetup::new("config_test")
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
+            let setup = crate::sinex_test_utils::satellite_integration::SatelliteTestSetup::new("config_test")
                 .await
                 .unwrap();
 
@@ -248,7 +248,7 @@ proptest! {
             // Process some events with initial config
             let half_point = events.len() / 2;
             for (source, event_type, payload) in events.iter().take(half_point) {
-                let event = crate::common::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
+                let event = crate::sinex_test_utils::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
                 ctx.insert_event(&event).await.unwrap();
             }
 
@@ -257,7 +257,7 @@ proptest! {
 
             // Process remaining events (simulating config update)
             for (source, event_type, payload) in events.iter().skip(half_point) {
-                let event = crate::common::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
+                let event = crate::sinex_test_utils::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
                 ctx.insert_event(&event).await.unwrap();
             }
 
@@ -282,8 +282,8 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let setup = crate::common::satellite_integration::SatelliteTestSetup::new("partition_test")
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
+            let setup = crate::sinex_test_utils::satellite_integration::SatelliteTestSetup::new("partition_test")
                 .await
                 .unwrap();
 
@@ -345,8 +345,8 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
-            let setup = crate::common::satellite_integration::SatelliteTestSetup::new("coordination_test")
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
+            let setup = crate::sinex_test_utils::satellite_integration::SatelliteTestSetup::new("coordination_test")
                 .await
                 .unwrap();
 
@@ -360,7 +360,7 @@ proptest! {
 
             // Process events through the satellite
             for (source, event_type, payload) in events.iter() {
-                let event = crate::common::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
+                let event = crate::sinex_test_utils::events::create_raw_event(source, event_type, payload.clone(), chrono::Utc::now());
                 ctx.insert_event(&event).await.unwrap();
             }
 
@@ -368,7 +368,7 @@ proptest! {
             ctx.wait_for_event_count(events.len()).await.unwrap();
 
             // Wait for automaton to process events
-            crate::common::test_context::TestContext::wait_for_checkpoint_progress(&ctx, automaton_type, events.len() as u64).await.unwrap();
+            crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, automaton_type, events.len() as u64).await.unwrap();
 
             // Verify coordination worked correctly
             let checkpoint = ctx.verify_checkpoint(automaton_type).await.unwrap();

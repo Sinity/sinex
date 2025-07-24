@@ -112,17 +112,10 @@ pub fn db_error(err: SqlxError, context: &str) -> DbError {
 /// Result type using DbError
 pub type DbResult<T> = std::result::Result<T, DbError>;
 
-/// Convert DbError to CoreError
+/// Convert DbError to CoreError (now unified)
 impl From<DbError> for sinex_core_types::CoreError {
     fn from(err: DbError) -> Self {
         sinex_core_types::CoreError::Database(err.to_string())
-    }
-}
-
-/// Convert DbError to sinex_error::CoreError
-impl From<DbError> for sinex_error::CoreError {
-    fn from(err: DbError) -> Self {
-        sinex_error::CoreError::Database(err.to_string())
     }
 }
 
@@ -311,17 +304,18 @@ impl UlidArrayExt for Vec<Ulid> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_ulid_conversion() {
+    #[sinex_test]
+    async fn test_ulid_conversion() {
         let ulid = Ulid::new();
         let uuid = ulid_to_uuid(ulid);
         let converted_back = uuid_to_ulid(uuid);
         assert_eq!(ulid, converted_back);
     }
 
-    #[test]
-    fn test_ulid_array_conversion() {
+    #[sinex_test]
+    async fn test_ulid_array_conversion() {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let uuids = ulids.to_uuid_vec();
         assert_eq!(ulids.len(), uuids.len());
@@ -331,8 +325,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_retry_config_default() {
+    #[sinex_test]
+    async fn test_retry_config_default() {
         let config = RetryConfig::default();
         assert_eq!(config.max_attempts, retry::MAX_RETRY_ATTEMPTS);
         assert_eq!(
@@ -343,8 +337,8 @@ mod tests {
         assert_eq!(config.exponential_base, retry::BACKOFF_MULTIPLIER as f64);
     }
 
-    #[test]
-    fn test_is_retryable_db_error_function_exists() {
+    #[sinex_test]
+    async fn test_is_retryable_db_error_function_exists() {
         // Test that timeout errors are not retryable
         let timeout_err = DbError::Timeout {
             context: "test timeout".to_string(),

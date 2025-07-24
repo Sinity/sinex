@@ -3,9 +3,9 @@
 // This module tests the integration of version tracking with basic functionality
 // without relying on complex API dependencies.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_satellite_sdk::VersionInfo;
 use std::collections::HashMap;
 use std::fs;

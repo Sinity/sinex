@@ -9,9 +9,9 @@
 //
 // Code reduction: ~75% fewer lines while testing more cases
 
-use crate::common::prelude::*;
-use crate::common::property_helpers::*;
-use crate::common::test_macros::*;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::property_helpers::*;
+use sinex_test_utils::test_macros::*;
 use proptest::prelude::*;
 use chrono::{DateTime, Utc};
 

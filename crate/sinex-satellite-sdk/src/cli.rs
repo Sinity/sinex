@@ -377,17 +377,51 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 // Initialize runner
                 runner
                     .initialize(
-                        service_name,
+                        service_name.clone(),
                         processor_config,
-                        db_pool,
+                        db_pool.clone(),
                         ingest_client,
                         work_dir,
                         dry_run,
                     )
                     .await?;
 
-                // Run service with startup sequence
-                runner.run_service().await?;
+                // Run service with satellite coordination
+                if dry_run {
+                    // Skip coordination for dry runs
+                    runner.run_service().await?;
+                } else {
+                    use crate::coordination::SatelliteCoordination;
+                    
+                    
+                    use uuid::Uuid;
+                    use std::sync::Arc;
+                    use tokio::sync::Mutex;
+                    
+                    // Create coordination with generated instance ID
+                    let instance_id = Uuid::new_v4().to_string();
+                    
+                    let mut coordination = SatelliteCoordination::new(
+                        service_name.clone(),
+                        instance_id,
+                        db_pool
+                    );
+                    
+                    // Wrap runner in Arc<Mutex<>> for sharing
+                    let runner = Arc::new(Mutex::new(runner));
+                    
+                    // Run with coordination (hot standby pattern)
+                    coordination.run_coordination_loop(move || {
+                        let runner = runner.clone();
+                        async move {
+                            // Only leader processes events
+                            let mut runner = runner.lock().await;
+                            runner.run_service().await.map_err(|e| {
+                                sinex_core_types::CoreError::Service(format!("Satellite error: {}", e))
+                            })
+                        }
+                    }).await?;
+                }
             }
 
             ProcessorCommand::Scan {
@@ -705,19 +739,21 @@ macro_rules! processor_main {
             let processor = <$processor_type>::new();
             let mut runner = ProcessorCliRunner::new(processor);
 
-            // Auto-spawn HeartbeatEmitter for service mode
+            // Auto-spawn HeartbeatEmitter and Coordination for service mode
             if matches!(args.command, ProcessorCommand::Service { .. }) {
                 let service_name = args
                     .service_name
                     .clone()
                     .unwrap_or_else(|| "sinex-processor".to_string());
                 
-                let heartbeat_emitter = HeartbeatEmitter::new(service_name, 30);
+                let heartbeat_emitter = HeartbeatEmitter::new(service_name.clone(), 30);
                 
                 // Spawn heartbeat task concurrently
                 tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;
                 });
+
+                // SatelliteCoordination integrated below in service mode
             }
 
             runner.run(args).await
@@ -735,19 +771,21 @@ macro_rules! processor_main {
             let processor = $processor_expr;
             let mut runner = ProcessorCliRunner::new(processor);
 
-            // Auto-spawn HeartbeatEmitter for service mode
+            // Auto-spawn HeartbeatEmitter and Coordination for service mode
             if matches!(args.command, ProcessorCommand::Service { .. }) {
                 let service_name = args
                     .service_name
                     .clone()
                     .unwrap_or_else(|| "sinex-processor".to_string());
                 
-                let heartbeat_emitter = HeartbeatEmitter::new(service_name, 30);
+                let heartbeat_emitter = HeartbeatEmitter::new(service_name.clone(), 30);
                 
                 // Spawn heartbeat task concurrently
                 tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;
                 });
+
+                // SatelliteCoordination integrated below in service mode
             }
 
             runner.run(args).await

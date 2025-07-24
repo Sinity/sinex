@@ -7,13 +7,13 @@ with lib;
 let
   cfg = config.services.sinex;
 
-  # Helper function to generate satellite systemd service
-  mkSatelliteService = name: serviceConfig: {
-    description = "Sinex ${serviceConfig.description or name} Satellite";
+  # Helper function to generate satellite systemd service with coordination support
+  mkSatelliteService = name: serviceConfig: instanceId: {
+    description = "Sinex ${serviceConfig.description or name} Satellite (Instance ${instanceId})";
     wantedBy = [ "multi-user.target" ];
-    after = [ "network-online.target" ] ++ serviceConfig.after or [];
+    after = [ "network-online.target" "sinex-coordination-setup.service" ] ++ serviceConfig.after or [];
     wants = [ "network-online.target" ];
-    requires = serviceConfig.requires or [];
+    requires = [ "sinex-coordination-setup.service" ] ++ serviceConfig.requires or [];
 
     serviceConfig = {
       Type = "notify";
@@ -23,6 +23,11 @@ let
       RestartSec = "10s";
       StartLimitIntervalSec = "300s";
       StartLimitBurst = 3;
+      
+      # Graceful shutdown for coordination handoff
+      TimeoutStopSec = "120s";
+      KillMode = "mixed";
+      KillSignal = "SIGTERM";
 
       # Security hardening
       NoNewPrivileges = true;
@@ -53,7 +58,12 @@ let
       TasksMax = serviceConfig.tasksMax or 100;
 
       ExecStart = serviceConfig.execStart;
-      Environment = serviceConfig.environment or [];
+      Environment = serviceConfig.environment or [] ++ [
+        "COORDINATION_HEARTBEAT_INTERVAL=${toString cfg.satellite.coordination.heartbeatInterval}"
+        "COORDINATION_LEADERSHIP_TIMEOUT=${toString cfg.satellite.coordination.leadershipTimeout}" 
+        "COORDINATION_HANDOFF_TIMEOUT=${toString cfg.satellite.coordination.handoffTimeout}"
+        "COORDINATION_INSTANCE_ID=${instanceId}"
+      ];
     } // (serviceConfig.serviceConfigOverrides or {});
   };
 
@@ -100,35 +110,33 @@ let
         };
       };
 
-      # Event Source Satellites
+      # Event Source Satellites with Hot Standby Support
       eventSourceServices = 
         let
-          mkEventSource = name: sourceConfig: mkIf sourceConfig.enable (mkSatelliteService "sinex-${name}" {
-            description = "${sourceConfig.description} Event Source";
-            after = [ "sinex-ingestd.service" ];
-            requires = [ "sinex-ingestd.service" ];
-            execStart = "${cfg.package}/bin/sinex-${name} --ingest-socket-path /run/sinex/ingest.sock --service-name sinex-${name} --verbose 1 service" + 
-              (if sourceConfig.extraArgs != "" then " ${sourceConfig.extraArgs}" else "");
-            environment = [
-              "RUST_LOG=${cfg.satellite.logLevel}"
-              "DATABASE_URL=${cfg.satellite.database.url}"
-            ] ++ sourceConfig.environment;
-            memoryLimit = sourceConfig.memoryLimit;
-            serviceConfigOverrides = sourceConfig.serviceConfigOverrides or {};
-          });
-        in {
-          # Filesystem watcher
-          sinex-fs-watcher = mkEventSource "fs-watcher" cfg.satellite.eventSources.filesystem;
-          
-          # Terminal event source
-          sinex-terminal-satellite = mkEventSource "terminal-satellite" cfg.satellite.eventSources.terminal;
-          
-          # Desktop event source (clipboard, window manager)
-          sinex-desktop-satellite = mkEventSource "desktop-satellite" cfg.satellite.eventSources.desktop;
-          
-          # System event source (dbus, journald)
-          sinex-system-satellite = mkEventSource "system-satellite" cfg.satellite.eventSources.system;
-        };
+          mkEventSource = name: sourceConfig: mkIf sourceConfig.enable (
+            # Generate multiple instances for hot standby pattern
+            lib.listToAttrs (map (instanceNum: 
+              let instanceId = "${name}-${toString instanceNum}"; in
+              lib.nameValuePair "sinex-${instanceId}" (mkSatelliteService "sinex-${name}" {
+                description = "${sourceConfig.description} Event Source";
+                after = [ "sinex-ingestd.service" ];
+                requires = [ "sinex-ingestd.service" ];
+                execStart = "${cfg.package}/bin/sinex-${name} --ingest-socket-path /run/sinex/ingest.sock --service-name sinex-${name} --verbose 1 service" + 
+                  (if sourceConfig.extraArgs != "" then " ${sourceConfig.extraArgs}" else "");
+                environment = [
+                  "RUST_LOG=${cfg.satellite.logLevel}"
+                  "DATABASE_URL=${cfg.satellite.database.url}"
+                ] ++ sourceConfig.environment;
+                memoryLimit = sourceConfig.memoryLimit;
+                serviceConfigOverrides = sourceConfig.serviceConfigOverrides or {};
+              } instanceId)
+            ) (lib.range 1 sourceConfig.instances))
+          );
+        in
+          (mkEventSource "fs-watcher" cfg.satellite.eventSources.filesystem) //
+          (mkEventSource "terminal-satellite" cfg.satellite.eventSources.terminal) //
+          (mkEventSource "desktop-satellite" cfg.satellite.eventSources.desktop) //
+          (mkEventSource "system-satellite" cfg.satellite.eventSources.system);
 
       # Automaton Satellites
       automatonServices = 
@@ -207,6 +215,33 @@ in {
       };
     };
 
+    # Coordination system configuration
+    coordination = {
+      enable = mkOption {
+        type = types.bool;
+        default = true;
+        description = "Enable satellite coordination system with hot standby";
+      };
+
+      heartbeatInterval = mkOption {
+        type = types.int;
+        default = 30;
+        description = "Heartbeat interval in seconds";
+      };
+
+      leadershipTimeout = mkOption {
+        type = types.int;
+        default = 120;
+        description = "Leadership acquisition timeout in seconds";
+      };
+
+      handoffTimeout = mkOption {
+        type = types.int;
+        default = 60;
+        description = "Graceful handoff timeout in seconds";
+      };
+    };
+
     # Event source satellites configuration
     eventSources = {
       filesystem = {
@@ -214,6 +249,12 @@ in {
           type = types.bool;
           default = true;
           description = "Enable filesystem watcher satellite";
+        };
+
+        instances = mkOption {
+          type = types.int;
+          default = 2;
+          description = "Number of instances for hot standby (2-3 recommended)";
         };
 
         description = mkOption {
@@ -266,6 +307,12 @@ in {
           description = "Enable terminal satellite";
         };
 
+        instances = mkOption {
+          type = types.int;
+          default = 2;
+          description = "Number of instances for hot standby (2-3 recommended)";
+        };
+
         description = mkOption {
           type = types.str;
           default = "Terminal Event Source";
@@ -316,6 +363,12 @@ in {
           description = "Enable desktop satellite (clipboard, window manager)";
         };
 
+        instances = mkOption {
+          type = types.int;
+          default = 2;
+          description = "Number of instances for hot standby (2-3 recommended)";
+        };
+
         description = mkOption {
           type = types.str;
           default = "Desktop Event Source";
@@ -364,6 +417,12 @@ in {
           type = types.bool;
           default = true;
           description = "Enable system satellite (dbus, journald)";
+        };
+
+        instances = mkOption {
+          type = types.int;
+          default = 2;
+          description = "Number of instances for hot standby (2-3 recommended)";
         };
 
         description = mkOption {
@@ -562,6 +621,69 @@ in {
         "maxmemory-policy" = "allkeys-lru";
         "save" = "900 1 300 10 60 10000";
       };
+    };
+
+    # Coordination database setup service
+    systemd.services.sinex-coordination-setup = mkIf cfg.satellite.coordination.enable {
+      description = "Setup Sinex Coordination Database Tables";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" ];
+      requires = [ "postgresql.service" ];
+      
+      serviceConfig = {
+        Type = "oneshot";
+        User = cfg.satelliteUser;
+        Group = cfg.satelliteUser;
+        RemainAfterExit = true;
+      };
+      
+      script = ''
+        ${pkgs.postgresql}/bin/psql "${cfg.satellite.database.url}" <<'EOF'
+        -- Create satellite coordination tables
+        CREATE TABLE IF NOT EXISTS core.satellite_instances (
+            instance_id UUID PRIMARY KEY,
+            service_name TEXT NOT NULL,
+            version TEXT NOT NULL,
+            start_time TIMESTAMPTZ NOT NULL,
+            last_heartbeat TIMESTAMPTZ NOT NULL,
+            host_name TEXT NOT NULL,
+            metadata JSONB DEFAULT '{}',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            updated_at TIMESTAMPTZ DEFAULT NOW()
+        );
+
+        CREATE TABLE IF NOT EXISTS core.satellite_signals (
+            id SERIAL PRIMARY KEY,
+            target_instance TEXT NOT NULL,
+            signal_type TEXT NOT NULL,
+            message TEXT,
+            payload JSONB DEFAULT '{}',
+            created_at TIMESTAMPTZ DEFAULT NOW(),
+            processed_at TIMESTAMPTZ,
+            processed_by UUID
+        );
+
+        CREATE TABLE IF NOT EXISTS core.service_leadership (
+            service_name TEXT PRIMARY KEY,
+            instance_id UUID NOT NULL,
+            acquired_at TIMESTAMPTZ NOT NULL,
+            last_heartbeat TIMESTAMPTZ NOT NULL,
+            version TEXT NOT NULL,
+            metadata JSONB DEFAULT '{}'
+        );
+
+        -- Create indexes for performance
+        CREATE INDEX IF NOT EXISTS idx_satellite_instances_service_version 
+            ON core.satellite_instances(service_name, version DESC, start_time ASC);
+
+        CREATE INDEX IF NOT EXISTS idx_satellite_signals_target_unprocessed 
+            ON core.satellite_signals(target_instance, created_at) 
+            WHERE processed_at IS NULL;
+
+        CREATE INDEX IF NOT EXISTS idx_service_leadership_heartbeat 
+            ON core.service_leadership(last_heartbeat);
+        EOF
+      '';
     };
 
     # Generate systemd services for all satellites

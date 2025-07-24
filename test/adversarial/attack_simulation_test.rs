@@ -9,7 +9,7 @@
 // - **JSON Attacks**: Circular references, billion laughs, expansion attacks
 // - **ULID Attacks**: Extreme dates, collision attempts, timestamp manipulation
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::validation::EventValidator;
 use chrono::{Duration, TimeZone, Utc};
 use std::sync::atomic::{AtomicU64, Ordering};

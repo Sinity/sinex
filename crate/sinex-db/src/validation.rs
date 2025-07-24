@@ -23,6 +23,7 @@ struct ActiveSchemaRecord {
     pub schema_id: String,
     pub event_source: String,
     pub event_type: String,
+    #[allow(dead_code)]
     pub schema_version: Option<i32>,
     pub schema_content: Value,
 }
@@ -902,8 +903,10 @@ impl<'a> DataIntegrityValidator<'a> {
         struct CheckpointRecord {
             automaton_name: String,
             last_processed_id: Option<sqlx::types::Uuid>,
+            #[allow(dead_code)]
             processed_count: Option<i64>,
             last_activity: Option<DateTime<Utc>>,
+            #[allow(dead_code)]
             state_data: Option<serde_json::Value>,
         }
         
