@@ -2,7 +2,6 @@
 //
 // Provides sophisticated failure simulation capabilities for testing system resilience
 
-use crate::common::prelude::*;
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -412,7 +411,7 @@ mod tests {
     use super::*;
     use tokio::time::{sleep, Duration};
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_permanent_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Permanent {
@@ -427,7 +426,7 @@ mod tests {
         assert!(!injector.should_fail("other").await);
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_probabilistic_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Probabilistic {
@@ -453,7 +452,7 @@ mod tests {
         assert!(failure_rate > 0.4 && failure_rate < 0.6);
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_temporary_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Temporary {
@@ -476,7 +475,7 @@ mod tests {
         assert!(!injector.should_fail("test").await);
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_conditional_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Conditional {
@@ -498,7 +497,7 @@ mod tests {
         assert!(injector.should_fail("test").await);
     }
 
-    #[sinex_test]
+    #[tokio::test]
     async fn test_cascade_failure() {
         let config = FailureConfig {
             patterns: vec![FailurePattern::Cascade {

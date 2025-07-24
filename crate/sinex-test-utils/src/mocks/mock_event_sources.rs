@@ -3,10 +3,11 @@
 // Provides test implementations of event sources that would normally be
 // implemented as satellite processes.
 
-use crate::common::prelude::*;
 use async_trait::async_trait;
-use serde_json::Value;
-use sinex_db::RawEvent;
+use chrono::Utc;
+use serde_json::{json, Value};
+use sinex_core_types::{RawEvent, DbPool};
+use sinex_events::EventFactory;
 use sinex_satellite_sdk::{
     SatelliteResult, ScanArgs, StatefulStreamProcessor,
     stream_processor::{Checkpoint, ProcessorType, StreamProcessorContext, ScanReport},

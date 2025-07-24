@@ -1,13 +1,11 @@
 // Satellite test utilities for integration testing
 // Provides test handles for satellites, ingestd, and automata
 
-use crate::common::prelude::*;
-use std::path::PathBuf;
-use tokio::process::{Child, Command};
-use tokio::sync::Mutex;
+use crate::prelude::*;
+use sinex_core_types::DbPool;
+use tokio::process::Child;
 
 // Re-export StreamMessage for convenience
-pub use sinex_satellite_sdk::StreamMessage;
 
 /// Configuration for test ingestd instance
 #[derive(Debug, Clone)]
@@ -35,7 +33,7 @@ pub struct TestIngestdHandle {
 
 impl TestIngestdHandle {
     /// Stop the ingestd process
-    pub async fn stop(&mut self) -> AnyhowResult<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -55,7 +53,7 @@ impl Drop for TestIngestdHandle {
 /// Start a test ingestd instance with custom configuration
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
-) -> AnyhowResult<TestIngestdHandle> {
+) -> TestResult<TestIngestdHandle> {
     // For now, return a mock handle
     // In a full implementation, this would start the actual ingestd process
     Ok(TestIngestdHandle {
@@ -75,7 +73,7 @@ impl TestSatelliteHandle {
     pub async fn start(
         config: serde_json::Value,
         _pool: DbPool,
-    ) -> AnyhowResult<Self> {
+    ) -> TestResult<Self> {
         // For now, return a mock handle
         Ok(Self {
             name: config.get("name")
@@ -87,7 +85,7 @@ impl TestSatelliteHandle {
     }
     
     /// Stop the satellite process
-    pub async fn stop(&mut self) -> AnyhowResult<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -107,7 +105,7 @@ impl TestAutomatonHandle {
         automaton_type: &str,
         _pool: DbPool,
         _redis_url: &str,
-    ) -> AnyhowResult<Self> {
+    ) -> TestResult<Self> {
         // For now, return a mock handle
         Ok(Self {
             name: format!("test-{}", automaton_type),
@@ -116,7 +114,7 @@ impl TestAutomatonHandle {
     }
     
     /// Stop the automaton process
-    pub async fn stop(&mut self) -> AnyhowResult<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }

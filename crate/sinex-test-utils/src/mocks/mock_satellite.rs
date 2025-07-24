@@ -1,6 +1,6 @@
 // Mock satellite implementation for testing
 
-use crate::common::prelude::*;
+use crate::prelude::*;
 use sinex_events::{RawEvent, EventFactory};
 use sinex_satellite_sdk::config::SatelliteConfig;
 use std::sync::Arc;
@@ -97,7 +97,7 @@ impl MockSatellite {
     }
 
     /// Start the mock satellite
-    pub async fn start(&mut self) -> AnyhowResult<()> {
+    pub async fn start(&mut self) -> TestResult<()> {
         *self.is_running.lock().await = true;
 
         let config = self.config.clone();
@@ -149,7 +149,7 @@ impl MockSatellite {
     }
 
     /// Stop the mock satellite
-    pub async fn stop(&mut self) -> AnyhowResult<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         *self.is_running.lock().await = false;
 
         if let Some(handle) = self.task_handle.take() {
@@ -193,7 +193,7 @@ impl MockSatellite {
         &self,
         expected: usize,
         timeout_secs: u64,
-    ) -> AnyhowResult<()> {
+    ) -> TestResult<()> {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let start = std::time::Instant::now();
 
@@ -204,11 +204,11 @@ impl MockSatellite {
             }
 
             if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
+                return Err(CoreError::Unknown(format!(
                     "Timeout waiting for {} events to be generated, got {}",
                     expected,
                     count
-                ));
+                )));
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -216,7 +216,7 @@ impl MockSatellite {
     }
 
     /// Wait for satellite to send expected number of events
-    pub async fn wait_for_sending(&self, expected: usize, timeout_secs: u64) -> AnyhowResult<()> {
+    pub async fn wait_for_sending(&self, expected: usize, timeout_secs: u64) -> TestResult<()> {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let start = std::time::Instant::now();
 
@@ -227,11 +227,11 @@ impl MockSatellite {
             }
 
             if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
+                return Err(CoreError::Unknown(format!(
                     "Timeout waiting for {} events to be sent, got {}",
                     expected,
                     count
-                ));
+                )));
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -273,13 +273,13 @@ async fn send_events_batch(
     config: &MockSatelliteConfig,
     events: &[RawEvent],
     sent_events: &Arc<Mutex<Vec<RawEvent>>>,
-) -> AnyhowResult<()> {
+) -> TestResult<()> {
     // Simulate connection failures
     if config.connection_failure_rate > 0.0 {
         use rand::Rng;
         let mut rng = rand::thread_rng();
         if rng.gen::<f64>() < config.connection_failure_rate {
-            return Err(anyhow::anyhow!("Simulated connection failure"));
+            return Err(CoreError::Unknown(format!("Simulated connection failure")));
         }
     }
 

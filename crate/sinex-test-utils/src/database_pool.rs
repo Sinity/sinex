@@ -17,11 +17,9 @@
 
 
 
-use crate::common::prelude::*;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use sinex_core_types::timeouts;
-use sinex_error::ErrorContext;
+use sinex_core_types::{timeouts, DbPool, CoreError, Result as TestResult};
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -180,7 +178,7 @@ impl TestDatabase {
     }
 
     /// Check if the database is healthy
-    pub async fn check_health(&self) -> AnyhowResult<bool> {
+    pub async fn check_health(&self) -> TestResult<bool> {
         match sqlx::query("SELECT 1 as health_check")
             .fetch_one(&self.pool)
             .await
@@ -191,7 +189,7 @@ impl TestDatabase {
     }
 
     /// Get database statistics for debugging
-    pub async fn get_stats(&self) -> AnyhowResult<DatabaseStats> {
+    pub async fn get_stats(&self) -> TestResult<DatabaseStats> {
         let row = sqlx::query!(
             r#"
             SELECT
@@ -211,7 +209,7 @@ impl TestDatabase {
     }
 
     /// Force cleanup of this database (for testing)
-    pub async fn force_cleanup(&self) -> AnyhowResult<()> {
+    pub async fn force_cleanup(&self) -> TestResult<()> {
         clean_database(&self.pool, &self.name).await
     }
 }
@@ -301,7 +299,7 @@ struct DatabasePool {
 
 impl DatabasePool {
     /// Initialize the pool
-    async fn new(config: PoolConfig) -> AnyhowResult<Self> {
+    async fn new(config: PoolConfig) -> TestResult<Self> {
         eprintln!(
             "🚀 Initializing database pool with {} databases (reusing existing if available)...",
             config.size
@@ -387,7 +385,7 @@ impl DatabasePool {
                 // Store URL for later pool creation
                 let url = base_url.replace("/sinex_dev", &format!("/{}", name));
 
-                Result::<_, anyhow::Error>::Ok((name, url))
+                Result::<_, CoreError>::Ok((name, url))
             });
 
             tasks.push(task);
@@ -395,7 +393,7 @@ impl DatabasePool {
 
         // Wait for all databases to be created
         for task in tasks {
-            let (name, url) = task.await??;
+            let (name, url) = task.await.map_err(|e| CoreError::Service(format!("Database creation task failed: {}", e)))??;
             slots.push(Arc::new(DatabaseSlot {
                 name,
                 url,
@@ -415,7 +413,7 @@ impl DatabasePool {
     }
 
     /// Acquire a database from the pool
-    async fn acquire(&self) -> AnyhowResult<TestDatabase> {
+    async fn acquire(&self) -> TestResult<TestDatabase> {
         let start_time = std::time::Instant::now();
         let mut attempts = 0;
 
@@ -514,11 +512,11 @@ impl DatabasePool {
             attempts += 1;
             if attempts > 100 {
                 let total_time = start_time.elapsed();
-                return Err(anyhow::anyhow!(
+                return Err(CoreError::Unknown(format!(
                     "Failed to acquire database after {} attempts ({:.1?})",
                     attempts,
                     total_time
-                ));
+                )));
             }
 
             // Log warning after many attempts
@@ -537,7 +535,7 @@ impl DatabasePool {
 }
 
 /// Clean a database for reuse with comprehensive cleanup strategies
-async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
+async fn clean_database(pool: &DbPool, db_name: &str) -> TestResult<()> {
     eprintln!("🧹 Cleaning database: {}", db_name);
 
     // First, disable FK checks for the cleanup session
@@ -736,10 +734,10 @@ async fn clean_database(pool: &DbPool, db_name: &str) -> AnyhowResult<()> {
 
         if !all_clean {
             POOL_METRICS.record_cleanup_failure();
-            return Err(anyhow::anyhow!(
+            return Err(CoreError::Unknown(format!(
                 "Database {} cleanup failed - tables still contain data",
                 db_name
-            ));
+            )));
         }
     }
 
@@ -752,7 +750,7 @@ static POOL: Lazy<tokio::sync::Mutex<Option<Arc<DatabasePool>>>> =
     Lazy::new(|| tokio::sync::Mutex::new(None));
 
 /// Acquire a test database
-pub async fn acquire_test_database() -> AnyhowResult<TestDatabase> {
+pub async fn acquire_test_database() -> TestResult<TestDatabase> {
     // Get or initialize the pool
     let mut pool_lock = POOL.lock().await;
 
@@ -770,7 +768,7 @@ pub async fn acquire_test_database() -> AnyhowResult<TestDatabase> {
 
 /// Ensure we have a template database with all migrations applied
 /// This is created once per test process and reused for all test databases
-async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResult<String> {
+async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult<String> {
     // Check if we already have a template database cached
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
         return Ok(template_name.clone());
@@ -808,7 +806,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
         if exists {
             eprintln!("✅ Template database already exists, reusing it");
             admin_conn.close().await?;
-            return Ok::<bool, anyhow::Error>(false); // false = no migrations needed
+            return Ok::<bool, CoreError>(false); // false = no migrations needed
         }
 
         eprintln!(
@@ -848,7 +846,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
         .map_err(|_| CoreError::Database("Create database timeout".to_string()))??;
 
         admin_conn.close().await?;
-        Ok::<bool, anyhow::Error>(true) // true = needs migrations
+        Ok::<bool, CoreError>(true) // true = needs migrations
     };
 
     // Execute admin operations with timeout
@@ -906,13 +904,14 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
             CoreError::Database(
                 "Migration timeout - check if all required extensions are installed".to_string(),
             )
-        })??;
+        })?
+        .map_err(|e| CoreError::Database(format!("Migration failed: {}", e)))?;
 
         // Optimize template for faster copying
         optimize_template_for_tests(&template_pool).await?;
 
         template_pool.close().await;
-        Ok::<(), anyhow::Error>(())
+        Ok::<(), CoreError>(())
     };
 
     // Execute template setup with timeout
@@ -932,7 +931,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> AnyhowResu
 }
 
 /// Check if required PostgreSQL extensions are available
-async fn check_required_extensions(pool: &DbPool) -> AnyhowResult<()> {
+async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     let required_extensions = vec![
         ("ulid", "pgx_ulid for ULID primary keys"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
@@ -955,7 +954,7 @@ async fn check_required_extensions(pool: &DbPool) -> AnyhowResult<()> {
     }
 
     if !missing.is_empty() {
-        return Err(sinex_error::CoreError::database(format!(
+        return Err(CoreError::database(format!(
             "Missing required PostgreSQL extensions: {}",
             missing.join(", ")
         ))
@@ -967,7 +966,7 @@ async fn check_required_extensions(pool: &DbPool) -> AnyhowResult<()> {
 }
 
 /// Apply test-specific PostgreSQL optimizations (session-level only)
-async fn apply_test_session_optimizations(pool: &DbPool) -> AnyhowResult<()> {
+async fn apply_test_session_optimizations(pool: &DbPool) -> TestResult<()> {
     if std::env::var("SINEX_TEST_OPTIMIZATIONS").is_ok() {
         eprintln!("⚡ Applying test session optimizations...");
 
@@ -993,7 +992,7 @@ async fn apply_test_session_optimizations(pool: &DbPool) -> AnyhowResult<()> {
 }
 
 /// Optimize template database for faster test copying
-async fn optimize_template_for_tests(pool: &DbPool) -> AnyhowResult<()> {
+async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
     eprintln!("🔧 Optimizing template database for test performance...");
 
     // Add a timeout to prevent hanging
@@ -1067,7 +1066,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> AnyhowResult<()> {
             });
 
         eprintln!("✅ Template database optimized for test performance");
-        Ok::<(), anyhow::Error>(())
+        Ok::<(), CoreError>(())
     };
 
     // Apply a reasonable timeout
@@ -1082,7 +1081,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> AnyhowResult<()> {
 }
 
 /// Health check for the entire pool
-pub async fn check_pool_health() -> AnyhowResult<PoolHealthReport> {
+pub async fn check_pool_health() -> TestResult<PoolHealthReport> {
     let pool_lock = POOL.lock().await;
 
     if let Some(pool) = pool_lock.as_ref() {
@@ -1142,7 +1141,7 @@ pub struct PoolHealthReport {
 }
 
 /// Emergency pool reset function (for testing/debugging)
-pub async fn reset_pool() -> AnyhowResult<()> {
+pub async fn reset_pool() -> TestResult<()> {
     let mut pool_lock = POOL.lock().await;
 
     if let Some(pool) = pool_lock.take() {
@@ -1164,7 +1163,7 @@ pub async fn reset_pool() -> AnyhowResult<()> {
 }
 
 /// Initialize pool with custom configuration (for testing)
-async fn _init_pool_with_config(config: PoolConfig) -> AnyhowResult<()> {
+async fn _init_pool_with_config(config: PoolConfig) -> TestResult<()> {
     let mut pool_lock = POOL.lock().await;
     let pool = Arc::new(DatabasePool::new(config).await?);
     *pool_lock = Some(pool);

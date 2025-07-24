@@ -6,7 +6,6 @@
 // - Performance degradation
 // - Network partitions
 
-use crate::common::prelude::*;
 use redis::{AsyncCommands, RedisError, RedisResult};
 use std::collections::HashMap;
 use std::sync::Arc;

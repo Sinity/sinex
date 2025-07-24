@@ -153,8 +153,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             quote! {
                 #[tokio::test]
                 #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                    use crate::common::test_context::{TestContext, TestConfig};
-                    use crate::common::database_pool;
+                    // Note: TestContext must be in scope
 
                     // Wrap the entire test in a timeout
                     let test_future = async {
@@ -163,14 +162,8 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let start = std::time::Instant::now();
                         eprintln!("🔄 {} [proptest+async, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                        // Acquire database from manager (guaranteed cleanup)
-                        let managed_db = database_pool::acquire_test_database().await?;
-
-                        // Create test context
-                        let ctx = TestContext::with_managed_database(managed_db, TestConfig {
-                            test_name: test_name.to_string(),
-                            ..Default::default()
-                        }).await?;
+                        // Create test context with test name
+                        let ctx = TestContext::with_name(test_name).await?;
 
                         // Run the proptest with progress tracking
                         let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = {
@@ -241,8 +234,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
             quote! {
                 #[tokio::test]
                 #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
-                    use crate::common::test_context::{TestContext, TestConfig};
-                    use crate::common::database_pool;
+                    // Note: TestContext must be in scope
 
                     // Wrap the entire test in a timeout
                     let test_future = async {
@@ -251,14 +243,8 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let start = std::time::Instant::now();
                         eprintln!("🔄 {} [timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
 
-                        // Acquire database from manager (guaranteed cleanup)
-                        let managed_db = database_pool::acquire_test_database().await?;
-
-                        // Create test context
-                        let ctx = TestContext::with_managed_database(managed_db, TestConfig {
-                            test_name: test_name.to_string(),
-                            ..Default::default()
-                        }).await?;
+                        // Create test context with test name
+                        let ctx = TestContext::with_name(test_name).await?;
 
                         // Run the test with progress tracking for long tests
                         let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if #timeout_secs > 10 {

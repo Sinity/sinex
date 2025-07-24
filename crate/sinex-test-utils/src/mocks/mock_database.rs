@@ -7,7 +7,7 @@
 // - Constraint violations
 // - Transaction failures
 
-use crate::common::prelude::*;
+use crate::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
@@ -105,7 +105,7 @@ impl MockDatabase {
         }
     }
 
-    pub async fn connect(&self) -> AnyhowResult<MockDatabaseConnection, MockDatabaseError> {
+    pub async fn connect(&self) -> Result<MockDatabaseConnection, MockDatabaseError> {
         // Check connection limit
         let mut connections = self.connections.lock().await;
         if *connections >= self.config.max_connections {
@@ -216,7 +216,7 @@ pub struct MockDatabaseConnection {
 }
 
 impl MockDatabaseConnection {
-    pub async fn insert_event(&mut self, event: &RawEvent) -> AnyhowResult<(), MockDatabaseError> {
+    pub async fn insert_event(&mut self, event: &RawEvent) -> Result<(), MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -267,7 +267,7 @@ impl MockDatabaseConnection {
     pub async fn query_events(
         &mut self,
         limit: Option<usize>,
-    ) -> AnyhowResult<Vec<RawEvent>, MockDatabaseError> {
+    ) -> Result<Vec<RawEvent>, MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -314,7 +314,7 @@ impl MockDatabaseConnection {
         Ok(result)
     }
 
-    pub async fn count_events(&mut self) -> AnyhowResult<usize, MockDatabaseError> {
+    pub async fn count_events(&mut self) -> Result<usize, MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -342,7 +342,7 @@ impl MockDatabaseConnection {
         processed_count: u64,
         last_processed_id: Option<&str>,
         state_data: Option<&serde_json::Value>,
-    ) -> AnyhowResult<(), MockDatabaseError> {
+    ) -> Result<(), MockDatabaseError> {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
         }
@@ -380,7 +380,7 @@ impl MockDatabaseConnection {
         automaton_name: &str,
         consumer_group: &str,
         consumer_name: &str,
-    ) -> AnyhowResult<Option<(u64, Option<String>, Option<serde_json::Value>)>, MockDatabaseError>
+    ) -> Result<Option<(u64, Option<String>, Option<serde_json::Value>)>, MockDatabaseError>
     {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
@@ -410,9 +410,9 @@ impl MockDatabaseConnection {
         }
     }
 
-    pub async fn transaction<F, T>(&mut self, f: F) -> AnyhowResult<T, MockDatabaseError>
+    pub async fn transaction<F, T>(&mut self, f: F) -> Result<T, MockDatabaseError>
     where
-        F: FnOnce(&mut Self) -> AnyhowResult<T, MockDatabaseError>,
+        F: FnOnce(&mut Self) -> Result<T, MockDatabaseError>,
     {
         if !self.connected {
             return Err(MockDatabaseError::NotConnected);
@@ -429,7 +429,7 @@ impl MockDatabaseConnection {
         f(self)
     }
 
-    pub async fn disconnect(&mut self) -> AnyhowResult<(), MockDatabaseError> {
+    pub async fn disconnect(&mut self) -> Result<(), MockDatabaseError> {
         if self.connected {
             self.connected = false;
             let mut connections = self.database.connections.lock().await;

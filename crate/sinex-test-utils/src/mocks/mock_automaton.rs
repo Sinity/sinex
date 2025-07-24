@@ -5,7 +5,7 @@
 // - Maintain checkpoints
 // - Simulate various processing scenarios
 
-use crate::common::prelude::*;
+use crate::prelude::*;
 use sinex_events::RawEvent;
 use sinex_satellite_sdk::{checkpoint::{CheckpointManager, CheckpointState}, stream_processor::Checkpoint};
 use std::sync::Arc;
@@ -86,7 +86,7 @@ impl Default for MockAutomatonConfig {
 }
 
 /// Custom processing function type
-pub type ProcessorFunction = Arc<dyn Fn(&RawEvent) -> AnyhowResult<ProcessingResult> + Send + Sync>;
+pub type ProcessorFunction = Arc<dyn Fn(&RawEvent) -> TestResult<ProcessingResult> + Send + Sync>;
 
 /// Result of processing an event
 #[derive(Debug, Clone)]
@@ -147,7 +147,7 @@ impl MockAutomaton {
     }
 
     /// Start the mock automaton
-    pub async fn start(&mut self) -> AnyhowResult<()> {
+    pub async fn start(&mut self) -> TestResult<()> {
         *self.is_running.lock().await = true;
 
         let config = self.config.clone();
@@ -158,14 +158,14 @@ impl MockAutomaton {
         let checkpoint_manager = self.checkpoint_manager.clone();
 
         let task_handle = tokio::spawn(async move {
-            let result: Result<(), anyhow::Error> = async {
+            let result: Result<(), CoreError> = async {
                 use redis::AsyncCommands;
 
                 let mut processed_count = 0usize;
 
                 // Create consumer group if it doesn't exist
                 let mut conn = redis.get_connection().await
-                    .map_err(|e| anyhow::anyhow!("Failed to get Redis connection: {}", e))?;
+                    .map_err(|e| CoreError::Unknown(format!("Failed to get Redis connection: {}", e)))?;
                 let _: Result<String, redis::RedisError> = conn
                     .xgroup_create(&config.stream_key, &config.consumer_group, "$")
                     .await;
@@ -227,7 +227,7 @@ impl MockAutomaton {
     }
 
     /// Stop the mock automaton
-    pub async fn stop(&mut self) -> AnyhowResult<()> {
+    pub async fn stop(&mut self) -> TestResult<()> {
         *self.is_running.lock().await = false;
 
         if let Some(handle) = self.task_handle.take() {
@@ -247,8 +247,8 @@ impl MockAutomaton {
     }
 
     /// Get current checkpoint state
-    pub async fn get_checkpoint(&self) -> AnyhowResult<CheckpointState> {
-        self.checkpoint_manager.load_checkpoint().await.map_err(|e| anyhow::anyhow!(e))
+    pub async fn get_checkpoint(&self) -> TestResult<CheckpointState> {
+        self.checkpoint_manager.load_checkpoint().await.map_err(|e| CoreError::Unknown(format!("{}", e)))
     }
 
     /// Get events processed by this automaton
@@ -271,7 +271,7 @@ impl MockAutomaton {
         &self,
         expected: usize,
         timeout_secs: u64,
-    ) -> AnyhowResult<()> {
+    ) -> TestResult<()> {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let start = std::time::Instant::now();
 
@@ -282,11 +282,11 @@ impl MockAutomaton {
             }
 
             if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
+                return Err(CoreError::Unknown(format!(
                     "Timeout waiting for {} events to be processed, got {}",
                     expected,
                     count
-                ));
+                )));
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -298,7 +298,7 @@ impl MockAutomaton {
         &self,
         expected_count: u64,
         timeout_secs: u64,
-    ) -> AnyhowResult<CheckpointState> {
+    ) -> TestResult<CheckpointState> {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let start = std::time::Instant::now();
 
@@ -309,11 +309,11 @@ impl MockAutomaton {
             }
 
             if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
+                return Err(CoreError::Unknown(format!(
                     "Timeout waiting for checkpoint to reach {}, got {}",
                     expected_count,
                     checkpoint.processed_count
-                ));
+                )));
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -343,12 +343,12 @@ async fn process_event_batch(
     config: &MockAutomatonConfig,
     events_processed: &Arc<Mutex<Vec<String>>>,
     processing_results: &Arc<Mutex<Vec<ProcessingResult>>>,
-) -> AnyhowResult<usize> {
+) -> TestResult<usize> {
     use redis::{cmd, AsyncCommands};
 
     // Get connection from RedisStreamClient
     let mut conn = redis.get_connection().await
-        .map_err(|e| anyhow::anyhow!("Failed to get Redis connection: {}", e))?;
+        .map_err(|e| CoreError::Unknown(format!("Failed to get Redis connection: {}", e)))?;
 
     // Read events from stream using XREADGROUP command
     let result: redis::streams::StreamReadReply = cmd("XREADGROUP")
@@ -361,7 +361,8 @@ async fn process_event_batch(
         .arg(&config.stream_key)
         .arg(">")
         .query_async(&mut conn)
-        .await?;
+        .await
+        .map_err(|e| CoreError::Service(format!("Redis query failed: {}", e)))?;
 
     let mut processed_count = 0;
 
@@ -404,7 +405,8 @@ async fn process_event_batch(
                 // Acknowledge the message
                 let _: i64 = conn
                     .xack(&config.stream_key, &config.consumer_group, &[&stream_id.id])
-                    .await?;
+                    .await
+                    .map_err(|e| CoreError::Service(format!("Redis XACK failed: {}", e)))?;
 
                 // Record as processed
                 events_processed.lock().await.push(stream_id.id.clone());
@@ -417,14 +419,14 @@ async fn process_event_batch(
 }
 
 /// Extract event from Redis stream fields
-fn extract_event_from_fields(fields: &[(String, String)]) -> AnyhowResult<RawEvent> {
+fn extract_event_from_fields(fields: &[(String, String)]) -> TestResult<RawEvent> {
     for (key, value) in fields {
         if key == "event" {
             return serde_json::from_str(value)
-                .map_err(|e| anyhow::anyhow!("Failed to parse event: {}", e));
+                .map_err(|e| CoreError::Parse(format!("Failed to parse event: {}", e)));
         }
     }
-    Err(anyhow::anyhow!("No event field found in stream message"))
+    Err(CoreError::Unknown(format!("No event field found in stream message")))
 }
 
 /// Default event processing function

@@ -7,7 +7,6 @@
 // - Latency variations
 // - Connection failures
 
-use crate::common::prelude::*;
 
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -107,7 +106,7 @@ impl MockNetwork {
     pub async fn connect(
         &self,
         addr: SocketAddr,
-    ) -> AnyhowResult<MockNetworkConnection, MockNetworkError> {
+    ) -> Result<MockNetworkConnection, MockNetworkError> {
         let config = self.config.read().await;
 
         // Check if host is partitioned
@@ -170,7 +169,7 @@ impl MockNetwork {
     pub async fn bind(
         &self,
         addr: SocketAddr,
-    ) -> AnyhowResult<MockNetworkListener, MockNetworkError> {
+    ) -> Result<MockNetworkListener, MockNetworkError> {
         let config = self.config.read().await;
 
         // Check if address is already bound
@@ -264,7 +263,7 @@ impl MockNetwork {
         &self,
         connection_id: &str,
         data: &[u8],
-    ) -> AnyhowResult<(), MockNetworkError> {
+    ) -> Result<(), MockNetworkError> {
         let config = self.config.read().await;
 
         // Check packet loss
@@ -300,7 +299,7 @@ impl MockNetwork {
         &self,
         connection_id: &str,
         buffer: &mut [u8],
-    ) -> AnyhowResult<usize, MockNetworkError> {
+    ) -> Result<usize, MockNetworkError> {
         let config = self.config.read().await;
 
         // Check packet loss
@@ -356,7 +355,7 @@ pub struct MockNetworkConnection {
 }
 
 impl MockNetworkConnection {
-    pub async fn send(&mut self, data: &[u8]) -> AnyhowResult<(), MockNetworkError> {
+    pub async fn send(&mut self, data: &[u8]) -> Result<(), MockNetworkError> {
         if !self.connected {
             return Err(MockNetworkError::NotConnected);
         }
@@ -364,7 +363,7 @@ impl MockNetworkConnection {
         self.network.send_data(&self.connection_id, data).await
     }
 
-    pub async fn receive(&mut self, buffer: &mut [u8]) -> AnyhowResult<usize, MockNetworkError> {
+    pub async fn receive(&mut self, buffer: &mut [u8]) -> Result<usize, MockNetworkError> {
         if !self.connected {
             return Err(MockNetworkError::NotConnected);
         }
@@ -380,7 +379,7 @@ impl MockNetworkConnection {
         self.remote_addr
     }
 
-    pub async fn close(&mut self) -> AnyhowResult<(), MockNetworkError> {
+    pub async fn close(&mut self) -> Result<(), MockNetworkError> {
         if self.connected {
             self.connected = false;
             self.network
@@ -408,7 +407,7 @@ pub struct MockNetworkListener {
 }
 
 impl MockNetworkListener {
-    pub async fn accept(&mut self) -> AnyhowResult<MockNetworkConnection, MockNetworkError> {
+    pub async fn accept(&mut self) -> Result<MockNetworkConnection, MockNetworkError> {
         if !self.active {
             return Err(MockNetworkError::ListenerClosed);
         }
@@ -456,7 +455,7 @@ impl MockNetworkListener {
         self.addr
     }
 
-    pub async fn close(&mut self) -> AnyhowResult<(), MockNetworkError> {
+    pub async fn close(&mut self) -> Result<(), MockNetworkError> {
         if self.active {
             self.active = false;
             let mut listeners = self.network.listeners.write().await;

@@ -11,24 +11,26 @@
 // Usage:
 // ```rust
 // #[sinex_test]
-// async fn test_with_fixture(ctx: TestContext) -> TestResult {
+// async fn test_with_fixture(ctx: TestContext) -> TestResult<()> {
 //     let session = fixtures::standard_user_session(&ctx).await?;
 //     // fixture automatically cleaned up
 // }
 // ```
 
-use crate::common::prelude::*;
-use crate::common::test_context::TestContext;
-use crate::common::builders::{TestEventBuilder, TestCheckpointBuilder, BatchEventBuilder};
-use crate::common::builders::EventBuilder;
+use crate::prelude::*;
+use crate::test_context::TestContext;
+use crate::builders::{TestEventBuilder, TestCheckpointBuilder};
+use crate::builders::EventBuilder;
 use sinex_events::{EventFactory, event_types, sources};
 use sinex_core_utils::ResourceGuard;
+use sinex_core_types::{DbPool, CoreError};
+use sinex_ulid::Ulid;
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
 use std::any::{Any, TypeId};
 use chrono::{Duration, Utc};
-use serde_json::json;
 use std::str::FromStr;
 use futures::future::BoxFuture;
 
@@ -73,7 +75,7 @@ impl FixtureRegistry {
     where
         T: Send + Sync + 'static,
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = anyhow::Result<T>>,
+        Fut: std::future::Future<Output = TestResult<T>>,
     {
         let type_id = TypeId::of::<T>();
         let cache_key = (type_id, key.clone());
@@ -186,7 +188,7 @@ impl<T> FixtureBuilder<T> {
 // =============================================================================
 
 /// Create a standard user session fixture with activity events
-pub async fn standard_user_session(ctx: &TestContext) -> AnyhowResult<FixtureHandle<UserSessionFixture>> {
+pub async fn standard_user_session(ctx: &TestContext) -> TestResult<FixtureHandle<UserSessionFixture>> {
     let key = format!("standard_user_session_{}", ctx.test_name());
     let registry = get_registry().await;
     
@@ -198,7 +200,7 @@ pub async fn standard_user_session(ctx: &TestContext) -> AnyhowResult<FixtureHan
         }
     }).await;
 
-    Ok(FixtureHandle::new(fixture, key))
+    Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
 }
 
 /// Create a parameterized user session fixture
@@ -206,7 +208,7 @@ pub async fn user_session_with_params(
     ctx: &TestContext,
     event_count: usize,
     checkpoint_interval: usize,
-) -> AnyhowResult<FixtureHandle<UserSessionFixture>> {
+) -> TestResult<FixtureHandle<UserSessionFixture>> {
     let key = format!("user_session_{}_{}_{}_{}", ctx.test_name(), event_count, checkpoint_interval, uuid::Uuid::new_v4());
     let registry = get_registry().await;
     
@@ -218,11 +220,11 @@ pub async fn user_session_with_params(
         }
     }).await;
 
-    Ok(FixtureHandle::new(fixture, key))
+    Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
 }
 
 /// Create an empty database fixture (useful for isolation tests)
-pub async fn empty_database(ctx: &TestContext) -> AnyhowResult<FixtureHandle<()>> {
+pub async fn empty_database(ctx: &TestContext) -> TestResult<FixtureHandle<()>> {
     let pool = ctx.pool().clone();
     
     // Create fixture
@@ -246,7 +248,7 @@ pub async fn empty_database(ctx: &TestContext) -> AnyhowResult<FixtureHandle<()>
 }
 
 /// Create populated checkpoints fixture
-pub async fn populated_checkpoints(ctx: &TestContext) -> AnyhowResult<FixtureHandle<PopulatedCheckpointsFixture>> {
+pub async fn populated_checkpoints(ctx: &TestContext) -> TestResult<FixtureHandle<PopulatedCheckpointsFixture>> {
     let key = format!("populated_checkpoints_{}", ctx.test_name());
     let registry = get_registry().await;
     
@@ -258,11 +260,11 @@ pub async fn populated_checkpoints(ctx: &TestContext) -> AnyhowResult<FixtureHan
         }
     }).await;
 
-    Ok(FixtureHandle::new(fixture, key))
+    Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
 }
 
 /// Create error scenarios fixture
-pub async fn error_scenarios(ctx: &TestContext) -> AnyhowResult<FixtureHandle<ErrorScenariosFixture>> {
+pub async fn error_scenarios(ctx: &TestContext) -> TestResult<FixtureHandle<ErrorScenariosFixture>> {
     let key = format!("error_scenarios_{}", ctx.test_name());
     let registry = get_registry().await;
     
@@ -274,11 +276,11 @@ pub async fn error_scenarios(ctx: &TestContext) -> AnyhowResult<FixtureHandle<Er
         }
     }).await;
 
-    Ok(FixtureHandle::new(fixture, key))
+    Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
 }
 
 /// Create performance dataset fixture
-pub async fn performance_dataset(ctx: &TestContext) -> AnyhowResult<FixtureHandle<PerformanceDatasetFixture>> {
+pub async fn performance_dataset(ctx: &TestContext) -> TestResult<FixtureHandle<PerformanceDatasetFixture>> {
     performance_dataset_with_size(ctx, 10000).await
 }
 
@@ -286,7 +288,7 @@ pub async fn performance_dataset(ctx: &TestContext) -> AnyhowResult<FixtureHandl
 pub async fn performance_dataset_with_size(
     ctx: &TestContext,
     event_count: usize,
-) -> AnyhowResult<FixtureHandle<PerformanceDatasetFixture>> {
+) -> TestResult<FixtureHandle<PerformanceDatasetFixture>> {
     let key = format!("performance_dataset_{}_{}_{}", ctx.test_name(), event_count, uuid::Uuid::new_v4());
     let registry = get_registry().await;
     
@@ -298,7 +300,7 @@ pub async fn performance_dataset_with_size(
         }
     }).await;
 
-    Ok(FixtureHandle::new(fixture, key))
+    Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
 }
 
 // =============================================================================
@@ -309,7 +311,7 @@ async fn create_user_session_fixture(
     pool: &DbPool,
     event_count: usize,
     checkpoint_interval: usize,
-) -> AnyhowResult<UserSessionFixture> {
+) -> TestResult<UserSessionFixture> {
     let user_id = format!("test_user_{}", uuid::Uuid::new_v4());
     let session_start = Utc::now() - Duration::hours(1);
     let mut event_ids = Vec::new();
@@ -321,7 +323,8 @@ async fn create_user_session_fixture(
             .created()
             .build();
         
-        let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await
+            .map_err(|e| CoreError::Database(e.to_string()))?;
         event_ids.push(inserted.id);
     }
 
@@ -335,7 +338,8 @@ async fn create_user_session_fixture(
             .duration_ms(100 + i as u64 * 10)
             .build();
         
-        let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await
+            .map_err(|e| CoreError::Database(e.to_string()))?;
         event_ids.push(inserted.id);
     }
 
@@ -345,7 +349,8 @@ async fn create_user_session_fixture(
             .text(&format!("Clipboard content {}", i))
             .build();
         
-        let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await
+            .map_err(|e| CoreError::Database(e.to_string()))?;
         event_ids.push(inserted.id);
     }
 
@@ -375,7 +380,7 @@ async fn create_user_session_fixture(
     })
 }
 
-async fn create_populated_checkpoints_fixture(pool: &DbPool) -> AnyhowResult<PopulatedCheckpointsFixture> {
+async fn create_populated_checkpoints_fixture(pool: &DbPool) -> TestResult<PopulatedCheckpointsFixture> {
     let automaton_names = vec![
         "health-aggregator".to_string(),
         "command-canonicalizer".to_string(),
@@ -411,7 +416,7 @@ async fn create_populated_checkpoints_fixture(pool: &DbPool) -> AnyhowResult<Pop
     })
 }
 
-async fn create_error_scenarios_fixture(pool: &DbPool) -> AnyhowResult<ErrorScenariosFixture> {
+async fn create_error_scenarios_fixture(pool: &DbPool) -> TestResult<ErrorScenariosFixture> {
     let mut invalid_event_ids = Vec::new();
     let mut failed_operation_ids = Vec::new();
     let mut error_messages = Vec::new();
@@ -448,7 +453,7 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> AnyhowResult<ErrorScen
         .await?
         .expect("start_operation should return an ID");
 
-        let op_id = Ulid::from_str(&op_id_str)?;
+        let op_id = Ulid::from_str(&op_id_str).map_err(|e| CoreError::Parse(format!("Invalid ULID: {}", e)))?;
         
         sqlx::query!(
             "SELECT core.fail_operation($1::uuid, $2::jsonb)",
@@ -472,7 +477,7 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> AnyhowResult<ErrorScen
 async fn create_performance_dataset_fixture(
     pool: &DbPool,
     event_count: usize,
-) -> AnyhowResult<PerformanceDatasetFixture> {
+) -> TestResult<PerformanceDatasetFixture> {
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     let sources = vec![
@@ -501,7 +506,7 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
         
-        let mut builder = TestEventBuilder::new(source, event_type)
+        let builder = TestEventBuilder::new(source, event_type)
             .with_field("index", json!(i))
             .with_field("data", json!("x".repeat(payload_size)))
             .with_timestamp(start_time + time_step * i as i32);
@@ -513,7 +518,8 @@ async fn create_performance_dataset_fixture(
     let chunk_size = 1000;
     for chunk in batch.chunks(chunk_size) {
         for event in chunk {
-            let inserted = sinex_db::insert_event_with_validator(pool, event, None).await?;
+            let inserted = sinex_db::insert_event_with_validator(pool, event, None).await
+            .map_err(|e| CoreError::Database(e.to_string()))?;
             event_ids.push(inserted.id);
         }
     }
@@ -531,7 +537,7 @@ async fn create_performance_dataset_fixture(
 // =============================================================================
 
 /// Composite fixture combining multiple fixtures
-pub struct CompositeFixture<A: 'static, B: 'static> {
+pub struct CompositeFixture<A: 'static + Send, B: 'static + Send> {
     pub first: FixtureHandle<A>,
     pub second: FixtureHandle<B>,
 }
@@ -539,7 +545,7 @@ pub struct CompositeFixture<A: 'static, B: 'static> {
 /// Create a fixture that depends on other fixtures
 pub async fn user_session_with_checkpoints(
     ctx: &TestContext,
-) -> AnyhowResult<CompositeFixture<UserSessionFixture, PopulatedCheckpointsFixture>> {
+) -> Result<CompositeFixture<UserSessionFixture, PopulatedCheckpointsFixture>, CoreError> {
     let session = standard_user_session(ctx).await?;
     let checkpoints = populated_checkpoints(ctx).await?;
     
@@ -557,10 +563,10 @@ pub async fn user_session_with_checkpoints(
 pub async fn with_transaction_fixture<F, Fut, T>(
     ctx: &TestContext,
     fixture_fn: F,
-) -> AnyhowResult<T>
+) -> TestResult<T>
 where
     F: FnOnce(sqlx::Transaction<'_, sqlx::Postgres>) -> Fut,
-    Fut: std::future::Future<Output = AnyhowResult<T>>,
+    Fut: std::future::Future<Output = TestResult<T>>,
 {
     let mut tx = ctx.pool().begin().await?;
     
@@ -594,6 +600,7 @@ where
 // =============================================================================
 
 /// Pre-warmed fixture with data already in database
+#[derive(Debug, Clone)]
 pub struct PreWarmedFixture {
     pub event_count: usize,
     pub checkpoint_count: usize,
@@ -602,7 +609,7 @@ pub struct PreWarmedFixture {
 }
 
 /// Create a pre-warmed fixture with various data types
-pub async fn pre_warmed_database(ctx: &TestContext) -> AnyhowResult<FixtureHandle<PreWarmedFixture>> {
+pub async fn pre_warmed_database(ctx: &TestContext) -> TestResult<FixtureHandle<PreWarmedFixture>> {
     let key = format!("pre_warmed_database_{}", ctx.test_name());
     let registry = get_registry().await;
     
@@ -614,10 +621,10 @@ pub async fn pre_warmed_database(ctx: &TestContext) -> AnyhowResult<FixtureHandl
         }
     }).await;
 
-    Ok(FixtureHandle::new(fixture, key))
+    Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
 }
 
-async fn create_pre_warmed_fixture(pool: &DbPool) -> AnyhowResult<PreWarmedFixture> {
+async fn create_pre_warmed_fixture(pool: &DbPool) -> TestResult<PreWarmedFixture> {
     let event_count = 5000;
     let checkpoint_count = 10;
     let operation_count = 50;
@@ -639,7 +646,8 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> AnyhowResult<PreWarmedFixtu
         for event in chunk {
             let size = serde_json::to_string(&event.payload)?.len();
             total_size_bytes += size;
-            sinex_db::insert_event_with_validator(pool, event, None).await?;
+            sinex_db::insert_event_with_validator(pool, event, None).await
+            .map_err(|e| CoreError::Database(e.to_string()))?;
         }
     }
 
@@ -675,7 +683,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> AnyhowResult<PreWarmedFixtu
         .await?
         .expect("start_operation should return an ID");
 
-        let op_id = Ulid::from_str(&op_id_str)?;
+        let op_id = Ulid::from_str(&op_id_str).map_err(|e| CoreError::Parse(format!("Invalid ULID: {}", e)))?;
         
         if i % 2 == 0 {
             sqlx::query!(
@@ -701,7 +709,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> AnyhowResult<PreWarmedFixtu
 // =============================================================================
 
 /// Manually cleanup all fixtures (useful for test teardown)
-pub async fn cleanup_all_fixtures() -> AnyhowResult<()> {
+pub async fn cleanup_all_fixtures() -> TestResult<()> {
     let registry = get_registry().await;
     let mut registry = registry.lock().await;
     
@@ -719,7 +727,7 @@ pub async fn cleanup_all_fixtures() -> AnyhowResult<()> {
 }
 
 /// Force cleanup of a specific fixture type
-pub async fn cleanup_fixture<T: 'static>(key: &str) -> AnyhowResult<()> {
+pub async fn cleanup_fixture<T: 'static>(key: &str) -> TestResult<()> {
     let registry = get_registry().await;
     let mut registry = registry.lock().await;
     
@@ -748,8 +756,8 @@ macro_rules! fixture {
         teardown: $teardown:expr,
         cache: $cache:expr
     }) => {
-        pub async fn $name(ctx: &TestContext) -> AnyhowResult<FixtureHandle<_>> {
-            use $crate::common::fixtures::*;
+        pub async fn $name(ctx: &TestContext) -> TestResult<FixtureHandle<_>> {
+            use $crate::fixtures::*;
             
             let key = if $cache {
                 stringify!($name).to_string()
@@ -777,7 +785,7 @@ macro_rules! fixture {
                 },
             );
             
-            Ok(FixtureHandle::new(fixture, key))
+            Ok(FixtureHandle::new((*fixture).clone(), |_| async {}))
         }
     };
 }

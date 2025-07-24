@@ -4,11 +4,12 @@
 //! making tests more readable and reducing boilerplate code.
 //! It combines both test-specific builders and re-exports from sinex-events.
 
-use crate::common::prelude::*;
-use sinex_db::RawEvent;
+use crate::prelude::*;
+use sinex_core_types::{RawEvent, DbPool};
+use sinex_db;
 use sinex_events::EventFactory;
-use serde_json::Value as JsonValue;
 use sinex_ulid::Ulid;
+use serde_json::{json, Value as JsonValue};
 use chrono::{DateTime, Utc};
 
 // Re-export everything from sinex-events event builders
@@ -113,7 +114,7 @@ impl TestEventBuilder {
     }
 
     /// Insert the event into the database
-    pub async fn insert(self, pool: &DbPool) -> AnyhowResult<RawEvent> {
+    pub async fn insert(self, pool: &DbPool) -> TestResult<RawEvent> {
         let host = self.host.clone()
             .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());
         
@@ -339,7 +340,7 @@ impl TestCheckpointBuilder {
     }
 
     /// Insert the checkpoint
-    pub async fn insert(self, pool: &DbPool) -> AnyhowResult<()> {
+    pub async fn insert(self, pool: &DbPool) -> TestResult<()> {
         use sinex_db::queries::CheckpointQueries;
         
         let group = self.consumer_group
@@ -408,7 +409,7 @@ impl TestScenarioBuilder {
     }
 
     /// Execute the scenario
-    pub async fn execute(self, pool: &DbPool) -> AnyhowResult<ScenarioResult> {
+    pub async fn execute(self, pool: &DbPool) -> TestResult<ScenarioResult> {
         let mut event_ids = Vec::new();
         
         // Insert all events
@@ -499,7 +500,7 @@ impl BatchEventBuilder {
     }
 
     /// Insert all events in batch
-    pub async fn insert(self, pool: &DbPool) -> AnyhowResult<Vec<RawEvent>> {
+    pub async fn insert(self, pool: &DbPool) -> TestResult<Vec<RawEvent>> {
         let mut results = Vec::new();
         
         for i in 0..self.count {
@@ -603,5 +604,269 @@ impl TestEvents {
         TestEventBuilder::new("test", "large.payload")
             .with_field("data", json!(data))
             .with_field("size_kb", json!(size_kb))
+    }
+}
+
+// Comprehensive builder tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::*;
+    
+    #[sinex_test]
+    async fn test_all_event_builders(_ctx: TestContext) -> TestResult<()> {
+        // Test all event builder types create valid events
+        let test_cases = vec![
+            ("fs", "file.created"),
+            ("fs", "file.modified"),
+            ("fs", "directory.created"),
+            ("shell.kitty", "command.executed"),
+            ("shell.kitty", "session.started"),
+            ("wm.hyprland", "window.focused"),
+            ("wm.hyprland", "workspace.changed"),
+            ("clipboard", "content.copied"),
+            ("system", "boot"),
+            ("sinex", "automaton.heartbeat"),
+        ];
+        
+        for (source, event_type) in test_cases {
+            let mut builder = TestEventBuilder::new(source, event_type);
+            
+            // Add some fields
+            builder = builder
+                .with_field("test", json!(true))
+                .with_field("index", json!(42))
+                .with_field("data", json!({"nested": "value"}));
+                
+            let event = builder.build();
+            
+            // Verify all fields
+            assert_eq!(event.source, source);
+            assert_eq!(event.event_type, event_type);
+            assert!(!event.id.to_string().is_empty());
+            assert!(!event.host.is_empty());
+            
+            // Verify payload contains all fields
+            assert_eq!(event.payload["test"], json!(true));
+            assert_eq!(event.payload["index"], json!(42));
+            assert_eq!(event.payload["data"], json!({"nested": "value"}));
+        }
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_batch_builder_ordering() {
+        // Test batch builder with proptest - pure function, no DB needed
+        use ::proptest::prelude::*;
+        
+        proptest!(|(
+            source in "[a-zA-Z][a-zA-Z0-9_.-]{2,20}",
+            event_type in "[a-zA-Z][a-zA-Z0-9_-]{1,20}\\.[a-zA-Z][a-zA-Z0-9_-]{1,20}",
+            count in 2..20usize,
+            spacing_ms in 1..100u64
+        )| {
+            let spacing = chrono::Duration::milliseconds(spacing_ms as i64);
+            let batch = BatchEventBuilder::new(&source, &event_type, count)
+                .with_time_spacing(spacing)
+                .build();
+            
+            prop_assert_eq!(batch.len(), count);
+            
+            // Verify ordering and spacing
+            for window in batch.windows(2) {
+                let event1 = &window[0];
+                let event2 = &window[1];
+                
+                // IDs should be ordered
+                prop_assert!(event1.id < event2.id);
+                
+                // Timestamps should respect spacing
+                if let (Some(ts1), Some(ts2)) = (event1.ts_orig, event2.ts_orig) {
+                    let diff = ts2 - ts1;
+                    prop_assert_eq!(diff, spacing);
+                }
+            }
+        });
+    }
+    
+    #[sinex_test]
+    async fn test_scenario_builder(_ctx: TestContext) -> TestResult<()> {
+        // Test scenario builder with multiple sources
+        let sources = vec!["source1", "source2", "source3"];
+        let counts = vec![3, 5, 2];
+        
+        let mut scenario = TestScenarioBuilder::new();
+        let mut expected_total = 0;
+        
+        for (source, count) in sources.iter().zip(counts.iter()) {
+            scenario = scenario.with_events_from_source(source, "test.event", *count);
+            expected_total += count;
+        }
+        
+        // Build the scenario (without inserting to DB)
+        let events: Vec<_> = scenario.events.into_iter().map(|b| b.build()).collect();
+        
+        assert_eq!(events.len(), expected_total);
+        
+        // Verify all events have unique IDs
+        let ids: std::collections::HashSet<_> = events.iter().map(|e| e.id).collect();
+        assert_eq!(ids.len(), events.len());
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_generic_builder_methods() {
+        // Test generic builder with proptest
+        use ::proptest::prelude::*;
+        
+        proptest!(|(
+            source in "[a-zA-Z][a-zA-Z0-9_.-]{2,20}",
+            command in "[a-zA-Z0-9 _-]{1,50}",
+            duration_ms in 1..1000u64
+        )| {
+            // Test terminal-specific methods
+            let event = GenericEventBuilder::new(&source, "command.executed")
+                .command(&command)
+                .duration_ms(duration_ms)
+                .build();
+                
+            prop_assert_eq!(&event.payload["command"], &json!(command));
+            prop_assert_eq!(&event.payload["execution_time_ms"], &json!(duration_ms));
+            
+            // Test agent-specific methods
+            let agent_name = format!("agent-{}", source);
+            let heartbeat = GenericEventBuilder::new(&source, "agent.status")
+                .name(&agent_name)
+                .heartbeat()
+                .uptime_seconds(3600)
+                .events_processed(1000)
+                .build();
+                
+            prop_assert_eq!(&heartbeat.event_type, "automaton.heartbeat");
+            prop_assert_eq!(&heartbeat.payload["agent_name"], &json!(agent_name));
+            prop_assert_eq!(&heartbeat.payload["uptime_seconds"], &json!(3600));
+            prop_assert_eq!(&heartbeat.payload["events_processed_session"], &json!(1000));
+        });
+    }
+    
+    #[sinex_test]
+    async fn test_builder_database_integration(ctx: TestContext) -> TestResult<()> {
+        // Property-based test for database insertion
+        let test_cases = vec![
+            ("fs", "file.created", json!({"path": "/test/file.txt"})),
+            ("shell", "command.executed", json!({"command": "ls -la"})),
+            ("clipboard", "content.copied", json!({"content": "test"})),
+            ("wm.hyprland", "window.focused", json!({"title": "Test Window"})),
+            ("system", "boot", json!({"kernel": "6.1.0"})),
+        ];
+        
+        for (source, event_type, payload) in test_cases {
+            // Test both builders can insert
+            let event1 = TestEventBuilder::new(source, event_type)
+                .with_payload(payload.clone())
+                .insert(ctx.pool())
+                .await?;
+                
+            let event2 = GenericEventBuilder::new(source, event_type)
+                .payload(payload.clone())
+                .build();
+                
+            // Verify consistency
+            assert_eq!(event1.source, source);
+            assert_eq!(event1.event_type, event_type);
+            assert_eq!(event1.payload, payload);
+            assert_eq!(event2.source, source);
+            assert_eq!(event2.event_type, event_type);
+            assert_eq!(event2.payload, payload);
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_checkpoint_builder(ctx: TestContext) -> TestResult<()> {
+        // Test checkpoint insertion with various configurations
+        let automata = vec!["analytics", "search", "content", "pkm"];
+        
+        for (i, name) in automata.iter().enumerate() {
+            TestCheckpointBuilder::new(name)
+                .with_group(&format!("{}-group", name))
+                .with_consumer(&format!("{}-01", name))
+                .with_processed_count((i + 1) as i64 * 100)
+                .with_state(json!({
+                    "last_run": "2024-01-01T00:00:00Z",
+                    "status": "active"
+                }))
+                .insert(ctx.pool())
+                .await?;
+        }
+        
+        // Verify checkpoints were created
+        let result: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = ANY($1)"
+        )
+        .bind(&automata)
+        .fetch_one(ctx.pool())
+        .await?;
+        
+        assert_eq!(result, automata.len() as i64);
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_scenario_execution(ctx: TestContext) -> TestResult<()> {
+        // Build and execute a complex scenario
+        let result = TestScenarioBuilder::new()
+            .with_events_from_source("fs", "file.created", 5)
+            .with_events_from_source("shell", "command.executed", 3)
+            .with_checkpoint(
+                TestCheckpointBuilder::new("test-automaton")
+                    .with_processed_count(8)
+            )
+            .execute(ctx.pool())
+            .await?;
+            
+        assert_eq!(result.event_count, 8);
+        assert_eq!(result.event_ids.len(), 8);
+        
+        // Verify all events exist
+        let count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM core.events WHERE id = ANY($1)"
+        )
+        .bind(&result.event_ids.iter().map(|id| id.to_uuid()).collect::<Vec<_>>())
+        .fetch_one(ctx.pool())
+        .await?;
+        
+        assert_eq!(count, 8);
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_batch_insertion(ctx: TestContext) -> TestResult<()> {
+        // Test batch insertion with time spacing
+        let start = Utc::now() - chrono::Duration::hours(1);
+        let events = BatchEventBuilder::new("monitoring", "metric.recorded", 10)
+            .with_start_time(start)
+            .with_time_spacing(chrono::Duration::minutes(5))
+            .with_payload_generator(|i| json!({
+                "metric": "cpu_usage",
+                "value": 50 + i * 5,
+                "host": format!("server-{}", i % 3)
+            }))
+            .insert(ctx.pool())
+            .await?;
+            
+        assert_eq!(events.len(), 10);
+        
+        // Verify time spacing
+        for window in events.windows(2) {
+            if let (Some(ts1), Some(ts2)) = (window[0].ts_orig, window[1].ts_orig) {
+                assert_eq!(ts2 - ts1, chrono::Duration::minutes(5));
+            }
+        }
+        
+        Ok(())
     }
 }

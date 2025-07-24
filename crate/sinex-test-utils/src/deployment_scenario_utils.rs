@@ -3,11 +3,8 @@
 // This module provides tools for testing Sinex deployment scenarios
 // across different environments, resource constraints, and failure modes.
 
-use crate::common::prelude::*;
-use sinex_error::ErrorContext;
-use serde::{Deserialize, Serialize};
+use crate::prelude::*;
 use std::collections::HashMap;
-use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::fs;
 
@@ -207,7 +204,7 @@ pub enum IssueSeverity {
 
 impl ConfigCompatibilityTester {
     /// Create a new configuration compatibility tester
-    pub async fn new() -> AnyhowResult<Self> {
+    pub async fn new() -> TestResult<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
             sinex_error::CoreError::io_error("temp_directory")
                 .with_context("source", e.to_string())
@@ -224,7 +221,7 @@ impl ConfigCompatibilityTester {
     }
 
     /// Initialize standard test scenarios
-    async fn initialize_test_scenarios(&mut self) -> AnyhowResult<()> {
+    async fn initialize_test_scenarios(&mut self) -> TestResult<()> {
         // Development environment scenario
         self.add_development_scenario().await?;
 
@@ -243,7 +240,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_development_scenario(&mut self) -> AnyhowResult<()> {
+    async fn add_development_scenario(&mut self) -> TestResult<()> {
         let scenario = CompatibilityTestScenario {
             name: "development_environment".to_string(),
             description: "Test configuration compatibility in development environment".to_string(),
@@ -344,7 +341,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_production_scenario(&mut self) -> AnyhowResult<()> {
+    async fn add_production_scenario(&mut self) -> TestResult<()> {
         let scenario = CompatibilityTestScenario {
             name: "production_environment".to_string(),
             description: "Test configuration compatibility in production environment".to_string(),
@@ -449,7 +446,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_high_availability_scenario(&mut self) -> AnyhowResult<()> {
+    async fn add_high_availability_scenario(&mut self) -> TestResult<()> {
         let scenario = CompatibilityTestScenario {
             name: "high_availability".to_string(),
             description: "Test configuration for high availability deployment".to_string(),
@@ -544,7 +541,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_resource_constrained_scenario(&mut self) -> AnyhowResult<()> {
+    async fn add_resource_constrained_scenario(&mut self) -> TestResult<()> {
         let scenario = CompatibilityTestScenario {
             name: "resource_constrained".to_string(),
             description: "Test configuration in resource-constrained environment (IoT/Edge)"
@@ -618,7 +615,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_failure_scenarios(&mut self) -> AnyhowResult<()> {
+    async fn add_failure_scenarios(&mut self) -> TestResult<()> {
         // Database unavailable scenario
         let db_failure_scenario = CompatibilityTestScenario {
             name: "database_unavailable".to_string(),
@@ -741,7 +738,7 @@ impl ConfigCompatibilityTester {
     }
 
     /// Run all compatibility test scenarios
-    pub async fn run_all_tests(&self) -> AnyhowResult<Vec<CompatibilityTestResult>> {
+    pub async fn run_all_tests(&self) -> TestResult<Vec<CompatibilityTestResult>> {
         let mut results = Vec::new();
 
         for scenario in &self.test_scenarios {
@@ -757,7 +754,7 @@ impl ConfigCompatibilityTester {
     pub async fn run_scenario(
         &self,
         scenario: &CompatibilityTestScenario,
-    ) -> AnyhowResult<CompatibilityTestResult> {
+    ) -> TestResult<CompatibilityTestResult> {
         let start_time = std::time::Instant::now();
         let mut step_results = Vec::new();
         let mut issues_found = Vec::new();
@@ -834,7 +831,7 @@ impl ConfigCompatibilityTester {
     async fn setup_test_environment(
         &self,
         scenario: &CompatibilityTestScenario,
-    ) -> AnyhowResult<()> {
+    ) -> TestResult<()> {
         // Create configuration files for each component
         for component in &scenario.components {
             let config_path = self
@@ -860,7 +857,7 @@ impl ConfigCompatibilityTester {
         &self,
         scenario: &CompatibilityTestScenario,
         step: &ValidationStep,
-    ) -> AnyhowResult<StepResult> {
+    ) -> TestResult<StepResult> {
         let start_time = std::time::Instant::now();
         let mut warnings = Vec::new();
         let mut errors = Vec::new();

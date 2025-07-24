@@ -7,7 +7,6 @@
 // - Network filesystem issues
 // - Concurrent access problems
 
-use crate::common::prelude::*;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -124,7 +123,7 @@ impl MockFilesystem {
         &self,
         path: &Path,
         content: &[u8],
-    ) -> AnyhowResult<(), MockFilesystemError> {
+    ) -> Result<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -190,7 +189,7 @@ impl MockFilesystem {
         Ok(())
     }
 
-    pub async fn read_file(&self, path: &Path) -> AnyhowResult<Vec<u8>, MockFilesystemError> {
+    pub async fn read_file(&self, path: &Path) -> Result<Vec<u8>, MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.should_fail_permission().await {
@@ -220,7 +219,7 @@ impl MockFilesystem {
         &self,
         path: &Path,
         content: &[u8],
-    ) -> AnyhowResult<(), MockFilesystemError> {
+    ) -> Result<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -269,7 +268,7 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn delete_file(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
+    pub async fn delete_file(&self, path: &Path) -> Result<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -308,7 +307,7 @@ impl MockFilesystem {
         files.contains_key(path) || directories.contains_key(path)
     }
 
-    pub async fn create_directory(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
+    pub async fn create_directory(&self, path: &Path) -> Result<(), MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.config.read_only {
@@ -360,7 +359,7 @@ impl MockFilesystem {
     pub async fn list_directory(
         &self,
         path: &Path,
-    ) -> AnyhowResult<Vec<PathBuf>, MockFilesystemError> {
+    ) -> Result<Vec<PathBuf>, MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.should_fail_permission().await {
@@ -404,7 +403,7 @@ impl MockFilesystem {
     pub async fn get_metadata(
         &self,
         path: &Path,
-    ) -> AnyhowResult<MockFileMetadata, MockFilesystemError> {
+    ) -> Result<MockFileMetadata, MockFilesystemError> {
         self.increment_operation_count().await;
 
         if self.should_fail_permission().await {
@@ -426,7 +425,7 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn lock_file(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
+    pub async fn lock_file(&self, path: &Path) -> Result<(), MockFilesystemError> {
         if !self.config.simulate_concurrent_access {
             return Ok(());
         }
@@ -445,7 +444,7 @@ impl MockFilesystem {
         }
     }
 
-    pub async fn unlock_file(&self, path: &Path) -> AnyhowResult<(), MockFilesystemError> {
+    pub async fn unlock_file(&self, path: &Path) -> Result<(), MockFilesystemError> {
         if !self.config.simulate_concurrent_access {
             return Ok(());
         }

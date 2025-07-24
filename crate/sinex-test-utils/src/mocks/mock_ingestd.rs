@@ -5,7 +5,7 @@
 // - Publish to Redis streams
 // - Simulate various failure scenarios
 
-use crate::common::prelude::*;
+use crate::prelude::*;
 use sinex_events::RawEvent;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -87,7 +87,7 @@ impl MockIngestd {
     }
 
     /// Start the mock ingestd server
-    pub async fn start(&mut self) -> AnyhowResult<()> {
+    pub async fn start(&mut self) -> TestResult<()> {
         // Remove existing socket
         let _ = tokio::fs::remove_file(&self.socket_path).await;
 
@@ -130,7 +130,7 @@ impl MockIngestd {
     }
 
     /// Stop the mock ingestd server
-    pub async fn stop(mut self) -> AnyhowResult<()> {
+    pub async fn stop(mut self) -> TestResult<()> {
         if let Some(handle) = self.server_handle.take() {
             handle.abort();
         }
@@ -150,7 +150,7 @@ impl MockIngestd {
     }
 
     /// Wait for expected number of events
-    pub async fn wait_for_events(&self, expected: usize, timeout_secs: u64) -> AnyhowResult<()> {
+    pub async fn wait_for_events(&self, expected: usize, timeout_secs: u64) -> TestResult<()> {
         let timeout = std::time::Duration::from_secs(timeout_secs);
         let start = std::time::Instant::now();
 
@@ -161,11 +161,11 @@ impl MockIngestd {
             }
 
             if start.elapsed() > timeout {
-                return Err(anyhow::anyhow!(
+                return Err(CoreError::Unknown(format!(
                     "Timeout waiting for {} events, got {}",
                     expected,
                     count
-                ));
+                )));
             }
 
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
@@ -195,12 +195,12 @@ trait IngestServiceTrait {
     async fn send_event(
         &self,
         request: Request<EventMessage>,
-    ) -> AnyhowResult<Response<EventResponse>, Status>;
+    ) -> Result<Response<EventResponse>, Status>;
 
     async fn send_event_batch(
         &self,
         request: Request<EventBatch>,
-    ) -> AnyhowResult<Response<BatchResponse>, Status>;
+    ) -> Result<Response<BatchResponse>, Status>;
 }
 
 // Simplified message types for testing
@@ -268,7 +268,7 @@ impl IngestServiceTrait for MockIngestService {
     async fn send_event(
         &self,
         request: Request<EventMessage>,
-    ) -> AnyhowResult<Response<EventResponse>, Status> {
+    ) -> Result<Response<EventResponse>, Status> {
         // Simulate latency
         if self.config.latency_ms > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(self.config.latency_ms)).await;
@@ -339,7 +339,7 @@ impl IngestServiceTrait for MockIngestService {
     async fn send_event_batch(
         &self,
         request: Request<EventBatch>,
-    ) -> AnyhowResult<Response<BatchResponse>, Status> {
+    ) -> Result<Response<BatchResponse>, Status> {
         let batch = request.into_inner();
         let mut success_count = 0;
         let mut error_count = 0;

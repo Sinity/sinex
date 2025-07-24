@@ -5,7 +5,6 @@
 // scope of testing. It tracks various dimensions of test coverage including
 // event types, validation rules, error conditions, and concurrency scenarios.
 
-use crate::common::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -224,26 +223,26 @@ impl CoverageAssertion {
 #[macro_export]
 macro_rules! track_test_coverage {
     (event_type: $source:expr, $event_type:expr) => {
-        $crate::common::coverage_assurance::CoverageTracker::record_event_type_tested(
+        $crate::coverage_assurance::CoverageTracker::record_event_type_tested(
             $source,
             $event_type,
         );
     };
 
     (validation_rule: $rule:expr) => {
-        $crate::common::coverage_assurance::CoverageTracker::record_validation_rule($rule);
+        $crate::coverage_assurance::CoverageTracker::record_validation_rule($rule);
     };
 
     (error_condition: $condition:expr) => {
-        $crate::common::coverage_assurance::CoverageTracker::record_error_condition($condition);
+        $crate::coverage_assurance::CoverageTracker::record_error_condition($condition);
     };
 
     (concurrency: $scenario:expr) => {
-        $crate::common::coverage_assurance::CoverageTracker::record_concurrency_scenario($scenario);
+        $crate::coverage_assurance::CoverageTracker::record_concurrency_scenario($scenario);
     };
 
     (edge_case: $category:expr, $case:expr) => {
-        $crate::common::coverage_assurance::CoverageTracker::record_edge_case($category, $case);
+        $crate::coverage_assurance::CoverageTracker::record_edge_case($category, $case);
     };
 }
 

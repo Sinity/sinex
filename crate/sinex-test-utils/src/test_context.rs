@@ -90,78 +90,52 @@
 //     .insert(pool).await?;
 // ```
 
-use crate::common::database_pool::TestDatabase;
-use sinex_core_types::{DbPoolRef, RawEvent};
+use crate::database_pool::TestDatabase;
+use sinex_core_types::RawEvent;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_db::query_builder::QueryBuilder;
 use sinex_events::{EventFactory, sources, event_types};
-use sinex_error::{CoreError, ErrorContext, ResultExt};
+use sinex_error::CoreError;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
 use std::sync::Arc;
-use anyhow::Result as AnyhowResult;
+use sinex_core_types::Result as TestResult;
 use serde_json::{Value, json};
 use chrono::{DateTime, Utc};
 
-pub type TestResult<T = ()> = AnyhowResult<T>;
 
-/// Configuration for test behavior
-#[derive(Debug, Clone)]
-pub struct TestConfig {
-    pub test_name: String,
-    pub default_timeout: Duration,
-    pub verbose: bool,
-}
-
-impl Default for TestConfig {
-    fn default() -> Self {
-        Self {
-            test_name: "unnamed_test".to_string(),
-            default_timeout: Duration::from_secs(3),
-            verbose: false,
-        }
-    }
-}
+// Default timeout for test operations
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Unified test context - single entry point for all test operations
 pub struct TestContext {
     db: TestDatabase,
-    config: TestConfig,
+    test_name: String,
     start_time: Instant,
     created_events: Arc<Mutex<Vec<sinex_ulid::Ulid>>>,
 }
 
 impl TestContext {
-    /// Create new test context with default config
+    /// Create new test context
     pub async fn new() -> TestResult<Self> {
-        Self::with_config(TestConfig::default()).await
+        Self::with_name("unnamed_test").await
     }
     
-    /// Create test context with custom config
-    pub async fn with_config(config: TestConfig) -> TestResult<Self> {
-        let db = crate::common::database_pool::acquire_test_database().await?;
+    /// Create test context with custom name
+    pub async fn with_name(test_name: &str) -> TestResult<Self> {
+        let db = crate::database_pool::acquire_test_database().await?;
         
         Ok(Self {
             db,
-            config,
+            test_name: test_name.to_string(),
             start_time: Instant::now(),
             created_events: Arc::new(Mutex::new(Vec::new())),
         })
     }
     
-    /// Get pool reference (internal use only)
-    fn pool(&self) -> DbPoolRef<'_> {
-        self.db.pool()
-    }
-    
-    /// Get test configuration
-    pub fn config(&self) -> &TestConfig {
-        &self.config
-    }
-    
     /// Get test name for fixture scoping
     pub fn test_name(&self) -> &str {
-        &self.config.test_name
+        &self.test_name
     }
     
     /// Get database pool (for fixture creation)
@@ -183,7 +157,8 @@ impl TestContext {
     
     /// Insert event directly (internal use)
     pub(crate) async fn insert_event_internal(&self, event: &RawEvent) -> TestResult<RawEvent> {
-        let inserted = sinex_db::insert_event_with_validator(self.pool(), event, None).await?;
+        let inserted = sinex_db::insert_event_with_validator(self.pool(), event, None).await
+            .map_err(|e| CoreError::Database(e.to_string()))?;
         self.created_events.lock().await.push(inserted.id);
         Ok(inserted)
     }
@@ -203,66 +178,52 @@ impl TestContext {
     // ===== TIMING HELPERS =====
     
     /// Wait for specific number of events using production wait helpers
-    pub async fn wait_for_event_count(&self, expected: usize) -> TestResult {
-        let timeout_secs = self.config.default_timeout.as_secs();
+    pub async fn wait_for_event_count(&self, expected: usize) -> TestResult<()> {
+        let timeout_secs = DEFAULT_TIMEOUT.as_secs();
         
         sinex_core_utils::wait_for_condition_adaptive(
             || async {
-                let count = self.events().count().await? as usize;
+                let count = self.events().count().await.map_err(|e| CoreError::Database(e.to_string()))? as usize;
                 Ok(count >= expected)
             },
             timeout_secs,
             &format!("event count >= {}", expected)
         ).await
-        .map_err(|e| 
-            CoreError::timeout(&format!("Wait for {} events failed", expected))
-                .with_context("timeout_duration", format!("{}s", timeout_secs))
-                .with_source(e)
-                .with_operation("wait_for_event_count")
-                .build()
-                .into()
-        )
+        .map_err(|e| CoreError::Timeout(format!("Wait condition failed: {}", e)))
     }
     
     /// Wait for condition to become true using production wait helpers
-    pub async fn wait_for_condition<F, Fut>(&self, condition: F) -> TestResult
+    pub async fn wait_for_condition<F, Fut>(&self, condition: F) -> TestResult<()>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = TestResult<bool>>,
     {
-        let timeout_secs = self.config.default_timeout.as_secs();
+        let timeout_secs = DEFAULT_TIMEOUT.as_secs();
         
         sinex_core_utils::wait_for_condition_adaptive(
             || async {
                 match condition().await {
                     Ok(result) => Ok(result),
-                    Err(e) => Err(sinex_core_types::CoreError::Unknown(e.to_string())),
+                    Err(e) => Err(CoreError::Unknown(e.to_string())),
                 }
             },
             timeout_secs,
             "custom test condition"
         ).await
-        .map_err(|e|
-            CoreError::timeout("Wait for test condition failed")
-                .with_context("timeout_duration", format!("{}s", timeout_secs))
-                .with_source(e)
-                .with_operation("wait_for_condition")
-                .build()
-                .into()
-        )
+        .map_err(|e| CoreError::Timeout(format!("Wait condition failed: {}", e)))
     }
     
     // ===== ASSERTION HELPERS =====
     
     /// Assert specific event count using production error context
-    pub async fn assert_event_count(&self, expected: usize) -> TestResult {
+    pub async fn assert_event_count(&self, expected: usize) -> TestResult<()> {
         let actual = self.events().count().await? as usize;
         if actual != expected {
             return Err(
                 CoreError::validation("Event count assertion failed")
                     .with_context("expected_count", expected)
                     .with_context("actual_count", actual)
-                    .with_context("test_name", &self.config.test_name)
+                    .with_context("test_name", &self.test_name)
                     .with_operation("assert_event_count")
                     .build()
                     .into()
@@ -272,15 +233,15 @@ impl TestContext {
     }
     
     /// Assert no events exist
-    pub async fn assert_no_events(&self) -> TestResult {
+    pub async fn assert_no_events(&self) -> TestResult<()> {
         self.assert_event_count(0).await
     }
     
     /// Assert event with ID exists
-    pub async fn assert_event_exists(&self, id: sinex_ulid::Ulid) -> TestResult {
+    pub async fn assert_event_exists(&self, id: sinex_ulid::Ulid) -> TestResult<()> {
         let event = self.events().by_id(id).fetch_one().await?;
         if event.is_none() {
-            return Err(anyhow::anyhow!("Event {} does not exist", id));
+            return Err(CoreError::NotFound(format!("Event {}", id)));
         }
         Ok(())
     }
@@ -355,19 +316,16 @@ impl TestContext {
     // ===== SCHEMA TESTING API =====
     
     /// Register test schema for validation
-    pub async fn register_schema(&self, source: &str, event_type: &str, version: &str, schema: Value) -> TestResult<sinex_ulid::Ulid> {
+    pub async fn register_schema(&self, source: &str, event_type: &str, _version: &str, schema: Value) -> TestResult<sinex_ulid::Ulid> {
         use sinex_db::queries::SchemaQueries;
         let schema_id = sinex_ulid::Ulid::new();
         
         SchemaQueries::insert_schema(
-            schema_id,
-            source.to_string(),
             event_type.to_string(),
-            version.to_string(),
-            schema,
-            chrono::Utc::now()
+            1, // schema_version as i32
+            schema
         ).execute(self.pool()).await.map_err(|e| {
-            anyhow::anyhow!("Failed to register test schema for {}/{}: {}", source, event_type, e)
+            CoreError::database(format!("Failed to register test schema for {}/{}: {}", source, event_type, e)).build()
         })?;
         
         Ok(schema_id)
@@ -376,28 +334,21 @@ impl TestContext {
     /// Validate event against registered schema
     pub async fn validate_against_schema(&self, event: &RawEvent, schema_id: sinex_ulid::Ulid) -> TestResult<()> {
         // Get schema from database using production query
-        let schema_record = sinex_db::queries::SchemaQueries::get_by_id(schema_id)
+        let schema_record: sinex_db::models::EventPayloadSchema = sinex_db::queries::SchemaQueries::get_by_id(schema_id)
             .fetch_optional(self.pool())
-            .await.map_err(|e| {
-                anyhow::anyhow!("Failed to fetch schema {}: {}", schema_id, e)
-            })?
-            .ok_or_else(|| anyhow::anyhow!("Schema not found: {}", schema_id))?;
+            .await?
+            .ok_or_else(|| CoreError::Validation(format!("Schema not found: {}", schema_id)))?;
         
         // Validate using jsonschema crate
-        let schema = jsonschema::JSONSchema::compile(&schema_record.definition)
-            .map_err(|e| anyhow::anyhow!("Invalid JSON schema {}: {}", schema_id, e))?;
+        let schema = jsonschema::JSONSchema::compile(&schema_record.json_schema_definition)
+            .map_err(|e| CoreError::Validation(format!("Invalid JSON schema {}: {}", schema_id, e)))?;
         
         let validation_result = schema.validate(&event.payload);
         if let Err(errors) = validation_result {
             let error_messages: Vec<String> = errors
                 .map(|e| format!("  - {}: {}", e.instance_path, e))
                 .collect();
-            return Err(anyhow::anyhow!(
-                "Schema validation failed for event {}\nSchema ID: {}\nErrors:\n{}",
-                event.id,
-                schema_id,
-                error_messages.join("\n")
-            ));
+            return Err(CoreError::Validation(format!("Schema validation failed for event {}\nSchema ID: {}\nErrors:\n{}", event.id, schema_id, error_messages.join("\n"))));
         }
         
         Ok(())
@@ -423,8 +374,175 @@ impl TestContext {
     // ===== TIMING UTILITIES API =====
     
     /// Access timing utilities for coordination and waiting
-    pub fn timing(&self) -> crate::common::timing_utils::TimingUtils<'_> {
-        crate::common::timing_utils::TimingUtils::new(self)
+    pub fn timing(&self) -> crate::timing_utils::TimingUtils<'_> {
+        crate::timing_utils::TimingUtils::new(self)
+    }
+    
+    // ===== CONVERTED MACRO FUNCTIONALITY =====
+    
+    /// Wait for a condition to become true (replaces eventually! macro)
+    pub async fn wait_until<F, Fut>(&self, condition: F, timeout: Duration) -> TestResult<()>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = bool>,
+    {
+        let start = std::time::Instant::now();
+        
+        loop {
+            if condition().await {
+                return Ok(());
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(CoreError::Timeout(format!(
+                    "Condition not met within {:?}", timeout
+                )));
+            }
+            
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+    
+    /// Assert two events are equivalent (replaces assert_event_eq! macro)
+    pub fn assert_event_eq(&self, actual: &RawEvent, expected: &RawEvent) -> TestResult<()> {
+        if actual.source != expected.source {
+            return Err(CoreError::Validation(format!(
+                "Event sources differ: expected '{}', got '{}'", 
+                expected.source, actual.source
+            )));
+        }
+        
+        if actual.event_type != expected.event_type {
+            return Err(CoreError::Validation(format!(
+                "Event types differ: expected '{}', got '{}'", 
+                expected.event_type, actual.event_type
+            )));
+        }
+        
+        if actual.payload != expected.payload {
+            return Err(CoreError::Validation(format!(
+                "Event payloads differ:\nExpected: {}\nActual: {}", 
+                serde_json::to_string_pretty(&expected.payload).unwrap_or_else(|_| "invalid JSON".to_string()),
+                serde_json::to_string_pretty(&actual.payload).unwrap_or_else(|_| "invalid JSON".to_string())
+            )));
+        }
+        
+        Ok(())
+    }
+    
+    /// Assert events match patterns (replaces assert_events_match! macro)
+    pub fn assert_events_match(&self, events: &[RawEvent], patterns: &[(String, String)]) -> TestResult<()> {
+        if events.len() != patterns.len() {
+            return Err(CoreError::Validation(format!(
+                "Event count mismatch: expected {}, got {}", 
+                patterns.len(), events.len()
+            )));
+        }
+        
+        for (i, (event, pattern)) in events.iter().zip(patterns.iter()).enumerate() {
+            if event.source != pattern.0 {
+                return Err(CoreError::Validation(format!(
+                    "Event {} source mismatch: expected '{}', got '{}'", 
+                    i, pattern.0, event.source
+                )));
+            }
+            
+            if event.event_type != pattern.1 {
+                return Err(CoreError::Validation(format!(
+                    "Event {} type mismatch: expected '{}', got '{}'", 
+                    i, pattern.1, event.event_type
+                )));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Run concurrent test tasks (replaces concurrent_test! macro)
+    pub async fn run_concurrent<F, T, Fut>(&self, count: usize, f: F) -> TestResult<Vec<T>>
+    where
+        F: Fn(TestContext, usize) -> Fut + Send + Sync + 'static,
+        Fut: std::future::Future<Output = TestResult<T>> + Send + 'static,
+        T: Send + 'static,
+    {
+        use tokio::task::JoinSet;
+        
+        let f = Arc::new(f);
+        let mut join_set = JoinSet::new();
+        
+        for i in 0..count {
+            let test_name = format!("{}_concurrent_{}", self.test_name, i);
+            let f = f.clone();
+            join_set.spawn(async move {
+                // Each concurrent task gets its own test database
+                let ctx = TestContext::with_name(&test_name).await?;
+                f(ctx, i).await
+            });
+        }
+        
+        let mut results = Vec::new();
+        let mut errors = Vec::new();
+        
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok(value)) => results.push(value),
+                Ok(Err(e)) => errors.push(e),
+                Err(join_err) => errors.push(CoreError::Service(format!("Task join failed: {}", join_err))),
+            }
+        }
+        
+        if !errors.is_empty() {
+            return Err(CoreError::Unknown(format!(
+                "Concurrent test had {} failures: {:?}", 
+                errors.len(), errors
+            )));
+        }
+        
+        Ok(results)
+    }
+    
+    /// Measure execution time (replaces measure_time! macro)
+    pub async fn measure<F, T>(&self, operation: F) -> TestResult<(T, Duration)>
+    where
+        F: std::future::Future<Output = T>,
+    {
+        let start = std::time::Instant::now();
+        let result = operation.await;
+        let duration = start.elapsed();
+        Ok((result, duration))
+    }
+    
+    /// Assert error contains specific text (replaces assert_error_contains! macro)
+    pub fn assert_error_contains<T, E>(&self, result: &Result<T, E>, expected_text: &str) -> TestResult<()>
+    where
+        E: std::fmt::Display,
+    {
+        match result {
+            Ok(_) => Err(CoreError::Validation(format!(
+                "Expected error containing '{}', but got Ok", expected_text
+            ))),
+            Err(err) => {
+                let err_string = err.to_string();
+                if err_string.contains(expected_text) {
+                    Ok(())
+                } else {
+                    Err(CoreError::Validation(format!(
+                        "Error '{}' does not contain '{}'", 
+                        err_string, expected_text
+                    )))
+                }
+            }
+        }
+    }
+    
+    /// Access mock objects
+    pub fn mocks(&self) -> crate::mocks::MockBuilder<'_> {
+        crate::mocks::MockBuilder::new(self)
+    }
+    
+    /// Access property testing functionality
+    pub fn property_tester(&self) -> crate::property_testing::PropertyTester<'_> {
+        crate::property_testing::PropertyTester::new(self)
     }
 }
 
@@ -437,23 +555,23 @@ pub struct ScenarioFixtures<'ctx> {
 
 impl<'ctx> ScenarioFixtures<'ctx> {
     /// Standard user session with filesystem, terminal, and clipboard events
-    pub async fn user_session(&self) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::UserSessionFixture>> {
-        crate::common::fixtures::standard_user_session(self.ctx).await
+    pub async fn user_session(&self) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::UserSessionFixture>> {
+        crate::fixtures::standard_user_session(self.ctx).await
     }
     
     /// User session with custom event count and checkpoint intervals
-    pub async fn user_session_with(&self, event_count: usize, checkpoint_interval: usize) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::UserSessionFixture>> {
-        crate::common::fixtures::user_session_with_params(self.ctx, event_count, checkpoint_interval).await
+    pub async fn user_session_with(&self, event_count: usize, checkpoint_interval: usize) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::UserSessionFixture>> {
+        crate::fixtures::user_session_with_params(self.ctx, event_count, checkpoint_interval).await
     }
     
     /// Pre-populated automaton checkpoints
-    pub async fn populated_checkpoints(&self) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::PopulatedCheckpointsFixture>> {
-        crate::common::fixtures::populated_checkpoints(self.ctx).await
+    pub async fn populated_checkpoints(&self) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::PopulatedCheckpointsFixture>> {
+        crate::fixtures::populated_checkpoints(self.ctx).await
     }
     
     /// Complex multi-event scenario builder
-    pub fn multi_event(&self) -> crate::common::builders::TestScenarioBuilder {
-        crate::common::builders::TestScenarioBuilder::new()
+    pub fn multi_event(&self) -> crate::builders::TestScenarioBuilder {
+        crate::builders::TestScenarioBuilder::new()
     }
 }
 
@@ -464,18 +582,18 @@ pub struct PerformanceFixtures<'ctx> {
 
 impl<'ctx> PerformanceFixtures<'ctx> {
     /// Large dataset for performance testing (default 10k events)
-    pub async fn large_dataset(&self) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::PerformanceDatasetFixture>> {
-        crate::common::fixtures::performance_dataset(self.ctx).await
+    pub async fn large_dataset(&self) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::PerformanceDatasetFixture>> {
+        crate::fixtures::performance_dataset(self.ctx).await
     }
     
     /// Large dataset with custom size
-    pub async fn large_dataset_with(&self, event_count: usize) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::PerformanceDatasetFixture>> {
-        crate::common::fixtures::performance_dataset_with_size(self.ctx, event_count).await
+    pub async fn large_dataset_with(&self, event_count: usize) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::PerformanceDatasetFixture>> {
+        crate::fixtures::performance_dataset_with_size(self.ctx, event_count).await
     }
     
     /// Pre-warmed database with mixed data types
-    pub async fn pre_warmed_db(&self) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::PreWarmedFixture>> {
-        crate::common::fixtures::pre_warmed_database(self.ctx).await
+    pub async fn pre_warmed_db(&self) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::PreWarmedFixture>> {
+        crate::fixtures::pre_warmed_database(self.ctx).await
     }
 }
 
@@ -486,13 +604,13 @@ pub struct ErrorFixtures<'ctx> {
 
 impl<'ctx> ErrorFixtures<'ctx> {
     /// Invalid events and failed operations for error testing
-    pub async fn validation_failures(&self) -> TestResult<crate::common::fixtures::FixtureHandle<crate::common::fixtures::ErrorScenariosFixture>> {
-        crate::common::fixtures::error_scenarios(self.ctx).await
+    pub async fn validation_failures(&self) -> TestResult<crate::fixtures::FixtureHandle<crate::fixtures::ErrorScenariosFixture>> {
+        crate::fixtures::error_scenarios(self.ctx).await
     }
     
     /// Empty database for isolation testing
-    pub async fn empty_database(&self) -> TestResult<crate::common::fixtures::FixtureHandle<()>> {
-        crate::common::fixtures::empty_database(self.ctx).await
+    pub async fn empty_database(&self) -> TestResult<crate::fixtures::FixtureHandle<()>> {
+        crate::fixtures::empty_database(self.ctx).await
     }
 }
 
@@ -511,11 +629,11 @@ impl<'ctx> ChannelTestUtils<'ctx> {
         receiver: &mut impl sinex_channel::ChannelReceiverExt<T>,
         test_value: T,
         test_name: &str,
-    ) -> TestResult
+    ) -> TestResult<()>
     where
         T: Send + PartialEq + std::fmt::Debug,
     {
-        crate::common::channel_behavior_utils::behavior::test_basic_send_receive(
+        crate::channel_behavior_utils::behavior::test_basic_send_receive(
             sender, receiver, test_value, test_name
         ).await
     }
@@ -526,18 +644,18 @@ impl<'ctx> ChannelTestUtils<'ctx> {
         sender: &impl sinex_channel::ChannelSenderExt<T>,
         test_items: Vec<T>,
         expected_timeout: std::time::Duration,
-    ) -> TestResult
+    ) -> TestResult<()>
     where
         T: Send + Clone,
     {
-        crate::common::channel_behavior_utils::backpressure::test_backpressure_management(
+        crate::channel_behavior_utils::backpressure::test_backpressure_management(
             sender, test_items, expected_timeout
         ).await
     }
     
     /// Create test channel setup with monitoring
-    pub fn setup<T>(&self) -> crate::common::channel_behavior_utils::TestChannelSetup<T> {
-        crate::common::channel_behavior_utils::TestChannelSetup::new(100)
+    pub fn setup<T>(&self) -> crate::channel_behavior_utils::TestChannelSetup<T> {
+        crate::channel_behavior_utils::TestChannelSetup::new(100)
     }
 }
 
@@ -548,22 +666,22 @@ pub struct ProcessTestUtils<'ctx> {
 
 impl<'ctx> ProcessTestUtils<'ctx> {
     /// Start test ingestd with default configuration
-    pub async fn start_test_ingestd(&self) -> TestResult<crate::common::satellite_management_utils::TestIngestdHandle> {
-        let config = crate::common::satellite_management_utils::TestIngestdConfig::default();
-        crate::common::satellite_management_utils::start_test_ingestd_with_config(config).await.map_err(Into::into)
+    pub async fn start_test_ingestd(&self) -> TestResult<crate::satellite_management_utils::TestIngestdHandle> {
+        let config = crate::satellite_management_utils::TestIngestdConfig::default();
+        crate::satellite_management_utils::start_test_ingestd_with_config(config).await.map_err(Into::into)
     }
     
     /// Start test satellite with configuration
     pub async fn start_test_satellite(
         &self, 
         config: serde_json::Value
-    ) -> TestResult<crate::common::satellite_management_utils::TestSatelliteHandle> {
-        crate::common::satellite_management_utils::TestSatelliteHandle::start(config, self.ctx.pool().clone()).await.map_err(Into::into)
+    ) -> TestResult<crate::satellite_management_utils::TestSatelliteHandle> {
+        crate::satellite_management_utils::TestSatelliteHandle::start(config, self.ctx.pool().clone()).await.map_err(Into::into)
     }
     
     /// Create satellite configuration
     pub fn satellite_config(&self, service_name: &str, socket_path: &str) -> serde_json::Value {
-        crate::common::satellite_management_utils::create_test_satellite_config(service_name, socket_path)
+        crate::satellite_management_utils::create_test_satellite_config(service_name, socket_path)
     }
 }
 
@@ -574,16 +692,16 @@ pub struct DeploymentTestUtils<'ctx> {
 
 impl<'ctx> DeploymentTestUtils<'ctx> {
     /// Create deployment scenario tester
-    pub async fn create_tester(&self) -> TestResult<crate::common::deployment_scenario_utils::ConfigCompatibilityTester> {
-        crate::common::deployment_scenario_utils::ConfigCompatibilityTester::new().await.map_err(Into::into)
+    pub async fn create_tester(&self) -> TestResult<crate::deployment_scenario_utils::ConfigCompatibilityTester> {
+        crate::deployment_scenario_utils::ConfigCompatibilityTester::new().await.map_err(Into::into)
     }
     
     /// Test environment compatibility
     pub async fn test_environment_compatibility(
         &self,
-        env_type: crate::common::deployment_scenario_utils::EnvironmentType,
-    ) -> TestResult<crate::common::deployment_scenario_utils::CompatibilityTestResult> {
-        let mut tester = self.create_tester().await?;
+        _env_type: crate::deployment_scenario_utils::EnvironmentType,
+    ) -> TestResult<crate::deployment_scenario_utils::CompatibilityTestResult> {
+        let _tester = self.create_tester().await?;
         // This would need implementation in the deployment utils
         todo!("Implementation depends on deployment_scenario_utils having test execution methods")
     }
@@ -670,10 +788,28 @@ impl<'ctx> EventBuilder<'ctx> {
         AgentEventBuilder { inner: self }
     }
     
+    /// Domain-specific builder for clipboard events
+    pub fn clipboard(mut self) -> ClipboardEventBuilder<'ctx> {
+        self.source = Some(sources::CLIPBOARD.to_string());
+        ClipboardEventBuilder { inner: self }
+    }
+    
+    /// Domain-specific builder for window manager events
+    pub fn window(mut self) -> WindowEventBuilder<'ctx> {
+        self.source = Some(sources::WM_HYPRLAND.to_string());
+        WindowEventBuilder { inner: self }
+    }
+    
+    /// Domain-specific builder for system events
+    pub fn system(mut self) -> SystemEventBuilder<'ctx> {
+        self.source = Some(sources::SYSTEMD.to_string());
+        SystemEventBuilder { inner: self }
+    }
+    
     /// Build event without inserting (like old TestEventBuilder)
     pub fn build(self) -> TestResult<RawEvent> {
-        let source = self.source.ok_or_else(|| anyhow::anyhow!("Source required"))?;
-        let event_type = self.event_type.ok_or_else(|| anyhow::anyhow!("Event type required"))?;
+        let source = self.source.ok_or_else(|| CoreError::Validation("Source required".to_string()))?;
+        let event_type = self.event_type.ok_or_else(|| CoreError::Validation("Event type required".to_string()))?;
         
         let factory = EventFactory::new(&source);
         let mut event = factory.create_event(&event_type, self.payload);
@@ -687,8 +823,9 @@ impl<'ctx> EventBuilder<'ctx> {
     
     /// Build and insert event with validation (most common case)
     pub async fn insert(self) -> TestResult<RawEvent> {
+        let ctx = self.ctx;
         let event = self.build()?;
-        self.ctx.insert_event_internal(&event).await
+        ctx.insert_event_internal(&event).await
     }
     
     /// Build and insert event without validation (for error testing)
@@ -701,7 +838,7 @@ impl<'ctx> EventBuilder<'ctx> {
             self.source.unwrap_or_else(|| "test".to_string()),
             self.event_type.unwrap_or_else(|| "test.event".to_string()),
             host,
-            self.payload.unwrap_or_else(|| json!({})),
+            self.payload,
             self.timestamp,
             None, // ingestor_version
             None, // payload_schema_id
@@ -714,6 +851,7 @@ impl<'ctx> EventBuilder<'ctx> {
     
     /// Build and insert multiple copies of this event
     pub async fn insert_batch(self, count: usize) -> TestResult<Vec<RawEvent>> {
+        let ctx = self.ctx;
         let base_event = self.build()?;
         let mut events = Vec::with_capacity(count);
         
@@ -726,7 +864,7 @@ impl<'ctx> EventBuilder<'ctx> {
             // Generate new ULID for each event
             event.id = sinex_ulid::Ulid::new();
             
-            let inserted = self.ctx.insert_event_internal(&event).await?;
+            let inserted = ctx.insert_event_internal(&event).await?;
             events.push(inserted);
         }
         
@@ -1128,14 +1266,14 @@ impl<'ctx> SchemaTestUtils<'ctx> {
     /// Assert that event validates successfully
     pub async fn assert_valid(&self, event: &RawEvent, schema_id: sinex_ulid::Ulid) -> TestResult<()> {
         self.validate(event, schema_id).await.map_err(|e| {
-            anyhow::anyhow!("Expected event to be valid but validation failed: {}", e)
+            CoreError::Validation(format!("Expected event to be valid but validation failed: {}", e))
         })
     }
     
     /// Assert that event validation fails
     pub async fn assert_invalid(&self, event: &RawEvent, schema_id: sinex_ulid::Ulid) -> TestResult<()> {
         match self.validate(event, schema_id).await {
-            Ok(()) => Err(anyhow::anyhow!("Expected event to be invalid but validation passed")),
+            Ok(()) => Err(CoreError::Validation(format!("Expected event to be invalid but validation passed"))),
             Err(_) => Ok(()) // Validation failed as expected
         }
     }
@@ -1184,8 +1322,9 @@ impl<'ctx> ValidatedEventBuilder<'ctx> {
     
     /// Build and insert event with validation
     pub async fn insert(self) -> TestResult<RawEvent> {
+        let ctx = self.ctx;
         let event = self.build().await?;
-        self.ctx.insert_event_internal(&event).await
+        ctx.insert_event_internal(&event).await
     }
     
     /// Filesystem-specific builder (uses production constants)
@@ -1218,10 +1357,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     /// Generic equality assertion with rich context
     pub fn eq<T: std::fmt::Debug + PartialEq>(self, actual: &T, expected: &T) -> TestResult<Self> {
         if actual != expected {
-            return Err(anyhow::anyhow!(
-                "Assertion failed in '{}': expected {:?}, got {:?}", 
-                self.context, expected, actual
-            ));
+            return Err(CoreError::Validation(format!("Assertion failed in '{}': expected {:?}, got {:?}", self.context, expected, actual)));
         }
         Ok(self)
     }
@@ -1229,10 +1365,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     /// Boolean condition assertion with context
     pub fn that(self, condition: bool, message: &str) -> TestResult<Self> {
         if !condition {
-            return Err(anyhow::anyhow!(
-                "Assertion failed in '{}': {}", 
-                self.context, message
-            ));
+            return Err(CoreError::Validation(format!("Assertion failed in '{}': {}", self.context, message)));
         }
         Ok(self)
     }
@@ -1241,26 +1374,15 @@ impl<'ctx> ContextualAssert<'ctx> {
     pub fn event_eq(self, actual: &RawEvent, expected: &RawEvent) -> TestResult<Self> {
         // Check each field individually for better error messages
         if actual.source != expected.source {
-            return Err(anyhow::anyhow!(
-                "Event source mismatch in '{}': expected '{}', got '{}'",
-                self.context, expected.source, actual.source
-            ));
+            return Err(CoreError::Validation(format!("Event source mismatch in '{}': expected '{}', got '{}'", self.context, expected.source, actual.source)));
         }
         
         if actual.event_type != expected.event_type {
-            return Err(anyhow::anyhow!(
-                "Event type mismatch in '{}': expected '{}', got '{}'",
-                self.context, expected.event_type, actual.event_type
-            ));
+            return Err(CoreError::Validation(format!("Event type mismatch in '{}': expected '{}', got '{}'", self.context, expected.event_type, actual.event_type)));
         }
         
         if actual.payload != expected.payload {
-            return Err(anyhow::anyhow!(
-                "Event payload mismatch in '{}':\nExpected: {}\nActual: {}",
-                self.context, 
-                serde_json::to_string_pretty(&expected.payload).unwrap_or_else(|_| "invalid JSON".to_string()),
-                serde_json::to_string_pretty(&actual.payload).unwrap_or_else(|_| "invalid JSON".to_string())
-            ));
+            return Err(CoreError::Validation(format!("Event payload mismatch in '{}':\nExpected: {}\nActual: {}", self.context, serde_json::to_string_pretty(&expected.payload).unwrap_or_else(|_| "invalid JSON".to_string()), serde_json::to_string_pretty(&actual.payload).unwrap_or_else(|_| "invalid JSON".to_string()))));
         }
         
         Ok(self)
@@ -1270,10 +1392,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     pub async fn event_inserts(self, event: &RawEvent) -> TestResult<sinex_ulid::Ulid> {
         match self.ctx.insert_event_internal(event).await {
             Ok(inserted) => Ok(inserted.id),
-            Err(e) => Err(anyhow::anyhow!(
-                "Event insertion failed in '{}': {} (source: {}, type: {})",
-                self.context, e, event.source, event.event_type
-            ))
+            Err(e) => Err(CoreError::Validation(format!("Event insertion failed in '{}': {} (source: {}, type: {})", self.context, e, event.source, event.event_type)))
         }
     }
     
@@ -1284,29 +1403,20 @@ impl<'ctx> ContextualAssert<'ctx> {
     {
         match tokio::time::timeout(timeout, operation).await {
             Ok(result) => result,
-            Err(_) => Err(anyhow::anyhow!(
-                "Operation '{}' timed out after {:?} in context '{}'", 
-                operation_name, timeout, self.context
-            ))
+            Err(_) => Err(CoreError::Timeout(format!("Operation '{}' timed out after {:?} in context '{}'", operation_name, timeout, self.context)))
         }
     }
     
     /// Assert error contains specific message
-    pub fn error_contains<T>(self, result: &Result<T, anyhow::Error>, expected_message: &str) -> TestResult<Self> {
+    pub fn error_contains<T>(self, result: &Result<T, CoreError>, expected_message: &str) -> TestResult<Self> {
         match result {
-            Ok(_) => Err(anyhow::anyhow!(
-                "Expected error containing '{}' in '{}' but operation succeeded",
-                expected_message, self.context
-            )),
+            Ok(_) => Err(CoreError::Validation(format!("Expected error in '{}' but operation succeeded", self.context))),
             Err(e) => {
                 let error_message = e.to_string();
                 if error_message.contains(expected_message) {
                     Ok(self)
                 } else {
-                    Err(anyhow::anyhow!(
-                        "Error message mismatch in '{}': expected to contain '{}', got '{}'",
-                        self.context, expected_message, error_message
-                    ))
+                    Err(CoreError::Validation(format!("Error in '{}' did not contain expected message '{}'. Actual error: {}", self.context, expected_message, error_message)))
                 }
             }
         }
@@ -1316,10 +1426,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     pub fn has_size<T>(self, collection: &[T], expected_size: usize) -> TestResult<Self> {
         let actual_size = collection.len();
         if actual_size != expected_size {
-            return Err(anyhow::anyhow!(
-                "Collection size mismatch in '{}': expected {}, got {}",
-                self.context, expected_size, actual_size
-            ));
+            return Err(CoreError::Validation(format!("Collection size mismatch in '{}': expected {}, got {}", self.context, expected_size, actual_size)));
         }
         Ok(self)
     }
@@ -1327,10 +1434,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     /// Assert collection is not empty
     pub fn not_empty<T>(self, collection: &[T]) -> TestResult<Self> {
         if collection.is_empty() {
-            return Err(anyhow::anyhow!(
-                "Expected non-empty collection in '{}' but got empty collection",
-                self.context
-            ));
+            return Err(CoreError::Validation(format!("Expected non-empty collection in '{}' but got empty collection", self.context)));
         }
         Ok(self)
     }
@@ -1338,10 +1442,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     /// Assert option contains a value
     pub fn some<T>(self, option: &Option<T>) -> TestResult<Self> {
         if option.is_none() {
-            return Err(anyhow::anyhow!(
-                "Expected Some value in '{}' but got None",
-                self.context
-            ));
+            return Err(CoreError::Validation(format!("Expected Some(_) in '{}' but got None", self.context)));
         }
         Ok(self)
     }
@@ -1349,11 +1450,155 @@ impl<'ctx> ContextualAssert<'ctx> {
     /// Assert option is None
     pub fn none<T>(self, option: &Option<T>) -> TestResult<Self> {
         if option.is_some() {
-            return Err(anyhow::anyhow!(
-                "Expected None in '{}' but got Some value",
-                self.context
-            ));
+            return Err(CoreError::Validation(format!("Expected None in '{}' but got Some(_)", self.context)));
         }
         Ok(self)
+    }
+}
+
+/// Clipboard-specific event builder
+pub struct ClipboardEventBuilder<'ctx> {
+    inner: EventBuilder<'ctx>,
+}
+
+impl<'ctx> ClipboardEventBuilder<'ctx> {
+    /// Set clipboard content
+    pub fn content(mut self, content: impl Into<String>) -> Self {
+        self.inner.payload["content"] = json!(content.into());
+        self
+    }
+    
+    /// Set clipboard format (text, image, etc)
+    pub fn format(mut self, format: impl Into<String>) -> Self {
+        self.inner.payload["format"] = json!(format.into());
+        self
+    }
+    
+    /// Clipboard copy event
+    pub fn copied(mut self) -> Self {
+        self.inner.event_type = Some("clipboard.copied".to_string());
+        self
+    }
+    
+    /// Clipboard paste event
+    pub fn pasted(mut self) -> Self {
+        self.inner.event_type = Some("clipboard.pasted".to_string());
+        self
+    }
+    
+    /// Build event
+    pub fn build(self) -> TestResult<RawEvent> {
+        self.inner.build()
+    }
+    
+    /// Build and insert
+    pub async fn insert(self) -> TestResult<RawEvent> {
+        self.inner.insert().await
+    }
+}
+
+/// Window manager event builder
+pub struct WindowEventBuilder<'ctx> {
+    inner: EventBuilder<'ctx>,
+}
+
+impl<'ctx> WindowEventBuilder<'ctx> {
+    /// Set window ID
+    pub fn window_id(mut self, id: impl Into<Value>) -> Self {
+        self.inner.payload["window_id"] = id.into();
+        self
+    }
+    
+    /// Set window title
+    pub fn title(mut self, title: impl Into<String>) -> Self {
+        self.inner.payload["title"] = json!(title.into());
+        self
+    }
+    
+    /// Set window class
+    pub fn class(mut self, class: impl Into<String>) -> Self {
+        self.inner.payload["class"] = json!(class.into());
+        self
+    }
+    
+    /// Window focused event
+    pub fn focused(mut self) -> Self {
+        self.inner.event_type = Some("window.focused".to_string());
+        self
+    }
+    
+    /// Window created event
+    pub fn created(mut self) -> Self {
+        self.inner.event_type = Some("window.created".to_string());
+        self
+    }
+    
+    /// Window closed event
+    pub fn closed(mut self) -> Self {
+        self.inner.event_type = Some("window.closed".to_string());
+        self
+    }
+    
+    /// Build event
+    pub fn build(self) -> TestResult<RawEvent> {
+        self.inner.build()
+    }
+    
+    /// Build and insert
+    pub async fn insert(self) -> TestResult<RawEvent> {
+        self.inner.insert().await
+    }
+}
+
+/// System event builder
+pub struct SystemEventBuilder<'ctx> {
+    inner: EventBuilder<'ctx>,
+}
+
+impl<'ctx> SystemEventBuilder<'ctx> {
+    /// Set service name
+    pub fn service(mut self, name: impl Into<String>) -> Self {
+        self.inner.payload["service"] = json!(name.into());
+        self
+    }
+    
+    /// Set unit type (service, timer, etc)
+    pub fn unit_type(mut self, unit_type: impl Into<String>) -> Self {
+        self.inner.payload["unit_type"] = json!(unit_type.into());
+        self
+    }
+    
+    /// Service started event
+    pub fn started(mut self) -> Self {
+        self.inner.event_type = Some("service.started".to_string());
+        self
+    }
+    
+    /// Service stopped event
+    pub fn stopped(mut self) -> Self {
+        self.inner.event_type = Some("service.stopped".to_string());
+        self
+    }
+    
+    /// Service failed event
+    pub fn failed(mut self) -> Self {
+        self.inner.event_type = Some("service.failed".to_string());
+        self
+    }
+    
+    /// System boot event
+    pub fn boot(mut self) -> Self {
+        self.inner.event_type = Some("system.boot".to_string());
+        self
+    }
+    
+    /// Build event
+    pub fn build(self) -> TestResult<RawEvent> {
+        self.inner.build()
+    }
+    
+    /// Build and insert
+    pub async fn insert(self) -> TestResult<RawEvent> {
+        self.inner.insert().await
     }
 }
