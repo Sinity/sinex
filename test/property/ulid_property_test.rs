@@ -1,4 +1,4 @@
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
@@ -102,7 +102,7 @@ fn test_ulid_timestamp_extraction() {
 #[test]
 fn test_event_ulids_maintain_ingestion_order() {
     proptest::proptest!(|(event_count in 5usize..50)| {
-        let events = crate::common::generators::time_distributed_events(
+        let events = crate::sinex_test_utils::generators::time_distributed_events(
             event_count,
             Utc::now() - ChronoDuration::hours(1),
             60  // 60 seconds between events
@@ -124,7 +124,7 @@ fn test_event_ulids_maintain_ingestion_order() {
 #[test]
 fn test_burst_events_maintain_order() {
     proptest::proptest!(|(burst_size in 10usize..100)| {
-        let burst_events = crate::common::generators::burst_pattern_events(3, burst_size);
+        let burst_events = crate::sinex_test_utils::generators::burst_pattern_events(3, burst_size);
 
         // Group events by burst (every burst_size events)
         for burst_chunk in burst_events.chunks(burst_size) {

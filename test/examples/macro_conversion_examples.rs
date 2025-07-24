@@ -3,8 +3,8 @@
 //! This file demonstrates before/after examples of converting verbose
 //! test implementations to use the powerful test macro system.
 
-use crate::common::prelude::*;
-use crate::common::test_macros::*;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::test_macros::*;
 
 // =============================================================================
 // EXAMPLE 1: Simple Event Insertion

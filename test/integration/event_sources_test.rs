@@ -1,5 +1,5 @@
-use crate::common::mocks::mock_ingestd::MockIngestdBuilder;
-use crate::common::prelude::*;
+use sinex_test_utils::mocks::mock_ingestd::MockIngestdBuilder;
+use sinex_test_utils::prelude::*;
 use sinex_satellite_sdk::{
     EventSourceConfig, IngestClient, StatefulStreamProcessor, StreamProcessorRunner,
 };

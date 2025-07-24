@@ -20,8 +20,8 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
-use crate::common::prelude::*;
-use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::{EventFactory, services, event_types};
 use sqlx::Row;
 use std::time::{Duration, Instant};

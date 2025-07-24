@@ -4,7 +4,7 @@
 // request/response handling including serialization, method routing, error handling,
 // and JSON-RPC 2.0 specification compliance.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use serde_json::{json, Value};
 use sinex_gateway::service_container::ServiceContainer;

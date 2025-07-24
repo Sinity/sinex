@@ -18,7 +18,7 @@
 // - **Resource usage**: Significant disk I/O, external process spawning
 // - **Dependencies**: Git Annex, external command tools, filesystem access
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_annex::{AnnexConfig, GitAnnex};
 use sqlx::Row;
 use tempfile::TempDir;

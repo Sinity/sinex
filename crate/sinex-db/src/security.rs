@@ -256,9 +256,10 @@ impl SecurityValidator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_path_sanitization() {
+    #[sinex_test]
+    async fn test_path_sanitization() {
         // Valid paths should work
         assert_eq!(
             SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
@@ -278,8 +279,8 @@ mod tests {
         assert!(SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").is_err());
     }
 
-    #[test]
-    fn test_unicode_sanitization() {
+    #[sinex_test]
+    async fn test_unicode_sanitization() {
         // Null byte
         assert_eq!(
             SecurityValidator::sanitize_unicode("test\0value"),
@@ -293,15 +294,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_json_depth() {
+    #[sinex_test]
+    async fn test_json_depth() {
         let shallow = serde_json::json!({"a": {"b": {"c": 1}}});
         assert!(SecurityValidator::check_json_depth(&shallow, 5).is_ok());
         assert!(SecurityValidator::check_json_depth(&shallow, 2).is_err());
     }
 
-    #[test]
-    fn test_json_size() {
+    #[sinex_test]
+    async fn test_json_size() {
         let small = serde_json::json!({"a": 1, "b": 2});
         assert!(SecurityValidator::check_json_size(&small, 10).is_ok());
         assert!(SecurityValidator::check_json_size(&small, 2).is_err());

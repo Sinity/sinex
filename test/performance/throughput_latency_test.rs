@@ -4,7 +4,7 @@
 // under various conditions. These tests establish performance baselines and verify
 // that the system meets performance requirements.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use redis::cmd;
 use chrono::{Duration, Utc};
 use sinex_events::{EventFactory, sources, event_types};

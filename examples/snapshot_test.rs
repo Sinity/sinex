@@ -8,7 +8,7 @@ fn main() {
     println!("Snapshot testing example - run with cargo test");
 }
 
-// use common::snapshot_testing::*; // Module not available
+// use sinex_test_utils::snapshot_testing::*; // Module not available
 use serde_json::json;
 use sinex_ulid::Ulid;
 

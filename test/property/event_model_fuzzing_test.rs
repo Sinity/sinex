@@ -19,7 +19,7 @@
 // - Test with malformed but parseable JSON structures
 // - Focus on the `output_event` function which is the main processing pipeline entry point
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
 use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;

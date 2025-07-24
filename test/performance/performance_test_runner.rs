@@ -4,7 +4,7 @@
 // establishment, regression detection, and bottleneck identification.
 // Provides unified reporting and performance tracking capabilities.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use crate::performance::baseline_performance_test::{BaselineTracker, EnvironmentInfo};
 use crate::performance::regression_detection_test::RegressionDetector;
 use crate::performance::bottleneck_identification_test::BottleneckDetector;

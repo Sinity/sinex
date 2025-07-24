@@ -9,9 +9,9 @@
 // - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
 // - **Memory Concurrency**: Shared state, atomic operations, cache coherency
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::events;
+use sinex_test_utils::events;
 use chrono::Utc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};

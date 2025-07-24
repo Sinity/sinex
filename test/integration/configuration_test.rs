@@ -3,9 +3,9 @@
 // This module provides systematic testing of all configuration options across
 // the Sinex ecosystem, including validation, compatibility, and environment testing.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;

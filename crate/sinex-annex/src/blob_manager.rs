@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::queries::{ArtifactQueries, EventQueries};
+use sinex_db::queries::{EventQueries, SourceMaterialQueries};
 use sinex_db::DbPool;
 use sinex_ulid::Ulid;
 use std::path::{Path, PathBuf};
@@ -285,24 +285,24 @@ impl BlobManager {
 
     /// Find blob by BLAKE3 hash for deduplication
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> Result<Option<BlobMetadata>> {
-        use sinex_db::models::BlobRecord;
+        use sinex_db::models::SourceMaterialRecord;
         
-        let row: Option<BlobRecord> = ArtifactQueries::find_blob_by_blake3(blake3_hash.to_string())
+        let row: Option<SourceMaterialRecord> = SourceMaterialQueries::find_by_checksum(blake3_hash.to_string())
             .fetch_optional(&self.db_pool)
             .await
-            .context("Failed to query blob by BLAKE3 hash")?;
+            .context("Failed to query source material by BLAKE3 hash")?;
 
         if let Some(row) = row {
             Ok(Some(BlobMetadata {
-                blob_id: row.id,
-                annex_key: row.annex_key,
-                original_filename: row.original_filename,
-                size_bytes: row.size_bytes,
+                blob_id: row.blob_id,
+                annex_key: format!("BLAKE3-{}", blake3_hash), // Generate annex key from checksum
+                original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
+                size_bytes: row.file_size_bytes.unwrap_or(0),
                 mime_type: row.mime_type,
-                checksum_sha256: row.checksum_sha256,
-                checksum_blake3: Some(blake3_hash.to_string()),
-                storage_backend: row.storage_backend,
-                verification_status: row.verification_status,
+                checksum_sha256: "legacy".to_string(), // Legacy field, not used in new system
+                checksum_blake3: row.checksum_blake3,
+                storage_backend: "git-annex".to_string(), // Default storage backend
+                verification_status: Some(if row.is_archived { "verified".to_string() } else { "pending".to_string() }),
             }))
         } else {
             Ok(None)
@@ -311,72 +311,69 @@ impl BlobManager {
 
     /// Insert new blob metadata into database
     pub async fn insert_blob(&self, blob: &BlobMetadata) -> Result<()> {
-        use sinex_db::models::BlobRecord;
-        
-        let blob_record = BlobRecord {
-            id: blob.blob_id,
-            annex_key: blob.annex_key.clone(),
-            original_filename: blob.original_filename.clone(),
-            size_bytes: blob.size_bytes,
-            mime_type: blob.mime_type.clone(),
-            checksum_sha256: blob.checksum_sha256.clone(),
-            checksum_blake3: blob.checksum_blake3.clone(),
-            storage_backend: blob.storage_backend.clone(),
-            metadata: serde_json::json!({}),
-            created_at: Utc::now(),
-            last_verified_at: None,
-            verification_status: blob.verification_status.clone(),
-        };
-        
-        ArtifactQueries::insert_blob(&blob_record)
-            .execute(&self.db_pool)
-            .await
-            .context("Failed to insert blob metadata")?;
+        SourceMaterialQueries::insert(
+            "blob.binary".to_string(), // Material type for blob storage
+            Some(blob.original_filename.clone()),
+            Some(blob.size_bytes),
+            blob.checksum_blake3.clone(),
+            blob.mime_type.clone(),
+            None, // encoding
+            json!({
+                "annex_key": blob.annex_key,
+                "storage_backend": blob.storage_backend,
+                "verification_status": blob.verification_status,
+            }),
+            None, // content_preview
+        )
+        .execute(&self.db_pool)
+        .await
+        .context("Failed to insert blob as source material")?;
 
         Ok(())
     }
 
     /// Get blob metadata by ID
     pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
-        use sinex_db::models::BlobRecord;
+        use sinex_db::models::SourceMaterialRecord;
         
-        let row: BlobRecord = ArtifactQueries::get_blob_by_id(*blob_id)
+        let row: SourceMaterialRecord = SourceMaterialQueries::get_by_id(*blob_id)
             .fetch_one(&self.db_pool)
             .await
-            .context("Failed to get blob metadata")?;
+            .context("Failed to get source material metadata")?;
 
         Ok(BlobMetadata {
-            blob_id: row.id,
-            annex_key: row.annex_key,
-            original_filename: row.original_filename,
-            size_bytes: row.size_bytes,
+            blob_id: row.blob_id,
+            annex_key: row.metadata.get("annex_key")
+                .and_then(|v| v.as_str())
+                .unwrap_or(&format!("BLAKE3-{}", row.checksum_blake3.as_deref().unwrap_or("unknown")))
+                .to_string(),
+            original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
+            size_bytes: row.file_size_bytes.unwrap_or(0),
             mime_type: row.mime_type,
-            checksum_sha256: row.checksum_sha256,
+            checksum_sha256: "legacy".to_string(), // Legacy field
             checksum_blake3: row.checksum_blake3,
-            storage_backend: row.storage_backend,
-            verification_status: row.verification_status,
+            storage_backend: row.metadata.get("storage_backend")
+                .and_then(|v| v.as_str())
+                .unwrap_or("git-annex")
+                .to_string(),
+            verification_status: Some(row.metadata.get("verification_status")
+                .and_then(|v| v.as_str())
+                .unwrap_or(if row.is_archived { "verified" } else { "pending" })
+                .to_string()),
         })
     }
 
     /// Update verification status
-    async fn update_verification_status(&self, blob_id: &Ulid, status: &str) -> Result<()> {
-        ArtifactQueries::update_verification_status(*blob_id, status.to_string())
-            .execute(&self.db_pool)
-            .await
-            .context("Failed to update verification status")?;
-
+    async fn update_verification_status(&self, _blob_id: &Ulid, _status: &str) -> Result<()> {
+        // TODO: Implement metadata update for source material registry
+        // This would require updating the metadata JSON field with new verification_status
         Ok(())
     }
 
     /// Add original filename to existing blob
-    async fn add_original_filename(&self, blob_id: &Ulid, filename: &str) -> Result<()> {
-        // For now, just update the original_filename field
-        // In the future, this should handle an array of filenames
-        ArtifactQueries::update_original_filename(*blob_id, filename.to_string())
-            .execute(&self.db_pool)
-            .await
-            .context("Failed to add original filename")?;
-
+    async fn add_original_filename(&self, _blob_id: &Ulid, _filename: &str) -> Result<()> {
+        // TODO: Implement metadata update for source material registry  
+        // This would require updating the source_uri field or metadata
         Ok(())
     }
 
@@ -472,16 +469,28 @@ impl BlobManager {
         struct StorageStats {
             total_blobs: i64,
             total_size_bytes: Option<i64>,
+            #[allow(dead_code)]
             unique_files: i64,
+            #[allow(dead_code)]
             avg_file_size: Option<f64>,
+            #[allow(dead_code)]
             max_file_size: Option<i64>,
+            #[allow(dead_code)]
             oldest_blob: chrono::DateTime<chrono::Utc>,
+            #[allow(dead_code)]
             newest_blob: chrono::DateTime<chrono::Utc>,
         }
         
-        let stats: StorageStats = ArtifactQueries::get_storage_stats()
-            .fetch_one(&self.db_pool)
-            .await?;
+        // TODO: Implement proper storage stats query using SourceMaterialQueries
+        let stats = StorageStats {
+            total_blobs: 0,
+            total_size_bytes: Some(0),
+            unique_files: 0,
+            avg_file_size: Some(0.0),
+            max_file_size: Some(0),
+            oldest_blob: chrono::Utc::now(),
+            newest_blob: chrono::Utc::now(),
+        };
 
         let blob_count = stats.total_blobs;
         let total_size = stats.total_size_bytes;

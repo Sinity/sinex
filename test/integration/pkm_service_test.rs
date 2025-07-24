@@ -13,10 +13,10 @@
 // All tests use #[sinex_test] for automatic transaction isolation and TestContext
 // for unified database access patterns.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::generators;
-use crate::common::prelude::*;
+use sinex_test_utils::generators;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_db::{
     annotations, artifacts, knowledge_graph,

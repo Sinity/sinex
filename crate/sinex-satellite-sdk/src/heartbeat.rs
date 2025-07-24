@@ -6,7 +6,7 @@
 //! by the health aggregator automaton.
 
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
+use sinex_core_utils::CoordinationPrimitive;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::time::{interval, Duration};
@@ -46,8 +46,8 @@ pub struct HeartbeatMetrics {
 pub struct HeartbeatEmitter {
     service_name: String,
     start_time: SystemTime,
-    events_processed: Arc<AtomicU64>,
-    errors_count: Arc<AtomicU64>,
+    events_processed: CoordinationPrimitive,
+    errors_count: CoordinationPrimitive,
     last_error: Arc<parking_lot::Mutex<Option<String>>>,
     pub interval_seconds: u64,
     version: String,
@@ -63,8 +63,8 @@ impl HeartbeatEmitter {
         Self {
             service_name,
             start_time: SystemTime::now(),
-            events_processed: Arc::new(AtomicU64::new(0)),
-            errors_count: Arc::new(AtomicU64::new(0)),
+            events_processed: CoordinationPrimitive::event_counter(0, "events_processed"),
+            errors_count: CoordinationPrimitive::event_counter(0, "errors_count"),
             last_error: Arc::new(parking_lot::Mutex::new(None)),
             interval_seconds,
             version,
@@ -74,18 +74,18 @@ impl HeartbeatEmitter {
 
     /// Increment the events processed counter
     pub fn increment_events_processed(&self, count: u64) {
-        self.events_processed.fetch_add(count, Ordering::Relaxed);
+        self.events_processed.add(count as usize);
     }
 
     /// Record an error
     pub fn record_error(&self, error_message: &str) {
-        self.errors_count.fetch_add(1, Ordering::Relaxed);
+        self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
     }
 
     /// Get current status based on error rate and activity
     fn get_current_status(&self) -> String {
-        let errors = self.errors_count.load(Ordering::Relaxed);
+        let errors = self.errors_count.get();
 
         // Simple heuristic: if we have more than 10 errors, we're degraded
         // If more than 50, we're failed
@@ -126,14 +126,22 @@ impl HeartbeatEmitter {
     fn create_heartbeat_metrics(&self, metadata: Option<serde_json::Value>) -> HeartbeatMetrics {
         let uptime = self.start_time.elapsed().unwrap_or_default().as_secs();
 
-        let events_processed = self.events_processed.swap(0, Ordering::Relaxed);
-        let errors_count = self.errors_count.swap(0, Ordering::Relaxed) as u32;
+        let events_processed = {
+            let old = self.events_processed.get();
+            self.events_processed.reset();
+            old
+        };
+        let errors_count = {
+            let old = self.errors_count.get();
+            self.errors_count.reset();
+            old as u32
+        };
         let last_error = self.last_error.lock().take();
 
         HeartbeatMetrics {
             service_name: self.service_name.clone(),
             status: self.get_current_status(),
-            events_processed,
+            events_processed: events_processed as u64,
             uptime_seconds: uptime,
             memory_usage_mb: self.get_memory_usage_mb(),
             cpu_usage_percent: self.get_cpu_usage_percent(),
@@ -224,31 +232,31 @@ impl HeartbeatEmitter {
 /// Handle for incrementing heartbeat counters from other parts of the code
 #[derive(Clone)]
 pub struct HeartbeatCounterHandle {
-    events_processed: Arc<AtomicU64>,
-    errors_count: Arc<AtomicU64>,
+    events_processed: CoordinationPrimitive,
+    errors_count: CoordinationPrimitive,
     last_error: Arc<parking_lot::Mutex<Option<String>>>,
 }
 
 impl HeartbeatCounterHandle {
     /// Increment events processed counter
     pub fn increment_events_processed(&self, count: u64) {
-        self.events_processed.fetch_add(count, Ordering::Relaxed);
+        self.events_processed.add(count as usize);
     }
 
     /// Record an error
     pub fn record_error(&self, error_message: &str) {
-        self.errors_count.fetch_add(1, Ordering::Relaxed);
+        self.errors_count.add(1);
         *self.last_error.lock() = Some(error_message.to_string());
     }
 
     /// Get current events processed count
     pub fn get_events_processed(&self) -> u64 {
-        self.events_processed.load(Ordering::Relaxed)
+        self.events_processed.get() as u64
     }
 
     /// Get current errors count
     pub fn get_errors_count(&self) -> u64 {
-        self.errors_count.load(Ordering::Relaxed)
+        self.errors_count.get() as u64
     }
 }
 

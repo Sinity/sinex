@@ -20,9 +20,9 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use crate::common::prelude::*;
-use crate::common::database_pool::acquire_test_database;
-use crate::common::timing_optimization::replacements::wait_for_filtered_event_count;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::database_pool::acquire_test_database;
+use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::EventFactory;
 use sinex_ulid::Ulid;
 use std::fs;

@@ -58,5 +58,7 @@ result-*
 /spec/combo/
 .direnv/
 
+/docs/
+
 # Git worktrees
 worktree-*

@@ -6,9 +6,9 @@
 // - Shell history scanner with multi-shell support
 // - Overlap analysis and interactive prompts
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use chrono::{TimeZone, Utc};
 use sinex_core_types::CoreError;
 use sinex_events::EventFactory;

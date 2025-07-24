@@ -4,9 +4,9 @@
 // verifying correctness properties including event ordering, consumer
 // group behavior, and duplicate detection.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use redis::aio::MultiplexedConnection;
 use redis::{AsyncCommands, RedisResult, cmd};
@@ -548,11 +548,11 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
             // Insert events
             let mut event_ids = Vec::new();
             for i in 0..events_before_crash {
-                let event = crate::common::events::filesystem_event(
+                let event = crate::sinex_test_utils::events::filesystem_event(
                     "file.created",
                     &format!("/test/file_{}.txt", i)
                 );
-                let id = crate::common::insert_event(&pool, &event).await?;
+                let id = crate::sinex_test_utils::insert_event(&pool, &event).await?;
                 event_ids.push(id);
             }
 

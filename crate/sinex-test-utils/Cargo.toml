@@ -1,0 +1,54 @@
+[package]
+name = "sinex-test-utils"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Core dependencies
+anyhow = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+uuid = { version = "1.0", features = ["v4"] }
+async-trait = "0.1"
+
+# Database
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "json"] }
+
+# Async/concurrency
+futures = "0.3"
+parking_lot = "0.12"
+once_cell = "1.19"
+lazy_static = "1.4"
+
+# Testing framework
+proptest = "1.0"
+pretty_assertions = "1.4"
+
+# Sinex dependencies
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-error = { path = "../sinex-error" }
+sinex-ulid = { path = "../sinex-ulid" }
+sinex-events = { path = "../sinex-events" }
+sinex-db = { path = "../sinex-db" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-channel = { path = "../sinex-channel" }
+# Internal macro crate (implementation detail)
+sinex-test-utils-macros = { path = "macros" }
+
+# System utilities
+gethostname = "0.4"
+rand = "0.8"
+tempfile = "3.0"
+redis = "0.24"
+tonic = "0.11"
+fastrand = "2.0"
+jsonschema = "0.17"
+tokio-stream = { version = "0.1", features = ["net"] }
+
+[dev-dependencies]
+# For self-testing
+criterion = "0.5"

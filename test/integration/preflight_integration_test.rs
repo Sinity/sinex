@@ -1,6 +1,6 @@
 // Preflight Integration Tests - Full pipeline verification testing
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use std::collections::HashMap;
 use std::env;

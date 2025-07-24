@@ -52,6 +52,7 @@
 
 // === Core Component Integration ===
 
+
 // Test macro demonstrations
 // pub mod macro_validation_test; // Temporarily disabled due to async closure lifetime issues
 

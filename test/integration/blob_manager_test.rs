@@ -12,10 +12,10 @@
 // IMPORTANT: These tests require git-annex to be available. If git-annex
 // is not installed, tests will be skipped with appropriate warnings.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
-use crate::common::resources::{create_test_file, temp_dir};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::resources::{create_test_file, temp_dir};
 use futures;
 use sinex_annex::{AnnexConfig, BlobManager, GitAnnex};
 use sinex_events::{sources, event_types};
@@ -412,7 +412,7 @@ async fn test_blob_manager_creation_without_git_annex() -> TestResult {
         return Ok(());
     }
 
-    let pool = crate::common::create_test_db_pool().await?;
+    let pool = crate::sinex_test_utils::create_test_db_pool().await?;
     let temp_dir = temp_dir()?;
     let annex_path = temp_dir.path().join("no-annex");
 
@@ -813,7 +813,7 @@ async fn test_storage_statistics_emission(ctx: TestContext) -> TestResult {
     fixture.manager.emit_storage_stats().await?;
 
     // Verify statistics event was created in core.events
-    let recent_events = crate::common::get_recent_events(ctx.pool(), 10).await?;
+    let recent_events = crate::sinex_test_utils::get_recent_events(ctx.pool(), 10).await?;
     let stats_events: Vec<_> = recent_events
         .iter()
         .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_STATISTICS)
@@ -840,7 +840,7 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult
     let content = b"Content for metrics testing";
 
     // Count events before operation
-    let events_before = crate::common::get_recent_events(ctx.pool(), 100).await?;
+    let events_before = crate::sinex_test_utils::get_recent_events(ctx.pool(), 100).await?;
     let metrics_before = events_before
         .iter()
         .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)
@@ -858,7 +858,7 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult
         .await?;
 
     // Check that operation metrics were emitted
-    let events_after = crate::common::get_recent_events(ctx.pool(), 100).await?;
+    let events_after = crate::sinex_test_utils::get_recent_events(ctx.pool(), 100).await?;
     let metrics_after = events_after
         .iter()
         .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)

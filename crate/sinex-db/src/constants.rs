@@ -17,7 +17,6 @@ pub mod tables {
     pub const AUTOMATON_CHECKPOINTS: &str = "core.automaton_checkpoints";
     pub const SOURCE_MATERIAL_REGISTRY: &str = "raw.source_material_registry";
     pub const ANNOTATIONS: &str = "core.annotations";
-    pub const ARTIFACTS: &str = "core.artifacts";
     pub const EVENT_BLOBS: &str = "core.event_blobs";
     
     // Raw schema tables

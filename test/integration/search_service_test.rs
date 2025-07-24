@@ -3,7 +3,7 @@
 // CRITICAL: These tests expose SQL injection vulnerabilities in the current implementation.
 // The SearchService MUST be fixed to use proper parameterized queries before production use!
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use chrono::{Duration, Utc};
 use serde_json::json;

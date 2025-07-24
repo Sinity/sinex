@@ -6,7 +6,7 @@
 //! - Large array and object handling
 //! - Memory usage and performance characteristics
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::{json, Value};
 use std::time::Instant;
 use tokio::time::timeout;

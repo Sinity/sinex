@@ -4,7 +4,7 @@
 // consumer group behavior, and stream processing latency.
 // Focuses on the event streaming backbone of the Sinex system.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use redis::cmd;
 use serde_json::json;
 use sinex_satellite_sdk::RedisStreamClient;

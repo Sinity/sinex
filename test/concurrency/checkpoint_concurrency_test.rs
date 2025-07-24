@@ -6,7 +6,7 @@
 //! - Optimistic locking behavior
 //! - Checkpoint versioning under contention
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::queries::checkpoints::CheckpointQueries;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

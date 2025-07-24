@@ -10,9 +10,9 @@
 // - Payload boundary testing
 // - Query interface testing
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{event_types, EventFactory};
-use crate::common::{assertions, events};
+use sinex_test_utils::{assertions, events};
 use async_trait::async_trait;
 use sinex_core_types::{CoreError, EventSender};
 use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
@@ -1184,7 +1184,7 @@ async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
         events::file_created_event("/test/file1.txt"),
         events::file_modified_event("/test/file2.txt"),
         events::kitty_event("ls -la"),
-        crate::common::create_test_event_with_payload(
+        crate::sinex_test_utils::create_test_event_with_payload(
             "clipboard",
             "content.changed",
             json!({"content": "test data", "format": "text"}),

@@ -450,9 +450,10 @@ mod migration_tests {
     use super::*;
     use serde_json::json;
     use chrono::Utc;
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_event_record_conversion() {
+    #[sinex_test]
+    async fn test_event_record_conversion() {
         use sqlx::types::Uuid;
 
         let event_uuid = Uuid::new_v4();
@@ -476,8 +477,8 @@ mod migration_tests {
         assert_eq!(raw_event.payload["test"], "data");
     }
 
-    #[test]
-    fn test_query_patterns_compile() {
+    #[sinex_test]
+    async fn test_query_patterns_compile() {
         // Test that the query patterns compile correctly
         // This ensures the migration examples are syntactically correct
         assert!(true);

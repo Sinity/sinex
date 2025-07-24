@@ -14,7 +14,7 @@ use crate::{EventSender, RawEvent};
 
 // Define our own error type to avoid circular dependency on sinex-core
 use thiserror::Error;
-use crate::{event_types, sources};
+use crate::event_types;
 
 #[derive(Error, Debug)]
 pub enum TypedEventError {

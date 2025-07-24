@@ -15,13 +15,13 @@ pub mod queries;
 pub mod query_builder;
 pub mod query_macros;
 pub mod constants;
+pub mod distributed_locking;
 
 #[cfg(test)]
 pub mod query_system_test;
 
 // New API modules
 pub mod annotations;
-pub mod artifacts;
 pub mod knowledge_graph;
 
 // Domain-specific query modules
@@ -34,7 +34,6 @@ pub use annotations::{
     create_annotation, delete_annotation, get_annotation_by_id, get_annotations_for_event,
     get_recent_annotations, update_annotation_content,
 };
-pub use artifacts::{create_artifact, get_artifact_by_id, get_recent_artifacts};
 pub use events::{
     attach_blob_to_event, count_events, detach_blob_from_event, get_event_by_id,
     get_events_with_blobs, insert_event, insert_event_with_blob, insert_event_with_validator,
@@ -55,7 +54,7 @@ pub use query_helpers::{
 
 // Re-export centralized query system
 pub use queries::{
-    ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+    CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
 };
 pub use query_builder::{QueryBuilder, QueryParam};
 
@@ -63,17 +62,13 @@ pub use query_builder::{QueryBuilder, QueryParam};
 pub mod prelude {
     pub use crate::models::{
         // New API models (now enabled)
-        Artifact,
         CreateAnnotationInput,
-        CreateArtifactInput,
         CreateEntityInput,
         CreateRelationInput,
-        CreateRevisionInput,
         Entity,
         EntityRelation,
         EventAnnotation,
         EventPayloadSchema,
-        Revision,
     };
     // Use domain-specific modules
     pub use crate::events::*;
@@ -83,12 +78,11 @@ pub mod prelude {
     };
     // New API services (now enabled)
     pub use crate::annotations::*;
-    pub use crate::artifacts::*;
     pub use crate::knowledge_graph::*;
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, PoolConfig, Timestamp};
     // Re-export centralized query system in prelude
     pub use crate::queries::{
-        ArtifactQueries, CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
+        CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
     };
     pub use crate::query_builder::{QueryBuilder, QueryParam};
     pub use anyhow::Result;
@@ -291,9 +285,10 @@ mod tests {
     use serde_json::json;
     use sinex_events::RawEvent;
     use sinex_ulid::Ulid;
+    use sinex_test_utils::prelude::*;
 
-    #[test]
-    fn test_raw_event_creation() {
+    #[sinex_test]
+    async fn test_raw_event_creation() {
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -319,8 +314,8 @@ mod tests {
         assert_eq!(event.payload["test"], "data");
     }
 
-    #[test]
-    fn test_ulid_in_models() {
+    #[sinex_test]
+    async fn test_ulid_in_models() {
         let ulid1 = Ulid::new();
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -341,8 +336,8 @@ mod tests {
         assert_eq!(ulid1, parsed_ulid);
     }
 
-    #[test]
-    fn test_event_payload_json_handling() {
+    #[sinex_test]
+    async fn test_event_payload_json_handling() {
         // Test simple JSON payload
         let simple_payload = json!({"key": "value", "number": 42});
         let event = RawEvent {
@@ -401,8 +396,8 @@ mod tests {
         assert_eq!(complex_event.payload["data"]["enabled"], true);
     }
 
-    #[test]
-    fn test_timestamp_handling() {
+    #[sinex_test]
+    async fn test_timestamp_handling() {
         let now = Utc::now();
         let past = now - chrono::Duration::seconds(3600); // 1 hour ago
 
@@ -443,8 +438,8 @@ mod tests {
         // Cannot actually call them without a database, but compilation success is the test
     }
 
-    #[test]
-    fn test_function_signatures() {
+    #[sinex_test]
+    async fn test_function_signatures() {
         // Just test that our functions exist and compile
         // We can't test the actual functionality without a database
 

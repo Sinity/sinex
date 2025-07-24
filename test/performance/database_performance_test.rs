@@ -4,10 +4,10 @@
 // index effectiveness, connection pool behavior, and database scalability.
 // These tests help identify database bottlenecks and optimization opportunities.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
-use crate::common::{events, generators};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{events, generators};
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_events::{EventFactory, services, event_types};

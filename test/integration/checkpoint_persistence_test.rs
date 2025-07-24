@@ -1,4 +1,4 @@
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde_json::json;
