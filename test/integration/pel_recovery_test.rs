@@ -4,7 +4,7 @@
 // These tests focus specifically on unacknowledged message recovery patterns
 // and edge cases that can occur in production environments.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use redis::{AsyncCommands, RedisResult, cmd};
 
 /// Test basic PEL recovery after consumer failure

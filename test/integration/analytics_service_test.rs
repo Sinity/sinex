@@ -3,7 +3,7 @@
 // Tests all analytics methods with focus on aggregation logic,
 // time-based filtering, and accurate data insights.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use chrono::{Duration, Utc};
 use sinex_services::AnalyticsService;

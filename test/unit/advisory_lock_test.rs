@@ -8,7 +8,7 @@
 
 use sinex_db::distributed_locking::{AdvisoryLock, DistributedCoordination, LeadershipGuard};
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
-use test_common::TestContext;
+use test_sinex_test_utils::TestContext;
 
 #[sinex_test]
 async fn test_advisory_lock_basic_acquisition() -> TestResult<()> {
@@ -367,7 +367,7 @@ mod test_common {
     }
 }
 
-use test_common::TestContext;
+use test_sinex_test_utils::TestContext;
 type TestResult<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation

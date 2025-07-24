@@ -10,7 +10,7 @@ use sinex_core_utils::{CoordinationPrimitive, ResourceGuard};
 use sinex_db::distributed_locking::{AdvisoryLock, DistributedCoordination};
 use sinex_satellite_sdk::coordination::SatelliteCoordination;
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
-use test_common::TestContext;
+use test_sinex_test_utils::TestContext;
 
 #[sinex_test]
 async fn test_coordination_primitive_unified_api() -> TestResult<()> {
@@ -275,7 +275,7 @@ mod test_common {
 }
 
 // Re-export for sinex_test macro
-use test_common::TestContext;
+use test_sinex_test_utils::TestContext;
 type TestResult<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation

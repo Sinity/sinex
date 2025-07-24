@@ -9,8 +9,8 @@
 // - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
-use crate::common::events;
-use crate::common::prelude::*;
+use sinex_test_utils::events;
+use sinex_test_utils::prelude::*;
 use chrono::Datelike;
 use futures::future::join_all;
 use sinex_events::{EventFactory, services, event_types};

@@ -18,7 +18,7 @@
 // - **Regression Detection**: Automated performance regression detection
 // - **Bottleneck Identification**: Tools for identifying system bottlenecks
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
 /// Throughput and latency performance tests
 pub mod throughput_latency_test;

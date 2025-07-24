@@ -3,10 +3,10 @@
 // This module tests basic edge cases for the dual-mode event sources refactoring
 // without relying on complex APIs that may not be fully implemented yet.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::mocks::EventSourceContext;
-use crate::common::prelude::*;
+use sinex_test_utils::mocks::EventSourceContext;
+use sinex_test_utils::prelude::*;
 use sinex_satellite_sdk::VersionInfo;
 use std::fs;
 use tempfile::TempDir;

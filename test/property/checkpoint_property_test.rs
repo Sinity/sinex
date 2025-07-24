@@ -2,9 +2,9 @@
 //
 // Tests that verify checkpoint consistency, recovery, and concurrency properties
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use crate::property::strategies::*;
 use proptest::prelude::*;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
@@ -23,7 +23,7 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
             let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
@@ -75,7 +75,7 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
             let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
@@ -120,7 +120,7 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
             let pool = ctx.pool().clone();
 
             let checkpoint_manager = Arc::new(CheckpointManager::new(
@@ -179,7 +179,7 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
             let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
@@ -240,7 +240,7 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
             let pool = ctx.pool().clone();
 
             let checkpoint_manager = CheckpointManager::new(
@@ -313,7 +313,7 @@ proptest! {
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
-            let ctx = crate::common::test_context::TestContext::new().await.unwrap();
+            let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
             let pool = ctx.pool().clone();
 
             // Create multiple automata with checkpoints

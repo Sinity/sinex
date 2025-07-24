@@ -7,7 +7,7 @@
 // - Process metrics collection and reporting
 // - Integration with the health aggregator
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use chrono::{Duration, Utc};
 use sinex_core_runtime::{MetricsProvider, ProcessHeartbeatEmitter};
 use sinex_db::queries::{EventQueries, CheckpointQueries};

@@ -14,8 +14,8 @@
 // Uses #[sinex_test] for automatic transaction isolation and TestContext
 // for unified database access.
 
-use crate::common::prelude::*;
-use crate::common::{self, assertions, events, generators, schema_test_utils};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
@@ -124,7 +124,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
     }
 
     // Query using our helper function
-    let filesystem_events = common::get_events_by_source(ctx.pool(), "fs", 10).await?;
+    let filesystem_events = sinex_test_utils::get_events_by_source(ctx.pool(), "fs", 10).await?;
     assert!(filesystem_events.len() >= 2);
 
     for event in &filesystem_events {
@@ -179,7 +179,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
     }
 
     // Query filesystem events to verify ordering
-    let filesystem_events = common::get_events_by_source(ctx.pool(), "fs", 10).await?;
+    let filesystem_events = sinex_test_utils::get_events_by_source(ctx.pool(), "fs", 10).await?;
     assert!(filesystem_events.len() >= 5);
 
     // Verify ULIDs are in chronological order
@@ -207,7 +207,7 @@ async fn test_ulid_uuid_conversion_consistency(ctx: TestContext) -> TestResult {
     let event_id = assertions::assert_event_inserted(ctx.pool(), &event).await?;
 
     // Query back using UUID conversion
-    let retrieved = common::get_event_by_id(ctx.pool(), event_id).await?;
+    let retrieved = sinex_test_utils::get_event_by_id(ctx.pool(), event_id).await?;
     pretty_assertions::assert_eq!(retrieved.id, event_id);
 
     Ok(())

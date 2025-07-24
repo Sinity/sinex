@@ -1,4 +1,4 @@
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 /// Unit tests for typed clipboard implementation
 use sinex_events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 

@@ -4,7 +4,7 @@
 // connection limits, memory constraints, CPU saturation, and I/O limitations.
 // Provides automated bottleneck detection and performance optimization guidance.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_events::{EventFactory, sources, event_types};
 use sinex_satellite_sdk::RedisStreamClient;

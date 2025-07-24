@@ -10,10 +10,10 @@
 // - **System Resource Chaos**: Memory exhaustion, disk full, network failures
 
 use redis::cmd;
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
-use crate::common::{events, resources};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{events, resources};
 use chrono::Utc;
 use sinex_db::{models::AutomatonManifest, queries};
 use std::fs;
@@ -674,7 +674,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
             }
 
             // Simulate database operations during init
-            match sinex_db::crate::common::sinex_db::insert_event_with_validator(
+            match sinex_db::crate::sinex_test_utils::sinex_db::insert_event_with_validator(
                 &pool_clone,
                 "init",
                 &format!("init.step_{}", step),
@@ -932,7 +932,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
                     ))))
                 } else {
                     // Normal database operation
-                    match sinex_db::common::sinex_db::insert_event_with_validator(
+                    match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
                         &pool_clone,
                         &format!("chaos-worker-{}", worker_id),
                         &format!("database.operation.{}", operation_id),
@@ -960,7 +960,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
                     for retry in 0..3 {
                         tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
                         
-                        match sinex_db::common::sinex_db::insert_event_with_validator(
+                        match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
                             &pool_clone,
                             &format!("chaos-worker-{}", worker_id),
                             &format!("database.retry.{}.{}", operation_id, retry),
@@ -1019,7 +1019,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
 /// Test Redis failure resilience with stream operations
 #[sinex_test]
 async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
-    use crate::common::mocks::{MockRedis, MockRedisConfig, FailureInjector, FailurePattern};
+    use sinex_test_utils::mocks::{MockRedis, MockRedisConfig, FailureInjector, FailurePattern};
     
     let mut mock_redis = MockRedis::new(MockRedisConfig {
         max_connections: 100,
@@ -1149,7 +1149,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
 /// Test network partition resilience
 #[sinex_test]
 async fn test_network_partition_resilience(ctx: TestContext) -> TestResult {
-    use crate::common::mocks::{MockNetwork, MockNetworkConfig, FailurePattern};
+    use sinex_test_utils::mocks::{MockNetwork, MockNetworkConfig, FailurePattern};
     
     let mut mock_network = MockNetwork::new(MockNetworkConfig {
         packet_loss_rate: 0.1,
@@ -1257,7 +1257,7 @@ async fn test_network_partition_resilience(ctx: TestContext) -> TestResult {
 /// Test cascading failure resilience
 #[sinex_test]
 async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
-    use crate::common::mocks::{FailureInjector, FailurePattern};
+    use sinex_test_utils::mocks::{FailureInjector, FailurePattern};
     
     let mut failure_injector = FailureInjector::new();
     
@@ -1337,7 +1337,7 @@ async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
                     match injector.should_fail("event_ingestion").await {
                         Ok(()) => {
                             // Simulate successful event ingestion
-                            match sinex_db::common::sinex_db::insert_event_with_validator(
+                            match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
                                 &pool_clone,
                                 &format!("cascade-component-{}", component_id),
                                 &format!("component.operation.{}", operation_id),
@@ -1413,7 +1413,7 @@ async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
 /// Test post-chaos recovery and system state consistency
 #[sinex_test]
 async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
-    use crate::common::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
+    use sinex_test_utils::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
     
     let pool = ctx.pool().clone();
     
@@ -1546,7 +1546,7 @@ async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
                 }
                 
                 // Recovery database operations
-                match sinex_db::common::sinex_db::insert_event_with_validator(
+                match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
                     &pool_clone,
                     &format!("recovery-component-{}", recovery_id),
                     &format!("recovery.operation.{}", op),

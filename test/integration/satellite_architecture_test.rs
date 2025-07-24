@@ -3,7 +3,7 @@
 // These tests verify that the satellite services can communicate
 // properly and that the overall system works as expected.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use anyhow::Result;
 use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient, SatelliteResult};
 use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};

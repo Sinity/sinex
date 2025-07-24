@@ -25,7 +25,7 @@
 // - Deadlock detection and recovery mechanisms
 // - Race condition monitoring and reporting
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_ulid::Ulid;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};

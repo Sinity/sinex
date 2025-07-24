@@ -9,7 +9,7 @@
 use sinex_satellite_sdk::coordination::{SatelliteCoordination, InstanceMode};
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
 use sinex_db::distributed_locking::DistributedCoordination;
-use test_common::TestContext;
+use test_sinex_test_utils::TestContext;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tokio::time::{timeout, Duration};
@@ -420,7 +420,7 @@ mod test_common {
     }
 }
 
-use test_common::TestContext;
+use test_sinex_test_utils::TestContext;
 type TestResult<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation

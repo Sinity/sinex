@@ -3,7 +3,7 @@
 //! This module tests all error conditions that could trigger unwrap() or expect()
 //! failures in production code, ensuring graceful error handling.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use chrono::{DateTime, Utc};
 use sinex_db::{queries::checkpoints::CheckpointQueries, query_helpers::ulid_to_uuid};
 use sinex_error::{Error, ErrorContext};
@@ -542,7 +542,7 @@ mod events {
     use serde_json::json;
     
     pub fn create_test_event() -> sinex_events::RawEvent {
-        crate::common::test_event_with_payload(
+        crate::sinex_test_utils::test_event_with_payload(
             "error_path_test",
             "test.event",
             json!({"test": true})

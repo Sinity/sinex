@@ -2,7 +2,7 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use std::sync::Arc;
 use tokio::time::{Duration, timeout};

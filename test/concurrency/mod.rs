@@ -7,7 +7,7 @@
 //! - Lock contention analysis
 //! - Atomic operation verification
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
 /// Concurrent checkpoint update tests
 pub mod checkpoint_concurrency_test;

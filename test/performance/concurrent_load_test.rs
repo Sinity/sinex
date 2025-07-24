@@ -4,7 +4,7 @@
 // Focuses on measuring throughput, latency, and system stability
 // when multiple operations are running simultaneously.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_events::{EventFactory, sources, event_types};
 use sinex_db::queries::{EventQueries, CheckpointQueries};

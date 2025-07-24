@@ -12,8 +12,8 @@
 // - No duplicate processing under high contention
 // - Checkpoint-based recovery and progress tracking
 
-use crate::common::prelude::*;
-use crate::common::satellite_test_utils::{StreamMessage, simulate_redis_consumer};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::satellite_test_utils::{StreamMessage, simulate_redis_consumer};
 use proptest::prelude::*;
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, RedisResult, cmd};

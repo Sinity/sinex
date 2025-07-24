@@ -7,7 +7,7 @@
 //! - Zero-width character injection
 //! - Encoding-based attacks
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::sanitization::EventSanitizer;
 use std::collections::HashMap;
 use unicode_normalization::UnicodeNormalization;

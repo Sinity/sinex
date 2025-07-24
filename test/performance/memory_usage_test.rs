@@ -4,7 +4,7 @@
 // detect memory leaks, and verify memory efficiency under various load conditions.
 // These tests help identify memory bottlenecks and optimization opportunities.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_events::{EventFactory, sources, event_types};
 use sinex_db::queries::{EventQueries, CheckpointQueries};

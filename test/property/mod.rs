@@ -4,7 +4,7 @@
 // a wide range of inputs, providing more comprehensive testing than
 // example-based tests.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
 // Consolidated property tests
 // Disabled - references obsolete sinex_collector module
@@ -26,7 +26,7 @@ pub use proptest::prelude::*;
 #[allow(dead_code)]
 pub mod strategies {
     use super::*;
-    use crate::common::prelude::*;
+    use sinex_test_utils::prelude::*;
     use chrono::{DateTime, Utc};
 
     /// Strategy for generating valid ULID timestamps
@@ -291,7 +291,7 @@ pub mod strategies {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
                     |(source, event_type, payload)| {
-                        crate::common::events::create_raw_event(
+                        crate::sinex_test_utils::events::create_raw_event(
                             source,
                             &event_type,
                             payload,

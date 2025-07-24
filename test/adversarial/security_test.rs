@@ -11,7 +11,7 @@
 // - **Query Interface**: API security and exploit prevention
 // - **Unicode Exploits**: Character encoding and normalization attacks
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::validation::EventValidator;
 use sinex_events::{EventFactory, services, event_types};
 use std::fs;

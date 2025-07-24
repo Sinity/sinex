@@ -4,7 +4,7 @@
 // These tests create repeatable benchmarks that can be used to detect
 // performance regressions and track improvements over time.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use redis::cmd;
 use serde_json::json;
 use sinex_events::{EventFactory, sources, event_types};

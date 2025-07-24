@@ -7,7 +7,7 @@
 // - Security validation (injection attacks, null bytes, etc.)
 // - Performance under load
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_events::{EventFactory, services, event_types};
 use sinex_db::integrity::{malformed_detection, IntegrityTestConfig, IntegrityTester};
 use sinex_db::validation::{EventValidator, SchemaViolationType, ValidationError};

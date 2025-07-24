@@ -11,10 +11,10 @@
 // IMPORTANT: These tests require git-annex to be available. If git-annex
 // is not installed, tests will be skipped with appropriate warnings.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
-use crate::common::prelude::*;
-use crate::common::resources::{create_test_file, temp_dir};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::resources::{create_test_file, temp_dir};
 use futures;
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_db::artifacts;
@@ -545,7 +545,7 @@ async fn test_content_service_without_git_annex() -> TestResult {
 
     // Test that attempting to create ContentService fails gracefully
     // when git-annex is not available
-    let pool = crate::common::create_test_db_pool().await?;
+    let pool = crate::sinex_test_utils::create_test_db_pool().await?;
     let temp_dir = temp_dir()?;
     let annex_path = temp_dir.path().join("no-annex");
 

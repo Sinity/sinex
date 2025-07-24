@@ -3,7 +3,7 @@
 //! This showcases how the consolidated TestContext provides a clean, unified API
 //! for all test operations while maintaining access to all advanced functionality.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 
 #[sinex_test]
 async fn demo_streamlined_event_creation(ctx: TestContext) -> TestResult {

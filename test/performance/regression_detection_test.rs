@@ -4,7 +4,7 @@
 // performance against established baselines. Includes trend analysis,
 // statistical significance testing, and automated alerting capabilities.
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use crate::performance::baseline_performance_test::{PerformanceBaseline, BaselineTracker, EnvironmentInfo};
 use serde_json::json;
 use sinex_events::{EventFactory, sources, event_types};

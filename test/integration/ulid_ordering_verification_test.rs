@@ -7,7 +7,7 @@
 // - Database ordering consistency
 // - Clock skew detection and handling
 
-use crate::common::prelude::*;
+use sinex_test_utils::prelude::*;
 use sinex_db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_db::queries::EventQueries;
 use sinex_events::EventFactory;
