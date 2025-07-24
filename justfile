@@ -153,6 +153,59 @@ watch-fast *ARGS:
     @echo "⚡👀 Watching for changes, running fast tests only..."
     cargo watch -x "nextest run -E 'test(unit::) or test(property::)' -- {{ARGS}}"
 
+# 🥓 Run bacon for background compilation (for human users with TUI)
+bacon *ARGS:
+    @echo "🥓 Starting bacon (background rust checker)..."
+    @echo "Press 'h' for help, 'q' to quit"
+    @echo "Note: This is a TUI tool - better for human users than AI assistants"
+    bacon {{ARGS}}
+
+# 🧠 Smart compilation - only compiles if source changed
+smart-check:
+    @./scripts/smart-compile.sh check
+
+# 📊 Smart compilation status
+smart-status:
+    @./scripts/smart-compile.sh status
+
+# 👀 Smart watch - efficient continuous checking
+smart-watch:
+    @./scripts/smart-compile.sh watch
+
+# 🚦 Pre-edit status check (call before making changes)
+pre-edit:
+    @echo "📸 Capturing pre-edit state..."
+    @./scripts/smart-compile.sh status
+    @echo ""
+    @echo "📝 Recent changes:"
+    @git status --short | head -10 || true
+
+# 🎯 Post-edit check (call after changes to see impact)
+post-edit:
+    @echo "🔍 Checking impact of changes..."
+    @./scripts/smart-compile.sh check
+
+# 📋 Check continuously and save to log (better for AI/scripts)
+check-continuous:
+    @echo "📋 Starting continuous compilation check..."
+    @echo "Output will be saved to compilation-watch.log"
+    cargo watch -x "check --workspace --all-targets --message-format short" 2>&1 | tee compilation-watch.log
+
+# 🔄 Watch and report errors/warnings
+watch-errors:
+    @echo "🔄 Watching for compilation errors..."
+    cargo watch -s 'just check-all && just errors || just errors'
+
+# 👀 Watch and compile only (no tests)
+watch-check:
+    @echo "👀 Watching for compilation..."
+    cargo watch -x check
+
+# 👀 Watch and run specific command
+watch-cmd CMD:
+    @echo "👀 Watching and running: {{CMD}}"
+    cargo watch -x "{{CMD}}"
+
 # 🔧 Run tests with limited parallelism (for flaky tests)
 test-reliable *ARGS:
     @echo "🔧 Running tests with limited parallelism for reliability..."
@@ -358,17 +411,82 @@ query LIMIT="10" *ARGS:
 # ⚡ Fast compilation check (no binary output)
 check:
     @echo "⚡ Running fast compilation check..."
-    cargo check --workspace --all-features
+    cargo check --workspace --all-features 2>&1 | tee compilation.log
+    @echo "✅ Output saved to compilation.log"
+
+# 🔍 Check with all targets (includes tests)
+check-all:
+    @echo "🔍 Checking all targets including tests..."
+    cargo check --workspace --all-targets --all-features 2>&1 | tee compilation-all.log
+    @echo "✅ Output saved to compilation-all.log"
+
+# 📋 Check specific package
+check-pkg PKG:
+    @echo "📋 Checking package: {{PKG}}"
+    cargo check -p {{PKG}} --all-targets 2>&1 | tee compilation-{{PKG}}.log
+    @echo "✅ Output saved to compilation-{{PKG}}.log"
 
 # 🔨 Build debug binaries
 build:
     @echo "🔨 Building debug binaries..."
-    cargo build --workspace --all-features
+    cargo build --workspace --all-features 2>&1 | tee build.log
+    @echo "✅ Output saved to build.log"
 
 # 🚀 Build optimized release binaries
 release:
     @echo "🚀 Building release binaries (optimized)..."
-    cargo build --release --workspace --all-features
+    cargo build --release --workspace --all-features 2>&1 | tee build-release.log
+    @echo "✅ Output saved to build-release.log"
+
+# 📊 Analyze compilation errors
+errors:
+    @echo "📊 Analyzing compilation errors..."
+    @if [ -f compilation.log ]; then \
+        echo "Found $(rg -c '^error\[E[0-9]+\]:' compilation.log || echo 0) errors"; \
+        echo ""; \
+        echo "Error summary:"; \
+        rg '^error\[E[0-9]+\]:' compilation.log | sort | uniq -c || echo "No errors found"; \
+    else \
+        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+    fi
+
+# 🔍 Show compilation warnings
+warnings:
+    @echo "🔍 Showing compilation warnings..."
+    @if [ -f compilation.log ]; then \
+        echo "Found $(rg -c '^warning:' compilation.log || echo 0) warnings"; \
+        echo ""; \
+        rg '^warning:' compilation.log | head -20 || echo "No warnings found"; \
+    else \
+        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+    fi
+
+# 📊 Analyze warnings by category
+warnings-summary:
+    @echo "📊 Warning summary:"
+    @if [ -f compilation.log ]; then \
+        echo "Total warnings: $(rg -c '^warning:' compilation.log || echo 0)"; \
+        echo ""; \
+        echo "By type:"; \
+        rg '^warning:' compilation.log | sed 's/warning: //' | cut -d' ' -f1-3 | sort | uniq -c | sort -rn | head -20; \
+    else \
+        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+    fi
+
+# 🧹 Fix auto-fixable warnings
+fix-warnings:
+    @echo "🧹 Fixing auto-fixable warnings..."
+    cargo fix --workspace --allow-dirty --allow-staged 2>&1 | tee fix.log
+    @echo "✅ Fixed warnings saved to fix.log"
+
+# 🚫 Show unused code
+unused:
+    @echo "🚫 Finding unused code..."
+    @if [ -f compilation.log ]; then \
+        rg 'warning:.*never used' compilation.log | head -30 || echo "No unused code warnings"; \
+    else \
+        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+    fi
 
 # 🎨 Format all code with rustfmt
 fmt:
@@ -479,8 +597,227 @@ test-dev:
     just db-setup
     just test-fast
 
+# === Development Helpers ===
+
+# 🔄 Quick compile and test cycle for a package
+dev-pkg PKG:
+    @echo "🔄 Development cycle for {{PKG}}..."
+    just check-pkg {{PKG}}
+    just test-fast -p {{PKG}}
+
+# 🪄 Magic mode - compilation happens automatically
+magic-mode:
+    @echo "🪄 Enabling magic compilation mode..."
+    @echo "Compilation will happen automatically when needed."
+    @# Set up file watcher with smart caching
+    @mkdir -p ~/.cache/sinex-magic
+    @echo '#!/usr/bin/env bash' > ~/.cache/sinex-magic/wrapper.sh
+    @echo 'COMPILE_CACHE=~/.cache/sinex-magic' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'LAST_HASH_FILE="$COMPILE_CACHE/last-hash"' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'COMPILE_LOG="$COMPILE_CACHE/compile.log"' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '# Check if compilation needed' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'current_hash=$(find . -name "*.rs" -o -name "Cargo.toml" | grep -v target/ | xargs sha256sum 2>/dev/null | sha256sum | cut -d" " -f1)' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'last_hash=$(cat "$LAST_HASH_FILE" 2>/dev/null || echo "")' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'if [ "$current_hash" != "$last_hash" ]; then' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '    echo "🔄 Source changed, compiling..." >&2' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '    if cargo check --workspace --all-targets 2>&1 | tee "$COMPILE_LOG"; then' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '        echo "$current_hash" > "$LAST_HASH_FILE"' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '    else' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '        echo "❌ Compilation failed! Check $COMPILE_LOG" >&2' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '        exit 1' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '    fi' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'fi' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo '# Run the actual command' >> ~/.cache/sinex-magic/wrapper.sh
+    @echo 'exec "$@"' >> ~/.cache/sinex-magic/wrapper.sh
+    @chmod +x ~/.cache/sinex-magic/wrapper.sh
+    @echo ""
+    @echo "Now use commands like:"
+    @echo "  ~/.cache/sinex-magic/wrapper.sh cargo test"
+    @echo "  ~/.cache/sinex-magic/wrapper.sh cargo run"
+    @echo ""
+    @echo "Or add to your shell:"
+    @echo "  alias cargo='~/.cache/sinex-magic/wrapper.sh cargo'"
+
+# 🏃 Quick check - workspace check without tests (fastest)
+qc:
+    @echo "🏃 Quick check (no tests)..."
+    cargo check --workspace 2>&1 | tee compilation-quick.log
+
+# 🔍 Check and show errors immediately
+ce:
+    @echo "🔍 Check and show errors..."
+    just check-all
+    just errors
+
+# 🧪 Test with timeout safety (prevents hanging tests)
+test-safe PKG="" TIMEOUT="60":
+    @echo "🧪 Running tests with {{TIMEOUT}}s safety timeout..."
+    @if [ -z "{{PKG}}" ]; then \
+        timeout {{TIMEOUT}} cargo nextest run || echo "⚠️  Tests exceeded {{TIMEOUT}}s timeout"; \
+    else \
+        timeout {{TIMEOUT}} cargo nextest run -p {{PKG}} || echo "⚠️  Tests exceeded {{TIMEOUT}}s timeout"; \
+    fi
+
+# 📝 Show recent changes to help understand context
+recent-changes:
+    @echo "📝 Recent git changes:"
+    git log --oneline -10
+    @echo ""
+    @echo "📝 Modified files:"
+    git status --short
+
+# 🔍 Find specific error type
+find-error PATTERN:
+    @echo "🔍 Finding error: {{PATTERN}}"
+    @if [ -f compilation.log ]; then \
+        rg -A5 -B2 "{{PATTERN}}" compilation.log || echo "Pattern not found"; \
+    else \
+        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+    fi
+
+# 🎯 Check specific file
+check-file FILE:
+    @echo "🎯 Checking file: {{FILE}}"
+    rustc --edition 2021 --crate-type lib --emit metadata {{FILE}} 2>&1 | tee check-file.log
+
+# 💡 Show hints for common errors
+hints:
+    @echo "💡 Common error hints:"
+    @echo "  - 'trait bound not satisfied': Check imports and trait implementations"
+    @echo "  - 'cannot move out of': Use .clone() or references"
+    @echo "  - 'ambiguous name': Use :: prefix or explicit imports"
+    @echo "  - 'not a future': Add 'async' or use block_on"
+    @echo "  - 'unused': Prefix with _ or add #[allow(unused)]"
+
+# 📦 Test specific package with nextest
+test-pkg PKG *ARGS:
+    @echo "📦 Testing package: {{PKG}}"
+    cargo nextest run -p {{PKG}} {{ARGS}}
+
+# 🔍 Find TODOs and FIXMEs in the code
+todos:
+    @echo "🔍 Finding TODOs and FIXMEs..."
+    rg -n "TODO|FIXME|HACK|XXX" --type rust | head -20
+
+# 📊 Show crate dependencies
+deps PKG="":
+    @if [ -z "{{PKG}}" ]; then \
+        echo "📊 Workspace dependencies:"; \
+        cargo tree --workspace; \
+    else \
+        echo "📊 Dependencies for {{PKG}}:"; \
+        cargo tree -p {{PKG}}; \
+    fi
+
+# 🔍 Search for a pattern in Rust files
+search PATTERN:
+    @echo "🔍 Searching for: {{PATTERN}}"
+    rg "{{PATTERN}}" --type rust
+
+# 📋 List all test functions
+list-tests:
+    @echo "📋 Listing all test functions..."
+    rg "^\s*(#\[test\]|#\[sinex_test\])" --type rust -A 1 | grep -E "^.*\.rs-\s*(async )?fn" | sed 's/.*fn //' | sed 's/(.*//' | sort | uniq
+
+# === Development Workflow Commands ===
+
+# 🚀 Start development session - check environment
+dev-start:
+    @echo "🚀 Starting development session..."
+    @echo "✓ Checking database connection..."
+    @psql "${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" -c "SELECT 1" > /dev/null 2>&1 && echo "✓ Database OK" || echo "✗ Database not available"
+    @echo "✓ Checking Redis..."
+    @redis-cli ping > /dev/null 2>&1 && echo "✓ Redis OK" || echo "✗ Redis not available"
+    @echo ""
+    @# Start compilation daemon automatically
+    @./scripts/sinex-daemon.sh start >/dev/null 2>&1 || true
+    @echo "🤖 Compilation daemon: $(./scripts/sinex-daemon.sh status | head -1)"
+    @echo ""
+    @echo "📋 Quick commands:"
+    @echo "  just tf        - Run fast tests (already compiled!)"
+    @echo "  just tp PKG    - Test package (already compiled!)"
+    @echo "  just ds        - Show daemon status"
+    @echo "  just de        - Show current errors"
+    @echo ""
+
+# 📊 Show current nextest status/results
+test-status:
+    @echo "📊 Latest test results:"
+    @if [ -f target/nextest/default/junit.xml ]; then \
+        echo "Found test results from $(stat -c %y target/nextest/default/junit.xml 2>/dev/null || stat -f "%Sm" target/nextest/default/junit.xml)"; \
+        echo ""; \
+        xmllint --xpath "//testsuite/@tests | //testsuite/@failures | //testsuite/@errors" target/nextest/default/junit.xml 2>/dev/null | sed 's/tests=/Total: /; s/failures=/Failed: /; s/errors=/Errors: /' || echo "Unable to parse results"; \
+    else \
+        echo "No test results found. Run tests first."; \
+    fi
+
+# 🏃 Run tests in background and notify when done
+test-bg PKG="" NOTIFY="echo":
+    @echo "🏃 Starting background tests..."
+    @if [ -z "{{PKG}}" ]; then \
+        (cargo nextest run && {{NOTIFY}} "✅ Tests passed!" || {{NOTIFY}} "❌ Tests failed!") & \
+        echo "Tests running in background (PID: $!)"; \
+    else \
+        (cargo nextest run -p {{PKG}} && {{NOTIFY}} "✅ Tests passed!" || {{NOTIFY}} "❌ Tests failed!") & \
+        echo "Tests for {{PKG}} running in background (PID: $!)"; \
+    fi
+
+# 🔄 Full development cycle - format, check, test
+cycle PKG="":
+    @if [ -z "{{PKG}}" ]; then \
+        echo "🔄 Full development cycle..."; \
+        just fmt; \
+        just check-all; \
+        just test-fast; \
+    else \
+        echo "🔄 Development cycle for {{PKG}}..."; \
+        cargo fmt -p {{PKG}}; \
+        just check-pkg {{PKG}}; \
+        just test-pkg {{PKG}}; \
+    fi
+
+# === Background Daemon Commands ===
+
+# 🤖 Start compilation daemon
+daemon-start:
+    @./scripts/sinex-daemon.sh start
+
+# 🛑 Stop compilation daemon
+daemon-stop:
+    @./scripts/sinex-daemon.sh stop
+
+# 📊 Daemon status
+daemon-status:
+    @./scripts/sinex-daemon.sh status
+
+# 📜 Daemon logs
+daemon-logs:
+    @./scripts/sinex-daemon.sh logs
+
+# ❌ Show current compilation errors from daemon
+daemon-errors:
+    @./scripts/sinex-daemon.sh errors
+
 # === Aliases ===
 alias t := test
 alias c := check
+alias ca := check-all
+alias cp := check-pkg
 alias b := build
 alias w := watch
+alias tf := test-fast
+alias tu := test-unit
+alias ti := test-integration
+alias tp := test-pkg
+alias e := errors
+alias warn := warnings
+alias ws := warnings-summary
+alias fw := fix-warnings
+alias ts := test-safe
+alias rc := recent-changes
+alias ds := daemon-status
+alias de := daemon-errors
+alias dl := daemon-logs

@@ -49,7 +49,7 @@
             src = ./.;
             cargoLock.lockFile = ./Cargo.lock;
             buildInputs = with pkgs; [ openssl dbus systemd ];
-            nativeBuildInputs = with pkgs; [ pkg-config ];
+            nativeBuildInputs = with pkgs; [ pkg-config protobuf ];
             cargoBuildFlags = [ "-p" package ];
             auditable = false;
             doCheck = false;
@@ -153,6 +153,7 @@
             sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
             sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
             sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
+            sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
             
             # Automaton satellites
             sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";

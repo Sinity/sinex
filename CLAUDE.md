@@ -9,16 +9,46 @@ STARTUP:
 WORKFLOW:
 
 - Research before implementing
-- Save compilation output for analysis (don't recompile multiple times in a row)
+- ALWAYS use `just` commands (not raw cargo commands)
 - TodoWrite for multi-step work
 - Atomic commits with clear messages
 
-EFFICIENCY:
+MAGIC WORKFLOW (TRUE BACKGROUND COMPILATION):
 
-- compile: cargo check --workspace --all-targets > compilation.log 2>&1
-  - without all-targets, test suite isn't compile and you believe, INCORRECTLY, that things are fine when they're not.
-- errors: rg "^error\[E[0-9]+\]:" compilation.log | sort | uniq -c
-- search: rg -t rust "pattern"
+THE ULTIMATE SETUP:
+1. `cd project/sinex` - Daemon starts automatically via .envrc
+2. Edit files - Daemon detects and compiles in background
+3. `just tf` - Tests run instantly (already compiled!)
+
+BACKGROUND DAEMON:
+- Starts automatically when entering directory
+- Watches all Rust files every 2 seconds
+- Compiles changes immediately in background
+- No manual compilation ever needed!
+
+DAEMON COMMANDS:
+- `just ds` - Show daemon status
+- `just de` - Show current errors  
+- `just dl` - Watch daemon logs
+- `just daemon-start` - Start manually if needed
+- `just daemon-stop` - Stop daemon
+
+HOW IT WORKS:
+- Daemon runs: `cargo check --workspace --all-targets`
+- Keeps compilation fresh at all times
+- Tests/runs start instantly - no compile delay
+- Errors available immediately via `just de`
+
+WORKFLOW EFFICIENCY:
+1. Edit code
+2. Run tests/commands - they start instantly!
+3. Check errors if needed with `just de`
+4. That's it - compilation is never a concern
+
+STATUS AT A GLANCE:
+- On directory entry: Shows if compilation has issues
+- `just ds`: Current compilation status
+- `/tmp/sinex-daemon.log`: Full compilation history
 
 ## ARCHITECTURE
 

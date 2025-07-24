@@ -2027,6 +2027,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6877bb514081ee2a7ff5ef9de3281f14a4dd4bceac4c09388074a6b5df8a139a"
 
 [[package]]
+name = "mime_guess"
+version = "2.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f7c44f8e672c00fe5308fa235f821cb4198414e1c77935c1ab6948d3fd78550e"
+dependencies = [
+ "mime",
+ "unicase",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3592,7 +3602,7 @@ dependencies = [
  "sinex-preflight",
  "sinex-satellite-sdk",
  "sinex-services",
- "sinex-test-macros",
+ "sinex-test-utils",
  "sinex-ulid",
  "sinex-utils",
  "sinex-validation",
@@ -3752,6 +3762,7 @@ dependencies = [
  "chrono",
  "serde",
  "serde_json",
+ "sinex-error",
  "sinex-events",
  "sinex-ulid",
  "sinex-validation",
@@ -3797,6 +3808,7 @@ dependencies = [
  "sinex-error",
  "sinex-events",
  "sinex-macros",
+ "sinex-test-utils",
  "sinex-ulid",
  "sinex-validation",
  "sqlx",
@@ -3842,6 +3854,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex-document-ingestor"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "blake3",
+ "chrono",
+ "clap",
+ "mime_guess",
+ "serde",
+ "serde_json",
+ "sinex-db",
+ "sinex-error",
+ "sinex-events",
+ "sinex-satellite-sdk",
+ "sinex-ulid",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "sinex-error"
 version = "0.4.2"
 dependencies = [
@@ -3883,6 +3916,7 @@ dependencies = [
  "clap",
  "dirs 5.0.1",
  "glob",
+ "mime_guess",
  "notify",
  "notify-debouncer-full",
  "serde",
@@ -4227,7 +4261,7 @@ dependencies = [
  "sinex-core-types",
  "sinex-core-utils",
  "sinex-db",
- "sinex-test-macros",
+ "sinex-test-utils",
  "sinex-ulid",
  "sqlx",
  "thiserror 1.0.69",
@@ -4320,7 +4354,46 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-test-macros"
+name = "sinex-test-utils"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "criterion",
+ "fastrand",
+ "futures",
+ "gethostname 0.4.3",
+ "jsonschema",
+ "lazy_static",
+ "once_cell",
+ "parking_lot",
+ "pretty_assertions",
+ "proptest",
+ "rand 0.8.5",
+ "redis",
+ "serde",
+ "serde_json",
+ "sinex-channel",
+ "sinex-core-types",
+ "sinex-core-utils",
+ "sinex-db",
+ "sinex-error",
+ "sinex-events",
+ "sinex-satellite-sdk",
+ "sinex-test-utils-macros",
+ "sinex-ulid",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-stream",
+ "tonic",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "sinex-test-utils-macros"
 version = "0.1.0"
 dependencies = [
  "proc-macro2",
@@ -5353,6 +5426,12 @@ name = "unarray"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "eaea85b334db583fe3274d12b4cd1880032beab409c0d774be044d4480ab9a94"
+
+[[package]]
+name = "unicase"
+version = "2.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75b844d17643ee918803943289730bec8aac480150456169e647ed0b576ba539"
 
 [[package]]
 name = "unicode-bidi"
