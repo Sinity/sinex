@@ -5,7 +5,8 @@
 - [Quick Start Guide](guides/quick-start.md) - Get Sinex running in 15 minutes
 - [Operations Manual](operations/manual.md) - Day-to-day operations procedures
 - [Troubleshooting Guide](operations/troubleshooting.md) - Common issues and solutions
-- [Architecture Overview](architecture/README.md) - System design and components
+- [Project Status](project-status.md) - Current implementation status and roadmap
+- [Security Guide](security.md) - Security best practices and threat mitigation
 
 ## Documentation Structure
 
@@ -26,16 +27,18 @@ Technical architecture documentation:
 - System Architecture
 - Database Schema
 - Satellite Implementation Patterns
+- Future designs (Tagging System, Event Relations)
 
-### `/docs/roadmap/`
-Future features and unimplemented designs:
-- Tagging System
-- Event Relations
-- Advanced Features
+### `/docs/archive/`
+Historical documentation and design specs:
+- Original TIMs (Technical Implementation Modules)
+- ADRs (Architecture Decision Records)
+- Migration guides and deprecated designs
 
 ## Development Documentation
 
 For development-specific documentation, see:
-- `/spec/` - Specifications and design documents
+- `/spec/` - Active specifications and design documents
 - `/crate/*/README.md` - Individual crate documentation
 - Rustdoc - Run `cargo doc --open` for API documentation
+- `/nixos/README.md` - NixOS deployment and development guide
