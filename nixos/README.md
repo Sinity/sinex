@@ -2,6 +2,47 @@
 
 Complete deployment and operations guide for the Sinex Exocortex personal data capture system.
 
+## Documentation Structure
+
+- **example.nix** - Complete configuration example with all options and defaults
+- **modules/** - Implementation modules:
+  - `sinex-config.nix` - Core configuration interface and PostgreSQL setup
+  - `database.nix` - Database connection pooling and health monitoring  
+  - `satellite-services.nix` - Individual satellite service configurations
+  - `monitoring.nix` - Prometheus/Grafana monitoring setup
+  - `preflight-verification.nix` - Pre-deployment validation checks
+
+## Architectural Documentation
+
+Key architectural decisions and implementation details are documented at their implementation points:
+
+### Database Layer
+- **PostgreSQL Extensions Setup**: [`modules/sinex-config.nix:285-305`](modules/sinex-config.nix#L285-L305)
+  - pgx_ulid configuration for ULID primary keys
+  - TimescaleDB setup for hypertable partitioning  
+  - Optional monotonic ULID generation instructions
+- **TimescaleDB Hypertable Creation**: [`migrations/00000000000002_create_core_tables.sql:1-47`](../migrations/00000000000002_create_core_tables.sql#L1-L47)
+  - Chunk interval optimization guidelines
+  - Compression strategy documentation
+- **ULID Implementation**: [`sinex-ulid/src/lib.rs:188-246`](../crate/sinex-ulid/src/lib.rs#L188-L246)
+  - ULID-UUID casting for foreign keys
+  - Monotonic generation for high concurrency
+
+### Event Processing
+- **Redis Streams Architecture**: [`sinex-satellite-sdk/src/redis_client.rs:1-88`](../crate/sinex-satellite-sdk/src/redis_client.rs#L1-L88)
+  - Supersedes ADR-014 routing cache architecture
+  - Consumer group pattern documentation
+  - Checkpoint hybrid strategy
+- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/stream_processor.rs:381-502`](../crate/sinex-satellite-sdk/src/stream_processor.rs#L381-L502)
+  - Unified interface for all satellites
+  - Snapshot, historical, and continuous modes
+
+### Satellite Implementations  
+- **Filesystem Monitoring**: [`sinex-fs-watcher/src/unified_processor.rs:1-62`](../crate/sinex-fs-watcher/src/unified_processor.rs#L1-L62)
+  - inotify (Linux) implementation details
+  - FSEvents (macOS) configuration
+  - System limits and overflow handling
+
 ## Quick Start
 
 ### Minimal Deployment

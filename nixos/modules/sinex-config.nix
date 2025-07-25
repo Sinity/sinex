@@ -1,4 +1,13 @@
 # Sinex Configuration Module - Direct, Clear Settings
+#
+# This module defines the primary configuration interface for Sinex services.
+# For a complete example with all available options, see ../example.nix
+#
+# Related modules:
+# - database.nix: Database-specific configuration options
+# - satellite-services.nix: Individual satellite service definitions  
+# - monitoring.nix: Monitoring and alerting configuration
+# - preflight-verification.nix: Pre-deployment validation
 {
   lib,
   config,
@@ -303,6 +312,25 @@ in
     # See also:
     # - sinex-ulid crate documentation for ULID implementation details
     # - migrations/00000000000002_create_core_tables.sql for TimescaleDB configuration
+    #
+    # Configuration Options:
+    # 
+    # shared_preload_libraries:
+    #   Default: "timescaledb"
+    #   With monotonic ULID: "timescaledb,pgx_ulid"
+    #   Impact: Requires PostgreSQL restart when changed
+    #   Use case: Add pgx_ulid only if you need strictly ordered ULIDs within same millisecond
+    #
+    # max_connections:
+    #   Default: 200 (from example.nix)
+    #   Calculation: (satellites * connectionPool.maxConnections) + overhead
+    #   With 10 satellites @ 20 connections each = 200 + 50 overhead = 250
+    #
+    # TimescaleDB chunk_time_interval:
+    #   Default: 1 day (configured at runtime)
+    #   High volume (>20GB/day): 6-12 hours
+    #   Low volume (<1GB/day): 7 days
+    #   Target: Each chunk should be 10-25% of PostgreSQL RAM allocation
     services.postgresql = mkIf cfg.database.autoSetup {
       enable = true;
       package = pkgs.postgresql_16;

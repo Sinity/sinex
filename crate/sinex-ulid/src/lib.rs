@@ -193,8 +193,9 @@ lazy_static! {
 /// ### PostgreSQL Extension Setup
 /// 
 /// The pgx_ulid extension must be installed and enabled. For NixOS users, see
-/// `nixos/modules/sinex-config.nix` for the complete PostgreSQL configuration
-/// including extension setup and optional monotonic generator configuration.
+/// [`nixos/modules/sinex-config.nix`](../../../nixos/modules/sinex-config.nix#L285-L305) 
+/// for the complete PostgreSQL configuration including extension setup and optional 
+/// monotonic generator configuration.
 /// 
 /// ### ULID-UUID Casting for Foreign Keys
 /// 

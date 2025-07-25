@@ -79,6 +79,13 @@
 //! - Using native Redis consumer groups for load balancing
 //! - Providing built-in retry and acknowledgment mechanisms
 //! - Achieving sub-second latency with push-based processing
+//! 
+//! ## Related Components
+//! 
+//! - [`StatefulStreamProcessor`](crate::stream_processor::StatefulStreamProcessor) - Unified processor interface
+//! - [`CheckpointManager`](crate::checkpoint::CheckpointManager) - Hybrid Redis/PostgreSQL checkpointing
+//! - [`sinex_events::RawEvent`] - Event structure distributed via streams
+//! - [`sinex_db`] - Database layer for PostgreSQL persistence
 
 use crate::{SatelliteError, SatelliteResult};
 use redis::{

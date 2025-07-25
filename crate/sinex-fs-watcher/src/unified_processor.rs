@@ -94,9 +94,54 @@ use walkdir::WalkDir;
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemConfig {
+    /// Glob patterns for files/directories to watch
+    /// 
+    /// Examples:
+    /// - `"**/*.rs"` - All Rust files recursively
+    /// - `"/home/user/documents/**"` - Everything under documents
+    /// - `"*.log"` - Log files in watch root only
+    /// 
+    /// Performance impact:
+    /// - More specific patterns = fewer watches = better performance
+    /// - `"**/*"` on large trees can hit inotify limits on Linux
     pub watch_patterns: Vec<String>,
+    
+    /// Patterns to explicitly ignore (takes precedence over watch_patterns)
+    /// 
+    /// Common ignores:
+    /// - `"**/.git/**"` - Git internals  
+    /// - `"**/target/**"` - Rust build artifacts
+    /// - `"**/node_modules/**"` - Node dependencies
+    /// - `"**/*.tmp"` - Temporary files
+    /// 
+    /// System limits (Linux):
+    /// - Check limit: `cat /proc/sys/fs/inotify/max_user_watches`
+    /// - Increase: `sudo sysctl fs.inotify.max_user_watches=524288`
     pub ignore_patterns: Vec<String>,
+    
+    /// Debounce delay in milliseconds for rapid file changes
+    /// 
+    /// Use cases:
+    /// - 50-100ms: Text editors with auto-save
+    /// - 200-500ms: Build systems with multiple outputs
+    /// - 1000ms+: Batch operations, large file copies
+    /// 
+    /// Trade-offs:
+    /// - Lower: More responsive, more events
+    /// - Higher: Fewer events, may miss rapid changes
     pub debounce_ms: u64,
+    
+    /// Maximum directory traversal depth (None = unlimited)
+    /// 
+    /// Guidelines:
+    /// - None: Full recursive monitoring (default)
+    /// - Some(3): Limit to 3 levels deep
+    /// - Some(1): Direct children only
+    /// 
+    /// Use depth limits when:
+    /// - Watching user home directories with deep structures
+    /// - Known flat directory structures
+    /// - inotify watch limits are a concern
     pub max_depth: Option<usize>,
 }
 
