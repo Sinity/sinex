@@ -1156,4 +1156,45 @@ mod tests {
         assert_eq!(builder1.params().len(), 1);
         assert_eq!(builder2.params().len(), 2);
     }
+    
+    #[sinex_test]
+    async fn test_fixture_lazy_loading(ctx: TestContext) -> TestResult<()> {
+        let initial_count = ctx.test_event_count().await;
+        
+        // Getting scenarios handle shouldn't create events
+        let scenarios = ctx.scenarios();
+        assert_eq!(ctx.test_event_count().await, initial_count);
+        
+        // Actually accessing a fixture should create events
+        let _fixture = scenarios.user_session().await?;
+        assert!(ctx.test_event_count().await > initial_count);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_caching(ctx: TestContext) -> TestResult<()> {
+        let scenarios = ctx.scenarios();
+        
+        // First access
+        let fixture1 = scenarios.user_session().await?;
+        let count_after_first = ctx.test_event_count().await;
+        
+        // Second access should return cached fixture
+        let fixture2 = scenarios.user_session().await?;
+        let count_after_second = ctx.test_event_count().await;
+        
+        // No new events should be created for cached fixture
+        assert_eq!(count_after_first, count_after_second);
+        
+        // Should be same fixture data
+        let data1 = fixture1.resource().await;
+        let data2 = fixture2.resource().await;
+        assert_eq!(
+            data1.as_ref().unwrap().user_id,
+            data2.as_ref().unwrap().user_id
+        );
+        
+        Ok(())
+    }
 }

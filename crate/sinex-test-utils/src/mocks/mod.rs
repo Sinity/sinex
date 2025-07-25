@@ -295,15 +295,18 @@ mod tests {
     
     #[sinex_test]
     async fn test_mock_event_generation(ctx: TestContext) -> TestResult<()> {
-        let sat = ctx.mocks().satellite("event-gen");
+        let mut sat = ctx.mocks().satellite("event-gen");
         sat.start().await?;
         
-        // Should generate events
-        let events = sat.generate_events(5).await?;
-        assert_eq!(events.len(), 5);
+        // Wait for satellite to generate events
+        sat.wait_for_generation(5, 5).await?;
+        
+        // Should have generated events
+        let events = sat.get_generated_events().await;
+        assert!(events.len() >= 5);
         
         // Events should have proper structure
-        for event in events {
+        for event in events.iter().take(5) {
             assert_eq!(event.source, "event-gen");
             assert!(!event.id.to_string().is_empty());
         }

@@ -1504,4 +1504,54 @@ mod tests {
         
         Ok(())
     }
+    
+    #[tokio::test]
+    async fn test_database_pool_provides_connection() -> TestResult<()> {
+        let db = acquire_test_database().await?;
+        
+        // Direct pool access should work
+        let result: i32 = sqlx::query_scalar("SELECT 1")
+            .fetch_one(db.pool())
+            .await?;
+        assert_eq!(result, 1);
+        
+        Ok(())
+    }
+    
+    #[tokio::test]
+    async fn test_concurrent_context_allocation() -> TestResult<()> {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+        
+        let success_count = Arc::new(AtomicU32::new(0));
+        
+        // Try to allocate multiple databases concurrently
+        let mut handles = vec![];
+        for i in 0..5 {
+            let counter = success_count.clone();
+            let handle = tokio::spawn(async move {
+                match acquire_test_database().await {
+                    Ok(db) => {
+                        // Do some work
+                        let _: i32 = sqlx::query_scalar("SELECT 1")
+                            .fetch_one(db.pool())
+                            .await?;
+                        counter.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    }
+                    Err(e) => Err(e)
+                }
+            });
+            handles.push(handle);
+        }
+        
+        // Wait for all
+        for handle in handles {
+            let _ = handle.await;
+        }
+        
+        assert!(success_count.load(Ordering::SeqCst) > 0);
+        
+        Ok(())
+    }
 }

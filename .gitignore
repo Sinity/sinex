@@ -47,7 +47,7 @@ Thumbs.db
 .env
 .envrc
 
-# Nix, Rust
+# Nix
 result
 result-*
 
@@ -55,6 +55,8 @@ result-*
 /spec/combo/
 .claude-outputs/
 .direnv/
+
+compilation.log
 
 # Git worktrees
 worktree-*

@@ -2107,4 +2107,172 @@ mod tests {
         
         Ok(())
     }
+    
+    #[sinex_test]
+    async fn test_context_provides_isolation(ctx: TestContext) -> TestResult<()> {
+        // Create events in this context
+        ctx.event()
+            .source("test-isolation")
+            .type_("marker")
+            .field("context", ctx.test_name())
+            .insert()
+            .await?;
+        
+        // Create a second context
+        let ctx2 = TestContext::with_name("other_test").await?;
+        
+        // Second context should not see first context's events
+        let other_events = ctx2.events()
+            .by_source("test-isolation")
+            .count()
+            .await?;
+        assert_eq!(other_events, 0);
+        
+        // Original context should still see its event
+        let our_events = ctx.events()
+            .by_source("test-isolation")
+            .count()
+            .await?;
+        assert_eq!(our_events, 1);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_context_tracks_event_count(ctx: TestContext) -> TestResult<()> {
+        assert_eq!(ctx.test_event_count().await, 0);
+        
+        // Insert events and verify count
+        for i in 1..=5 {
+            ctx.event()
+                .source("count-test")
+                .type_("increment")
+                .field("index", i)
+                .insert()
+                .await?;
+            
+            assert_eq!(ctx.test_event_count().await, i);
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_context_timing_measurement(ctx: TestContext) -> TestResult<()> {
+        let start = ctx.elapsed();
+        
+        // Do some work
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        
+        let end = ctx.elapsed();
+        assert!(end > start);
+        assert!(end.as_millis() >= 50);
+        
+        // Test measure helper (already tested above, so just verify it works)
+        let (result, duration) = ctx.measure(async {
+            tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
+            Ok::<_, CoreError>("done")
+        }).await?;
+        
+        assert_eq!(result?, "done");
+        assert!(duration.as_millis() >= 25);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_assertion_helpers(ctx: TestContext) -> TestResult<()> {
+        // Test various assertion helpers
+        ctx.assert("equality").eq(&5, &5)?;
+        
+        let vec = vec![1, 2, 3];
+        ctx.assert("size").has_size(&vec, 3)?;
+        ctx.assert("not empty").not_empty(&vec)?;
+        
+        let some_val = Some(42);
+        ctx.assert("some").some(&some_val)?;
+        
+        let none_val: Option<i32> = None;
+        ctx.assert("none").none(&none_val)?;
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_query_builder_chaining(ctx: TestContext) -> TestResult<()> {
+        // Insert test data
+        for i in 0..10 {
+            ctx.event()
+                .source("query-test")
+                .type_(if i < 5 { "type.a" } else { "type.b" })
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+        
+        // Test various query combinations
+        let by_source = ctx.events()
+            .by_source("query-test")
+            .count()
+            .await?;
+        assert_eq!(by_source, 10);
+        
+        let by_type_a = ctx.events()
+            .by_type("type.a")
+            .count()
+            .await?;
+        assert_eq!(by_type_a, 5);
+        
+        let limited = ctx.events()
+            .by_source("query-test")
+            .limit(3)
+            .fetch()
+            .await?;
+        assert_eq!(limited.len(), 3);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_query_builder_flexibility(ctx: TestContext) -> TestResult<()> {
+        // Test that query builder methods can be called in any order
+        let event = ctx.event()
+            .source("test-query")
+            .type_("event.test")
+            .field("value", 42)
+            .insert()
+            .await?;
+        
+        // Query by ID should work
+        let by_id = ctx.events()
+            .by_id(event.id)
+            .fetch_one()
+            .await?;
+        assert_eq!(by_id.as_ref().map(|e| e.id), Some(event.id));
+        
+        // Complex queries should work
+        ctx.event()
+            .source("complex-query")
+            .type_("event.complex")
+            .field("status", "active")
+            .insert()
+            .await?;
+            
+        ctx.event()
+            .source("complex-query")
+            .type_("event.simple")
+            .field("status", "inactive")
+            .insert()
+            .await?;
+        
+        let complex = ctx.events()
+            .by_source("complex-query")
+            .by_type("event.complex")
+            .fetch()
+            .await?;
+        assert_eq!(complex.len(), 1);
+        assert_eq!(complex[0].payload["status"], json!("active"));
+        
+        Ok(())
+    }
 }
