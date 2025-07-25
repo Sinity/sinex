@@ -42,13 +42,34 @@ schemas/
 └── v2/                     # Version 2 schemas (backward-incompatible changes)
 ```
 
-## Schema Management Workflow
+## Schema Management Workflow (GitOps)
 
-1. **Development**: Schemas are generated from Rust structs in `sinex-events` crate
-2. **Generation**: CI pipeline runs schema generation on every commit
-3. **Validation**: Generated schemas are validated against JSON Schema meta-schema
-4. **Compatibility**: Breaking changes require a new major version (v1 → v2)
-5. **Deployment**: Schemas are synced to PostgreSQL `sinex_schemas.event_payload_schemas` table
+### Current Implementation
+
+1. **Development**: Schemas are maintained as JSON files in this directory
+   - Each schema must have a unique `$id` field
+   - Follow JSON Schema draft-07 specification
+   
+2. **CI/CD Pipeline**: `.github/workflows/schema-validation.yml`
+   - Validates JSON syntax on every push/PR
+   - Tests schema registry table functionality
+   - Runs compatibility checks between versions
+   
+3. **Deployment**: `scripts/deploy-schemas.sh`
+   - Syncs schemas from Git to `sinex_schemas.schema_registry` table
+   - Handles version activation/deactivation
+   - Idempotent - safe to run multiple times
+   
+4. **Compatibility Checking**: `scripts/check-schema-compatibility.sh`
+   - Validates that new versions are backward compatible
+   - Fails CI if breaking changes detected without version bump
+
+### Schema Evolution Strategy
+
+1. **Non-breaking changes** (add optional fields): Keep same version
+2. **Breaking changes**: Create new version directory (v1 → v2)
+3. **Deprecation**: Mark old versions as inactive but keep for reference
+4. **Migration**: Document upgrade path in schema descriptions
 
 ## Schema Versioning
 
@@ -67,3 +88,42 @@ Reference these JSON files directly to understand the expected event payload str
 
 ### For Database Validation
 Schemas are loaded into PostgreSQL and used for runtime validation via `pg_jsonschema`.
+
+## Technical Implementation Notes
+
+### Schema Registry Table
+Schemas are stored in `sinex_schemas.schema_registry` with:
+- ULID primary keys for time-ordered identification
+- Version tracking with activation flags
+- JSON Schema definitions stored as JSONB
+
+### Event Validation
+Events reference schemas via `payload_schema_id` foreign key, enabling:
+- Runtime validation of event payloads
+- Schema evolution tracking
+- Type safety across language boundaries
+
+## Future Enhancements (Not Yet Implemented)
+
+These features were considered but represent additional capabilities rather than core requirements:
+
+### Schema Change Eventification
+Automatically log schema changes as events in `core.events` for audit trail:
+- Would use PostgreSQL trigger on schema registry table
+- Create `sinex.schema.definition_changed` events
+- Enable tracking schema evolution over time
+
+### Automatic Code Generation
+Generate type-safe structs/classes from JSON schemas:
+- Rust: Generate structs with serde derives
+- Python: Generate Pydantic models
+- TypeScript: Generate interfaces
+- Would ensure cross-language consistency
+
+### Advanced Schema Tooling
+- **Schema Diffing**: Visual/programmatic comparison between versions
+- **Migration Scripts**: Auto-generate data migration code for breaking changes
+- **Schema Analytics**: Usage metrics, validation failure patterns
+- **Schema Composition**: Reference common definitions, inheritance patterns
+
+These enhancements would add value but the current GitOps workflow provides a solid foundation for schema management.

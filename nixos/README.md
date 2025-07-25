@@ -647,12 +647,105 @@ services.grafana = {
 };
 ```
 
+## TimescaleDB Operational Guidelines
+
+### Chunk Interval Sizing
+
+TimescaleDB partitions data into chunks for efficient time-series storage. Optimal chunk sizing is critical for performance.
+
+**Default Configuration**: 1 day chunks
+
+**Sizing Guidelines**:
+- **Target**: Each chunk should be 10-25% of PostgreSQL RAM allocation
+- **High volume** (>20GB/day): Use 6-12 hour chunks
+- **Medium volume** (1-20GB/day): Use 1 day chunks (default)
+- **Low volume** (<1GB/day): Use 7 day chunks
+
+**Monitor chunk sizes**:
+```sql
+-- View chunk information
+SELECT 
+    chunk_name,
+    table_bytes,
+    index_bytes,
+    total_bytes,
+    pg_size_pretty(total_bytes) as total_size
+FROM timescaledb_information.chunks
+WHERE hypertable_name = 'events'
+ORDER BY range_start DESC
+LIMIT 10;
+
+-- Adjust chunk interval if needed
+SELECT set_chunk_time_interval('core.events', INTERVAL '12 hours');
+```
+
+### Compression Policy
+
+TimescaleDB compression can achieve 90-95% storage reduction on time-series data.
+
+**Enable compression**:
+```sql
+-- Configure compression settings
+ALTER TABLE core.events SET (
+    timescaledb.compress,
+    timescaledb.compress_orderby = 'ts_ingest DESC, event_id',
+    timescaledb.compress_segmentby = 'source, event_type'
+);
+
+-- Add automatic compression for chunks older than 7 days
+SELECT add_compression_policy('core.events', INTERVAL '7 days');
+```
+
+**Compression considerations**:
+- JSONB payloads compress less effectively than structured columns
+- Extract frequently queried fields to dedicated columns for better compression
+- Query performance on compressed data has decompression overhead
+- Use `compress_segmentby` columns that match your common WHERE clauses
+
+### Continuous Aggregates
+
+For frequently-run analytical queries, use continuous aggregates:
+
+```sql
+-- Example: Hourly event counts by source
+CREATE MATERIALIZED VIEW event_counts_hourly
+WITH (timescaledb.continuous) AS
+SELECT 
+    time_bucket('1 hour', ts_ingest) AS hour,
+    source,
+    event_type,
+    COUNT(*) as event_count
+FROM core.events
+GROUP BY hour, source, event_type;
+
+-- Add refresh policy
+SELECT add_continuous_aggregate_policy(
+    'event_counts_hourly',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '30 minutes'
+);
+```
+
+### Retention Policies
+
+Automatically drop old data:
+
+```sql
+-- Drop chunks older than 1 year
+SELECT add_retention_policy('core.events', INTERVAL '1 year');
+
+-- For infinite retention (default), don't add a policy
+```
+
 ## Support & Documentation
 
 - **Architecture**: See `spec/SADI.md` and `plan.md`
 - **Development**: See `CLAUDE.md` for developer reference
 - **API**: Check `cli/README.md` for CLI usage
 - **Issues**: Report to project repository
+- **TimescaleDB**: [Official docs](https://docs.timescale.com/)
+- **Performance tuning**: See TimescaleDB best practices guide
 
 ## Security Considerations
 

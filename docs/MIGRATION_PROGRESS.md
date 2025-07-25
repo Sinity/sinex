@@ -72,9 +72,33 @@ Successfully deleted after migration:
 - spec/docs/adr/ADR-002-PostgreSQLWorkQueue.md
 - spec/docs/adr/ADR-011-clock-regression-handling.md
 - spec/docs/adr/ADR-014-routing-cache.md
+- spec/docs/adr/ADR-009-ULID-Primary-Key-With-TimescaleDB.md
 - spec/implemented/infrastructure/TIM-EventValidation-pgJsonschema.md
 - spec/implemented/event-sources/TIM-FilesystemMonitoringWatchers.md
 - spec/implemented/infrastructure/TIM-TimescaleDBConfiguration.md
 - spec/implemented/infrastructure/TIM-PrimaryKeyImplementation.md
 - spec/implemented/infrastructure/TIM-EventSubstrateDDL.md
+- spec/implemented/infrastructure/TIM-CanonicalEventSchemas.md
+- spec/implemented/infrastructure/TIM-TestFrameworkInfrastructure.md
+
+## Partial Extractions (Moved to /spec/leftover/)
+
+Files with unimplemented features preserved:
+- TIM-EventSchemaRegistry-unimplemented.md (schema diffing, code generation, evolution policies)
+
+## Additional Documentation Created
+
+Beyond simple migration, new documentation files were created:
+- `/crate/sinex-fs-watcher/FILESYSTEM_MONITORING_DETAILS.md` - Detailed inotify mappings and overflow recovery
+- `/crate/sinex-test-utils/TEST_INFRASTRUCTURE_EXAMPLES.md` - Conceptual testing examples
+- `/nixos/README.md` - Added TimescaleDB operational guidelines section
+
+## Migration Approach Update
+
+Following new guidelines:
+- Extract implemented content to appropriate code locations
+- Remove only the extracted portions from original files
+- Move partially-extracted files to `/spec/leftover/` 
+- Create supplementary markdown files for conceptual examples
+- Preserve unimplemented but useful features for future reference
 EOF < /dev/null

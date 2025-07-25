@@ -88,6 +88,27 @@ CREATE INDEX idx_source_material_uri ON raw.source_material_registry (source_uri
 CREATE INDEX idx_source_material_checksum ON raw.source_material_registry (checksum_blake3) WHERE checksum_blake3 IS NOT NULL;
 
 -- Create the main events table with unified architecture
+--
+-- ## Architectural Decision: ULID Primary Key with TimescaleDB (ADR-009)
+--
+-- We use a generated column approach to maintain ULID as the sole primary key
+-- while enabling TimescaleDB hypertable partitioning:
+--
+-- 1. event_id ULID remains the sole primary key (architectural purity)
+-- 2. ts_ingest is GENERATED from the ULID timestamp (no redundancy)
+-- 3. TimescaleDB partitions by ULID using custom partition function
+--
+-- This approach was chosen after benchmarking showed it provides:
+-- - Same query performance as composite keys
+-- - Only 8 bytes storage overhead per row
+-- - No timestamp extraction overhead in queries
+-- - Enables index-only scans on time ranges
+--
+-- Alternative approaches considered but rejected:
+-- - Composite key (event_id, ts_ingest): Violates single PK principle
+-- - ULID-only partitioning: 3-13x slower aggregation queries
+-- - Native PostgreSQL partitioning: Lacks TimescaleDB features
+--
 CREATE TABLE IF NOT EXISTS core.events (
     event_id ULID PRIMARY KEY DEFAULT gen_ulid(),
     ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (event_id::timestamp) STORED,
@@ -233,6 +254,26 @@ CREATE INDEX idx_sinex_metrics_legacy_name_time ON sinex.metrics (metric_name, t
 CREATE INDEX idx_sinex_metrics_legacy_namespace ON sinex.metrics (namespace, subsystem, timestamp DESC);
 
 -- Create entities table for knowledge graph
+--
+-- ## Knowledge Graph Schema (TIM-KnowledgeGraphSchema)
+-- 
+-- Central registry for all canonical "things" or "concepts" (nodes) in Sinex.
+-- Supports entity resolution, relationship discovery, and graph queries.
+--
+-- ### Entity Types
+-- - people: Individuals mentioned or involved in events
+-- - projects: Software projects, repositories, tasks
+-- - artifacts: Files, documents, media
+-- - topics: Subjects, tags, categories
+-- - locations: Physical or virtual locations
+-- - organizations: Companies, teams, groups
+--
+-- ### Future Enhancements (Not Implemented)
+-- - Entity embeddings with pgvector (768-dimensional vectors)
+-- - Semantic similarity search across entities
+-- - Automated entity extraction from events
+-- - Entity resolution using embeddings
+-- - Confidence scoring for relationships
 CREATE TABLE IF NOT EXISTS core.entities (
     id ULID PRIMARY KEY DEFAULT gen_ulid(),
     type TEXT NOT NULL,
@@ -254,6 +295,29 @@ CREATE INDEX idx_entities_canonical ON core.entities (canonical_name) WHERE cano
 CREATE INDEX idx_entities_created_from ON core.entities (created_from_event_id) WHERE created_from_event_id IS NOT NULL;
 
 -- Create entity relations table
+--
+-- ## Entity Relations (Knowledge Graph Edges)
+--
+-- Represents relationships between entities with temporal validity.
+--
+-- ### Relationship Types
+-- - mentions: Entity A mentions Entity B
+-- - works_on: Person works on Project
+-- - depends_on: Project A depends on Project B
+-- - links_to: Document links to another entity
+-- - authored_by: Artifact authored by Person
+-- - located_at: Entity located at Location
+-- - member_of: Person member of Organization
+--
+-- ### Temporal Tracking
+-- - valid_from/valid_until: When relationship was/is valid
+-- - Allows historical relationship queries
+--
+-- ### Future Enhancements
+-- - Relationship strength/confidence scoring
+-- - Bidirectional relationship inference
+-- - Graph traversal optimizations
+-- - Path-finding algorithms support
 CREATE TABLE IF NOT EXISTS core.entity_relations (
     id ULID PRIMARY KEY DEFAULT gen_ulid(),
     from_entity_id ULID NOT NULL REFERENCES core.entities(id) ON DELETE CASCADE,
