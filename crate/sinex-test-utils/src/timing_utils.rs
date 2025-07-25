@@ -389,3 +389,454 @@ impl<'ctx> TimingUtils<'ctx> {
         WaitHelpers::wait_for_condition(condition, timeout_secs).await
     }
 }
+
+// Comprehensive timing utils tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    
+    #[sinex_test]
+    async fn test_synchronizer_basic(ctx: TestContext) -> TestResult<()> {
+        let sync = TestSynchronizer::new(Duration::from_secs(5));
+        
+        // Should not be signaled initially
+        let result = tokio::time::timeout(Duration::from_millis(10), sync.wait()).await;
+        assert!(result.is_err(), "Should timeout when not signaled");
+        
+        // Signal and wait should succeed
+        sync.signal();
+        sync.wait().await.map_err(|_| CoreError::Unknown("Wait failed".to_string()))?;
+        
+        // Should still be signaled
+        sync.wait().await.map_err(|_| CoreError::Unknown("Second wait failed".to_string()))?;
+        
+        // Reset should clear signal
+        sync.reset();
+        let result = tokio::time::timeout(Duration::from_millis(10), sync.wait()).await;
+        assert!(result.is_err(), "Should timeout after reset");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_synchronizer_concurrent(ctx: TestContext) -> TestResult<()> {
+        let sync = Arc::new(TestSynchronizer::new(Duration::from_secs(5)));
+        let counter = Arc::new(AtomicUsize::new(0));
+        
+        // Spawn multiple waiters
+        let mut handles = vec![];
+        for _ in 0..5 {
+            let sync_clone = sync.clone();
+            let counter_clone = counter.clone();
+            let handle = tokio::spawn(async move {
+                sync_clone.wait().await?;
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+                Ok::<(), tokio::time::error::Elapsed>(())
+            });
+            handles.push(handle);
+        }
+        
+        // Give waiters time to start
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        
+        // All should be waiting
+        assert_eq!(counter.load(Ordering::SeqCst), 0);
+        
+        // Signal should wake all
+        sync.signal();
+        
+        // Wait for all to complete
+        for handle in handles {
+            handle.await.unwrap()?;
+        }
+        
+        assert_eq!(counter.load(Ordering::SeqCst), 5);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_barrier_basic(ctx: TestContext) -> TestResult<()> {
+        let barrier = TestBarrier::new(3);
+        let counter = Arc::new(AtomicUsize::new(0));
+        
+        // Spawn participants
+        let mut handles = vec![];
+        for i in 0..3 {
+            let barrier_clone = Arc::new(barrier);
+            let counter_clone = counter.clone();
+            let handle = tokio::spawn(async move {
+                // Increment before barrier
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+                
+                // Wait at barrier
+                barrier_clone.wait(Duration::from_secs(5)).await?;
+                
+                // Increment after barrier
+                counter_clone.fetch_add(10, Ordering::SeqCst);
+                
+                Ok::<i32, tokio::time::error::Elapsed>(i as i32)
+            });
+            handles.push(handle);
+        }
+        
+        // Wait for all to complete
+        let results = futures::future::join_all(handles).await;
+        
+        // All should succeed
+        for result in results {
+            assert!(result?.is_ok());
+        }
+        
+        // Counter should show all participants passed
+        assert_eq!(counter.load(Ordering::SeqCst), 33); // 3 + 30
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_barrier_timeout(ctx: TestContext) -> TestResult<()> {
+        let barrier = TestBarrier::new(3);
+        
+        // Only 2 participants (less than required)
+        let handle1 = tokio::spawn({
+            let barrier = Arc::new(barrier);
+            async move {
+                barrier.wait(Duration::from_millis(100)).await
+            }
+        });
+        
+        let handle2 = tokio::spawn({
+            let barrier = Arc::new(barrier);
+            async move {
+                barrier.wait(Duration::from_millis(100)).await
+            }
+        });
+        
+        // Both should timeout
+        let result1 = handle1.await.unwrap();
+        let result2 = handle2.await.unwrap();
+        
+        assert!(result1.is_err());
+        assert!(result2.is_err());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_worker_readiness_coordinator(ctx: TestContext) -> TestResult<()> {
+        let coordinator = WorkerReadinessCoordinator::new(3);
+        
+        // Simulate workers becoming ready
+        assert_eq!(coordinator.worker_ready(), 1);
+        assert_eq!(coordinator.worker_ready(), 2);
+        assert_eq!(coordinator.ready_count(), 2);
+        
+        // Spawn waiter
+        let coordinator_clone = Arc::new(coordinator);
+        let waiter = tokio::spawn({
+            let coord = coordinator_clone.clone();
+            async move {
+                coord.wait_for_all_ready(Duration::from_secs(5)).await
+            }
+        });
+        
+        // Last worker ready
+        assert_eq!(coordinator_clone.worker_ready(), 3);
+        
+        // Waiter should complete
+        let result = waiter.await.unwrap()?;
+        assert_eq!(result, 3);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_wait_helpers_event_count(ctx: TestContext) -> TestResult<()> {
+        // Insert some events
+        for i in 0..5 {
+            ctx.event()
+                .source("wait-test")
+                .type_("test.event")
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+        
+        // Wait for event count
+        let count = WaitHelpers::wait_for_event_count(ctx.pool(), 5, 5).await?;
+        assert!(count >= 5);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_wait_helpers_source_events(ctx: TestContext) -> TestResult<()> {
+        // Insert events from different sources
+        for i in 0..3 {
+            ctx.event()
+                .source("source-a")
+                .type_("test.event")
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+        
+        for i in 0..2 {
+            ctx.event()
+                .source("source-b")
+                .type_("test.event")
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+        
+        // Wait for specific source
+        let count_a = WaitHelpers::wait_for_source_events(ctx.pool(), "source-a", 3, 5).await?;
+        assert_eq!(count_a, 3);
+        
+        let count_b = WaitHelpers::wait_for_source_events(ctx.pool(), "source-b", 2, 5).await?;
+        assert_eq!(count_b, 2);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_wait_helpers_custom_condition(ctx: TestContext) -> TestResult<()> {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let counter_clone = counter.clone();
+        
+        // Spawn task that increments counter
+        tokio::spawn(async move {
+            for _ in 0..5 {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                counter_clone.fetch_add(1, Ordering::SeqCst);
+            }
+        });
+        
+        // Wait for counter to reach 5
+        WaitHelpers::wait_for_condition(
+            || {
+                let counter = counter.clone();
+                async move {
+                    Ok(counter.load(Ordering::SeqCst) >= 5)
+                }
+            },
+            5
+        ).await?;
+        
+        assert_eq!(counter.load(Ordering::SeqCst), 5);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_wait_helpers_multiple_conditions(ctx: TestContext) -> TestResult<()> {
+        let counter1 = Arc::new(AtomicUsize::new(0));
+        let counter2 = Arc::new(AtomicUsize::new(0));
+        
+        // Spawn tasks that increment counters
+        let c1_clone = counter1.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            c1_clone.store(5, Ordering::SeqCst);
+        });
+        
+        let c2_clone = counter2.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            c2_clone.store(10, Ordering::SeqCst);
+        });
+        
+        // Wait for both conditions
+        let conditions = vec![
+            ("counter1 >= 5", {
+                let counter = counter1.clone();
+                move || {
+                    let c = counter.clone();
+                    async move {
+                        Ok(c.load(Ordering::SeqCst) >= 5)
+                    }
+                }
+            }),
+            ("counter2 >= 10", {
+                let counter = counter2.clone();
+                move || {
+                    let c = counter.clone();
+                    async move {
+                        Ok(c.load(Ordering::SeqCst) >= 10)
+                    }
+                }
+            }),
+        ];
+        
+        WaitHelpers::wait_for_multiple_conditions(conditions, 5).await?;
+        
+        assert_eq!(counter1.load(Ordering::SeqCst), 5);
+        assert_eq!(counter2.load(Ordering::SeqCst), 10);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_patterns_event_processing(ctx: TestContext) -> TestResult<()> {
+        let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5)).await
+            .map_err(|_| CoreError::Unknown("Failed to create counter".to_string()))?;
+        
+        // Simulate event processing
+        for _ in 0..5 {
+            counter.increment();
+        }
+        
+        assert_eq!(counter.get(), 5);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_patterns_test_phases(ctx: TestContext) -> TestResult<()> {
+        let phases = vec!["setup", "execution", "validation", "cleanup"];
+        let (tracker, phase_names) = TimingPatterns::create_test_phases(&phases);
+        
+        assert_eq!(phase_names.len(), 4);
+        assert_eq!(tracker.get_phase(), 0);
+        
+        // Progress through phases
+        for (i, phase) in phase_names.iter().enumerate() {
+            assert_eq!(tracker.get_phase(), i);
+            tracker.advance_phase();
+        }
+        
+        assert!(tracker.is_complete());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_utils_integration(ctx: TestContext) -> TestResult<()> {
+        let timing = ctx.timing();
+        
+        // Insert events
+        for i in 0..3 {
+            ctx.event()
+                .source("timing-test")
+                .type_("integration")
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+        
+        // Use timing utils to wait
+        let count = timing.wait_for_event_count(3).await?;
+        assert!(count >= 3);
+        
+        let source_count = timing.wait_for_source_events("timing-test", 3).await?;
+        assert_eq!(source_count, 3);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_utils_synchronizer(ctx: TestContext) -> TestResult<()> {
+        let timing = ctx.timing();
+        let sync = timing.synchronizer(Duration::from_secs(5));
+        
+        // Spawn signaler
+        let sync_clone = Arc::new(sync);
+        tokio::spawn({
+            let s = sync_clone.clone();
+            async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                s.signal();
+            }
+        });
+        
+        // Wait should succeed
+        sync_clone.wait().await
+            .map_err(|_| CoreError::Unknown("Synchronizer wait failed".to_string()))?;
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_utils_barrier(ctx: TestContext) -> TestResult<()> {
+        let timing = ctx.timing();
+        let barrier = Arc::new(timing.barrier(2));
+        
+        let b1 = barrier.clone();
+        let h1 = tokio::spawn(async move {
+            b1.wait(Duration::from_secs(5)).await
+        });
+        
+        let b2 = barrier.clone();
+        let h2 = tokio::spawn(async move {
+            b2.wait(Duration::from_secs(5)).await
+        });
+        
+        // Both should complete
+        h1.await.unwrap()?;
+        h2.await.unwrap()?;
+        
+        assert_eq!(barrier.generation(), 1);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_utils_progress_tracker(ctx: TestContext) -> TestResult<()> {
+        let timing = ctx.timing();
+        let tracker = timing.progress_tracker(3);
+        
+        assert_eq!(tracker.get_phase(), 0);
+        assert!(!tracker.is_complete());
+        
+        tracker.advance_phase();
+        assert_eq!(tracker.get_phase(), 1);
+        
+        tracker.advance_phase();
+        tracker.advance_phase();
+        assert!(tracker.is_complete());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_utils_event_counter(ctx: TestContext) -> TestResult<()> {
+        let timing = ctx.timing();
+        let counter = timing.event_counter(10);
+        
+        // Increment concurrently
+        let handles: Vec<_> = (0..10)
+            .map(|_| {
+                let counter = counter.clone();
+                tokio::spawn(async move {
+                    counter.increment()
+                })
+            })
+            .collect();
+        
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        
+        assert_eq!(counter.get(), 10);
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_barrier_generation_tracking() {
+        let barrier = TestBarrier::new(2);
+        
+        assert_eq!(barrier.generation(), 0);
+        assert_eq!(barrier.current_count(), 0);
+        
+        // After one participant
+        barrier.counter.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(barrier.current_count(), 1);
+        assert_eq!(barrier.generation(), 0);
+    }
+}

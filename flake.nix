@@ -3,8 +3,8 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    rust-overlay = {
-      url = "github:oxalica/rust-overlay";
+    fenix = {
+      url = "github:nix-community/fenix";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils.url = "github:numtide/flake-utils";
@@ -14,7 +14,7 @@
     {
       self,
       nixpkgs,
-      rust-overlay,
+      fenix,
       flake-utils,
     }:
     let
@@ -22,19 +22,22 @@
       systemOutputs = flake-utils.lib.eachDefaultSystem (
         system:
         let
-          overlays = [ (import rust-overlay) ];
           pkgs = import nixpkgs {
-            inherit system overlays;
-            config.allowUnfree = true;  # For TimescaleDB in VM tests
+            inherit system;
+            config.allowUnfree = true; # For TimescaleDB in VM tests
           };
 
-          rustToolchain = pkgs.rust-bin.stable.latest.default.override {
-            extensions = [
-              "rust-src"
-              "rust-analyzer"
-              "llvm-tools-preview"
-            ];
-          };
+          rustToolchain = fenix.packages.${system}.complete.withComponents [
+            "cargo"
+            "clippy"
+            "rust-src"
+            "rust-analyzer"
+            "rustc"
+            "rustfmt"
+            "llvm-tools-preview"
+            "rustc-codegen-cranelift"
+          ];
+
 
           # Extract git information for version tracking
           gitRev = self.rev or self.dirtyRev or "unknown";
@@ -43,68 +46,80 @@
           buildTime = "unknown"; # builtins.currentTime not available in pure mode
 
           # Helper to build Rust packages with common configuration
-          buildRustPackage = package: pkgs.rustPlatform.buildRustPackage {
-            pname = package;
-            version = version;
-            src = ./.;
-            cargoLock.lockFile = ./Cargo.lock;
-            buildInputs = with pkgs; [ openssl dbus systemd ];
-            nativeBuildInputs = with pkgs; [ pkg-config protobuf ];
-            cargoBuildFlags = [ "-p" package ];
-            auditable = false;
-            doCheck = false;
-            SQLX_OFFLINE = "true";
-            preBuild = ''
-              if [ ! -d ".sqlx" ]; then
-                echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
-                exit 1
-              fi
-              
-              # Create build info for version tracking
-              mkdir -p src/generated
-              cat > src/generated/build_info.rs << EOF
-              pub const VERSION: &str = "${version}";
-              pub const GIT_HASH: &str = "${gitRev}";
-              pub const GIT_SHORT_HASH: &str = "${gitShortRev}";
-              pub const BUILD_TIME: &str = "${buildTime}";
-              pub const BUILD_HOST: &str = "${system}";
-              EOF
-            '';
-            postInstall = ''
-              # Include migrations in the package
-              mkdir -p $out/share/sinex
-              cp -r migrations $out/share/sinex/
-            '';
-          };
+          buildRustPackage =
+            package:
+            pkgs.rustPlatform.buildRustPackage {
+              pname = package;
+              version = version;
+              src = ./.;
+              cargoLock.lockFile = ./Cargo.lock;
+              buildInputs = with pkgs; [
+                openssl
+                dbus
+                systemd
+              ];
+              nativeBuildInputs = with pkgs; [
+                pkg-config
+                protobuf
+              ];
+              cargoBuildFlags = [
+                "-p"
+                package
+              ];
+              auditable = false;
+              doCheck = false;
+              SQLX_OFFLINE = "true";
+              preBuild = ''
+                if [ ! -d ".sqlx" ]; then
+                  echo "ERROR: .sqlx directory not found. Run 'cargo sqlx prepare' first."
+                  exit 1
+                fi
+
+                # Create build info for version tracking
+                mkdir -p src/generated
+                cat > src/generated/build_info.rs << EOF
+                pub const VERSION: &str = "${version}";
+                pub const GIT_HASH: &str = "${gitRev}";
+                pub const GIT_SHORT_HASH: &str = "${gitShortRev}";
+                pub const BUILD_TIME: &str = "${buildTime}";
+                pub const BUILD_HOST: &str = "${system}";
+                EOF
+              '';
+              postInstall = ''
+                # Include migrations in the package
+                mkdir -p $out/share/sinex
+                cp -r migrations $out/share/sinex/
+              '';
+            };
           # Package the Python CLI tool
           sinex-cli = pkgs.python3Packages.buildPythonApplication rec {
             pname = "sinex-cli";
             version = "0.1.0";
             format = "other";
-            
+
             src = ./cli;
-            
+
             propagatedBuildInputs = with pkgs.python3Packages; [
               click
               psycopg2
               rich
               pyyaml
             ];
-            
+
             installPhase = ''
               mkdir -p $out/bin
               cp exo.py $out/bin/sinex-cli
               chmod +x $out/bin/sinex-cli
-              
+
               # Also provide 'exo' as an alias
               ln -s $out/bin/sinex-cli $out/bin/exo
             '';
-            
+
             # Add a simple check to ensure the CLI can import dependencies
             checkPhase = ''
               $out/bin/sinex-cli --help > /dev/null
             '';
-            
+
             meta = with pkgs.lib; {
               description = "Sinex CLI - Query your digital memory";
               license = licenses.mit;
@@ -134,7 +149,7 @@
 
             installPhase = ''
               mkdir -p $out/lib $out/share/postgresql/extension
-              
+
               # Find and copy the actual files (not symlinks)
               find . -name "*.so" -type f -exec cp {} $out/lib/ \;
               find . -name "*.sql" -type f -exec cp {} $out/share/postgresql/extension/ \;
@@ -147,23 +162,23 @@
             # Core satellite services
             sinexIngestd = buildRustPackage "sinex-ingestd";
             sinexGateway = buildRustPackage "sinex-gateway";
-            
+
             # Event source satellites
             sinexFsWatcher = buildRustPackage "sinex-fs-watcher";
             sinexTerminalSatellite = buildRustPackage "sinex-terminal-satellite";
             sinexDesktopSatellite = buildRustPackage "sinex-desktop-satellite";
             sinexSystemSatellite = buildRustPackage "sinex-system-satellite";
             sinexDocumentIngestor = buildRustPackage "sinex-document-ingestor";
-            
+
             # Automaton satellites
             sinexTerminalCommandCanonicalizer = buildRustPackage "sinex-terminal-command-canonicalizer";
-            
+
             # Support services
             healthAggregator = buildRustPackage "sinex-health-aggregator";
             sinexHealthAggregator = buildRustPackage "sinex-health-aggregator";
             sinexPreflight = buildRustPackage "sinex-preflight";
             sinexCli = sinex-cli;
-            
+
             # Default package is now the ingestion daemon
             default = buildRustPackage "sinex-ingestd";
             inherit pg_jsonschema;
@@ -171,7 +186,7 @@
 
           devShells.default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              # Rust toolchain
+              # Rust toolchain with cranelift backend
               rustToolchain
               cargo-watch
               cargo-nextest
@@ -181,6 +196,7 @@
               just
               bacon
               sqlx-cli
+              mold  # Fast linker for compilation speed
 
               # Python and testing
               python3
@@ -209,14 +225,14 @@
 
             shellHook = ''
               echo "🚀 Setting up Sinex development environment..."
-              
+
               # Database configuration
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
-              
+
               # Test optimizations (applied per-session in code, not globally)
               export SINEX_TEST_OPTIMIZATIONS="true"
-              
+
               # Setup database if needed
               if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then
                 if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw "$DATABASE_NAME"; then
@@ -234,17 +250,17 @@
               else
                 echo "⚠️  PostgreSQL not available - database setup skipped"
               fi
-              
+
               echo "📦 Sinex devShell ready. Run 'just' to see available commands."
             '';
           };
-          
+
           # NixOS VM tests
           checks = {
             # VM tests need to be updated for the new satellite architecture
             # Temporarily disabled until test scenarios are rewritten
-            
-            # sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix { 
+
+            # sinex-vm-basic = pkgs.callPackage ./test/nixos-vm/test-scenarios/basic-flow.nix {
             #   sinex-ingestd = self.packages.${system}.sinexIngestd;
             #   sinex-gateway = self.packages.${system}.sinexGateway;
             #   sinex-fs-watcher = self.packages.${system}.sinexFsWatcher;
@@ -261,7 +277,7 @@
         default = ./nixos;
         sinex = ./nixos;
       };
-      
+
       # Overlay providing pg_jsonschema
       overlays.default = final: prev: {
         postgresql16Packages = prev.postgresql16Packages // {

@@ -1602,3 +1602,424 @@ impl<'ctx> SystemEventBuilder<'ctx> {
         self.inner.insert().await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    
+    #[sinex_test]
+    async fn test_contexts_are_isolated(ctx: TestContext) -> TestResult<()> {
+        // Create another context
+        let ctx2 = TestContext::with_name("isolation_test").await?;
+        
+        // Insert event in first context
+        let event1 = ctx.event()
+            .source("ctx1")
+            .type_("isolation.test")
+            .field("context", "first")
+            .insert()
+            .await?;
+        
+        // Insert event in second context
+        let event2 = ctx2.event()
+            .source("ctx2")
+            .type_("isolation.test")
+            .field("context", "second")
+            .insert()
+            .await?;
+        
+        // Each context should only see its own event
+        ctx.assert_event_exists(event1.id).await?;
+        ctx2.assert_event_exists(event2.id).await?;
+        
+        // First context should not see second context's event
+        let ctx1_events = ctx.events().fetch().await?;
+        assert_eq!(ctx1_events.len(), 1);
+        assert_eq!(ctx1_events[0].id, event1.id);
+        
+        // Second context should not see first context's event
+        let ctx2_events = ctx2.events().fetch().await?;
+        assert_eq!(ctx2_events.len(), 1);
+        assert_eq!(ctx2_events[0].id, event2.id);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_event_builder_fluent_api(ctx: TestContext) -> TestResult<()> {
+        // Test all builder methods work correctly
+        let event = ctx.event()
+            .source("test_source")
+            .type_("test.type")
+            .field("string", "value")
+            .field("number", 42)
+            .field("boolean", true)
+            .fields(vec![
+                ("array", json!([1, 2, 3])),
+                ("object", json!({"nested": "value"}))
+            ])
+            .timestamp(chrono::Utc::now())
+            .insert()
+            .await?;
+        
+        // Verify all fields
+        assert_eq!(event.source, "test_source");
+        assert_eq!(event.event_type, "test.type");
+        assert_eq!(event.payload["string"], json!("value"));
+        assert_eq!(event.payload["number"], json!(42));
+        assert_eq!(event.payload["boolean"], json!(true));
+        assert_eq!(event.payload["array"], json!([1, 2, 3]));
+        assert_eq!(event.payload["object"], json!({"nested": "value"}));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_domain_specific_builders(ctx: TestContext) -> TestResult<()> {
+        // Test filesystem builder
+        let fs_event = ctx.event()
+            .filesystem()
+            .path("/test/file.txt")
+            .size(1024)
+            .permissions(0o644)
+            .created()
+            .insert()
+            .await?;
+        
+        assert_eq!(fs_event.source, sources::FS);
+        assert_eq!(fs_event.event_type, event_types::filesystem::FILE_CREATED);
+        assert_eq!(fs_event.payload["path"], json!("/test/file.txt"));
+        assert_eq!(fs_event.payload["size"], json!(1024));
+        
+        // Test terminal builder
+        let term_event = ctx.event()
+            .terminal()
+            .command("ls -la")
+            .exit_code(0)
+            .duration_ms(100)
+            .working_dir("/home/user")
+            .insert()
+            .await?;
+        
+        assert_eq!(term_event.source, sources::SHELL_KITTY);
+        assert_eq!(term_event.event_type, event_types::shell::COMMAND_EXECUTED);
+        assert_eq!(term_event.payload["command"], json!("ls -la"));
+        assert_eq!(term_event.payload["exit_code"], json!(0));
+        
+        // Test agent builder
+        let agent_event = ctx.event()
+            .agent()
+            .name("test-automaton")
+            .version("1.0.0")
+            .uptime_seconds(3600)
+            .events_processed(1000)
+            .heartbeat()
+            .insert()
+            .await?;
+        
+        assert_eq!(agent_event.source, sources::SINEX);
+        assert_eq!(agent_event.event_type, "automaton.heartbeat");
+        assert_eq!(agent_event.payload["agent_name"], json!("test-automaton"));
+        assert_eq!(agent_event.payload["version"], json!("1.0.0"));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_query_builder_chains(ctx: TestContext) -> TestResult<()> {
+        // Insert various events
+        for i in 0..10 {
+            ctx.event()
+                .source(if i % 2 == 0 { "even" } else { "odd" })
+                .type_(if i < 5 { "type.a" } else { "type.b" })
+                .field("index", i)
+                .field("value", i * 10)
+                .insert()
+                .await?;
+        }
+        
+        // Test by_source
+        let even_events = ctx.events().by_source("even").fetch().await?;
+        assert_eq!(even_events.len(), 5);
+        
+        // Test by_type
+        let type_a_events = ctx.events().by_type("type.a").fetch().await?;
+        assert_eq!(type_a_events.len(), 5);
+        
+        // Test limit
+        let limited = ctx.events().limit(3).fetch().await?;
+        assert_eq!(limited.len(), 3);
+        
+        // Test combined filters
+        let even_type_a = ctx.events()
+            .by_source("even")
+            .by_type("type.a")
+            .fetch()
+            .await?;
+        assert_eq!(even_type_a.len(), 3); // 0, 2, 4
+        
+        // Test count
+        let total_count = ctx.events().count().await?;
+        assert_eq!(total_count, 10);
+        
+        let even_count = ctx.events().by_source("even").count().await?;
+        assert_eq!(even_count, 5);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_assertion_api(ctx: TestContext) -> TestResult<()> {
+        // Test successful assertions
+        ctx.assert("basic equality").eq(&5, &5)?;
+        ctx.assert("condition").that(10 > 5, "10 should be greater than 5")?;
+        
+        // Test collection assertions
+        let items = vec!["a", "b", "c"];
+        ctx.assert("collection size").has_size(&items, 3)?;
+        ctx.assert("not empty").not_empty(&items)?;
+        
+        // Test option assertions
+        let some_val = Some("value");
+        let none_val: Option<&str> = None;
+        ctx.assert("some value").some(&some_val)?;
+        ctx.assert("none value").none(&none_val)?;
+        
+        // Test event assertions
+        let event1 = ctx.event().source("test").type_("assert").build()?;
+        let event2 = ctx.event().source("test").type_("assert").build()?;
+        ctx.assert("events equal").event_eq(&event1, &event2)?;
+        
+        // Test that assertions fail when they should
+        let fail_result = ctx.assert("should fail").eq(&5, &10);
+        assert!(fail_result.is_err());
+        assert!(fail_result.unwrap_err().to_string().contains("expected 10, got 5"));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_wait_helpers(ctx: TestContext) -> TestResult<()> {
+        // Test wait_for_event_count
+        let handle = tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+            for i in 0..5 {
+                ctx.event()
+                    .source("async")
+                    .type_("test")
+                    .field("index", i)
+                    .insert()
+                    .await
+                    .unwrap();
+            }
+        });
+        
+        // Wait for events to appear
+        ctx.wait_for_event_count(5).await?;
+        
+        // Verify they're there
+        let count = ctx.events().count().await?;
+        assert_eq!(count, 5);
+        
+        handle.await.map_err(|e| CoreError::Service(format!("Task failed: {}", e)))?;
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_batch_operations(ctx: TestContext) -> TestResult<()> {
+        // Test create_event_batch
+        let batch = ctx.create_event_batch("batch_test", 5);
+        assert_eq!(batch.len(), 5);
+        
+        // Insert them all
+        let mut inserted = Vec::new();
+        for builder in batch {
+            let event = builder.insert().await?;
+            inserted.push(event);
+        }
+        
+        // Verify all were inserted
+        let events = ctx.events().by_source("batch_test").fetch().await?;
+        assert_eq!(events.len(), 5);
+        
+        // Test insert_events with pre-built events
+        let pre_built: Vec<RawEvent> = (0..3)
+            .map(|i| ctx.event()
+                .source("pre_built")
+                .type_("test")
+                .field("index", i)
+                .build()
+                .unwrap())
+            .collect();
+        
+        let inserted = ctx.insert_events(&pre_built).await?;
+        assert_eq!(inserted.len(), 3);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_schema_validation(ctx: TestContext) -> TestResult<()> {
+        // Register a test schema
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "required_field": {"type": "string"},
+                "optional_field": {"type": "number"}
+            },
+            "required": ["required_field"]
+        });
+        
+        let schema_id = ctx.register_schema("test", "validated.event", "1.0", schema).await?;
+        
+        // Create valid event
+        let valid_event = ctx.event()
+            .source("test")
+            .type_("validated.event")
+            .field("required_field", "present")
+            .field("optional_field", 42)
+            .build()?;
+        
+        // Should validate successfully
+        ctx.validate_against_schema(&valid_event, schema_id).await?;
+        
+        // Create invalid event (missing required field)
+        let invalid_event = ctx.event()
+            .source("test")
+            .type_("validated.event")
+            .field("optional_field", 42)
+            .build()?;
+        
+        // Should fail validation
+        let result = ctx.validate_against_schema(&invalid_event, schema_id).await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("required"));
+        
+        // Test validated event builder
+        let validated = ctx.validated_event(schema_id)
+            .source("test")
+            .type_("validated.event")
+            .field("required_field", "valid")
+            .insert()
+            .await?;
+        
+        assert_eq!(validated.payload["required_field"], json!("valid"));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_timing_utilities(ctx: TestContext) -> TestResult<()> {
+        // Test synchronizer
+        let sync = ctx.timing().synchronizer(Duration::from_secs(1));
+        
+        // Spawn task to signal after delay
+        let sync_clone = Arc::new(sync);
+        let sync_for_task = sync_clone.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            sync_for_task.signal();
+        });
+        
+        // Wait should succeed
+        sync_clone.wait().await.map_err(|_| CoreError::Timeout("Sync wait failed".to_string()))?;
+        
+        // Test event counter
+        let counter = ctx.timing().event_counter(3);
+        counter.increment();
+        counter.increment();
+        counter.increment();
+        assert_eq!(counter.get(), 3);
+        
+        // Test barrier
+        let barrier = ctx.timing().barrier(2);
+        let barrier_clone = Arc::new(barrier);
+        
+        let b1 = barrier_clone.clone();
+        let h1 = tokio::spawn(async move {
+            b1.wait(Duration::from_secs(1)).await
+        });
+        
+        let b2 = barrier_clone.clone();
+        let h2 = tokio::spawn(async move {
+            b2.wait(Duration::from_secs(1)).await
+        });
+        
+        // Both should complete successfully
+        h1.await.map_err(|e| CoreError::Service(format!("Task 1 failed: {}", e)))??
+            .map_err(|_| CoreError::Timeout("Barrier wait failed".to_string()))?;
+        h2.await.map_err(|e| CoreError::Service(format!("Task 2 failed: {}", e)))??
+            .map_err(|_| CoreError::Timeout("Barrier wait failed".to_string()))?;
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_error_handling_in_builders(ctx: TestContext) -> TestResult<()> {
+        // Test empty source validation
+        let result = ctx.event()
+            .source("")
+            .type_("test")
+            .insert()
+            .await;
+        assert!(result.is_err());
+        
+        // Test empty type validation
+        let result = ctx.event()
+            .source("test")
+            .type_("")
+            .insert()
+            .await;
+        assert!(result.is_err());
+        
+        // Test insert_direct bypasses validation
+        let event = ctx.event()
+            .source("") // Would normally fail
+            .type_("test")
+            .insert_direct()
+            .await;
+        // This might succeed or fail depending on database constraints
+        // The point is it bypasses our validation layer
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_concurrent_helpers(ctx: TestContext) -> TestResult<()> {
+        // Test run_concurrent
+        let results = ctx.run_concurrent(3, |ctx, i| async move {
+            // Each task inserts an event
+            let event = ctx.event()
+                .source("concurrent")
+                .type_("test")
+                .field("task_id", i)
+                .insert()
+                .await?;
+            Ok(event.id)
+        }).await?;
+        
+        assert_eq!(results.len(), 3);
+        
+        // All events should be in original context
+        let events = ctx.events().by_source("concurrent").fetch().await?;
+        assert_eq!(events.len(), 3);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_measure_helper(ctx: TestContext) -> TestResult<()> {
+        let (result, duration) = ctx.measure(async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            ctx.event().source("measured").type_("test").insert().await
+        }).await?;
+        
+        assert!(duration >= Duration::from_millis(50));
+        assert!(duration < Duration::from_millis(200)); // Reasonable upper bound
+        assert!(result.is_ok());
+        
+        Ok(())
+    }
+}

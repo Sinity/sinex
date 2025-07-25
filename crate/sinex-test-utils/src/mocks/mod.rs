@@ -72,3 +72,355 @@ impl<'a> MockBuilder<'a> {
         mock_network::MockNetwork::new(mock_network::MockNetworkConfig::default())
     }
 }
+
+// Comprehensive mock tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::*;
+    
+    #[sinex_test]
+    async fn test_mock_builder_creation(ctx: TestContext) -> TestResult<()> {
+        // Mock builder should be accessible from context
+        let mocks = ctx.mocks();
+        
+        // Should create filesystem mock
+        let fs = mocks.filesystem();
+        assert!(fs.exists(Path::new("/")).await);
+        
+        // Should create database mock
+        let db = mocks.database();
+        assert_eq!(db.name(), "mock");
+        
+        // Should create redis mock
+        let redis = mocks.redis();
+        let result = redis.get("test").await?;
+        assert!(result.is_none());
+        
+        // Should create satellite mock
+        let sat = mocks.satellite("test-satellite");
+        assert_eq!(sat.name(), "test-satellite");
+        
+        // Should create ingestd mock
+        let ingestd = mocks.ingestd();
+        assert_eq!(ingestd.name(), "mock-ingestd");
+        
+        // Should create network mock
+        let net = mocks.network();
+        assert!(!net.is_connected());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_isolation(ctx: TestContext) -> TestResult<()> {
+        // Each test should get isolated mocks
+        let fs1 = ctx.mocks().filesystem();
+        let fs2 = ctx.mocks().filesystem();
+        
+        // Operations on one should not affect the other
+        fs1.create_file(Path::new("/test1.txt"), b"content1").await?;
+        
+        assert!(fs1.exists(Path::new("/test1.txt")).await);
+        assert!(!fs2.exists(Path::new("/test1.txt")).await);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_error_injection(ctx: TestContext) -> TestResult<()> {
+        use mock_filesystem::MockFilesystemConfig;
+        
+        // Create filesystem with error injection
+        let mut config = MockFilesystemConfig::default();
+        config.permission_error_rate = 1.0; // Always fail
+        
+        let fs = mock_filesystem::MockFilesystem::new(config);
+        
+        // Should fail with permission error
+        let result = fs.create_file(Path::new("/test.txt"), b"content").await;
+        assert!(result.is_err());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_concurrency(ctx: TestContext) -> TestResult<()> {
+        let fs = ctx.mocks().filesystem();
+        
+        // Concurrent operations should be safe
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let fs_clone = fs.clone();
+                tokio::spawn(async move {
+                    let path = format!("/concurrent_{}.txt", i);
+                    fs_clone.create_file(Path::new(&path), format!("content_{}", i).as_bytes()).await
+                })
+            })
+            .collect();
+        
+        let results = futures::future::join_all(handles).await;
+        
+        // All should succeed
+        for result in results {
+            assert!(result?.is_ok());
+        }
+        
+        // All files should exist
+        for i in 0..10 {
+            let path = format!("/concurrent_{}.txt", i);
+            assert!(fs.exists(Path::new(&path)).await);
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_state_tracking(ctx: TestContext) -> TestResult<()> {
+        let db = ctx.mocks().database();
+        
+        // Mock should track operations
+        assert_eq!(db.query_count(), 0);
+        
+        let _ = db.execute("INSERT INTO test VALUES (1)").await?;
+        let _ = db.execute("SELECT * FROM test").await?;
+        
+        assert_eq!(db.query_count(), 2);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_configuration(ctx: TestContext) -> TestResult<()> {
+        use mock_network::MockNetworkConfig;
+        
+        // Should support custom configuration
+        let mut config = MockNetworkConfig::default();
+        config.latency = Duration::from_millis(100);
+        config.packet_loss_rate = 0.1;
+        
+        let net = mock_network::MockNetwork::new(config);
+        
+        // Configuration should affect behavior
+        let start = std::time::Instant::now();
+        let _ = net.send_packet(b"test").await;
+        let elapsed = start.elapsed();
+        
+        // Should have simulated latency
+        assert!(elapsed >= Duration::from_millis(100));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_failure_patterns(ctx: TestContext) -> TestResult<()> {
+        use failure_injector::{FailurePattern, FailureInjector};
+        
+        let injector = FailureInjector::new();
+        
+        // Test different failure patterns
+        injector.set_pattern(FailurePattern::Constant { rate: 0.5 });
+        
+        let mut failures = 0;
+        for _ in 0..100 {
+            if injector.should_fail().await {
+                failures += 1;
+            }
+        }
+        
+        // Should be approximately 50%
+        assert!(failures > 40 && failures < 60);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_lifecycle(ctx: TestContext) -> TestResult<()> {
+        let sat = ctx.mocks().satellite("lifecycle-test");
+        
+        // Should start in stopped state
+        assert!(!sat.is_running());
+        
+        // Should be startable
+        sat.start().await?;
+        assert!(sat.is_running());
+        
+        // Should be stoppable
+        sat.stop().await?;
+        assert!(!sat.is_running());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_event_generation(ctx: TestContext) -> TestResult<()> {
+        let sat = ctx.mocks().satellite("event-gen");
+        sat.start().await?;
+        
+        // Should generate events
+        let events = sat.generate_events(5).await?;
+        assert_eq!(events.len(), 5);
+        
+        // Events should have proper structure
+        for event in events {
+            assert_eq!(event.source, "event-gen");
+            assert!(!event.id.to_string().is_empty());
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_redis_operations(ctx: TestContext) -> TestResult<()> {
+        let redis = ctx.mocks().redis();
+        
+        // Basic operations
+        redis.set("key1", "value1").await?;
+        let value = redis.get("key1").await?;
+        assert_eq!(value, Some("value1".to_string()));
+        
+        // Expiration
+        redis.set_with_expiry("key2", "value2", Duration::from_millis(100)).await?;
+        assert!(redis.get("key2").await?.is_some());
+        
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        assert!(redis.get("key2").await?.is_none());
+        
+        // Lists
+        redis.lpush("list1", "item1").await?;
+        redis.lpush("list1", "item2").await?;
+        
+        let items = redis.lrange("list1", 0, -1).await?;
+        assert_eq!(items.len(), 2);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_database_transactions(ctx: TestContext) -> TestResult<()> {
+        let db = ctx.mocks().database();
+        
+        // Should support transactions
+        let tx = db.begin().await?;
+        
+        tx.execute("INSERT INTO test VALUES (1)").await?;
+        tx.execute("INSERT INTO test VALUES (2)").await?;
+        
+        // Before commit, main connection shouldn't see changes
+        let result = db.query("SELECT COUNT(*) FROM test").await?;
+        assert_eq!(result.len(), 0);
+        
+        tx.commit().await?;
+        
+        // After commit, should see changes
+        let result = db.query("SELECT COUNT(*) FROM test").await?;
+        assert_eq!(result.len(), 1);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_filesystem_operations(ctx: TestContext) -> TestResult<()> {
+        let fs = ctx.mocks().filesystem();
+        
+        // Directory operations
+        fs.create_dir(Path::new("/test_dir")).await?;
+        assert!(fs.exists(Path::new("/test_dir")).await);
+        assert!(fs.is_dir(Path::new("/test_dir")).await);
+        
+        // File operations
+        let content = b"Hello, world!";
+        fs.create_file(Path::new("/test_dir/file.txt"), content).await?;
+        
+        let read_content = fs.read_file(Path::new("/test_dir/file.txt")).await?;
+        assert_eq!(read_content, content);
+        
+        // Metadata
+        let metadata = fs.metadata(Path::new("/test_dir/file.txt")).await?;
+        assert_eq!(metadata.len(), content.len() as u64);
+        
+        // Move operations
+        fs.rename(Path::new("/test_dir/file.txt"), Path::new("/test_dir/renamed.txt")).await?;
+        assert!(!fs.exists(Path::new("/test_dir/file.txt")).await);
+        assert!(fs.exists(Path::new("/test_dir/renamed.txt")).await);
+        
+        // Delete operations
+        fs.remove_file(Path::new("/test_dir/renamed.txt")).await?;
+        assert!(!fs.exists(Path::new("/test_dir/renamed.txt")).await);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_network_simulation(ctx: TestContext) -> TestResult<()> {
+        let net = ctx.mocks().network();
+        
+        // Connection simulation
+        net.connect("example.com:80").await?;
+        assert!(net.is_connected());
+        
+        // Data transfer
+        let sent = net.send_packet(b"GET / HTTP/1.1\r\n\r\n").await?;
+        assert_eq!(sent, 18);
+        
+        // Receive simulation
+        net.simulate_receive(b"HTTP/1.1 200 OK\r\n\r\n").await;
+        let received = net.receive_packet().await?;
+        assert_eq!(received, b"HTTP/1.1 200 OK\r\n\r\n");
+        
+        // Disconnection
+        net.disconnect().await?;
+        assert!(!net.is_connected());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_mock_ingestd_grpc(ctx: TestContext) -> TestResult<()> {
+        let ingestd = ctx.mocks().ingestd();
+        ingestd.start().await?;
+        
+        // Should accept events
+        let event = ctx.event()
+            .source("test")
+            .type_("test.event")
+            .build();
+        
+        ingestd.ingest_event(&event).await?;
+        
+        // Should track ingested events
+        assert_eq!(ingestd.event_count(), 1);
+        
+        // Should support batch ingestion
+        let events: Vec<_> = (0..5)
+            .map(|i| ctx.event()
+                .source("batch")
+                .type_("test.batch")
+                .field("index", i)
+                .build())
+            .collect();
+        
+        ingestd.ingest_batch(&events).await?;
+        assert_eq!(ingestd.event_count(), 6);
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_mock_config_defaults() {
+        use mock_filesystem::MockFilesystemConfig;
+        use mock_network::MockNetworkConfig;
+        use mock_database::MockDatabaseConfig;
+        
+        // All configs should have sensible defaults
+        let fs_config = MockFilesystemConfig::default();
+        assert_eq!(fs_config.max_files, 10000);
+        assert_eq!(fs_config.permission_error_rate, 0.0);
+        
+        let net_config = MockNetworkConfig::default();
+        assert_eq!(net_config.packet_loss_rate, 0.0);
+        
+        let db_config = MockDatabaseConfig::default();
+        assert_eq!(db_config.max_connections, 100);
+    }
+}

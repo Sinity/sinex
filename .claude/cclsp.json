@@ -1,0 +1,27 @@
+{
+  "servers": [
+    {
+      "extensions": [
+        "py",
+        "pyi"
+      ],
+      "command": [
+        "uvx",
+        "--from",
+        "python-lsp-server",
+        "pylsp"
+      ],
+      "rootDir": ".",
+      "restartInterval": 5
+    },
+    {
+      "extensions": [
+        "rs"
+      ],
+      "command": [
+        "rust-analyzer"
+      ],
+      "rootDir": "."
+    }
+  ]
+}

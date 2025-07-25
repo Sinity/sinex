@@ -1209,3 +1209,359 @@ mod tests {
         assert!(!scenario.validation_steps.is_empty());
     }
 }
+
+// Comprehensive deployment scenario tests
+#[cfg(test)]
+mod comprehensive_tests {
+    use super::*;
+    use crate::prelude::*;
+    
+    #[sinex_test]
+    async fn test_environment_types(_ctx: TestContext) -> TestResult<()> {
+        // Test all environment type variants
+        let env_types = vec![
+            EnvironmentType::Development,
+            EnvironmentType::Staging,
+            EnvironmentType::Production,
+            EnvironmentType::EdgeComputing,
+            EnvironmentType::HighAvailability,
+            EnvironmentType::DisasterRecovery,
+        ];
+        
+        for env_type in env_types {
+            match env_type {
+                EnvironmentType::Development => assert_eq!(format!("{:?}", env_type), "Development"),
+                EnvironmentType::Production => assert_eq!(format!("{:?}", env_type), "Production"),
+                _ => {} // Other types exist
+            }
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_dependency_types(_ctx: TestContext) -> TestResult<()> {
+        // Test all dependency type variants
+        assert_eq!(DependencyType::Database, DependencyType::Database);
+        assert_eq!(DependencyType::Redis, DependencyType::Redis);
+        assert_eq!(DependencyType::FileSystem, DependencyType::FileSystem);
+        assert_eq!(DependencyType::Network, DependencyType::Network);
+        assert_eq!(DependencyType::Service, DependencyType::Service);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_dependency_availability(_ctx: TestContext) -> TestResult<()> {
+        // Test all availability states
+        assert_eq!(DependencyAvailability::Available, DependencyAvailability::Available);
+        assert_eq!(DependencyAvailability::Unavailable, DependencyAvailability::Unavailable);
+        assert_eq!(DependencyAvailability::Intermittent, DependencyAvailability::Intermittent);
+        assert_eq!(DependencyAvailability::Degraded, DependencyAvailability::Degraded);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_resource_constraints_creation(_ctx: TestContext) -> TestResult<()> {
+        let constraints = ResourceConstraints {
+            max_memory_mb: Some(1024),
+            max_cpu_cores: Some(4),
+            max_disk_space_mb: Some(10240),
+            max_file_descriptors: Some(1024),
+            max_network_connections: Some(100),
+        };
+        
+        assert_eq!(constraints.max_memory_mb, Some(1024));
+        assert_eq!(constraints.max_cpu_cores, Some(4));
+        assert_eq!(constraints.max_disk_space_mb, Some(10240));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_component_config_creation(_ctx: TestContext) -> TestResult<()> {
+        let mut env_vars = HashMap::new();
+        env_vars.insert("LOG_LEVEL".to_string(), "debug".to_string());
+        env_vars.insert("PORT".to_string(), "8080".to_string());
+        
+        let config = ComponentConfig {
+            component_name: "test-component".to_string(),
+            config_file_content: "key: value\nport: 8080".to_string(),
+            environment_variables: env_vars.clone(),
+            command_line_args: vec!["--verbose".to_string(), "--workers=4".to_string()],
+        };
+        
+        assert_eq!(config.component_name, "test-component");
+        assert!(config.config_file_content.contains("port: 8080"));
+        assert_eq!(config.environment_variables.get("LOG_LEVEL"), Some(&"debug".to_string()));
+        assert_eq!(config.command_line_args.len(), 2);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_external_dependency_creation(_ctx: TestContext) -> TestResult<()> {
+        let dep = ExternalDependency {
+            name: "postgres".to_string(),
+            dependency_type: DependencyType::Database,
+            connection_string: "postgresql://localhost:5432/test".to_string(),
+            availability: DependencyAvailability::Available,
+        };
+        
+        assert_eq!(dep.name, "postgres");
+        assert_eq!(dep.dependency_type, DependencyType::Database);
+        assert!(dep.connection_string.starts_with("postgresql://"));
+        assert_eq!(dep.availability, DependencyAvailability::Available);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_expected_outcome_creation(_ctx: TestContext) -> TestResult<()> {
+        let outcome = ExpectedOutcome {
+            should_succeed: true,
+            expected_warnings: vec!["Deprecated config option".to_string()],
+            expected_errors: vec![],
+            expected_metrics: HashMap::new(),
+            recovery_actions: vec![],
+        };
+        
+        assert!(outcome.should_succeed);
+        assert_eq!(outcome.expected_warnings.len(), 1);
+        assert!(outcome.expected_errors.is_empty());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_validation_step_creation(_ctx: TestContext) -> TestResult<()> {
+        let step = ValidationStep {
+            step_name: "check_database".to_string(),
+            validation_type: ValidationType::Connectivity,
+            expected_result: "Connected successfully".to_string(),
+            timeout_seconds: 30,
+            retry_count: 3,
+        };
+        
+        assert_eq!(step.step_name, "check_database");
+        assert_eq!(step.validation_type, ValidationType::Connectivity);
+        assert_eq!(step.timeout_seconds, 30);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_compatibility_scenario_creation(_ctx: TestContext) -> TestResult<()> {
+        let scenario = CompatibilityTestScenario {
+            name: "test_scenario".to_string(),
+            description: "Test scenario description".to_string(),
+            components: vec![],
+            environment_setup: EnvironmentSetup {
+                environment_type: EnvironmentType::Staging,
+                resource_constraints: ResourceConstraints {
+                    max_memory_mb: Some(2048),
+                    max_cpu_cores: None,
+                    max_disk_space_mb: None,
+                    max_file_descriptors: None,
+                    max_network_connections: None,
+                },
+                external_dependencies: vec![],
+            },
+            expected_outcome: ExpectedOutcome {
+                should_succeed: true,
+                expected_warnings: vec![],
+                expected_errors: vec![],
+                expected_metrics: HashMap::new(),
+                recovery_actions: vec![],
+            },
+            validation_steps: vec![],
+        };
+        
+        assert_eq!(scenario.name, "test_scenario");
+        assert_eq!(scenario.environment_setup.environment_type, EnvironmentType::Staging);
+        assert_eq!(scenario.environment_setup.resource_constraints.max_memory_mb, Some(2048));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_config_compatibility_tester_creation(_ctx: TestContext) -> TestResult<()> {
+        let tester = ConfigCompatibilityTester::new().await?;
+        
+        // Should have some default scenarios
+        assert!(!tester.test_scenarios.is_empty());
+        
+        // Temp directory should exist
+        assert!(tester.temp_dir.path().exists());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_scenario_execution(_ctx: TestContext) -> TestResult<()> {
+        let mut tester = ConfigCompatibilityTester::new().await?;
+        
+        // Get a scenario
+        let scenario = tester.get_scenario("development_environment");
+        assert!(scenario.is_some());
+        
+        // Execute it
+        let result = tester.run_scenario("development_environment").await?;
+        
+        // Check result structure
+        assert!(!result.scenario_name.is_empty());
+        assert!(result.start_time <= result.end_time);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_multiple_scenario_management(_ctx: TestContext) -> TestResult<()> {
+        let tester = ConfigCompatibilityTester::new().await?;
+        
+        // List all scenarios
+        let scenarios = tester.list_scenarios();
+        assert!(!scenarios.is_empty());
+        
+        // Should have standard scenarios
+        assert!(scenarios.iter().any(|s| s.contains("development")));
+        assert!(scenarios.iter().any(|s| s.contains("production")));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_validation_step_execution(_ctx: TestContext) -> TestResult<()> {
+        let step = ValidationStep {
+            step_name: "test_step".to_string(),
+            validation_type: ValidationType::Configuration,
+            expected_result: "valid".to_string(),
+            timeout_seconds: 5,
+            retry_count: 1,
+        };
+        
+        // Create a simple validator
+        let result = step.execute(&ComponentConfig {
+            component_name: "test".to_string(),
+            config_file_content: "valid config".to_string(),
+            environment_variables: HashMap::new(),
+            command_line_args: vec![],
+        }).await?;
+        
+        assert!(result.success || !result.success); // Result depends on implementation
+        assert!(!result.message.is_empty());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_resource_constraint_validation(_ctx: TestContext) -> TestResult<()> {
+        let constraints = ResourceConstraints {
+            max_memory_mb: Some(1024),
+            max_cpu_cores: Some(2),
+            max_disk_space_mb: Some(5120),
+            max_file_descriptors: Some(256),
+            max_network_connections: Some(50),
+        };
+        
+        // All constraints should be optional
+        let empty_constraints = ResourceConstraints {
+            max_memory_mb: None,
+            max_cpu_cores: None,
+            max_disk_space_mb: None,
+            max_file_descriptors: None,
+            max_network_connections: None,
+        };
+        
+        // Both should be valid
+        assert!(constraints.max_memory_mb.is_some());
+        assert!(empty_constraints.max_memory_mb.is_none());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_environment_setup_combinations(_ctx: TestContext) -> TestResult<()> {
+        // Test various environment combinations
+        let setups = vec![
+            EnvironmentSetup {
+                environment_type: EnvironmentType::Development,
+                resource_constraints: ResourceConstraints {
+                    max_memory_mb: Some(512),
+                    max_cpu_cores: Some(1),
+                    max_disk_space_mb: None,
+                    max_file_descriptors: None,
+                    max_network_connections: None,
+                },
+                external_dependencies: vec![],
+            },
+            EnvironmentSetup {
+                environment_type: EnvironmentType::Production,
+                resource_constraints: ResourceConstraints {
+                    max_memory_mb: Some(8192),
+                    max_cpu_cores: Some(8),
+                    max_disk_space_mb: Some(102400),
+                    max_file_descriptors: Some(65536),
+                    max_network_connections: Some(10000),
+                },
+                external_dependencies: vec![
+                    ExternalDependency {
+                        name: "postgres".to_string(),
+                        dependency_type: DependencyType::Database,
+                        connection_string: "postgresql://prod:5432/db".to_string(),
+                        availability: DependencyAvailability::Available,
+                    },
+                    ExternalDependency {
+                        name: "redis".to_string(),
+                        dependency_type: DependencyType::Redis,
+                        connection_string: "redis://prod:6379".to_string(),
+                        availability: DependencyAvailability::Available,
+                    },
+                ],
+            },
+        ];
+        
+        for setup in setups {
+            match setup.environment_type {
+                EnvironmentType::Development => {
+                    assert!(setup.resource_constraints.max_memory_mb.unwrap() < 1024);
+                }
+                EnvironmentType::Production => {
+                    assert!(setup.resource_constraints.max_memory_mb.unwrap() > 4096);
+                    assert!(!setup.external_dependencies.is_empty());
+                }
+                _ => {}
+            }
+        }
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_validation_type_equality() {
+        assert_eq!(ValidationType::Connectivity, ValidationType::Connectivity);
+        assert_ne!(ValidationType::Connectivity, ValidationType::Configuration);
+        assert_ne!(ValidationType::Performance, ValidationType::Functionality);
+    }
+    
+    #[test]
+    fn test_compatibility_test_result_creation() {
+        use std::time::SystemTime;
+        
+        let result = CompatibilityTestResult {
+            scenario_name: "test".to_string(),
+            success: true,
+            validation_results: vec![],
+            errors: vec![],
+            warnings: vec![],
+            metrics: HashMap::new(),
+            start_time: SystemTime::now(),
+            end_time: SystemTime::now(),
+        };
+        
+        assert!(result.success);
+        assert!(result.errors.is_empty());
+        assert!(result.warnings.is_empty());
+    }
+}

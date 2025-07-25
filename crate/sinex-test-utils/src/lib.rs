@@ -411,4 +411,230 @@ mod tests {
         
         Ok(())
     }
+    
+    #[sinex_test]
+    async fn test_database_isolation_comprehensive(ctx: TestContext) -> TestResult<()> {
+        // Create multiple contexts and verify complete isolation
+        let contexts = vec![
+            TestContext::with_name("isolation_1").await?,
+            TestContext::with_name("isolation_2").await?,
+            TestContext::with_name("isolation_3").await?,
+        ];
+        
+        // Each context inserts events with unique source
+        for (i, test_ctx) in contexts.iter().enumerate() {
+            for j in 0..3 {
+                test_ctx.event()
+                    .source(&format!("ctx_{}", i))
+                    .type_("isolation.test")
+                    .field("context_id", i)
+                    .field("event_num", j)
+                    .insert()
+                    .await?;
+            }
+        }
+        
+        // Verify each context only sees its own events
+        for (i, test_ctx) in contexts.iter().enumerate() {
+            let own_events = test_ctx.events()
+                .by_source(&format!("ctx_{}", i))
+                .fetch()
+                .await?;
+            assert_eq!(own_events.len(), 3, "Context {} should see exactly 3 of its own events", i);
+            
+            // Should not see events from other contexts
+            for j in 0..3 {
+                if i != j {
+                    let other_events = test_ctx.events()
+                        .by_source(&format!("ctx_{}", j))
+                        .fetch()
+                        .await?;
+                    assert_eq!(other_events.len(), 0, 
+                        "Context {} should not see events from context {}", i, j);
+                }
+            }
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_concurrent_test_execution(ctx: TestContext) -> TestResult<()> {
+        // Test that multiple tests can run concurrently without interference
+        let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
+        let mut handles = vec![];
+        
+        for i in 0..5 {
+            let barrier_clone = barrier.clone();
+            let handle = tokio::spawn(async move {
+                let ctx = TestContext::with_name(&format!("concurrent_{}", i)).await?;
+                
+                // Synchronize all tasks to start at same time
+                barrier_clone.wait().await;
+                
+                // Each performs operations
+                for j in 0..10 {
+                    ctx.event()
+                        .source(&format!("task_{}", i))
+                        .type_("concurrent.test")
+                        .field("iteration", j)
+                        .insert()
+                        .await?;
+                }
+                
+                // Verify only sees own events
+                let count = ctx.events()
+                    .by_source(&format!("task_{}", i))
+                    .count()
+                    .await?;
+                assert_eq!(count, 10);
+                
+                // Should not see any other task's events
+                for k in 0..5 {
+                    if k != i {
+                        let other_count = ctx.events()
+                            .by_source(&format!("task_{}", k))
+                            .count()
+                            .await?;
+                        assert_eq!(other_count, 0);
+                    }
+                }
+                
+                Ok::<(), CoreError>(())
+            });
+            handles.push(handle);
+        }
+        
+        // All should succeed
+        for handle in handles {
+            handle.await.map_err(|e| CoreError::Service(format!("Task failed: {}", e)))??;
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_error_propagation(ctx: TestContext) -> TestResult<()> {
+        // Test that errors propagate correctly through TestResult
+        
+        // Test validation error
+        let result = ctx.event()
+            .source("") // Empty source should fail
+            .type_("test")
+            .insert()
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("source"));
+        
+        // Test that custom errors work with TestResult
+        fn failing_operation() -> TestResult<()> {
+            Err(CoreError::Validation("Custom validation error".to_string()))
+        }
+        
+        let result = failing_operation();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Custom validation error");
+        
+        Ok(())
+    }
+    
+    #[sinex_test(timeout = 5)]
+    async fn test_timeout_handling(ctx: TestContext) -> TestResult<()> {
+        // Test that the timeout attribute works
+        // This test should complete quickly, well under 5 seconds
+        
+        let start = std::time::Instant::now();
+        
+        // Do some work
+        for i in 0..10 {
+            ctx.event()
+                .source("timeout_test")
+                .type_("test")
+                .field("index", i)
+                .insert()
+                .await?;
+        }
+        
+        let elapsed = start.elapsed();
+        assert!(elapsed.as_secs() < 5, "Test should complete well under timeout");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_test_context_helpers(ctx: TestContext) -> TestResult<()> {
+        // Test various TestContext helper methods
+        
+        // Test name should be set
+        assert!(!ctx.test_name().is_empty());
+        
+        // Pool should be valid
+        let pool_result: Result<i32, sqlx::Error> = sqlx::query_scalar("SELECT 1")
+            .fetch_one(ctx.pool())
+            .await;
+        assert_eq!(pool_result?, 1);
+        
+        // Test elapsed time tracking
+        let initial_elapsed = ctx.elapsed();
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+        let after_elapsed = ctx.elapsed();
+        assert!(after_elapsed > initial_elapsed);
+        
+        // Test event count tracking
+        let initial_count = ctx.test_event_count().await;
+        ctx.event().source("helper_test").type_("test").insert().await?;
+        let after_count = ctx.test_event_count().await;
+        assert_eq!(after_count, initial_count + 1);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_assertion_helpers(ctx: TestContext) -> TestResult<()> {
+        // Test the contextual assertion API
+        
+        // Basic assertions
+        ctx.assert("equality test").eq(&5, &5)?;
+        ctx.assert("condition test").that(true, "should be true")?;
+        
+        // Collection assertions
+        let items = vec![1, 2, 3];
+        ctx.assert("size test").has_size(&items, 3)?;
+        ctx.assert("not empty test").not_empty(&items)?;
+        
+        // Option assertions
+        let some_value = Some(42);
+        let none_value: Option<i32> = None;
+        ctx.assert("some test").some(&some_value)?;
+        ctx.assert("none test").none(&none_value)?;
+        
+        // Error assertions
+        let error_result: Result<(), CoreError> = Err(CoreError::Validation("test error".to_string()));
+        ctx.assert("error test").error_contains(&error_result, "test error")?;
+        
+        // Test that assertions fail appropriately
+        let bad_assertion = ctx.assert("should fail").eq(&5, &6);
+        assert!(bad_assertion.is_err());
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_result_type_alias() {
+        // Test that TestResult is properly aliased
+        fn returns_test_result() -> TestResult<String> {
+            Ok("success".to_string())
+        }
+        
+        let result = returns_test_result();
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "success");
+        
+        fn returns_error() -> TestResult<()> {
+            Err(CoreError::Unknown("test error".to_string()))
+        }
+        
+        let error_result = returns_error();
+        assert!(error_result.is_err());
+    }
 }

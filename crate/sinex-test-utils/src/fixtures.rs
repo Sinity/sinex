@@ -789,3 +789,381 @@ macro_rules! fixture {
         }
     };
 }
+
+// Comprehensive fixture tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::*;
+    use std::sync::Arc;
+    use std::time::Duration;
+    
+    #[sinex_test]
+    async fn test_fixture_caching(ctx: TestContext) -> TestResult<()> {
+        // First fixture should be created
+        let fixture1 = standard_user_session(&ctx).await?;
+        let user_id1 = fixture1.user_id.clone();
+        let event_count1 = fixture1.event_ids.len();
+        
+        // Second call should return cached fixture
+        let fixture2 = standard_user_session(&ctx).await?;
+        assert_eq!(user_id1, fixture2.user_id, "Should return cached fixture");
+        assert_eq!(event_count1, fixture2.event_ids.len(), "Should have same event count");
+        
+        // Different test context should get different fixture
+        let ctx2 = TestContext::with_name("different_test").await?;
+        let fixture3 = standard_user_session(&ctx2).await?;
+        assert_ne!(user_id1, fixture3.user_id, "Different context should get new fixture");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_lifecycle(ctx: TestContext) -> TestResult<()> {
+        // Create fixture with specific params
+        let fixture = user_session_with_params(&ctx, 15, 5).await?;
+        
+        // Verify it was created correctly
+        assert_eq!(fixture.event_ids.len(), 15);
+        assert!(fixture.checkpoint_id.is_some(), "Should have checkpoint");
+        
+        // Events should exist in database
+        for event_id in &fixture.event_ids {
+            ctx.assert_event_exists(*event_id).await?;
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_empty_database_fixture(ctx: TestContext) -> TestResult<()> {
+        // Insert some test data
+        ctx.event().source("test").type_("test").insert().await?;
+        ctx.event().source("test_2").type_("test").insert().await?;
+        
+        // Create empty database fixture
+        let _empty = empty_database(&ctx).await?;
+        
+        // Should have cleaned test data
+        let count = ctx.events().by_source("test").count().await?;
+        assert_eq!(count, 0, "Test data should be cleaned");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_populated_checkpoints_fixture(ctx: TestContext) -> TestResult<()> {
+        let fixture = populated_checkpoints(&ctx).await?;
+        
+        // Should have created multiple checkpoints
+        assert!(fixture.automaton_names.len() >= 3);
+        assert_eq!(fixture.automaton_names.len(), fixture.checkpoint_ids.len());
+        assert!(fixture.total_events_processed > 0);
+        
+        // Verify checkpoints exist
+        for name in &fixture.automaton_names {
+            let count = ctx.checkpoints().by_automaton(name).count().await?;
+            assert_eq!(count, 1, "Should have one checkpoint for {}", name);
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_error_scenarios_fixture(ctx: TestContext) -> TestResult<()> {
+        let fixture = error_scenarios(&ctx).await?;
+        
+        // Should have error messages
+        assert!(!fixture.error_messages.is_empty());
+        
+        // Should have created failed operations
+        assert!(!fixture.failed_operation_ids.is_empty());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_performance_dataset_fixture(ctx: TestContext) -> TestResult<()> {
+        // Create small performance dataset
+        let fixture = performance_dataset_with_size(&ctx, 100).await?;
+        
+        assert_eq!(fixture.event_count, 100);
+        assert_eq!(fixture.event_ids.len(), 100);
+        assert!(fixture.sources.len() >= 4);
+        
+        // Verify time distribution
+        let (start, end) = fixture.time_range;
+        assert!(end > start);
+        
+        // Events should exist
+        let count = ctx.events().count().await?;
+        assert!(count >= 100);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_composite_fixtures(ctx: TestContext) -> TestResult<()> {
+        let composite = user_session_with_checkpoints(&ctx).await?;
+        
+        // Both fixtures should be available
+        assert!(!composite.first.event_ids.is_empty());
+        assert!(!composite.second.automaton_names.is_empty());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_pre_warmed_fixture(ctx: TestContext) -> TestResult<()> {
+        let fixture = pre_warmed_database(&ctx).await?;
+        
+        assert!(fixture.event_count > 0);
+        assert!(fixture.checkpoint_count > 0);
+        assert!(fixture.operation_count > 0);
+        assert!(fixture.total_size_bytes > 0);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_transaction_fixture(ctx: TestContext) -> TestResult<()> {
+        let result = with_transaction_fixture(&ctx, |mut tx| async move {
+            // Work with transaction
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
+                .fetch_one(&mut *tx)
+                .await?;
+            
+            // Should see fixture event
+            assert!(count >= 1);
+            
+            // Insert more data
+            sqlx::query(
+                "INSERT INTO core.events (id, source, event_type, host, payload) 
+                 VALUES ($1, 'tx_test', 'test', 'test', '{}'::jsonb)"
+            )
+            .bind(sinex_ulid::Ulid::new().to_uuid())
+            .execute(&mut *tx)
+            .await?;
+            
+            Ok(42)
+        }).await?;
+        
+        assert_eq!(result, 42);
+        
+        // Transaction should be rolled back
+        let count = ctx.events().by_source("tx_test").count().await?;
+        assert_eq!(count, 0, "Transaction should be rolled back");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_registry_cleanup() -> TestResult<()> {
+        // Create multiple fixtures
+        let ctx1 = TestContext::with_name("cleanup_test_1").await?;
+        let ctx2 = TestContext::with_name("cleanup_test_2").await?;
+        
+        let _fixture1 = standard_user_session(&ctx1).await?;
+        let _fixture2 = standard_user_session(&ctx2).await?;
+        
+        // Manual cleanup
+        cleanup_all_fixtures().await?;
+        
+        // Registry should be empty
+        let registry = get_registry().await;
+        let reg = registry.lock().await;
+        assert!(reg.cache.is_empty(), "Cache should be empty after cleanup");
+        assert!(reg.ref_counts.is_empty(), "Ref counts should be empty");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_builder_pattern(ctx: TestContext) -> TestResult<()> {
+        // Test the FixtureBuilder pattern
+        let builder = FixtureBuilder::<UserSessionFixture>::new()
+            .param("event_count", 20)
+            .param("checkpoint_interval", 10)
+            .param("user_prefix", "builder_test");
+        
+        // Builder should store params
+        assert_eq!(builder.params().len(), 3);
+        assert_eq!(builder.params()["event_count"], json!(20));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_scenario_fixture_creation(ctx: TestContext) -> TestResult<()> {
+        // Create a complex scenario
+        let scenario = ctx.scenarios().multi_event()
+            .with_event(TestEventBuilder::new("scenario", "test.start"))
+            .with_events_from_source("scenario", "test.middle", 5)
+            .with_event(TestEventBuilder::new("scenario", "test.end"))
+            .with_checkpoint(TestCheckpointBuilder::new("scenario-processor"))
+            .execute(ctx.pool())
+            .await?;
+        
+        assert_eq!(scenario.event_count, 7); // 1 + 5 + 1
+        assert_eq!(scenario.event_ids.len(), 7);
+        
+        // Verify all events exist
+        let events = ctx.events().by_source("scenario").fetch().await?;
+        assert_eq!(events.len(), 7);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_concurrent_fixture_access(ctx: TestContext) -> TestResult<()> {
+        let handles: Vec<_> = (0..10)
+            .map(|i| {
+                let ctx_clone = ctx.clone();
+                tokio::spawn(async move {
+                    // All tasks should get same cached fixture
+                    let fixture = standard_user_session(&ctx_clone).await?;
+                    Ok::<_, CoreError>((i, fixture.user_id))
+                })
+            })
+            .collect();
+        
+        let results = futures::future::join_all(handles).await;
+        
+        // All should get same user_id (cached)
+        let mut user_ids = vec![];
+        for result in results {
+            let (_, user_id) = result??;
+            user_ids.push(user_id);
+        }
+        
+        let first_id = &user_ids[0];
+        for id in &user_ids {
+            assert_eq!(id, first_id, "All concurrent accesses should get same fixture");
+        }
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_timeout_handling(ctx: TestContext) -> TestResult<()> {
+        // Create fixture that simulates slow operation
+        let start = std::time::Instant::now();
+        
+        let fixture = ctx.fixtures()
+            .with_timeout(Duration::from_secs(5))
+            .create(async {
+                // Simulate work
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                UserSessionFixture {
+                    user_id: "timeout_test".to_string(),
+                    event_ids: vec![],
+                    checkpoint_id: None,
+                    session_start: chrono::Utc::now(),
+                    session_end: chrono::Utc::now(),
+                }
+            })
+            .await?;
+        
+        let elapsed = start.elapsed();
+        assert!(elapsed < Duration::from_secs(1), "Should complete quickly");
+        assert_eq!(fixture.user_id, "timeout_test");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_error_propagation(ctx: TestContext) -> TestResult<()> {
+        // Fixture that fails should propagate error
+        let result: Result<UserSessionFixture, CoreError> = ctx.fixtures()
+            .create(async {
+                Err(CoreError::Validation("Test fixture error".to_string()))
+            })
+            .await;
+        
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.to_string().contains("Test fixture error"));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_parameterized_fixtures(ctx: TestContext) -> TestResult<()> {
+        // Test fixtures with different parameters
+        parameterized!([
+            (5, 1),
+            (10, 2),
+            (20, 5),
+            (50, 10),
+        ], |(event_count, checkpoint_interval)| {
+            let fixture = user_session_with_params(&ctx, event_count, checkpoint_interval).await?;
+            
+            assert_eq!(fixture.event_ids.len(), event_count);
+            
+            // Should have checkpoint if interval allows
+            if event_count >= checkpoint_interval {
+                assert!(fixture.checkpoint_id.is_some());
+            }
+            
+            Ok(())
+        });
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_fixture_cleanup_on_drop(ctx: TestContext) -> TestResult<()> {
+        let fixture_id = {
+            let fixture = standard_user_session(&ctx).await?;
+            fixture.user_id.clone()
+        }; // Fixture dropped here
+        
+        // Registry should still track it until test ends
+        let registry = get_registry().await;
+        let reg = registry.lock().await;
+        let cache_key = format!("{}:{}", ctx.test_name(), "standard_user_session");
+        assert!(reg.cache.contains_key(&cache_key));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_complex_fixture_scenario(ctx: TestContext) -> TestResult<()> {
+        // Create a complex scenario with multiple fixture types
+        let user_session = standard_user_session(&ctx).await?;
+        let checkpoints = populated_checkpoints(&ctx).await?;
+        let perf_data = performance_dataset_with_size(&ctx, 50).await?;
+        
+        // All fixtures should coexist
+        assert!(!user_session.event_ids.is_empty());
+        assert!(!checkpoints.automaton_names.is_empty());
+        assert_eq!(perf_data.event_count, 50);
+        
+        // Total events should be sum of all fixtures
+        let total_events = ctx.events().count().await?;
+        assert!(total_events >= user_session.event_ids.len() + perf_data.event_count);
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_fixture_registry_singleton() {
+        // Registry should be singleton
+        let registry1 = Arc::clone(&FIXTURE_REGISTRY);
+        let registry2 = Arc::clone(&FIXTURE_REGISTRY);
+        
+        assert!(Arc::ptr_eq(&registry1, &registry2));
+    }
+    
+    #[test]
+    fn test_fixture_builder_immutability() {
+        let builder1 = FixtureBuilder::<UserSessionFixture>::new()
+            .param("test", 1);
+        
+        let builder2 = builder1.param("test2", 2);
+        
+        // Original builder unchanged
+        assert_eq!(builder1.params().len(), 1);
+        assert_eq!(builder2.params().len(), 2);
+    }
+}
