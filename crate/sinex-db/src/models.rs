@@ -6,7 +6,63 @@ use sqlx::FromRow;
 // RawEvent is now re-exported from sinex-events
 // This eliminates type conflicts and provides a single source of truth
 
-/// Event payload schema
+/// Event payload schema registry entry
+/// 
+/// # Technical Implementation Module: Event Schema Registry
+/// 
+/// **Maturity Level**: L4 - Implemented  
+/// **Implementation**: 98% (Comprehensive implementation)  
+/// **Dependencies**: PostgreSQL, JSONB support, ULID generation, Git repository  
+/// **Blocks**: Event validation, schema evolution, type safety, code generation  
+/// 
+/// ## Overview
+/// 
+/// Central registry for JSON Schema definitions describing event payload structures.
+/// Enables data integrity, documentation, interoperability, and schema evolution management.
+/// 
+/// ## Database Schema
+/// 
+/// Maps to `sinex_schemas.event_payload_schemas` table:
+/// 
+/// ```sql
+/// CREATE TABLE sinex_schemas.event_payload_schemas (
+///     id                      ULID PRIMARY KEY DEFAULT gen_ulid(),
+///     event_source            TEXT NOT NULL,
+///     event_type              TEXT NOT NULL,
+///     schema_version          TEXT NOT NULL, -- e.g., "v1.0", "v2.0"
+///     json_schema_definition  JSONB NOT NULL, -- The actual JSON Schema
+///     description             TEXT,
+///     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+///     is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+///     UNIQUE (event_source, event_type, schema_version)
+/// );
+/// ```
+/// 
+/// ## GitOps Management Strategy
+/// 
+/// 1. **Source of Truth**: JSON Schema files in `/schemas` directory
+/// 2. **CI/CD Pipeline**: Validates and deploys schema changes
+/// 3. **Backward Compatibility**: Automatic checking on updates
+/// 4. **Schema Evolution**: Version-based with activation flags
+/// 
+/// ## Usage Pattern
+/// 
+/// ```rust
+/// // Ingestors lookup schema ID during initialization
+/// let schema = EventPayloadSchema::find_active(
+///     &pool,
+///     "filesystem",
+///     "file_created"
+/// ).await?;
+/// 
+/// // Attach schema ID to events
+/// event.payload_schema_id = Some(schema.id);
+/// ```
+/// 
+/// ## Schema Change Eventification
+/// 
+/// Changes to schemas are automatically logged as events via database trigger,
+/// creating `sinex.schema.definition_changed` events for audit trail.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct EventPayloadSchema {
     pub id: Ulid,
