@@ -314,6 +314,57 @@ impl Ulid {
 }
 
 impl Default for Ulid {
+    /// Create a new ULID.
+    ///
+    /// This is equivalent to [`Ulid::new()`].
+    /// 
+    /// ## Architectural Decision: Clock Regression Handling (ADR-011)
+    /// 
+    /// **Status**: Implemented  
+    /// **Decision Date**: 2025-01-10
+    /// 
+    /// ### Context
+    /// 
+    /// ULID generation relies on system time to create time-ordered identifiers. When system 
+    /// clocks go backwards (due to NTP corrections, DST changes, or manual adjustments), this 
+    /// can break ULID ordering assumptions and cause events to appear out of sequence.
+    /// 
+    /// ### Decision
+    /// 
+    /// **We handle clock regression by not caring about it.**
+    /// 
+    /// Instead, we:
+    /// 1. Use standard `Ulid::new()` without modification
+    /// 2. Rely on the operating system to maintain reasonable time
+    /// 3. Recommend (but not require) chrony for time synchronization
+    /// 4. Accept that minor clock regressions may occasionally cause out-of-order ULIDs
+    /// 
+    /// ### Rationale
+    /// 
+    /// 1. **Complexity vs Benefit**: Elaborate solutions add significant complexity for a rare edge case
+    /// 2. **Performance Impact**: Monotonic generators require synchronization that slows ULID generation
+    /// 3. **OS Responsibility**: Timekeeping is the operating system's job, not the application's
+    /// 4. **Real-world Impact**: With modern NTP clients (chrony), significant clock regression is extremely rare
+    /// 5. **Failure Mode**: If time goes backwards, having slightly out-of-order events is preferable to refusing to operate
+    /// 
+    /// ### Consequences
+    /// 
+    /// **Positive:**
+    /// - Simple, fast ULID generation with no synchronization overhead
+    /// - No complex time validation logic to maintain
+    /// - System continues operating even during time anomalies
+    /// - Clear separation of concerns (OS handles time, app handles events)
+    /// 
+    /// **Negative:**
+    /// - Events may occasionally have out-of-order ULIDs during clock regression
+    /// - No application-level detection of time anomalies
+    /// - Relies on proper OS configuration for time accuracy
+    /// 
+    /// **Mitigations:**
+    /// - Document that Sinex requires a properly synchronized system clock
+    /// - Recommend chrony with `makestep 1 3` configuration
+    /// - The `ts_ingest` derived from ULID provides a consistent timestamp even if system time is wrong
+    /// - Database indexes on both `id` and `ts_ingest` allow efficient querying by either order
     fn default() -> Self {
         Self::new()
     }

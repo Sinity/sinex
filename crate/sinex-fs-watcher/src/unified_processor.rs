@@ -3,6 +3,63 @@
 //! This module contains the new implementation that replaces the old EventSource-based
 //! FilesystemWatcher with a unified processor supporting snapshot, historical, and
 //! continuous scanning modes.
+//! 
+//! # Technical Implementation Module: Platform-Specific Filesystem Watchers
+//! 
+//! **Maturity Level**: L4 - Implemented  
+//! **Implementation**: 90% (Linux inotify fully working, cross-platform abstraction in place)  
+//! **Dependencies**: notify-rs crate, inotify on Linux, FSEvents on macOS  
+//! **Blocks**: Real-time content analysis, PKM document change detection  
+//! 
+//! ## Overview
+//! 
+//! This module implements efficient, low-overhead filesystem monitoring crucial for 
+//! ingesting new or updated user files, PKM notes, downloads, etc. The implementation
+//! uses platform-specific backends for optimal performance.
+//! 
+//! ## Platform-Specific Implementations
+//! 
+//! ### inotify (Linux)
+//! 
+//! Linux kernel subsystem for monitoring filesystem events. Key characteristics:
+//! 
+//! - **Non-recursive**: Must manually watch subdirectories
+//! - **Event types**: IN_MODIFY, IN_CLOSE_WRITE, IN_CREATE, IN_DELETE, IN_MOVED_FROM/TO
+//! - **System limits**: Configured via `/proc/sys/fs/inotify/max_user_watches`
+//! - **Overflow handling**: IN_Q_OVERFLOW signals dropped events, requires rescan
+//! 
+//! The notify-rs crate handles recursive watching by:
+//! 1. Watching root directory
+//! 2. On IN_CREATE | IN_ISDIR, adding new watch for subdirectory
+//! 3. On IN_DELETE | IN_ISDIR, removing watch for subdirectory
+//! 4. Handling IN_MOVED_TO/FROM for directory moves
+//! 
+//! ### FSEvents (macOS)
+//! 
+//! macOS native API with built-in advantages:
+//! 
+//! - **Automatic recursive monitoring**: No manual subdirectory management
+//! - **No per-directory limits**: More scalable for large trees
+//! - **Event coalescing**: Batches rapid changes, configurable latency
+//! - **Historical events**: Can catch up on changes while offline
+//! 
+//! ## Implementation Details
+//! 
+//! - **Completed write detection**: Uses IN_CLOSE_WRITE on Linux when available
+//! - **Debouncing**: Configurable delay to handle rapid file changes
+//! - **Rename tracking**: Cookie-based correlation for move operations
+//! - **Performance optimization**: Configurable max depth and ignore patterns
+//! 
+//! ## System Configuration
+//! 
+//! For extensive monitoring on Linux, increase inotify limits:
+//! ```bash
+//! # Temporary
+//! sudo sysctl fs.inotify.max_user_watches=524288
+//! 
+//! # Persistent (add to /etc/sysctl.d/99-inotify.conf)
+//! fs.inotify.max_user_watches=524288
+//! ```
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
