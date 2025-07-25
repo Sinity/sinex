@@ -305,8 +305,6 @@ impl<'ctx> PropertyTester<'ctx> {
         Ok(())
     }
     
-    // Note: test_concurrent_insertion_property moved to sinex-db/tests/concurrency_test.rs
-    // as it tests database concurrent insertion guarantees, not the test framework
 }
 
 /// Extension trait to add property testing to TestContext
