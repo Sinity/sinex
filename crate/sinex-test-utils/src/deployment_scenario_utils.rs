@@ -119,7 +119,7 @@ pub struct ValidationStep {
 }
 
 /// Type of validation to perform
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum ValidationType {
     ConfigurationLoad,
     ServiceStartup,
@@ -1323,8 +1323,12 @@ mod comprehensive_tests {
             should_succeed: true,
             expected_warnings: vec!["Deprecated config option".to_string()],
             expected_errors: vec![],
-            expected_metrics: HashMap::new(),
-            recovery_actions: vec![],
+            performance_expectations: PerformanceExpectations {
+                startup_time_max_secs: Some(10),
+                throughput_min_events_per_sec: None,
+                memory_usage_max_mb: None,
+                latency_max_ms: None,
+            },
         };
         
         assert!(outcome.should_succeed);
@@ -1338,15 +1342,13 @@ mod comprehensive_tests {
     async fn test_validation_step_creation(_ctx: TestContext) -> TestResult<()> {
         let step = ValidationStep {
             step_name: "check_database".to_string(),
-            validation_type: ValidationType::Connectivity,
-            expected_result: "Connected successfully".to_string(),
-            timeout_seconds: 30,
-            retry_count: 3,
+            validation_type: ValidationType::DatabaseConnection,
+            expected_result: ValidationExpectation::Success,
         };
         
         assert_eq!(step.step_name, "check_database");
-        assert_eq!(step.validation_type, ValidationType::Connectivity);
-        assert_eq!(step.timeout_seconds, 30);
+        assert_eq!(step.validation_type, ValidationType::DatabaseConnection);
+        assert_eq!(step.expected_result, ValidationExpectation::Success);
         
         Ok(())
     }
@@ -1372,8 +1374,12 @@ mod comprehensive_tests {
                 should_succeed: true,
                 expected_warnings: vec![],
                 expected_errors: vec![],
-                expected_metrics: HashMap::new(),
-                recovery_actions: vec![],
+                performance_expectations: PerformanceExpectations {
+                    startup_time_max_secs: None,
+                    throughput_min_events_per_sec: None,
+                    memory_usage_max_mb: None,
+                    latency_max_ms: None,
+                },
             },
             validation_steps: vec![],
         };
@@ -1411,7 +1417,7 @@ mod comprehensive_tests {
         
         // Check result structure
         assert!(!result.scenario_name.is_empty());
-        assert!(result.start_time <= result.end_time);
+        assert!(result.overall_success || !result.issues_found.is_empty());
         
         Ok(())
     }

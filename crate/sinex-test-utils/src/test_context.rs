@@ -192,6 +192,7 @@ use chrono::{DateTime, Utc};
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Unified test context - single entry point for all test operations
+#[derive(Debug)]
 pub struct TestContext {
     db: TestDatabase,
     test_name: String,
@@ -1425,6 +1426,7 @@ impl<'ctx> ValidatedEventBuilder<'ctx> {
 }
 
 /// Contextual assertion builder - provides rich error context for all assertions
+#[derive(Debug)]
 pub struct ContextualAssert<'ctx> {
     ctx: &'ctx TestContext,
     context: String,
@@ -2033,10 +2035,8 @@ mod tests {
         });
         
         // Both should complete successfully
-        h1.await.map_err(|e| CoreError::Service(format!("Task 1 failed: {}", e)))??
-            .map_err(|_| CoreError::Timeout("Barrier wait failed".to_string()))?;
-        h2.await.map_err(|e| CoreError::Service(format!("Task 2 failed: {}", e)))??
-            .map_err(|_| CoreError::Timeout("Barrier wait failed".to_string()))?;
+        h1.await.map_err(|e| CoreError::Service(format!("Task 1 failed: {}", e)))??;
+        h2.await.map_err(|e| CoreError::Service(format!("Task 2 failed: {}", e)))??;
         
         Ok(())
     }

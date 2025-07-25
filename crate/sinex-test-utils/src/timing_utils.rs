@@ -460,13 +460,13 @@ mod tests {
     
     #[sinex_test]
     async fn test_barrier_basic(ctx: TestContext) -> TestResult<()> {
-        let barrier = TestBarrier::new(3);
+        let barrier = Arc::new(TestBarrier::new(3));
         let counter = Arc::new(AtomicUsize::new(0));
         
         // Spawn participants
         let mut handles = vec![];
         for i in 0..3 {
-            let barrier_clone = Arc::new(barrier);
+            let barrier_clone = barrier.clone();
             let counter_clone = counter.clone();
             let handle = tokio::spawn(async move {
                 // Increment before barrier
@@ -499,18 +499,18 @@ mod tests {
     
     #[sinex_test]
     async fn test_barrier_timeout(ctx: TestContext) -> TestResult<()> {
-        let barrier = TestBarrier::new(3);
+        let barrier = Arc::new(TestBarrier::new(3));
         
         // Only 2 participants (less than required)
         let handle1 = tokio::spawn({
-            let barrier = Arc::new(barrier);
+            let barrier = barrier.clone();
             async move {
                 barrier.wait(Duration::from_millis(100)).await
             }
         });
         
         let handle2 = tokio::spawn({
-            let barrier = Arc::new(barrier);
+            let barrier = barrier.clone();
             async move {
                 barrier.wait(Duration::from_millis(100)).await
             }

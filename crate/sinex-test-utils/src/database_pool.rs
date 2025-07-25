@@ -200,6 +200,7 @@ impl PoolConfig {
 
 /// A test database handle that automatically returns to pool on Drop
 /// This is the primary interface for test database access
+#[derive(Debug)]
 pub struct TestDatabase {
     name: String,
     pool: DbPool,
@@ -334,6 +335,7 @@ impl Drop for TestDatabase {
 }
 
 /// A slot in the database pool
+#[derive(Debug)]
 struct DatabaseSlot {
     name: String,
     url: String,                 // Store URL instead of pool to create fresh connections

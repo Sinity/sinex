@@ -770,17 +770,15 @@ mod comprehensive_tests {
     async fn test_backpressure_handling(_ctx: TestContext) -> TestResult<()> {
         let setup = TestChannelSetup::<i32>::zero_capacity();
         let backpressure = BackpressureManager::new(
-            1, // threshold
-            Duration::from_millis(100),
-            100
+            10, // high watermark
+            5   // low watermark
         );
         
         // Test backpressure detection
-        let result = test_backpressure_management(
+        let result = backpressure::test_backpressure_management(
             &setup.sender,
             vec![1, 2, 3, 4, 5],
-            &backpressure,
-            "backpressure_test"
+            Duration::from_millis(10)
         ).await;
         
         // Should handle backpressure appropriately
@@ -808,11 +806,11 @@ mod comprehensive_tests {
         
         // Test batch receive
         behavior::test_batch_receive(
+            &setup.sender,
             &mut setup.receiver,
-            5,
-            Duration::from_secs(1),
             items,
-            "batch_test"
+            5,  // max_batch_size
+            Duration::from_secs(1)
         ).await?;
         
         Ok(())

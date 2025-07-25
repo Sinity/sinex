@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn test_coverage_assertions() {
         // Set up minimum coverage requirements
-        let min_coverage = TestCoverageRequirements {
+        let min_coverage = CoverageMinimums {
             event_types: 10,
             validation_rules: 5,
             error_conditions: 8,

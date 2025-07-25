@@ -859,7 +859,7 @@ mod tests {
                 ctx.event()
                     .source(format!("isolated-{}", i))
                     .type_("test")
-                    .field("unique_id", &unique_id)
+                    .field("unique_id", unique_id.clone())
                     .insert()
                     .await?;
                 
