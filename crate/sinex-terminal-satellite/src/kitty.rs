@@ -1,6 +1,25 @@
 //! Kitty terminal integration watcher
 //!
 //! Watches for Kitty terminal events and shell integration via Unix socket
+//!
+//! ## Implementation Details (TIM-KittyTerminalIntegration)
+//!
+//! Provides comprehensive Kitty terminal monitoring via:
+//! - **UNIX Domain Socket**: Primary communication method (~1-2ms latency)
+//! - **Remote Control API**: Window/tab/pane enumeration and state queries
+//! - **Scrollback Capture**: Efficient access to terminal history
+//! - **Real-time Monitoring**: Command execution and window state tracking
+//!
+//! Key remote control commands:
+//! - `{"cmd": "ls"}` - List all windows, tabs, and panes
+//! - `{"cmd": "get-text", "match": "focused:true", "extent": "scrollback"}` - Get scrollback
+//! - `{"cmd": "get-window-state", "match": "focused:true"}` - Get window state
+//!
+//! Security features:
+//! - Socket-only mode (disable PTY remote control)
+//! - Restrictive socket permissions (0600)
+//! - Optional password protection
+//! - Validated JSON command structure
 
 use regex::Regex;
 use serde_json::json;

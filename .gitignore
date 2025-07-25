@@ -2,6 +2,8 @@
 target/
 **/*.rs.bk
 *.pdb
+# Incremental compilation cache (if not in target/)
+on/
 
 # Coverage
 .coverage/
@@ -45,20 +47,16 @@ Thumbs.db
 .env
 .envrc
 
-# Logs
-*.log
-
 # Nix
 result
 result-*
 
 # Project specific
-/data/
-/logs/
 /spec/combo/
+.claude-outputs/
 .direnv/
 
-/docs/
+compilation.log
 
 # Git worktrees
 worktree-*

@@ -51,4 +51,9 @@ tokio-stream = { version = "0.1", features = ["net"] }
 
 [dev-dependencies]
 # For self-testing
-criterion = "0.5"
+criterion = { version = "0.5", features = ["html_reports"] }
+tokio-test = "0.4"
+
+[[bench]]
+name = "test_utils_bench"
+harness = false

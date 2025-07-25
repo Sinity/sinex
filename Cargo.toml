@@ -223,3 +223,28 @@ jsonschema = "0.17"
 
 # Database (for Atuin integration)
 rusqlite = { version = "0.30", features = ["bundled"] }
+
+# Speed-optimized profiles for development
+[profile.dev]
+# Fast compilation for development
+opt-level = 0
+debug = true
+split-debuginfo = "unpacked"  # Faster debug info handling
+incremental = true
+codegen-units = 256           # Maximum parallelism for fast compilation
+
+[profile.dev-fast]
+# Maximum compilation speed, minimal runtime performance
+inherits = "dev"
+opt-level = 0
+debug = false                 # No debug info at all for maximum speed
+incremental = true
+codegen-units = 256
+overflow-checks = false       # Skip overflow checks for speed
+debug-assertions = false      # Skip debug assertions
+strip = "symbols"             # Strip symbols for faster linking
+
+[profile.dev-cranelift]
+# Fastest possible compilation using cranelift backend (requires nightly)
+inherits = "dev-fast"
+# Note: This profile requires RUSTFLAGS="-Z codegen-backend=cranelift" to work

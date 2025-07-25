@@ -50,25 +50,62 @@ in
       maxConnections = mkOption {
         type = types.int;
         default = 20;
-        description = "Maximum database connections";
+        description = ''
+          Maximum database connections per service.
+          
+          Calculation guidelines:
+          - Base: 5-10 connections for low-traffic satellites
+          - Scale: 20-30 for high-traffic services (ingestd, gateway)
+          - Total PostgreSQL max_connections should be:
+            (number_of_services * avg_maxConnections) + 50 overhead
+          
+          Example with 10 satellites:
+          - 8 satellites @ 10 connections = 80
+          - 2 high-traffic @ 30 connections = 60
+          - Overhead for admin/monitoring = 50
+          - Total max_connections = 190 (round to 200)
+        '';
       };
 
       minConnections = mkOption {
         type = types.int;
         default = 5;
-        description = "Minimum database connections";
+        description = ''
+          Minimum database connections to maintain.
+          
+          Trade-offs:
+          - Higher: Faster response for bursts, more idle resources
+          - Lower: Better resource efficiency, slower burst response
+          - Recommended: 25% of maxConnections
+        '';
       };
 
       connectionTimeout = mkOption {
         type = types.int;
         default = 30;
-        description = "Connection timeout in seconds";
+        description = ''
+          Connection timeout in seconds.
+          
+          When to adjust:
+          - Increase (60s): High-latency networks, overloaded DB
+          - Decrease (10s): Fast failure detection needed
+          - Default (30s): Good for local/LAN PostgreSQL
+        '';
       };
 
       idleTimeout = mkOption {
         type = types.int;
         default = 600;
-        description = "Idle connection timeout in seconds";
+        description = ''
+          Idle connection timeout in seconds.
+          
+          Balancing act:
+          - Shorter (300s): Aggressive resource reclaim, more reconnects
+          - Longer (1800s): Fewer reconnects, more idle resources
+          - Default (600s/10min): Good balance for most workloads
+          
+          Set to 0 to disable idle timeouts (not recommended).
+        '';
       };
     };
 

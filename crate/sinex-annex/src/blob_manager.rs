@@ -1,3 +1,45 @@
+//! Blob management with PostgreSQL metadata and git-annex storage
+//!
+//! ## Core Workflow Integration
+//!
+//! 1. **File Detection**: Ingestors detect large files (>100KB threshold)
+//! 2. **Annex Addition**: `git annex add <file>` stores content by hash
+//! 3. **Metadata Extraction**: Parse annex key, compute checksums
+//! 4. **Database Registration**: Insert metadata into core.blobs table
+//! 5. **Event Generation**: Log blob registration events
+//!
+//! ## Database Schema (core.blobs)
+//!
+//! ```sql
+//! CREATE TABLE core.blobs (
+//!     id                ULID PRIMARY KEY,
+//!     annex_key         TEXT NOT NULL UNIQUE,
+//!     original_filename TEXT NOT NULL,
+//!     size_bytes        BIGINT NOT NULL,
+//!     mime_type         TEXT,
+//!     checksum_sha256   TEXT NOT NULL,
+//!     checksum_blake3   TEXT,
+//!     storage_backend   TEXT NOT NULL DEFAULT 'git-annex',
+//!     metadata          JSONB NOT NULL DEFAULT '{}',
+//!     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+//!     last_verified_at  TIMESTAMPTZ,
+//!     verification_status TEXT
+//! );
+//! ```
+//!
+//! ## Deduplication Strategy
+//!
+//! - Check BLAKE3 hash before ingestion
+//! - If exists, create new reference to existing blob
+//! - Save ~30-90% storage for common duplicates
+//!
+//! ## Performance Optimization
+//!
+//! - Batch operations for multiple files
+//! - Async I/O for file operations
+//! - Connection pooling for database access
+//! - Caching of frequently accessed blobs
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};

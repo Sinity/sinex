@@ -1,6 +1,33 @@
 //! Terminal recording watcher (Asciinema)
 //!
 //! Monitors for asciinema recording files and tracks session lifecycle
+//!
+//! ## Asciinema Format Details
+//! 
+//! ### File Format (v2)
+//! ```json
+//! {"version": 2, "width": 80, "height": 24, "timestamp": 1234567890, ...}
+//! [0.248, "o", "user@host:~$ "]
+//! [0.500, "o", "l"]
+//! [0.501, "o", "s"]
+//! [0.502, "o", "\r\n"]
+//! ```
+//!
+//! ### Auto-Recording Setup
+//! Add to shell profile (.bashrc/.zshrc):
+//! ```bash
+//! if [[ $- == *i* ]] && [[ -z "$ASCIINEMA_REC" ]]; then
+//!     export ASCIINEMA_REC=1
+//!     asciinema rec --quiet --stdin --command "$SHELL" \
+//!         "/tmp/asciinema/$(date +%Y%m%d_%H%M%S)_$$.cast"
+//! fi
+//! ```
+//!
+//! ### Event Generation
+//! - `terminal.session.started`: Recording begins
+//! - `terminal.session.ended`: Recording completes
+//! - Blob storage for .cast files
+//! - Metadata includes dimensions, duration, command
 
 use serde_json::json;
 use sinex_events::{EventFactory, RawEvent};

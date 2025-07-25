@@ -1,4 +1,13 @@
 # Sinex Configuration Module - Direct, Clear Settings
+#
+# This module defines the primary configuration interface for Sinex services.
+# For a complete example with all available options, see ../example.nix
+#
+# Related modules:
+# - database.nix: Database-specific configuration options
+# - satellite-services.nix: Individual satellite service definitions  
+# - monitoring.nix: Monitoring and alerting configuration
+# - preflight-verification.nix: Pre-deployment validation
 {
   lib,
   config,
@@ -282,6 +291,46 @@ in
     users.groups.${cfg.database.user} = mkIf (cfg.database.user != "root") {};
 
     # PostgreSQL configuration
+    # Technical Implementation Module: PostgreSQL Extension Configuration
+    #
+    # Maturity Level: L4 - Implemented
+    # Implementation: 98% (ULID generation, PostgreSQL integration, and UUID casting for FKs fully working)
+    #
+    # Extension Requirements:
+    # - pgx_ulid: Native ULID type and gen_ulid() function for time-ordered primary keys
+    # - timescaledb: Hypertable partitioning for core.events time-series data
+    # - pg_jsonschema: JSON Schema validation for event payload integrity
+    # - pgvector: Vector similarity search for AI embeddings
+    #
+    # Monotonic ULID Generation (Optional):
+    # For strictly ordered IDs within the same millisecond in high-concurrency scenarios,
+    # add pgx_ulid to shared_preload_libraries. This enables gen_monotonic_ulid().
+    # Without this, gen_ulid() works fine but may have rare out-of-order IDs within
+    # the same millisecond. Most deployments don't need this.
+    # To enable: services.postgresql.settings.shared_preload_libraries = "timescaledb,pgx_ulid";
+    #
+    # See also:
+    # - sinex-ulid crate documentation for ULID implementation details
+    # - migrations/00000000000002_create_core_tables.sql for TimescaleDB configuration
+    #
+    # Configuration Options:
+    # 
+    # shared_preload_libraries:
+    #   Default: "timescaledb"
+    #   With monotonic ULID: "timescaledb,pgx_ulid"
+    #   Impact: Requires PostgreSQL restart when changed
+    #   Use case: Add pgx_ulid only if you need strictly ordered ULIDs within same millisecond
+    #
+    # max_connections:
+    #   Default: 200 (from example.nix)
+    #   Calculation: (satellites * connectionPool.maxConnections) + overhead
+    #   With 10 satellites @ 20 connections each = 200 + 50 overhead = 250
+    #
+    # TimescaleDB chunk_time_interval:
+    #   Default: 1 day (configured at runtime)
+    #   High volume (>20GB/day): 6-12 hours
+    #   Low volume (<1GB/day): 7 days
+    #   Target: Each chunk should be 10-25% of PostgreSQL RAM allocation
     services.postgresql = mkIf cfg.database.autoSetup {
       enable = true;
       package = pkgs.postgresql_16;

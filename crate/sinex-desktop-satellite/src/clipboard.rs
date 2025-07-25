@@ -7,6 +7,25 @@
 //! - File path extraction and URL detection
 //! - Blob storage for large content
 //! - Linux primary selection support
+//!
+//! ## Implementation Notes
+//!
+//! Currently uses polling approach with `copypasta` crate. The event-driven approach
+//! documented in TIM-ClipboardMonitoring would be more efficient:
+//! - Wayland: `wl-paste --watch` for event notifications (CPU <0.1%, ~95% less power)
+//! - X11: XFIXES extension for selection change events
+//!
+//! ## Platform-Specific Clipboard Access
+//!
+//! ### Display Server Detection
+//! - Check `WAYLAND_DISPLAY` env var for Wayland
+//! - Check `DISPLAY` env var for X11
+//! - Initialize appropriate backend based on detection
+//!
+//! ### MIME Type Handling
+//! Current implementation analyzes content heuristically. Native clipboard APIs provide:
+//! - Wayland: `wl-paste --list-types` for available MIME types
+//! - X11: `TARGETS` atom request for available formats
 
 use chrono::Utc;
 use copypasta::{ClipboardContext, ClipboardProvider};

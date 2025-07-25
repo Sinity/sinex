@@ -9,6 +9,31 @@
 //! - Lifecycle management and graceful shutdown
 //! - State persistence and checkpointing
 //! - Historical replay capabilities
+//!
+//! ## Core Architecture: Deep Symmetry
+//!
+//! All satellites implement the [`StatefulStreamProcessor`] trait, achieving "deep symmetry"
+//! between ingestors and automata. This unified interface enables consistent behavior
+//! across all data capture and processing mechanisms.
+//!
+//! ## Three-Phase Startup Pattern
+//!
+//! All satellites follow a consistent startup sequence:
+//!
+//! ### Phase 1: Snapshot
+//! - Captures current state of the external system
+//! - Uses `TimeHorizon::Snapshot` for instantaneous data capture
+//! - Example: Filesystem satellite scans existing files
+//!
+//! ### Phase 2: Gap-filling (Historical)
+//! - Processes events that occurred while offline
+//! - Uses `TimeHorizon::Historical { end_time }` for bounded scanning
+//! - Only runs if processor supports historical scanning
+//!
+//! ### Phase 3: Continuous Processing
+//! - Real-time event monitoring and streaming
+//! - Uses `TimeHorizon::Continuous` for unbounded operation
+//! - Continues indefinitely until shutdown
 
 // pub mod automaton; // REMOVED - use StatefulStreamProcessor instead
 pub mod checkpoint;

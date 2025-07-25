@@ -3,6 +3,36 @@
 //! This module implements the "Deep Symmetry" vision from Part 16 of the design discussion,
 //! unifying ingestors and automata as both being "Stateful Stream Processors" with a single
 //! scan(from: Checkpoint, until: TimeHorizon) interface.
+//!
+//! ## Architecture Overview
+//!
+//! The unified architecture eliminates the artificial distinction between ingestors and automata:
+//!
+//! - **Single Interface**: Both implement `StatefulStreamProcessor`
+//! - **Unified Checkpoints**: Support external positions (files, APIs) and internal event IDs
+//! - **Time Horizons**: Three modes replace sensor/scanner split:
+//!   - `Snapshot`: Capture current state
+//!   - `Historical`: Process bounded time range
+//!   - `Continuous`: Real-time streaming
+//! - **Startup Sequence**: Automatic Snapshot → Gap-Fill → Continuous progression
+//! - **CLI Structure**: Standardized service/scan/explore subcommands
+//!
+//! ## Checkpoint Types
+//!
+//! ### External Checkpoints (Ingestors)
+//! ```rust
+//! // File position
+//! Checkpoint::external(
+//!     json!({"path": "/var/log/app.log", "offset": 1024}),
+//!     "app.log:1024"
+//! )
+//! ```
+//!
+//! ### Internal Checkpoints (Automata)
+//! ```rust
+//! // Event-based
+//! Checkpoint::internal(event_ulid, message_count)
+//! ```
 
 use crate::{
     checkpoint::CheckpointManager, grpc_client::IngestClient, SatelliteError, SatelliteResult,

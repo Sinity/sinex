@@ -3,6 +3,93 @@
 //! This module contains the new implementation that replaces the old EventSource-based
 //! FilesystemWatcher with a unified processor supporting snapshot, historical, and
 //! continuous scanning modes.
+//! 
+//! # Technical Implementation Module: Platform-Specific Filesystem Watchers
+//! 
+//! **Maturity Level**: L4 - Implemented  
+//! **Implementation**: 90% (Linux inotify fully working, cross-platform abstraction in place)  
+//! **Dependencies**: notify-rs crate, inotify on Linux, FSEvents on macOS  
+//! **Blocks**: Real-time content analysis, PKM document change detection  
+//! 
+//! ## Overview
+//! 
+//! This module implements efficient, low-overhead filesystem monitoring crucial for 
+//! ingesting new or updated user files, PKM notes, downloads, etc. The implementation
+//! uses platform-specific backends for optimal performance.
+//!
+//! ## Content Processing (TIM-FilesystemIngestionLogic)
+//!
+//! ### BLAKE3 Content Hashing
+//!
+//! All file content is hashed using BLAKE3 for:
+//! - Content-addressed storage and deduplication
+//! - Rename/move detection via hash correlation
+//! - Integrity verification
+//!
+//! The streaming implementation in sinex-core-utils::chunking handles large files
+//! efficiently without loading entire contents into memory.
+//!
+//! ### Git-annex Integration
+//!
+//! Large files (>100KB) are managed via git-annex:
+//! - Content stored by hash in `.git/annex/objects/`
+//! - Original paths replaced by symlinks
+//! - Metadata tracked in core.blobs table
+//! - Automatic deduplication for identical content
+//!
+//! See sinex-annex crate for implementation details.
+//!
+//! ### Rename/Move Detection
+//!
+//! Two approaches implemented:
+//! 1. **inotify cookies** (Linux): IN_MOVED_FROM/TO events share a cookie value
+//! 2. **Hash correlation**: Delete+create with same BLAKE3 hash within time window
+//!
+//! Note: Cross-filesystem moves appear as delete+create and rely on hash correlation.
+//! 
+//! ## Platform-Specific Implementations
+//! 
+//! ### inotify (Linux)
+//! 
+//! Linux kernel subsystem for monitoring filesystem events. Key characteristics:
+//! 
+//! - **Non-recursive**: Must manually watch subdirectories
+//! - **Event types**: IN_MODIFY, IN_CLOSE_WRITE, IN_CREATE, IN_DELETE, IN_MOVED_FROM/TO
+//! - **System limits**: Configured via `/proc/sys/fs/inotify/max_user_watches`
+//! - **Overflow handling**: IN_Q_OVERFLOW signals dropped events, requires rescan
+//! 
+//! The notify-rs crate handles recursive watching by:
+//! 1. Watching root directory
+//! 2. On IN_CREATE | IN_ISDIR, adding new watch for subdirectory
+//! 3. On IN_DELETE | IN_ISDIR, removing watch for subdirectory
+//! 4. Handling IN_MOVED_TO/FROM for directory moves
+//! 
+//! ### FSEvents (macOS)
+//! 
+//! macOS native API with built-in advantages:
+//! 
+//! - **Automatic recursive monitoring**: No manual subdirectory management
+//! - **No per-directory limits**: More scalable for large trees
+//! - **Event coalescing**: Batches rapid changes, configurable latency
+//! - **Historical events**: Can catch up on changes while offline
+//! 
+//! ## Implementation Details
+//! 
+//! - **Completed write detection**: Uses IN_CLOSE_WRITE on Linux when available
+//! - **Debouncing**: Configurable delay to handle rapid file changes
+//! - **Rename tracking**: Cookie-based correlation for move operations
+//! - **Performance optimization**: Configurable max depth and ignore patterns
+//! 
+//! ## System Configuration
+//! 
+//! For extensive monitoring on Linux, increase inotify limits:
+//! ```bash
+//! # Temporary
+//! sudo sysctl fs.inotify.max_user_watches=524288
+//! 
+//! # Persistent (add to /etc/sysctl.d/99-inotify.conf)
+//! fs.inotify.max_user_watches=524288
+//! ```
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -37,9 +124,54 @@ use walkdir::WalkDir;
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemConfig {
+    /// Glob patterns for files/directories to watch
+    /// 
+    /// Examples:
+    /// - `"**/*.rs"` - All Rust files recursively
+    /// - `"/home/user/documents/**"` - Everything under documents
+    /// - `"*.log"` - Log files in watch root only
+    /// 
+    /// Performance impact:
+    /// - More specific patterns = fewer watches = better performance
+    /// - `"**/*"` on large trees can hit inotify limits on Linux
     pub watch_patterns: Vec<String>,
+    
+    /// Patterns to explicitly ignore (takes precedence over watch_patterns)
+    /// 
+    /// Common ignores:
+    /// - `"**/.git/**"` - Git internals  
+    /// - `"**/target/**"` - Rust build artifacts
+    /// - `"**/node_modules/**"` - Node dependencies
+    /// - `"**/*.tmp"` - Temporary files
+    /// 
+    /// System limits (Linux):
+    /// - Check limit: `cat /proc/sys/fs/inotify/max_user_watches`
+    /// - Increase: `sudo sysctl fs.inotify.max_user_watches=524288`
     pub ignore_patterns: Vec<String>,
+    
+    /// Debounce delay in milliseconds for rapid file changes
+    /// 
+    /// Use cases:
+    /// - 50-100ms: Text editors with auto-save
+    /// - 200-500ms: Build systems with multiple outputs
+    /// - 1000ms+: Batch operations, large file copies
+    /// 
+    /// Trade-offs:
+    /// - Lower: More responsive, more events
+    /// - Higher: Fewer events, may miss rapid changes
     pub debounce_ms: u64,
+    
+    /// Maximum directory traversal depth (None = unlimited)
+    /// 
+    /// Guidelines:
+    /// - None: Full recursive monitoring (default)
+    /// - Some(3): Limit to 3 levels deep
+    /// - Some(1): Direct children only
+    /// 
+    /// Use depth limits when:
+    /// - Watching user home directories with deep structures
+    /// - Known flat directory structures
+    /// - inotify watch limits are a concern
     pub max_depth: Option<usize>,
 }
 

@@ -60,12 +60,12 @@ pub mod behavior {
         test_name: &str,
     ) -> TestResult<()>
     where
-        T: Send + PartialEq + Debug,
+        T: Send + PartialEq + Debug + Clone,
     {
-        // Send the value with context
-        // TODO: Fix trait method resolution issue
-        // (*sender).send(test_value).await
-        //     .map_err(|e| CoreError::Unknown(format!("Send failed in {}: {:?}", test_name, e)))?;
+        let expected_value = test_value.clone();
+        
+        // Send the value with context using the trait method
+        sender.send_or_log(test_value, test_name).await?;
 
         // Receive with timeout
         let received = receiver
@@ -77,6 +77,14 @@ pub mod behavior {
             .ok_or_else(|| {
                 CoreError::Unknown(format!("Channel closed unexpectedly in test {}", test_name))
             })?;
+
+        // Verify the received value matches what was sent
+        if received != expected_value {
+            return Err(CoreError::Validation(format!(
+                "Channel test '{}' failed: received {:?}, expected {:?}",
+                test_name, received, expected_value
+            )));
+        }
 
         Ok(())
     }
@@ -692,5 +700,290 @@ mod tests {
 
         let stats = monitor.stats();
         assert_eq!(stats.sent, 5);
+    }
+}
+
+// Comprehensive channel behavior tests
+#[cfg(test)]
+mod comprehensive_tests {
+    use super::*;
+    use crate::prelude::*;
+    use tokio::sync::mpsc;
+    
+    #[sinex_test]
+    async fn test_channel_setup_creation(_ctx: TestContext) -> TestResult<()> {
+        // Test different channel setup methods
+        let zero_cap = TestChannelSetup::<i32>::zero_capacity();
+        assert_eq!(zero_cap.monitor.stats().sent, 0);
+        assert_eq!(zero_cap.monitor.stats().received, 0);
+        
+        let small_cap = TestChannelSetup::<String>::small_capacity();
+        assert_eq!(small_cap.monitor.stats().errors, 0);
+        
+        let large_cap = TestChannelSetup::<Vec<u8>>::large_capacity();
+        assert_eq!(large_cap.monitor.queue_depth(), 0);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_basic_send_receive_behavior(_ctx: TestContext) -> TestResult<()> {
+        let mut setup = TestChannelSetup::<String>::new(10);
+        
+        // Test successful send/receive
+        behavior::test_basic_send_receive(
+            &setup.sender,
+            &mut setup.receiver,
+            "test_message".to_string(),
+            "basic_test"
+        ).await?;
+        
+        // Monitor should track the operation
+        assert_eq!(setup.monitor.stats().sent, 0); // Not tracked by test function
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_channel_timeout_behavior(_ctx: TestContext) -> TestResult<()> {
+        let mut setup = TestChannelSetup::<i32>::new(1);
+        
+        // Test timeout when no data
+        behavior::test_channel_timeout(
+            &mut setup.receiver,
+            Duration::from_millis(100),
+            true
+        ).await?;
+        
+        // Send data and test no timeout
+        setup.sender.send(42).await?;
+        behavior::test_channel_timeout(
+            &mut setup.receiver,
+            Duration::from_millis(100),
+            false
+        ).await?;
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_backpressure_handling(_ctx: TestContext) -> TestResult<()> {
+        let setup = TestChannelSetup::<i32>::zero_capacity();
+        let backpressure = BackpressureManager::new(
+            10, // high watermark
+            5   // low watermark
+        );
+        
+        // Test backpressure detection
+        let result = backpressure::test_backpressure_management(
+            &setup.sender,
+            vec![1, 2, 3, 4, 5],
+            Duration::from_millis(10)
+        ).await;
+        
+        // Should handle backpressure appropriately
+        assert!(result.is_ok());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_batch_receive_operations(_ctx: TestContext) -> TestResult<()> {
+        let mut setup = TestChannelSetup::<String>::new(20);
+        
+        // Send multiple items
+        let items = vec![
+            "item1".to_string(),
+            "item2".to_string(),
+            "item3".to_string(),
+            "item4".to_string(),
+            "item5".to_string(),
+        ];
+        
+        for item in &items {
+            setup.sender.send(item.clone()).await?;
+        }
+        
+        // Test batch receive
+        behavior::test_batch_receive(
+            &setup.sender,
+            &mut setup.receiver,
+            items,
+            5,  // max_batch_size
+            Duration::from_secs(1)
+        ).await?;
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_channel_monitoring(_ctx: TestContext) -> TestResult<()> {
+        let monitor = Arc::new(ChannelMonitor::new());
+        
+        // Record various operations
+        monitor.record_send();
+        monitor.record_send();
+        monitor.record_receive();
+        monitor.record_error("test error".to_string());
+        
+        let stats = monitor.stats();
+        assert_eq!(stats.sent, 2);
+        assert_eq!(stats.received, 1);
+        assert_eq!(stats.errors, 1);
+        assert_eq!(stats.queue_depth, 1); // 2 sent - 1 received
+        assert_eq!(stats.last_error, Some("test error".to_string()));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_channel_extension_traits(_ctx: TestContext) -> TestResult<()> {
+        let (sender, mut receiver) = mpsc::channel::<i32>(5);
+        
+        // Test send_or_log
+        sender.send_or_log(42, "test_context").await?;
+        
+        // Test send_timeout
+        sender.send_timeout(43, Duration::from_secs(1)).await?;
+        
+        // Test try_send_or_queue
+        let mut queue = Vec::new();
+        sender.try_send_or_queue(44, &mut queue, 10).await?;
+        
+        // Test recv_timeout
+        let received = receiver.recv_timeout(Duration::from_secs(1)).await?;
+        assert_eq!(received, Some(42));
+        
+        // Test recv_batch
+        let batch = receiver.recv_batch(5, Duration::from_millis(100)).await;
+        assert!(batch.len() >= 2); // Should have at least 43 and 44
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_channel_error_handling(_ctx: TestContext) -> TestResult<()> {
+        let (sender, receiver) = mpsc::channel::<String>(1);
+        
+        // Drop receiver to cause send errors
+        drop(receiver);
+        
+        // send_or_log should handle the error gracefully
+        let result = sender.send_or_log("test".to_string(), "error_test").await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Channel send failed"));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_channel_drain_operations(_ctx: TestContext) -> TestResult<()> {
+        let (sender, mut receiver) = mpsc::channel::<i32>(10);
+        
+        // Send multiple items
+        for i in 0..5 {
+            sender.send(i).await?;
+        }
+        
+        // Test drain_all
+        let drained = receiver.drain_all().await;
+        assert_eq!(drained.len(), 5);
+        assert_eq!(drained, vec![0, 1, 2, 3, 4]);
+        
+        // Channel should be empty now
+        let empty = receiver.drain_all().await;
+        assert!(empty.is_empty());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_concurrent_channel_operations(_ctx: TestContext) -> TestResult<()> {
+        let setup = TestChannelSetup::<i32>::new(100);
+        let sender = setup.sender.clone();
+        let monitor = setup.monitor.clone();
+        
+        // Spawn multiple senders
+        let mut handles = vec![];
+        for i in 0..10 {
+            let sender_clone = sender.clone();
+            let monitor_clone = monitor.clone();
+            let handle = tokio::spawn(async move {
+                for j in 0..10 {
+                    sender_clone.send(i * 10 + j).await?;
+                    monitor_clone.record_send();
+                }
+                Ok::<_, CoreError>(())
+            });
+            handles.push(handle);
+        }
+        
+        // Wait for all senders
+        for handle in handles {
+            handle.await??;
+        }
+        
+        // Verify monitoring
+        assert_eq!(monitor.stats().sent, 100);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_channel_queue_management(_ctx: TestContext) -> TestResult<()> {
+        let (sender, mut receiver) = mpsc::channel::<String>(2);
+        let mut queue = Vec::new();
+        
+        // Fill channel
+        sender.send("first".to_string()).await?;
+        sender.send("second".to_string()).await?;
+        
+        // These should go to queue
+        sender.try_send_or_queue("third".to_string(), &mut queue, 5).await?;
+        sender.try_send_or_queue("fourth".to_string(), &mut queue, 5).await?;
+        
+        assert_eq!(queue.len(), 2);
+        
+        // Drain one item
+        let _ = receiver.recv().await;
+        
+        // Try again - should move one from queue
+        sender.try_send_or_queue("fifth".to_string(), &mut queue, 5).await?;
+        
+        // Queue should have fewer items now
+        assert!(queue.len() < 2);
+        
+        Ok(())
+    }
+    
+    #[test]
+    fn test_channel_monitor_thread_safety() {
+        use std::thread;
+        
+        let monitor = Arc::new(ChannelMonitor::new());
+        let mut handles = vec![];
+        
+        // Spawn threads that increment counters
+        for _ in 0..10 {
+            let monitor_clone = monitor.clone();
+            let handle = thread::spawn(move || {
+                for _ in 0..100 {
+                    monitor_clone.record_send();
+                    monitor_clone.record_receive();
+                }
+            });
+            handles.push(handle);
+        }
+        
+        // Wait for all threads
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        
+        // Verify counts
+        let stats = monitor.stats();
+        assert_eq!(stats.sent, 1000);
+        assert_eq!(stats.received, 1000);
+        assert_eq!(stats.queue_depth, 0);
     }
 }
