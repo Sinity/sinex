@@ -1,4 +1,62 @@
 //! Redis Streams client for message bus communication
+//! 
+//! # Architectural Decision: Event Processing via Redis Streams (Supersedes ADR-002)
+//! 
+//! **Status**: Implemented  
+//! **Implementation Date**: 2025-07-17  
+//! **Supersedes**: ADR-002 (PostgreSQL Work Queue)
+//! 
+//! ## Context
+//! 
+//! Originally planned to use PostgreSQL work queue with polling for event
+//! processing notification. This approach had limitations:
+//! - Polling latency impacted real-time processing
+//! - Database load from frequent polling
+//! - Complex retry and failure handling
+//! - Limited scalability for consumer groups
+//! 
+//! ## Decision
+//! 
+//! Implemented Redis Streams as the message bus for event distribution:
+//! - Events flow: gRPC → PostgreSQL → Redis Streams → Consumer Groups
+//! - Push-based processing eliminates polling
+//! - Native consumer groups for horizontal scaling
+//! - Built-in retry and acknowledgment mechanisms
+//! 
+//! ## Architecture
+//! 
+//! ```text
+//! ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
+//! │  Satellites  │────▶│   ingestd   │────▶│  PostgreSQL  │
+//! └──────────────┘     └─────────────┘     └──────┬───────┘
+//!                                                  │
+//!                                           ┌──────▼───────┐
+//!                                           │ Redis Stream │
+//!                                           └──────┬───────┘
+//!                                                  │
+//!                              ┌───────────────────┴───────────────────┐
+//!                              │                                       │
+//!                      ┌───────▼────────┐                     ┌───────▼────────┐
+//!                      │ Consumer Group │                     │ Consumer Group │
+//!                      │   (Automata)   │                     │  (Analytics)   │
+//!                      └────────────────┘                     └────────────────┘
+//! ```
+//! 
+//! ## Benefits Over Original Design
+//! 
+//! - **Sub-second latency**: Push-based processing vs polling
+//! - **Horizontal scaling**: Native consumer groups
+//! - **Reduced DB load**: No polling queries
+//! - **Built-in reliability**: Automatic retries and acknowledgments
+//! - **Real-time processing**: Immediate event distribution
+//! 
+//! ## Implementation Details
+//! 
+//! - Stream key pattern: `sinex:events:{event_type}`
+//! - Consumer group pattern: `{processor_name}_group`
+//! - Checkpoint hybrid: Redis for progress, PostgreSQL for durability
+//! - Automatic dead letter queue handling
+//! - Configurable batch sizes and timeouts
 
 use crate::{SatelliteError, SatelliteResult};
 use redis::{

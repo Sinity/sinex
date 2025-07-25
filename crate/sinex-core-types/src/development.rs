@@ -237,3 +237,83 @@ pub struct DevelopmentPrinciples;
 /// - Content extraction pipelines
 /// - Health metric aggregation
 pub struct ContributionPathways;
+
+/// # Feature Dependency Graph
+/// 
+/// Defines dependency relationships between Sinex components, organized
+/// into implementation tiers. Features in higher tiers depend on components
+/// from lower tiers, creating a clear implementation roadmap.
+/// 
+/// ## Tier System
+/// 
+/// ### Tier 0: Foundation Components (35% complete)
+/// **Core infrastructure with no internal dependencies**
+/// 
+/// - **Event Storage**: PostgreSQL, TimescaleDB, ULID keys ✅
+/// - **Git Integration**: Git-annex blob storage 🚧
+/// - **Core Event Sources**: Filesystem, terminal, clipboard 🚧
+/// 
+/// ### Tier 1: Independent Extensions (20% complete)
+/// **Features depending only on Tier 0**
+/// 
+/// - **Enhanced Sources**: Audio (PipeWire), email, rich terminal
+/// - **Infrastructure**: pgBackRest backup, basic LLM, monitoring
+/// - **Next Priority**: Audio capture, backup setup, Ollama integration
+/// 
+/// ### Tier 2: Dependent Features (5% complete)
+/// **Components requiring multiple Tier 1 dependencies**
+/// 
+/// - **Browser Integration**: Extension + native messaging
+/// - **AI Pipeline**: Embeddings, entity resolution, context synthesis
+/// - **Search**: Semantic search, advanced query language
+/// - **Blocked By**: LLM integration, native messaging protocol
+/// 
+/// ### Tier 3: Complex Integrations (2% complete)
+/// **Advanced features with multiple dependencies**
+/// 
+/// - **Knowledge Management**: Living documents, PKM, knowledge graph
+/// - **User Interfaces**: Neovim plugin, web dashboard
+/// - **Advanced Processing**: Activity segmentation, pattern analysis
+/// 
+/// ### Tier 4: Distributed Systems (0% complete)
+/// **Multi-device and federation capabilities**
+/// 
+/// - **Sync**: Multi-device, privacy-preserving federation
+/// - **Security**: E2E encryption, zero-knowledge proofs
+/// - **Research Required**: Foundational architecture needed
+/// 
+/// ## Critical Paths
+/// 
+/// ### Primary Sequence (3-month MVP)
+/// 1. **Month 1**: Complete Tier 0 foundation
+/// 2. **Month 2**: Tier 1 essentials (LLM, backup, audio)
+/// 3. **Month 3**: Early Tier 2 (embeddings, browser extension)
+/// 
+/// ### Parallel Opportunities
+/// - Infrastructure improvements (independent)
+/// - Event source additions (independent)
+/// - UI development with mock data
+/// 
+/// ### Risk Factors
+/// - 🟢 **Low Risk**: Event storage, Git-annex, filesystems
+/// - 🟡 **Medium Risk**: LLM integration, browser APIs
+/// - 🔴 **High Risk**: CRDT implementation, multi-device sync
+/// 
+/// ## Dependency Management
+/// 
+/// ### Single Points of Failure
+/// - PostgreSQL/TimescaleDB stability
+/// - LLM integration architecture
+/// - Native messaging security model
+/// 
+/// ### Adding New Features
+/// 1. Identify minimum tier placement
+/// 2. Document all dependencies
+/// 3. Update implementation estimates
+/// 4. Consider parallel development
+/// 
+/// ### Resolving Blockers
+/// - **Technical**: Research, prototyping, architecture
+/// - **Resource**: Prioritization, contributor allocation
+/// - **External**: Third-party APIs, upstream projects
+pub struct DependencyGraph;

@@ -384,6 +384,42 @@ impl StreamProcessorContext {
 /// and automata share the same core `scan()` interface, differing only in their
 /// data sources and processing logic.
 ///
+/// # Architectural Decision: Unified Event-Centric Architecture (ADR-010)
+/// 
+/// **Status**: Implemented  
+/// **Decision Date**: 2025-01-10  
+/// **Implementation Date**: 2025-07-17  
+/// 
+/// ## Context
+/// 
+/// The original architecture had multiple ingestor binaries creating:
+/// - Process overhead (3x memory, CPU, startup)
+/// - Configuration fragmentation
+/// - Deployment complexity
+/// - Conceptual confusion (sources overshadowing events)
+/// 
+/// ## Decision
+/// 
+/// Implement unified collector with event-centric architecture where:
+/// - Events are primary entities
+/// - Sources are implementation details
+/// - Single binary, single configuration
+/// - All processors implement this trait
+/// 
+/// ## Key Patterns
+/// 
+/// - **Single/Multiple Sources**: Events can originate from one or many sources
+/// - **Hierarchical Configuration**: Config inheritance with event-specific overrides
+/// - **Compile-time Registry**: Automatic discovery of all event types
+/// - **Cross-Event Correlation**: Enabled through unified processing pipeline
+/// 
+/// ## Benefits
+/// 
+/// - Single process to manage (reduced operational complexity)
+/// - Events as first-class citizens (clearer mental model)
+/// - Cross-event correlation possible
+/// - Unified configuration and deployment
+///
 /// # Architecture
 /// - **Ingestors**: External World → RawEvent Stream (e.g., file watchers, log parsers)
 /// - **Automata**: RawEvent Stream → DerivedEvent Stream (e.g., command canonicalizers)
