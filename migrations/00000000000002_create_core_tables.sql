@@ -1,4 +1,50 @@
 -- Create core event storage tables with unified architecture
+--
+-- Technical Implementation Module: TimescaleDB Configuration
+--
+-- Maturity Level: L4 - Implemented
+-- Implementation: 85% (TimescaleDB hypertable creation and basic configuration working, compression pending)
+-- Dependencies: TimescaleDB PostgreSQL extension, NixOS PostgreSQL configuration
+-- Blocks: Time-series event storage, efficient time-based queries, data compression
+--
+-- ## Overview
+--
+-- This migration configures TimescaleDB for managing the core.events table as a hypertable,
+-- optimized for time-series data. TimescaleDB is used due to its ability to efficiently
+-- partition large time-series tables, provide performant time-based queries, and offer
+-- features like native compression.
+--
+-- ## Key Configuration Decisions
+--
+-- 1. Partitioning Strategy: Uses ULID-based partitioning via ulid_to_timestamptz function
+--    - Leverages time-ordering properties of ULIDs
+--    - Automatic chunk management based on time ranges
+--
+-- 2. Chunk Interval: Default 1 day (configured at runtime)
+--    - Aim for chunks to be 10-25% of available RAM
+--    - Adjust based on actual daily volume
+--
+-- 3. Compression Strategy (to be configured):
+--    - Enable compression for chunks older than 7 days
+--    - Uses columnar compression with segmentby on source, host
+--    - Can achieve 90-95% storage reduction
+--
+-- ## Optimization Guidelines
+--
+-- - For high volume (>10-20GB/day): Use shorter intervals (6-12 hours)
+-- - For low volume: Can extend to 7 days
+-- - Extract frequently queried JSONB fields to native columns for better compression
+-- - Monitor chunk sizes via timescaledb_information.chunks
+--
+-- ## Required Configuration
+--
+-- 1. Enable TimescaleDB in postgresql.conf:
+--    shared_preload_libraries = 'timescaledb'
+--
+-- 2. Run timescaledb_tune for optimal settings based on system resources
+--
+-- 3. Configure compression policy after initial data load:
+--    SELECT add_compression_policy('core.events', INTERVAL '7 days');
 
 -- Create processor manifests table for tracking event producers
 CREATE TABLE IF NOT EXISTS core.processor_manifests (

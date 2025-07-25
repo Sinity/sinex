@@ -57,6 +57,28 @@
 //! - Checkpoint hybrid: Redis for progress, PostgreSQL for durability
 //! - Automatic dead letter queue handling
 //! - Configurable batch sizes and timeouts
+//! 
+//! ## Historical Context: Routing Cache Architecture (ADR-014)
+//! 
+//! **Status**: Superseded by this Redis Streams implementation
+//! 
+//! The original architecture used complex routing caches and work queues:
+//! - Per-row triggers for event routing (15-50ms latency)
+//! - Materialized view `routing_cache` for agent mappings
+//! - Batch router process running every 1-5 seconds
+//! - Work queue with `SELECT FOR UPDATE SKIP LOCKED`
+//! 
+//! This approach had limitations:
+//! - High database lock contention
+//! - Complex trigger logic difficult to test
+//! - Poor observability into routing decisions
+//! - Limited scalability under high event volumes
+//! 
+//! The Redis Streams architecture eliminates these issues by:
+//! - Moving routing logic out of the database
+//! - Using native Redis consumer groups for load balancing
+//! - Providing built-in retry and acknowledgment mechanisms
+//! - Achieving sub-second latency with push-based processing
 
 use crate::{SatelliteError, SatelliteResult};
 use redis::{
