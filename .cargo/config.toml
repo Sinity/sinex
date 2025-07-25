@@ -75,6 +75,7 @@ RUSTC_WRAPPER = ""                     # Don't use sccache/etc for dev
 CARGO_BUILD_JOBS = "0"                 # Use all CPU cores
 CARGO_NET_GIT_FETCH_WITH_CLI = "false" # Faster git operations
 
+
 [target.'cfg(coverage)']
 # Coverage-specific configuration
 rustflags = [
