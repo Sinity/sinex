@@ -45,21 +45,14 @@ Thumbs.db
 .env
 .envrc
 
-# Logs
-*.log
-
-# Nix
+# Nix, Rust
 result
 result-*
 
 # Project specific
-/data/
-/logs/
 /spec/combo/
 .claude-outputs/
 .direnv/
-
-/docs/
 
 # Git worktrees
 worktree-*
