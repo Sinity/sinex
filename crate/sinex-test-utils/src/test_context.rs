@@ -1,94 +1,178 @@
-// Unified Test Context - Single Entry Point for All Test Operations
-//
-// QUICK START - Everything you need for testing:
-//
-// 1. CREATE EVENTS:
-// ```rust
-// // Filesystem events with fluent API:
-// let event = ctx.event().filesystem()
-//     .path("/tmp/test.txt")
-//     .size(1024)
-//     .created()                      // or .modified(), .deleted()
-//     .insert().await?;
-//
-// // Terminal/shell commands:
-// let cmd = ctx.event().terminal()
-//     .command("ls -la")
-//     .success()                      // or .failed(), .exit_code(1)
-//     .insert().await?;
-//
-// // Custom events (build fields incrementally):
-// let custom = ctx.event()
-//     .source("my_service")
-//     .type_("service.started")
-//     .field("version", "1.0.0")
-//     .field("port", 8080)
-//     .insert().await?;
-// ```
-//
-// 2. QUERY EVENTS:
-// ```rust
-// // Find events by various criteria:
-// let recent = ctx.events().limit(10).fetch().await?;
-// let fs_events = ctx.events().by_source(sources::FS).fetch().await?;
-// let count = ctx.events().by_type(event_types::filesystem::FILE_CREATED).count().await?;
-//
-// // Time-based queries:
-// let since_noon = ctx.events().after(timestamp).fetch().await?;
-// ```
-//
-// 3. RICH ASSERTIONS (get clear error messages):
-// ```rust
-// // Basic assertions with context:
-// ctx.assert("file creation test")
-//     .eq(&actual.path, "/expected/path")?
-//     .that(event.size > 0, "file should have content")?;
-//
-// // Event-specific assertions:
-// ctx.assert("event comparison").event_eq(&actual, &expected)?;
-//
-// // Database assertions:
-// let id = ctx.assert("insertion test").event_inserts(&event).await?;
-// ```
-//
-// 4. SCHEMA VALIDATION:
-// ```rust
-// // Register and use schemas:
-// let schema_id = ctx.register_schema(
-//     sources::FS, 
-//     event_types::filesystem::FILE_CREATED, 
-//     "1.0", 
-//     schema
-// ).await?;
-// ctx.validate_against_schema(&event, schema_id).await?;
-//
-// // Create validated events (validates before insertion):
-// let validated = ctx.validated_event(schema_id)
-//     .filesystem().path("/test").insert().await?;
-// ```
-//
-// 5. TIMING & COORDINATION:
-// ```rust
-// // Wait for events to appear:
-// ctx.timing().wait_for_event_count(5).await?;
-// ctx.timing().wait_for_source_events(sources::FS, 3).await?;
-//
-// // Coordinate multiple operations:
-// let barrier = ctx.timing().barrier(3);  // Wait for 3 participants
-// let counter = ctx.timing().event_counter(100);  // Count to 100
-// ```
-//
-// 6. TEST FIXTURES (automatic setup/cleanup):
-// ```rust
-// // Pre-built test data (cached across tests):
-// let session = ctx.standard_user_session().await?;
-// let dataset = ctx.performance_dataset().await?;
-//
-// // Custom fixtures:
-// let checkpoint = ctx.checkpoint("test-automaton")
-//     .with_processed_count(100)
-//     .insert(pool).await?;
-// ```
+//! Test Context - Unified Interface for All Testing Operations
+//!
+//! The `TestContext` is the central abstraction for Sinex testing, providing isolated database
+//! access, fluent builders, rich assertions, and comprehensive test utilities through a single
+//! unified interface.
+//!
+//! # Architecture
+//!
+//! TestContext manages:
+//! - **Database Isolation**: Each test gets its own database from the pool
+//! - **Event Lifecycle**: Creation, validation, and querying of events
+//! - **Test Coordination**: Timing, synchronization, and fixtures
+//! - **Assertions**: Rich error messages with context
+//! - **Mocking**: Access to comprehensive mock infrastructure
+//!
+//! # Core Components
+//!
+//! ## Event Creation
+//! Events are created through domain-specific builders:
+//!
+//! ```rust
+//! // Filesystem events
+//! let event = ctx.event()
+//!     .filesystem()
+//!     .path("/data/report.pdf")
+//!     .size(2048576)  // 2MB
+//!     .permissions(0o644)
+//!     .modified()
+//!     .insert()
+//!     .await?;
+//!
+//! // Terminal commands
+//! let cmd = ctx.event()
+//!     .terminal()
+//!     .command("cargo test")
+//!     .working_dir("/project")
+//!     .duration_ms(1500)
+//!     .success()
+//!     .insert()
+//!     .await?;
+//!
+//! // Custom events with incremental field building
+//! let custom = ctx.event()
+//!     .source("analytics")
+//!     .type_("user.behavior")
+//!     .field("action", "page_view")
+//!     .field("duration_ms", 450)
+//!     .fields(vec![
+//!         ("browser", json!("Firefox")),
+//!         ("viewport", json!({"width": 1920, "height": 1080}))
+//!     ])
+//!     .insert()
+//!     .await?;
+//! ```
+//!
+//! ## Event Querying
+//! Type-safe query builders with chainable methods:
+//!
+//! ```rust
+//! // Basic queries
+//! let all_events = ctx.events().fetch().await?;
+//! let recent = ctx.events().limit(20).fetch().await?;
+//! let fs_events = ctx.events().by_source("fs").fetch().await?;
+//!
+//! // Complex queries
+//! let terminal_errors = ctx.events()
+//!     .by_source("shell-kitty")
+//!     .by_type("shell.command.failed")
+//!     .limit(10)
+//!     .fetch()
+//!     .await?;
+//!
+//! // Aggregations
+//! let total_count = ctx.events().count().await?;
+//! let fs_count = ctx.events().by_source("fs").count().await?;
+//!
+//! // Single event lookup
+//! let event = ctx.events().by_id(event_id).fetch_one().await?;
+//! ```
+//!
+//! ## Rich Assertions
+//! Contextual assertions with detailed error messages:
+//!
+//! ```rust
+//! // Basic assertions
+//! ctx.assert("user data validation")
+//!     .eq(&user.name, "Alice")?
+//!     .that(user.age >= 18, "user must be adult")?
+//!     .not_empty(&user.permissions)?;
+//!
+//! // Event-specific assertions
+//! ctx.assert("event processing")
+//!     .event_eq(&actual, &expected)?
+//!     .completes_within(
+//!         async { process_event(&event).await },
+//!         Duration::from_secs(5),
+//!         "event processing"
+//!     ).await?;
+//!
+//! // Error assertions
+//! ctx.assert("validation failure")
+//!     .error_contains(&result, "invalid format")?;
+//! ```
+//!
+//! ## Schema Validation
+//! JSON Schema integration for event validation:
+//!
+//! ```rust
+//! // Register schema
+//! let schema_id = ctx.schema().register("fs", "file.created",
+//!     json!({
+//!         "type": "object",
+//!         "properties": {
+//!             "path": {"type": "string", "minLength": 1},
+//!             "size": {"type": "integer", "minimum": 0},
+//!             "hash": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+//!         },
+//!         "required": ["path", "size"]
+//!     })
+//! ).await?;
+//!
+//! // Validate existing events
+//! ctx.schema().validate(&event, schema_id).await?;
+//!
+//! // Create pre-validated events
+//! let event = ctx.validated_event(schema_id)
+//!     .field("path", "/data/file.txt")
+//!     .field("size", 1024)
+//!     .field("hash", "a".repeat(64))
+//!     .insert()
+//!     .await?;
+//! ```
+//!
+//! ## Timing and Synchronization
+//! Utilities for coordinating async operations:
+//!
+//! ```rust
+//! // Wait for conditions
+//! ctx.wait_for_event_count(10).await?;
+//! ctx.timing().wait_for_events_from("fs", 5).await?;
+//!
+//! // Synchronization primitives
+//! let barrier = ctx.timing().barrier(3);
+//! let sync = ctx.timing().synchronizer(Duration::from_secs(10));
+//!
+//! // Measure operations
+//! let (result, duration) = ctx.measure(async {
+//!     expensive_operation().await
+//! }).await?;
+//! ```
+//!
+//! ## Fixtures and Scenarios
+//! Pre-built test data with lifecycle management:
+//!
+//! ```rust
+//! // Standard scenarios
+//! let session = ctx.scenarios().user_session().await?;
+//! let checkpoints = ctx.scenarios().populated_checkpoints().await?;
+//!
+//! // Performance testing
+//! let large_dataset = ctx.performance()
+//!     .large_dataset_with(100_000)
+//!     .await?;
+//!
+//! // Error scenarios
+//! let errors = ctx.errors().validation_failures().await?;
+//! ```
+//!
+//! # Design Principles
+//!
+//! 1. **Single Entry Point**: Everything through `ctx` parameter
+//! 2. **Fluent Interfaces**: Chainable methods for intuitive API
+//! 3. **Type Safety**: Compile-time guarantees where possible
+//! 4. **Rich Context**: Detailed error messages for debugging
+//! 5. **Performance**: Optimized for parallel test execution
 
 use crate::database_pool::TestDatabase;
 use sinex_core_types::RawEvent;

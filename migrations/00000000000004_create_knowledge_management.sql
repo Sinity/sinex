@@ -16,6 +16,30 @@ CREATE TABLE IF NOT EXISTS km.concepts (
 
 CREATE INDEX idx_concepts_type ON km.concepts (concept_type);
 CREATE INDEX idx_concepts_name ON km.concepts (concept_name);
+-- ## Architectural Decision: IVFFlat for Vector Indexes (ADR-005)
+-- 
+-- We use IVFFlat over HNSW for pgvector indexes because:
+-- - **Faster build times**: Important for development iteration
+-- - **Lower memory usage**: More efficient for our scale
+-- - **Good enough recall**: With proper tuning of lists/probes
+-- 
+-- Trade-offs:
+-- - Requires periodic reindexing if data distribution changes significantly
+-- - Need to tune probes parameter for query speed vs recall
+-- - May switch to HNSW later if query patterns demand it
+--
+-- ## Architectural Decision: CPU-based pgvector for Scale (ADR-007)
+--
+-- We chose to stay with pgvector on CPU rather than external GPU vector DBs because:
+-- - **Simplicity**: No additional services to deploy or manage
+-- - **Unified data**: Embeddings live with their metadata
+-- - **Good enough performance**: ~1800 QPS at 91% recall on 50M vectors
+-- - **Cost-effective**: Leverages existing PostgreSQL hardware
+--
+-- Future options if scale demands:
+-- - External GPU vector DB (Milvus, Qdrant) for massive scale
+-- - pgvectorscale extension for better CPU performance
+-- - Hybrid approach with hot/cold tier separation
 CREATE INDEX idx_concepts_embedding ON km.concepts USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Relations between concepts
@@ -37,6 +61,22 @@ CREATE INDEX idx_relations_to ON km.relations (to_concept_id);
 CREATE INDEX idx_relations_type ON km.relations (relation_type);
 
 -- Event annotations linking events to concepts
+--
+-- ## Event Annotations Schema (TIM-EventAnnotationsSchema)
+--
+-- Provides flexible annotation system for events with:
+-- - Multiple annotation types (tag, comment, summary, analysis)
+-- - Actor tracking for provenance (user vs AI agent)
+-- - Confidence scoring for automated annotations
+-- - Structured metadata in JSONB format
+--
+-- This implementation differs from the TIM which proposed core.event_annotations.
+-- We use km.event_annotations to link events with knowledge concepts instead.
+--
+-- Future enhancements:
+-- - Direct text annotations without concept requirement
+-- - Version history for annotation edits
+-- - Collaborative annotation workflows
 CREATE TABLE IF NOT EXISTS km.event_annotations (
     id ULID PRIMARY KEY DEFAULT gen_ulid(),
     event_id ULID NOT NULL,

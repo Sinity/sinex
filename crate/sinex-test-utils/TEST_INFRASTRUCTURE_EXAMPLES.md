@@ -1,6 +1,6 @@
-# Test Infrastructure Conceptual Examples
+# Test Infrastructure Examples
 
-This document contains conceptual examples and advanced testing patterns that supplement the test infrastructure implemented in this crate. These examples show how you could implement various testing patterns, though the actual implementation in Sinex uses the `TestContext` approach.
+This document provides practical examples of using the sinex-test-utils infrastructure for various testing scenarios. All examples use the unified `TestContext` approach that is the standard for Sinex testing.
 
 ## Synthetic Event Generation
 

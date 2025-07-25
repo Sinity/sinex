@@ -1,33 +1,194 @@
-//! Sinex Test Utilities - Unified Testing Through TestContext
+//! Sinex Test Utilities - Comprehensive Testing Infrastructure
 //!
-//! **IMPORTANT FOR WRITING TESTS**: All Sinex tests should use the `#[sinex_test]` macro
-//! and access functionality through `TestContext`. Do not use `#[tokio::test]` directly.
+//! This crate provides a unified testing framework for the Sinex event system, offering
+//! database isolation, rich builders, comprehensive mocks, and performance fixtures.
 //!
-//! # Quick Example
+//! # Quick Start
+//!
 //! ```rust
 //! use sinex_test_utils::prelude::*;
 //! 
 //! #[sinex_test]
-//! async fn test_example(ctx: TestContext) -> TestResult<()> {
-//!     // Everything is accessed through ctx
+//! async fn test_filesystem_event(ctx: TestContext) -> TestResult<()> {
+//!     // Create events with fluent builders
 //!     let event = ctx.event()
-//!         .source("my-service")
-//!         .type_("user.created")
+//!         .filesystem()
+//!         .path("/data/file.txt")
+//!         .size(1024)
+//!         .created()
 //!         .insert()
 //!         .await?;
 //!     
-//!     assert_eq!(event.source, "my-service");
+//!     // Query with type-safe builders
+//!     let events = ctx.events()
+//!         .by_source("fs")
+//!         .limit(10)
+//!         .fetch()
+//!         .await?;
+//!     
+//!     // Rich assertions with context
+//!     ctx.assert("file creation")
+//!         .eq(&events.len(), &1)?
+//!         .that(events[0].payload["size"] == 1024, "size should match")?;
+//!     
 //!     Ok(())
 //! }
 //! ```
 //!
-//! # Key Features
-//! - **Automatic database isolation** - Each test gets its own database
-//! - **Automatic cleanup** - Database rollback on test completion  
-//! - **No manual setup** - The `#[sinex_test]` macro handles everything
-//! - **Unified API** - All functionality through `TestContext`
+//! # Core Concepts
 //!
-//! See `/TESTING.md` in repository root for comprehensive guide.
+//! ## TestContext - Single Entry Point
+//! All test functionality is accessed through `TestContext`, providing:
+//! - Isolated database per test
+//! - Event creation builders
+//! - Query abstractions
+//! - Assertion helpers
+//! - Mock objects
+//! - Timing utilities
+//!
+//! ## The `#[sinex_test]` Macro
+//! **Always use `#[sinex_test]` instead of `#[tokio::test]`**. This macro:
+//! - Creates and injects TestContext
+//! - Manages database lifecycle
+//! - Handles timeouts intelligently
+//! - Provides progress indicators
+//! - Integrates with proptest
+//!
+//! ## Event Builders
+//! Domain-specific builders for common event types:
+//!
+//! ```rust
+//! // Filesystem events
+//! ctx.event().filesystem().path("/tmp/test").modified().insert().await?;
+//! 
+//! // Terminal commands
+//! ctx.event().terminal().command("ls -la").success().insert().await?;
+//! 
+//! // System events
+//! ctx.event().system().service("nginx").started().insert().await?;
+//! 
+//! // Custom events with incremental building
+//! ctx.event()
+//!     .source("my-service")
+//!     .type_("user.action")
+//!     .field("user_id", 123)
+//!     .field("action", "login")
+//!     .insert()
+//!     .await?;
+//! ```
+//!
+//! ## Query Builders
+//! Type-safe query construction:
+//!
+//! ```rust
+//! // Various query patterns
+//! let recent = ctx.events().limit(5).fetch().await?;
+//! let by_source = ctx.events().by_source("fs").fetch().await?;
+//! let count = ctx.events().by_type("file.created").count().await?;
+//! let single = ctx.events().by_id(event_id).fetch_one().await?;
+//! ```
+//!
+//! ## Fixtures
+//! Reusable test scenarios:
+//!
+//! ```rust
+//! // Standard scenarios
+//! let session = ctx.scenarios().user_session().await?;
+//! let dataset = ctx.performance().large_dataset().await?;
+//! let errors = ctx.errors().validation_failures().await?;
+//! ```
+//!
+//! ## Mocks
+//! Comprehensive service mocking:
+//!
+//! ```rust
+//! // Mock filesystem
+//! let fs = ctx.mocks().filesystem();
+//! fs.create_file("/test.txt", b"content").await?;
+//! 
+//! // Mock with failure injection
+//! let db = ctx.mocks().database()
+//!     .with_failure_rate(0.1)
+//!     .with_latency(Duration::from_millis(50));
+//! ```
+//!
+//! # Testing Patterns
+//!
+//! ## Property Testing
+//! Use `parameterized!` for data-driven tests with database:
+//!
+//! ```rust
+//! #[sinex_test]
+//! async fn test_edge_cases(ctx: TestContext) -> TestResult<()> {
+//!     parameterized!([
+//!         ("empty", ""),
+//!         ("unicode", "Hello 世界 🌍"),
+//!         ("large", "x".repeat(1000)),
+//!     ], |(name, value)| {
+//!         let event = ctx.event()
+//!             .source("test")
+//!             .field("data", value)
+//!             .insert()
+//!             .await?;
+//!         assert!(event.id != Ulid::nil());
+//!         Ok(())
+//!     });
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ## Timing and Synchronization
+//! ```rust
+//! // Wait for conditions
+//! ctx.wait_for_event_count(5).await?;
+//! ctx.timing().wait_for_events_from("fs", 3).await?;
+//! 
+//! // Coordinate parallel operations
+//! let barrier = ctx.timing().barrier(3);
+//! // ... spawn tasks that wait on barrier
+//! ```
+//!
+//! ## Schema Validation
+//! ```rust
+//! let schema_id = ctx.schema().register("fs", "file.created", 
+//!     json!({
+//!         "type": "object",
+//!         "properties": {
+//!             "path": {"type": "string"},
+//!             "size": {"type": "integer", "minimum": 0}
+//!         },
+//!         "required": ["path"]
+//!     })
+//! ).await?;
+//! 
+//! // Create validated events
+//! let event = ctx.validated_event(schema_id)
+//!     .field("path", "/test")
+//!     .field("size", 100)
+//!     .insert()
+//!     .await?;
+//! ```
+//!
+//! # Module Organization
+//!
+//! - **`test_context`** - Core TestContext implementation
+//! - **`database_pool`** - Database isolation and pooling
+//! - **`builders`** - Event and fixture builders
+//! - **`fixtures`** - Reusable test scenarios
+//! - **`mocks`** - Service mocking infrastructure
+//! - **`timing_utils`** - Synchronization helpers
+//! - **`property_testing`** - Proptest strategies
+//! - **`error_testing`** - Error scenario utilities
+//!
+//! # Performance
+//!
+//! The test infrastructure is optimized for speed:
+//! - 64-database pool minimizes contention
+//! - Parallel test execution by default
+//! - Fixture caching reduces setup time
+//! - Smart timeouts based on test type
+//!
+//! See `TESTING.md` for comprehensive patterns and best practices.
 //!
 //! ## Technical Implementation Module: Test Framework Infrastructure
 //!
@@ -677,5 +838,348 @@ mod tests {
         
         let error_result = returns_error();
         assert!(error_result.is_err());
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_empty_strings(ctx: TestContext) -> TestResult<()> {
+        // Test empty source/type validation
+        let empty_source = ctx.event()
+            .source("")
+            .type_("test")
+            .insert()
+            .await;
+        assert!(empty_source.is_err());
+        assert!(empty_source.unwrap_err().to_string().contains("source"));
+        
+        let empty_type = ctx.event()
+            .source("test")
+            .type_("")
+            .insert()
+            .await;
+        assert!(empty_type.is_err());
+        assert!(empty_type.unwrap_err().to_string().contains("Event type required"));
+        
+        // Test whitespace-only strings
+        let whitespace_source = ctx.event()
+            .source("   ")
+            .type_("test")
+            .insert()
+            .await;
+        assert!(whitespace_source.is_ok(), "Whitespace source should be allowed");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_very_long_strings(ctx: TestContext) -> TestResult<()> {
+        // Test very long source and type names
+        let long_source = "x".repeat(255);
+        let long_type = format!("type.{}", "x".repeat(200));
+        
+        let event = ctx.event()
+            .source(&long_source)
+            .type_(&long_type)
+            .insert()
+            .await?;
+        
+        assert_eq!(event.source, long_source);
+        assert_eq!(event.event_type, long_type);
+        
+        // Test extremely long payload values
+        let huge_payload = "data".repeat(100_000); // 400KB string
+        let large_event = ctx.event()
+            .source("test")
+            .type_("large.payload")
+            .field("data", &huge_payload)
+            .insert()
+            .await?;
+        
+        assert_eq!(large_event.payload["data"], json!(huge_payload));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_special_characters(ctx: TestContext) -> TestResult<()> {
+        // Test Unicode in all fields
+        let unicode_cases = vec![
+            ("emoji", "🚀🌟✨", "Hello 世界 🌍"),
+            ("chinese", "中文测试", "这是一个测试"),
+            ("arabic", "اختبار", "هذا اختبار"),
+            ("special", "sp€ci@l", "ñoñó ¿qué?"),
+        ];
+        
+        for (name, source_suffix, data) in unicode_cases {
+            let event = ctx.event()
+                .source(format!("test-{}", source_suffix))
+                .type_(format!("unicode.{}", name))
+                .field("message", data)
+                .field("emoji", "🎉")
+                .insert()
+                .await?;
+            
+            assert!(event.payload["message"].as_str().unwrap().contains(data));
+        }
+        
+        // Test special characters in JSON
+        let special_json = ctx.event()
+            .source("json-special")
+            .type_("test")
+            .field("quotes", r#"Hello "world" with 'quotes'"#)
+            .field("newlines", "line1\nline2\nline3")
+            .field("tabs", "col1\tcol2\tcol3")
+            .field("backslash", "C:\\Users\\test")
+            .insert()
+            .await?;
+        
+        assert!(special_json.payload["quotes"].as_str().unwrap().contains("\"world\""));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_numeric_boundaries(ctx: TestContext) -> TestResult<()> {
+        // Test numeric edge cases
+        let numeric_event = ctx.event()
+            .source("numeric")
+            .type_("boundaries")
+            .field("i64_max", i64::MAX)
+            .field("i64_min", i64::MIN)
+            .field("u64_max", u64::MAX)
+            .field("f64_max", f64::MAX)
+            .field("f64_min", f64::MIN)
+            .field("f64_inf", f64::INFINITY)
+            .field("f64_neg_inf", f64::NEG_INFINITY)
+            .field("zero", 0)
+            .field("negative_zero", -0.0)
+            .insert()
+            .await?;
+        
+        assert_eq!(numeric_event.payload["i64_max"], json!(i64::MAX));
+        assert_eq!(numeric_event.payload["u64_max"], json!(u64::MAX));
+        assert!(numeric_event.payload["f64_inf"].as_f64().unwrap().is_infinite());
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_nested_json(ctx: TestContext) -> TestResult<()> {
+        // Test deeply nested JSON structures
+        let mut nested = json!("leaf");
+        for i in 0..50 {
+            nested = json!({
+                "level": i,
+                "data": nested
+            });
+        }
+        
+        let deep_event = ctx.event()
+            .source("nested")
+            .type_("deep.structure")
+            .payload(json!({
+                "shallow": "value",
+                "deep": nested
+            }))
+            .insert()
+            .await?;
+        
+        assert!(deep_event.payload["deep"].is_object());
+        
+        // Test large arrays
+        let large_array: Vec<i32> = (0..1000).collect();
+        let array_event = ctx.event()
+            .source("array")
+            .type_("large")
+            .field("items", json!(large_array))
+            .insert()
+            .await?;
+        
+        assert_eq!(array_event.payload["items"].as_array().unwrap().len(), 1000);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_concurrent_isolation(ctx: TestContext) -> TestResult<()> {
+        // Test that concurrent operations are truly isolated
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        
+        let found_cross_contamination = Arc::new(AtomicBool::new(false));
+        
+        let handles: Vec<_> = (0..10).map(|i| {
+            let contamination = found_cross_contamination.clone();
+            
+            tokio::spawn(async move {
+                let ctx = TestContext::with_name(&format!("isolation_{}", i)).await?;
+                
+                // Create unique event
+                let unique_id = uuid::Uuid::new_v4().to_string();
+                ctx.event()
+                    .source(format!("isolated-{}", i))
+                    .type_("test")
+                    .field("unique_id", &unique_id)
+                    .insert()
+                    .await?;
+                
+                // Check for any cross-contamination
+                for j in 0..10 {
+                    if i != j {
+                        let other_events = ctx.events()
+                            .by_source(format!("isolated-{}", j))
+                            .fetch()
+                            .await?;
+                        
+                        if !other_events.is_empty() {
+                            contamination.store(true, Ordering::Relaxed);
+                            return Err(CoreError::Unknown(format!(
+                                "Context {} can see events from context {}",
+                                i, j
+                            )));
+                        }
+                    }
+                }
+                
+                Ok::<_, CoreError>(())
+            })
+        }).collect();
+        
+        // Wait for all tasks
+        for handle in handles {
+            handle.await.map_err(|e| CoreError::Service(format!("Task failed: {}", e)))??;
+        }
+        
+        assert!(!found_cross_contamination.load(Ordering::Relaxed));
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_query_combinations(ctx: TestContext) -> TestResult<()> {
+        // Create diverse events for complex querying
+        for i in 0..20 {
+            ctx.event()
+                .source(if i % 2 == 0 { "even" } else { "odd" })
+                .type_(match i % 3 {
+                    0 => "type.a",
+                    1 => "type.b",
+                    _ => "type.c",
+                })
+                .field("index", i)
+                .field("group", i / 5)
+                .insert()
+                .await?;
+        }
+        
+        // Test various query combinations
+        let queries = vec![
+            (ctx.events().by_source("even").by_type("type.a").fetch().await?, "even + type.a"),
+            (ctx.events().by_source("odd").limit(3).fetch().await?, "odd with limit"),
+            (ctx.events().by_type("type.b").fetch().await?, "all type.b"),
+        ];
+        
+        for (results, description) in queries {
+            println!("Query '{}' returned {} results", description, results.len());
+            assert!(!results.is_empty(), "Query '{}' should return results", description);
+        }
+        
+        // Test count queries
+        let total = ctx.events().count().await?;
+        assert_eq!(total, 20);
+        
+        let even_count = ctx.events().by_source("even").count().await?;
+        assert_eq!(even_count, 10);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_edge_case_rapid_operations(ctx: TestContext) -> TestResult<()> {
+        // Test rapid event creation
+        let start = std::time::Instant::now();
+        
+        for i in 0..100 {
+            ctx.event()
+                .source("rapid")
+                .type_("burst")
+                .field("seq", i)
+                .insert()
+                .await?;
+        }
+        
+        let duration = start.elapsed();
+        println!("Created 100 events in {:?}", duration);
+        
+        // Should be reasonably fast
+        assert!(duration.as_secs() < 10, "Event creation too slow");
+        
+        // Test rapid querying
+        let query_start = std::time::Instant::now();
+        
+        for _ in 0..50 {
+            let _ = ctx.events().by_source("rapid").limit(10).fetch().await?;
+        }
+        
+        let query_duration = query_start.elapsed();
+        println!("Executed 50 queries in {:?}", query_duration);
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
+        // Test that builder methods can be called in any order
+        let event1 = ctx.event()
+            .type_("test")
+            .source("order1")
+            .field("a", 1)
+            .insert()
+            .await?;
+        
+        let event2 = ctx.event()
+            .field("a", 1)
+            .source("order2")
+            .type_("test")
+            .insert()
+            .await?;
+        
+        // Both should succeed despite different order
+        assert_eq!(event1.event_type, "test");
+        assert_eq!(event2.event_type, "test");
+        
+        Ok(())
+    }
+    
+    #[sinex_test]
+    async fn test_assertion_edge_cases(ctx: TestContext) -> TestResult<()> {
+        // Test assertion boundary conditions
+        let empty_vec: Vec<i32> = vec![];
+        let non_empty_vec = vec![1, 2, 3];
+        
+        // Empty collection assertions
+        let empty_assert = ctx.assert("empty check").not_empty(&empty_vec);
+        assert!(empty_assert.is_err());
+        
+        ctx.assert("non-empty check").not_empty(&non_empty_vec)?;
+        
+        // Size assertions with edge cases
+        ctx.assert("size 0").has_size(&empty_vec, 0)?;
+        ctx.assert("exact size").has_size(&non_empty_vec, 3)?;
+        
+        let size_mismatch = ctx.assert("wrong size").has_size(&non_empty_vec, 2);
+        assert!(size_mismatch.is_err());
+        
+        // Option assertions
+        let none: Option<i32> = None;
+        let some = Some(42);
+        
+        ctx.assert("none check").none(&none)?;
+        ctx.assert("some check").some(&some)?;
+        
+        // Reversed assertions should fail
+        assert!(ctx.assert("none as some").some(&none).is_err());
+        assert!(ctx.assert("some as none").none(&some).is_err());
+        
+        Ok(())
     }
 }

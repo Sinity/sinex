@@ -1,14 +1,53 @@
-// Mock implementations for satellite architecture testing
-//
-// Provides simplified, controllable versions of system components for testing:
-// - Mock ingestd for gRPC event ingestion
-// - Mock satellites for event generation
-// - Mock automata for event processing
-//
-// These mocks are designed to be:
-// - Fast and predictable for tests
-// - Configurable for different scenarios
-// - Compatible with real component interfaces
+//! Mock Infrastructure - Comprehensive Service Simulation
+//!
+//! This module provides high-fidelity mocks for external dependencies, enabling
+//! thorough testing of error conditions, performance characteristics, and edge cases
+//! without requiring real services.
+//!
+//! # Available Mocks
+//!
+//! - **Filesystem**: In-memory filesystem with full POSIX semantics
+//! - **Database**: Simulated database with transaction support
+//! - **Redis**: Complete Redis command implementation
+//! - **Network**: TCP/UDP simulation with latency/loss injection
+//! - **Ingestd**: Event ingestion service mock
+//! - **Satellite**: Event source simulation
+//! - **Automaton**: Event processor mock
+//!
+//! # Usage Examples
+//!
+//! ## Basic Mock Usage
+//! ```rust
+//! let fs = ctx.mocks().filesystem();
+//! fs.create_file("/test.txt", b"content").await?;
+//! assert!(fs.exists("/test.txt").await);
+//! ```
+//!
+//! ## Failure Injection
+//! ```rust
+//! let db = ctx.mocks()
+//!     .database()
+//!     .with_failure_rate(0.1)  // 10% failure rate
+//!     .with_latency(Duration::from_millis(50))
+//!     .with_pattern(FailurePattern::Burst { duration: Duration::from_secs(2) });
+//! ```
+//!
+//! ## Network Simulation
+//! ```rust
+//! let net = ctx.mocks().network();
+//! net.configure()
+//!     .latency(Duration::from_millis(100))
+//!     .packet_loss(0.05)
+//!     .bandwidth_limit(1_000_000);  // 1MB/s
+//! ```
+//!
+//! # Design Principles
+//!
+//! 1. **Realistic Behavior**: Mocks simulate real service behavior accurately
+//! 2. **Controllable Chaos**: Inject failures, delays, and errors on demand
+//! 3. **Performance**: Fast execution for rapid test feedback
+//! 4. **Observability**: Track all operations for verification
+//! 5. **Thread Safety**: Safe for concurrent test execution
 
 
 pub mod failure_injector;

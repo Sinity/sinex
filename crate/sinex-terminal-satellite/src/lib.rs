@@ -33,6 +33,22 @@
 //! - **State Management**: Tracks last seen positions/timestamps
 //! - **Batch Processing**: Efficient handling of bulk history imports
 //! - **Event Correlation**: Links commands to sessions and recordings
+//!
+//! ## Architectural Decision: Layered Capture Strategy (ADR-008)
+//!
+//! We use a multi-layered approach combining:
+//! 1. **Atuin** (primary): Structured command history with metadata
+//! 2. **Asciinema** (primary): Full session I/O capture for replayability
+//! 3. **Shell history** (fallback): Direct parsing when tools unavailable
+//! 4. **Kitty RC** (supplemental): Terminal-specific semantic events
+//!
+//! This layered approach was chosen over single-tool solutions because:
+//! - No single tool captures everything (commands + output + context)
+//! - Atuin provides queryable structured data but misses output
+//! - Asciinema captures everything but requires parsing
+//! - Combination gives both structure and completeness
+//!
+//! Data correlation happens via timestamps, CWD, and session IDs.
 
 mod atuin;
 mod history;
