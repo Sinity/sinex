@@ -776,7 +776,7 @@ mod comprehensive_tests {
         );
         
         // Test backpressure detection
-        let result = backpressure::test_backpressure_handling(
+        let result = test_backpressure_management(
             &setup.sender,
             vec![1, 2, 3, 4, 5],
             &backpressure,

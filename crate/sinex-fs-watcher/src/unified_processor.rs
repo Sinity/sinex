@@ -16,6 +16,36 @@
 //! This module implements efficient, low-overhead filesystem monitoring crucial for 
 //! ingesting new or updated user files, PKM notes, downloads, etc. The implementation
 //! uses platform-specific backends for optimal performance.
+//!
+//! ## Content Processing (TIM-FilesystemIngestionLogic)
+//!
+//! ### BLAKE3 Content Hashing
+//!
+//! All file content is hashed using BLAKE3 for:
+//! - Content-addressed storage and deduplication
+//! - Rename/move detection via hash correlation
+//! - Integrity verification
+//!
+//! The streaming implementation in sinex-core-utils::chunking handles large files
+//! efficiently without loading entire contents into memory.
+//!
+//! ### Git-annex Integration
+//!
+//! Large files (>100KB) are managed via git-annex:
+//! - Content stored by hash in `.git/annex/objects/`
+//! - Original paths replaced by symlinks
+//! - Metadata tracked in core.blobs table
+//! - Automatic deduplication for identical content
+//!
+//! See sinex-annex crate for implementation details.
+//!
+//! ### Rename/Move Detection
+//!
+//! Two approaches implemented:
+//! 1. **inotify cookies** (Linux): IN_MOVED_FROM/TO events share a cookie value
+//! 2. **Hash correlation**: Delete+create with same BLAKE3 hash within time window
+//!
+//! Note: Cross-filesystem moves appear as delete+create and rely on hash correlation.
 //! 
 //! ## Platform-Specific Implementations
 //! 

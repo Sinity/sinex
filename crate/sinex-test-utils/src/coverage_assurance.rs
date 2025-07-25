@@ -366,6 +366,7 @@ impl PropertyCoverage {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     
     #[test]
     fn test_coverage_tracker_creation() {
@@ -498,7 +499,7 @@ mod tests {
     #[test]
     fn test_coverage_assertions() {
         // Set up minimum coverage requirements
-        let min_coverage = MinimumCoverageRequirements {
+        let min_coverage = TestCoverageRequirements {
             event_types: 10,
             validation_rules: 5,
             error_conditions: 8,

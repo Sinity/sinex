@@ -3,6 +3,17 @@
 //! This module implements the "Deep Symmetry" vision from Part 16 of the design discussion,
 //! unifying ingestors and automata as both being "Stateful Stream Processors" with a single
 //! scan(from: Checkpoint, until: TimeHorizon) interface.
+//!
+//! ## Migration Guide
+//!
+//! For migrating from the old EventSource/Automaton split to this unified architecture,
+//! see `/spec/docs/migration/stream_processor_migration.md`. Key changes include:
+//!
+//! - Single interface: Both ingestors and automata implement `StatefulStreamProcessor`
+//! - Unified checkpoints: Support external positions and internal event IDs
+//! - Time horizons: Replace sensor/scanner split with Historical/Continuous/Snapshot modes
+//! - Startup sequence: Automatic Snapshot → Gap-Fill → Continuous progression
+//! - CLI structure: Standardized service/scan/explore subcommands
 
 use crate::{
     checkpoint::CheckpointManager, grpc_client::IngestClient, SatelliteError, SatelliteResult,

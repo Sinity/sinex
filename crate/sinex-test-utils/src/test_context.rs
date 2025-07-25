@@ -715,7 +715,7 @@ impl<'ctx> ChannelTestUtils<'ctx> {
         test_name: &str,
     ) -> TestResult<()>
     where
-        T: Send + PartialEq + std::fmt::Debug,
+        T: Send + PartialEq + std::fmt::Debug + Clone,
     {
         crate::channel_behavior_utils::behavior::test_basic_send_receive(
             sender, receiver, test_value, test_name
@@ -765,7 +765,7 @@ impl<'ctx> ProcessTestUtils<'ctx> {
     
     /// Create satellite configuration
     pub fn satellite_config(&self, service_name: &str, socket_path: &str) -> serde_json::Value {
-        crate::satellite_management_utils::create_test_satellite_config(service_name, socket_path)
+        crate::satellite_management_utils::build_test_satellite_config(service_name, socket_path)
     }
 }
 
@@ -1690,6 +1690,7 @@ impl<'ctx> SystemEventBuilder<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use serde_json::json;
     
     #[sinex_test]

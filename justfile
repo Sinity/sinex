@@ -160,22 +160,9 @@ bacon *ARGS:
     @echo "Note: This is a TUI tool - better for human users than AI assistants"
     bacon {{ARGS}}
 
-# 🧠 Smart compilation - only compiles if source changed
-smart-check:
-    @./scripts/smart-compile.sh check
-
-# 📊 Smart compilation status
-smart-status:
-    @./scripts/smart-compile.sh status
-
-# 👀 Smart watch - efficient continuous checking
-smart-watch:
-    @./scripts/smart-compile.sh watch
-
 # 🚦 Pre-edit status check (call before making changes)
 pre-edit:
     @echo "📸 Capturing pre-edit state..."
-    @./scripts/smart-compile.sh status
     @echo ""
     @echo "📝 Recent changes:"
     @git status --short | head -10 || true
@@ -183,7 +170,7 @@ pre-edit:
 # 🎯 Post-edit check (call after changes to see impact)
 post-edit:
     @echo "🔍 Checking impact of changes..."
-    @./scripts/smart-compile.sh check
+    @just check
 
 # 📋 Check continuously and save to log (better for AI/scripts)
 check-continuous:
@@ -438,39 +425,60 @@ release:
     cargo build --release --workspace --all-features 2>&1 | tee build-release.log
     @echo "✅ Output saved to build-release.log"
 
-# 📊 Analyze compilation errors
+# 📊 Analyze compilation errors from bacon output
 errors:
-    @echo "📊 Analyzing compilation errors..."
-    @if [ -f compilation.log ]; then \
-        echo "Found $(rg -c '^error\[E[0-9]+\]:' compilation.log || echo 0) errors"; \
+    @echo "📊 Analyzing compilation errors from bacon..."
+    @# Simple wait for bacon to finish
+    @if [ -f .claude-outputs/bacon.log ]; then \
+        count=0; \
+        while find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q . && [ $$count -lt 10 ]; do \
+            echo "⏳ Waiting for bacon to finish..."; \
+            sleep 1; \
+            count=$$\(\(count + 1\)\); \
+        done; \
+        errors=$$(rg -c 'error\[E[0-9]+\]:' .claude-outputs/bacon.log 2>/dev/null || echo 0); \
+        echo "Found $$errors errors"; \
         echo ""; \
         echo "Error summary:"; \
-        rg '^error\[E[0-9]+\]:' compilation.log | sort | uniq -c || echo "No errors found"; \
+        rg 'error\[E[0-9]+\]:' .claude-outputs/bacon.log | tail -20 | sort | uniq -c || echo "No errors found"; \
     else \
-        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
     fi
 
-# 🔍 Show compilation warnings
+# 🔍 Show compilation warnings from bacon
 warnings:
-    @echo "🔍 Showing compilation warnings..."
-    @if [ -f compilation.log ]; then \
-        echo "Found $(rg -c '^warning:' compilation.log || echo 0) warnings"; \
+    @echo "🔍 Showing compilation warnings from bacon..."
+    @# Simple wait for bacon to finish
+    @if [ -f .claude-outputs/bacon.log ]; then \
+        count=0; \
+        while find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q . && [ $$count -lt 10 ]; do \
+            echo "⏳ Waiting for bacon to finish..."; \
+            sleep 1; \
+            count=$$\(\(count + 1\)\); \
+        done; \
+        warnings=$$(rg -c 'warning:' .claude-outputs/bacon.log 2>/dev/null || echo 0); \
+        echo "Found $$warnings warnings"; \
         echo ""; \
-        rg '^warning:' compilation.log | head -20 || echo "No warnings found"; \
+        rg 'warning:' .claude-outputs/bacon.log | tail -20 || echo "No warnings found"; \
     else \
-        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
     fi
 
-# 📊 Analyze warnings by category
+# 📊 Analyze warnings by category from bacon
 warnings-summary:
-    @echo "📊 Warning summary:"
-    @if [ -f compilation.log ]; then \
-        echo "Total warnings: $(rg -c '^warning:' compilation.log || echo 0)"; \
+    @echo "📊 Warning summary from bacon:"
+    @# Wait for bacon to finish
+    @while [ -f .claude-outputs/bacon.log ] && find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q .; do \
+        echo "⏳ Waiting for bacon..."; \
+        sleep 1; \
+    done
+    @if [ -f .claude-outputs/bacon.log ]; then \
+        echo "Total warnings: $(rg -c 'warning:' .claude-outputs/bacon.log || echo 0)"; \
         echo ""; \
         echo "By type:"; \
-        rg '^warning:' compilation.log | sed 's/warning: //' | cut -d' ' -f1-3 | sort | uniq -c | sort -rn | head -20; \
+        rg 'warning:' .claude-outputs/bacon.log | sed 's/warning: //' | cut -d' ' -f1-3 | sort | uniq -c | sort -rn | head -20; \
     else \
-        echo "⚠️  No compilation.log found. Run 'just check' first."; \
+        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
     fi
 
 # 🧹 Fix auto-fixable warnings
@@ -605,52 +613,41 @@ dev-pkg PKG:
     just check-pkg {{PKG}}
     just test-fast -p {{PKG}}
 
-# 🪄 Magic mode - compilation happens automatically
-magic-mode:
-    @echo "🪄 Enabling magic compilation mode..."
-    @echo "Compilation will happen automatically when needed."
-    @# Set up file watcher with smart caching
-    @mkdir -p ~/.cache/sinex-magic
-    @echo '#!/usr/bin/env bash' > ~/.cache/sinex-magic/wrapper.sh
-    @echo 'COMPILE_CACHE=~/.cache/sinex-magic' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'LAST_HASH_FILE="$COMPILE_CACHE/last-hash"' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'COMPILE_LOG="$COMPILE_CACHE/compile.log"' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '# Check if compilation needed' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'current_hash=$(find . -name "*.rs" -o -name "Cargo.toml" | grep -v target/ | xargs sha256sum 2>/dev/null | sha256sum | cut -d" " -f1)' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'last_hash=$(cat "$LAST_HASH_FILE" 2>/dev/null || echo "")' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'if [ "$current_hash" != "$last_hash" ]; then' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '    echo "🔄 Source changed, compiling..." >&2' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '    if cargo check --workspace --all-targets 2>&1 | tee "$COMPILE_LOG"; then' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '        echo "$current_hash" > "$LAST_HASH_FILE"' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '    else' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '        echo "❌ Compilation failed! Check $COMPILE_LOG" >&2' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '        exit 1' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '    fi' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'fi' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo '# Run the actual command' >> ~/.cache/sinex-magic/wrapper.sh
-    @echo 'exec "$@"' >> ~/.cache/sinex-magic/wrapper.sh
-    @chmod +x ~/.cache/sinex-magic/wrapper.sh
-    @echo ""
-    @echo "Now use commands like:"
-    @echo "  ~/.cache/sinex-magic/wrapper.sh cargo test"
-    @echo "  ~/.cache/sinex-magic/wrapper.sh cargo run"
-    @echo ""
-    @echo "Or add to your shell:"
-    @echo "  alias cargo='~/.cache/sinex-magic/wrapper.sh cargo'"
 
-# 🏃 Quick check - workspace check without tests (fastest)
+# 🏃 Quick check - check bacon compilation status
 qc:
-    @echo "🏃 Quick check (no tests)..."
-    cargo check --workspace 2>&1 | tee compilation-quick.log
+    @echo "🏃 Checking compilation status from bacon..."
+    @# Simple wait for bacon to settle
+    @if [ -f .claude-outputs/bacon.log ]; then \
+        count=0; \
+        while find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q . && [ $$count -lt 5 ]; do \
+            echo "⏳ Bacon is compiling..."; \
+            sleep 1; \
+            count=$$\(\(count + 1\)\); \
+        done; \
+        if tail -50 .claude-outputs/bacon.log | rg -q "error\[E[0-9]+\]:"; then \
+            echo "❌ Compilation failed with errors:"; \
+            tail -50 .claude-outputs/bacon.log | rg "error\[E[0-9]+\]:" | head -5; \
+            echo ""; \
+            echo "Run 'just errors' for full error details"; \
+        elif tail -50 .claude-outputs/bacon.log | rg -q "warning:"; then \
+            echo "⚠️  Compilation succeeded with warnings"; \
+            echo "Run 'just warnings' for details"; \
+        elif tail -20 .claude-outputs/bacon.log | rg -q "(✓|success|compiled|Finished)"; then \
+            echo "✅ Compilation successful"; \
+        else \
+            echo "🔍 Compilation status unclear. Showing recent output:"; \
+            tail -10 .claude-outputs/bacon.log; \
+        fi; \
+    else \
+        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
+    fi
 
-# 🔍 Check and show errors immediately
+# 🔍 Check and show errors immediately from bacon
 ce:
-    @echo "🔍 Check and show errors..."
-    just check-all
-    just errors
+    @echo "🔍 Checking for errors from bacon..."
+    @just qc > /dev/null 2>&1 || true
+    @just errors
 
 # 🧪 Test with timeout safety (prevents hanging tests)
 test-safe PKG="" TIMEOUT="60":
@@ -732,15 +729,13 @@ dev-start:
     @echo "✓ Checking Redis..."
     @redis-cli ping > /dev/null 2>&1 && echo "✓ Redis OK" || echo "✗ Redis not available"
     @echo ""
-    @# Start compilation daemon automatically
-    @./scripts/sinex-daemon.sh start >/dev/null 2>&1 || true
-    @echo "🤖 Compilation daemon: $(./scripts/sinex-daemon.sh status | head -1)"
+    @echo "🤖 Compilation handled by sinex-devtools user service"
     @echo ""
     @echo "📋 Quick commands:"
-    @echo "  just tf        - Run fast tests (already compiled!)"
-    @echo "  just tp PKG    - Test package (already compiled!)"
-    @echo "  just ds        - Show daemon status"
-    @echo "  just de        - Show current errors"
+    @echo "  just tf        - Run fast tests"
+    @echo "  just tp PKG    - Test package"
+    @echo "  just check     - Quick compilation check"
+    @echo "  just errors    - Show current errors"
     @echo ""
 
 # 📊 Show current nextest status/results
@@ -779,27 +774,6 @@ cycle PKG="":
         just test-pkg {{PKG}}; \
     fi
 
-# === Background Daemon Commands ===
-
-# 🤖 Start compilation daemon
-daemon-start:
-    @./scripts/sinex-daemon.sh start
-
-# 🛑 Stop compilation daemon
-daemon-stop:
-    @./scripts/sinex-daemon.sh stop
-
-# 📊 Daemon status
-daemon-status:
-    @./scripts/sinex-daemon.sh status
-
-# 📜 Daemon logs
-daemon-logs:
-    @./scripts/sinex-daemon.sh logs
-
-# ❌ Show current compilation errors from daemon
-daemon-errors:
-    @./scripts/sinex-daemon.sh errors
 
 # === Aliases ===
 alias t := test
@@ -818,6 +792,3 @@ alias ws := warnings-summary
 alias fw := fix-warnings
 alias ts := test-safe
 alias rc := recent-changes
-alias ds := daemon-status
-alias de := daemon-errors
-alias dl := daemon-logs

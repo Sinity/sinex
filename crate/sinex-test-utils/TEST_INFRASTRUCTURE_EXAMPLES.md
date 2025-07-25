@@ -4,67 +4,101 @@ This document provides practical examples of using the sinex-test-utils infrastr
 
 ## Synthetic Event Generation
 
-### High-Volume Event Generation for Load Testing
+### High-Volume Event Generation with TestContext
 
 ```rust
+use sinex_test_utils::prelude::*;
 use rand::{Rng, distributions::Alphanumeric, seq::SliceRandom};
-use sqlx::PgPool;
-use serde_json::json;
-use ulid::Ulid;
-use tokio::time::{sleep, Duration};
-use chrono::Utc;
 
-async fn generate_and_insert_event_batch(db_pool: &PgPool, batch_size: usize) -> Result<(), sqlx::Error> {
-    let mut rng = rand::thread_rng();
-    let sources = ["ingestor_A", "ingestor_B", "synthetic_input"];
-    let event_types = ["type_1", "type_2", "type_3", "type_4", "type_5"];
-    let hosts = ["host_main", "host_laptop", "host_mobile"];
+#[sinex_test(timeout = 60)]
+async fn test_high_volume_event_generation(ctx: TestContext) -> TestResult<()> {
+    let sources = ["sensor_a", "sensor_b", "sensor_c"];
+    let event_types = ["metric.cpu", "metric.memory", "metric.disk", "metric.network"];
+    
+    // Generate 10,000 events in batches
+    let batch_size = 100;
+    let total_events = 10_000;
+    
+    let (_, duration) = ctx.measure(async {
+        for batch in 0..(total_events / batch_size) {
+            let mut batch_events = Vec::with_capacity(batch_size);
+            
+            for i in 0..batch_size {
+                let mut rng = rand::thread_rng();
+                let event = ctx.event()
+                    .source(sources.choose(&mut rng).unwrap())
+                    .type_(event_types.choose(&mut rng).unwrap())
+                    .field("value", rng.gen_range(0.0..100.0))
+                    .field("batch", batch)
+                    .field("index", i)
+                    .field("message", rng.sample_iter(&Alphanumeric)
+                        .take(50)
+                        .map(char::from)
+                        .collect::<String>())
+                    .build()?;
+                batch_events.push(event);
+            }
+            
+            // Batch insert
+            ctx.insert_events(&batch_events).await?;
+        }
+        Ok::<_, CoreError>(())
+    }).await?;
+    
+    // Verify and measure performance
+    let count = ctx.events().count().await?;
+    assert_eq!(count, total_events as i64);
+    
+    let events_per_second = total_events as f64 / duration.as_secs_f64();
+    println!("Generated {} events in {:?} ({:.0} events/sec)", 
+             total_events, duration, events_per_second);
+    
+    ctx.assert("performance")
+        .that(events_per_second > 1000.0, 
+              &format!("Should generate >1000 events/sec, got {:.0}", events_per_second))?;
+    
+    Ok(())
+}
+```
 
-    let mut records_to_insert: Vec<(Ulid, String, String, chrono::DateTime<Utc>, String, serde_json::Value)> = Vec::with_capacity(batch_size);
+### Realistic Event Patterns
 
-    for _ in 0..batch_size {
-        let event_id_ulid = Ulid::new();
-        let source = sources.choose(&mut rng).unwrap().to_string();
-        let event_type = event_types.choose(&mut rng).unwrap().to_string();
-        let ts_orig_pg: chrono::DateTime<chrono::Utc> = Utc::now() - chrono::Duration::seconds(rng.gen_range(0..86400)); // Within last day
-        let host = hosts.choose(&mut rng).unwrap().to_string();
-        let payload_data = json!({
-            "message": rng.sample_iter(&Alphanumeric).take(rng.gen_range(50..150)).map(char::from).collect::<String>(),
-            "value": rng.gen_range(1..10000),
-            "is_processed": rng.gen_bool(0.5),
-            "nested_obj": {
-                "keyA": rng.gen_range(0.0..1.0),
-                "keyB": ["option1", "option2", "option3"].choose(&mut rng).unwrap().to_string()
-            },
-            "_provenance": { "generator_run_id": Ulid::new().to_string() }
-        });
-        records_to_insert.push((event_id_ulid, source, event_type, ts_orig_pg, host, payload_data));
+```rust
+#[sinex_test]
+async fn test_realistic_filesystem_activity(ctx: TestContext) -> TestResult<()> {
+    use fake::{Fake, Faker};
+    use fake::faker::filesystem::en::*;
+    
+    // Simulate realistic file operations
+    let operations = ["created", "modified", "deleted", "renamed"];
+    let extensions = ["txt", "pdf", "jpg", "log", "json", "rs"];
+    
+    for _ in 0..100 {
+        let mut rng = rand::thread_rng();
+        let path: String = FilePath().fake();
+        let size: u64 = (100..10_000_000).fake();
+        
+        let event = ctx.event()
+            .filesystem()
+            .path(&path)
+            .size(size)
+            .field("extension", extensions.choose(&mut rng).unwrap())
+            .field("operation", operations.choose(&mut rng).unwrap())
+            .modified()
+            .insert()
+            .await?;
     }
     
-    // Batch insert using unnest for potentially better performance with sqlx
-    let mut ulids: Vec<Ulid> = Vec::new();
-    let mut sources_vec: Vec<String> = Vec::new();
-    let mut event_types_vec: Vec<String> = Vec::new();
-    let mut ts_origs_vec: Vec<chrono::DateTime<Utc>> = Vec::new();
-    let mut hosts_vec: Vec<String> = Vec::new();
-    let mut payloads_vec: Vec<serde_json::Value> = Vec::new();
-
-    for r in records_to_insert {
-        ulids.push(r.0);
-        sources_vec.push(r.1);
-        event_types_vec.push(r.2);
-        ts_origs_vec.push(r.3);
-        hosts_vec.push(r.4);
-        payloads_vec.push(r.5);
-    }
-
-    sqlx::query!(
-        "INSERT INTO core.events (event_id, source, event_type, ts_orig, host, payload) \
-         SELECT * FROM UNNEST($1::ulid[], $2::text[], $3::text[], $4::timestamptz[], $5::text[], $6::jsonb[])",
-        &ulids, &sources_vec, &event_types_vec, &ts_origs_vec, &hosts_vec, &payloads_vec
-    )
-    .execute(db_pool)
-    .await?;
+    // Query patterns
+    let large_files = ctx.events()
+        .by_source("fs")
+        .fetch()
+        .await?
+        .into_iter()
+        .filter(|e| e.payload["size"].as_u64().unwrap_or(0) > 1_000_000)
+        .count();
+    
+    println!("Found {} large files (>1MB)", large_files);
     
     Ok(())
 }
@@ -305,8 +339,191 @@ impl SyntheticFileEvent {
 }
 ```
 
-## Notes
+## Integration with External Tools
 
-These examples demonstrate advanced testing patterns. The actual Sinex test infrastructure uses the `TestContext` approach documented in the main library documentation, which provides a cleaner, more integrated testing experience.
+### Using TestContext with Property Testing
 
-For production use, always prefer the established `#[sinex_test]` macro and `TestContext` patterns over these conceptual examples.
+```rust
+#[sinex_test]
+async fn test_property_based_event_validation(ctx: TestContext) -> TestResult<()> {
+    use proptest::prelude::*;
+    
+    // Define property test within async context
+    parameterized!([
+        ("alphanumeric", "[a-zA-Z0-9]{5,20}", 20),
+        ("with-special", "[a-zA-Z0-9._-]{5,30}", 20),
+        ("unicode", ".*{1,50}", 10),
+    ], |(name, pattern, iterations)| {
+        // Limited iterations for database tests
+        for i in 0..iterations {
+            let source = format!("prop-test-{}-{}", name, i);
+            
+            let event = ctx.event()
+                .source(&source)
+                .type_("property.test")
+                .field("pattern", pattern)
+                .field("iteration", i)
+                .insert()
+                .await?;
+            
+            // Verify source follows expected pattern
+            assert!(event.source.contains("prop-test"));
+            assert_eq!(event.payload["iteration"], json!(i));
+        }
+        Ok(())
+    });
+    
+    Ok(())
+}
+```
+
+### Performance Profiling in Tests
+
+```rust
+#[sinex_test(timeout = 120)]
+async fn test_with_performance_profiling(ctx: TestContext) -> TestResult<()> {
+    use std::time::Instant;
+    
+    let mut timings = vec![];
+    
+    // Profile different operations
+    for operation in ["insert", "query", "update"] {
+        let start = Instant::now();
+        
+        match operation {
+            "insert" => {
+                for i in 0..1000 {
+                    ctx.event()
+                        .source("perf-test")
+                        .type_("benchmark")
+                        .field("op", operation)
+                        .field("index", i)
+                        .insert()
+                        .await?;
+                }
+            }
+            "query" => {
+                for _ in 0..100 {
+                    let _ = ctx.events()
+                        .by_source("perf-test")
+                        .limit(10)
+                        .fetch()
+                        .await?;
+                }
+            }
+            "update" => {
+                // Simulate updates by creating derived events
+                let events = ctx.events()
+                    .by_source("perf-test")
+                    .limit(100)
+                    .fetch()
+                    .await?;
+                
+                for event in events {
+                    ctx.event()
+                        .source("perf-updated")
+                        .type_("benchmark.updated")
+                        .field("original_id", event.id)
+                        .insert()
+                        .await?;
+                }
+            }
+            _ => unreachable!()
+        }
+        
+        let elapsed = start.elapsed();
+        timings.push((operation, elapsed));
+        println!("Operation '{}' took {:?}", operation, elapsed);
+    }
+    
+    // Generate performance report
+    println!("\nPerformance Summary:");
+    for (op, duration) in &timings {
+        println!("  {}: {:?}", op, duration);
+    }
+    
+    Ok(())
+}
+```
+
+## Advanced Mock Scenarios
+
+### Simulating Complex System Behavior
+
+```rust
+#[sinex_test]
+async fn test_cascading_failures(ctx: TestContext) -> TestResult<()> {
+    // Setup mock infrastructure
+    let fs = ctx.mocks().filesystem();
+    let db = ctx.mocks().database()
+        .with_failure_rate(0.0); // Start healthy
+    
+    // Create initial state
+    fs.create_file("/app/config.json", br#"{"healthy": true}"#).await?;
+    
+    // Simulate normal operation
+    for i in 0..10 {
+        let config = fs.read_file("/app/config.json").await?;
+        ctx.event()
+            .source("app")
+            .type_("health.check")
+            .field("iteration", i)
+            .field("config_size", config.len())
+            .insert()
+            .await?;
+    }
+    
+    // Inject filesystem failure
+    fs.inject_error("/app/config.json", std::io::ErrorKind::PermissionDenied);
+    
+    // Observe cascade effect
+    let mut failure_count = 0;
+    for i in 10..20 {
+        match fs.read_file("/app/config.json").await {
+            Ok(_) => {
+                ctx.event()
+                    .source("app")
+                    .type_("health.recovered")
+                    .field("iteration", i)
+                    .insert()
+                    .await?;
+            }
+            Err(e) => {
+                failure_count += 1;
+                ctx.event()
+                    .source("app")
+                    .type_("health.failed")
+                    .field("iteration", i)
+                    .field("error", e.to_string())
+                    .insert()
+                    .await?;
+            }
+        }
+    }
+    
+    // Verify failure propagation
+    ctx.assert("cascade detection")
+        .that(failure_count > 5, "Should see cascading failures")?;
+    
+    let failure_events = ctx.events()
+        .by_type("health.failed")
+        .count()
+        .await?;
+    
+    assert_eq!(failure_events, failure_count as i64);
+    
+    Ok(())
+}
+```
+
+## Testing Best Practices
+
+1. **Use TestContext for Everything**: All test operations should flow through the TestContext
+2. **Leverage Fixtures**: Reuse common test scenarios via `ctx.scenarios()`
+3. **Test in Isolation**: Each test gets its own database - use this isolation
+4. **Measure Performance**: Use `ctx.measure()` to track operation timing
+5. **Rich Assertions**: Use `ctx.assert()` for better error messages
+6. **Mock External Dependencies**: Use mocks for filesystem, network, etc.
+7. **Property Test Wisely**: Limit iterations when using database operations
+
+For more examples, see the TESTING.md guide and the test files throughout the Sinex codebase.

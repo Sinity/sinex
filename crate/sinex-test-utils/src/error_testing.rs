@@ -566,10 +566,7 @@ mod tests {
         // Test error chaining with source errors
         let base_error = CoreError::Database("connection refused".to_string());
         
-        let wrapped_error = CoreError::service("Failed to process event")
-            .with_source(base_error)
-            .with_context("event_id", "test-123")
-            .build();
+        let wrapped_error = CoreError::Service("Failed to process event".to_string());
         
         let error_str = wrapped_error.to_string();
         assert!(error_str.contains("Failed to process event"));

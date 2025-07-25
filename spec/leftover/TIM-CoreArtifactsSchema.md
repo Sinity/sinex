@@ -6,28 +6,12 @@
 **Dependencies**: `pgx_ulid` extension, `core.blobs` table, `core.set_updated_at_trigger_func_generic()` trigger function
 **Blocks**: PKM note management, content versioning, artifact-based workflows, content search and discovery
 
-## MVP Specification
-- Core artifact tables (`core.artifacts`, `core.artifact_contents`) with versioning support
-- Artifact types: PKM notes, web pages, emails, documents, tasks
-- Content versioning with BLAKE3 hashing for deduplication
-- Basic artifact CRUD operations and content management
-
-## Enhanced Features
-- Yjs integration for real-time collaborative editing (PKM notes)
-- Full-text search across all artifact content
-- Automatic content extraction from various file formats
-- Content similarity detection and clustering
-- Artifact relationship mapping and cross-references
-
 ## Implementation Checklist
-- [x] Database migration to create `core.artifacts` and `core.artifact_contents` tables
-- [x] Foreign key constraints after `core.blobs` table exists
+- [x] Database migration to create artifact tables (implemented as `km.artifacts` and `km.artifact_revisions`)
 - [ ] Artifact management API (create, update, version, delete)
-- [x] Content versioning and deduplication logic
-- [x] Basic artifact search and filtering
 - [ ] PKM note Yjs integration (per ADR-004)
 - [ ] Tests for artifact operations and content versioning
-- [x] Full-text search index setup (tsvector generation)
+- [ ] Full-text search index setup (tsvector generation)
 
 *   **Purpose:** Provides the canonical Data Definition Language (DDL) for `core.artifacts` (representing conceptual documents/items like PKM notes, web pages, emails) and `core.artifact_contents` (storing their versioned textual content or references to content blobs).
 *   **Source:** Derived from original Vision Document Appendix A and Part II.2, refined by ADR-004 and specific content needs.

@@ -305,79 +305,8 @@ impl<'ctx> PropertyTester<'ctx> {
         Ok(())
     }
     
-    /// Test concurrency properties
-    pub async fn test_concurrent_insertion_property(&mut self, test_cases: u32) -> TestResult<()> {
-        use std::sync::Arc;
-        use tokio::sync::Mutex;
-        
-        // Track insertion results
-        let results = Arc::new(Mutex::new(Vec::new()));
-        let errors = Arc::new(Mutex::new(Vec::new()));
-        
-        // Run concurrent insertions
-        let mut handles = vec![];
-        for i in 0..test_cases {
-            let ctx = self.ctx.clone();
-            let results_clone = results.clone();
-            let errors_clone = errors.clone();
-            
-            let handle = tokio::spawn(async move {
-                // Generate unique event for this iteration
-                let source = format!("concurrent-{}", i % 5);
-                let event_type = format!("test.concurrent.{}", i % 3);
-                
-                match ctx.event()
-                    .source(&source)
-                    .type_(&event_type)
-                    .field("iteration", i)
-                    .field("thread_id", format!("{:?}", std::thread::current().id()))
-                    .insert()
-                    .await
-                {
-                    Ok(event) => {
-                        results_clone.lock().await.push((i, event.id));
-                    }
-                    Err(e) => {
-                        errors_clone.lock().await.push((i, e.to_string()));
-                    }
-                }
-            });
-            handles.push(handle);
-        }
-        
-        // Wait for all to complete
-        for handle in handles {
-            handle.await.map_err(|e| CoreError::Service(format!("Task join failed: {}", e)))?;
-        }
-        
-        // Verify results
-        let final_results = results.lock().await;
-        let final_errors = errors.lock().await;
-        
-        // Property: All insertions should succeed
-        if !final_errors.is_empty() {
-            return Err(CoreError::Validation(format!(
-                "Concurrent insertions failed: {} errors out of {} attempts. First error: {:?}",
-                final_errors.len(), test_cases, final_errors.first()
-            )));
-        }
-        
-        // Property: All events should have unique IDs
-        let mut id_set = std::collections::HashSet::new();
-        for (_, id) in final_results.iter() {
-            if !id_set.insert(*id) {
-                return Err(CoreError::Validation(format!(
-                    "Duplicate event ID found in concurrent insertions: {}",
-                    id
-                )));
-            }
-        }
-        
-        // Property: Number of successful insertions should match test cases
-        assert_eq!(final_results.len(), test_cases as usize);
-        
-        Ok(())
-    }
+    // Note: test_concurrent_insertion_property moved to sinex-db/tests/concurrency_test.rs
+    // as it tests database concurrent insertion guarantees, not the test framework
 }
 
 /// Extension trait to add property testing to TestContext

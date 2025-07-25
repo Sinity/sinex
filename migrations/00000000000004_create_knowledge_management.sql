@@ -94,6 +94,34 @@ CREATE INDEX idx_annotations_concept ON km.event_annotations (concept_id);
 CREATE INDEX idx_annotations_type ON km.event_annotations (annotation_type);
 
 -- Artifacts for storing knowledge documents
+--
+-- ## Artifact Schema Design (TIM-CoreArtifactsSchema)
+--
+-- The artifacts system provides versioned storage for conceptual documents including:
+-- - PKM notes with Yjs integration for real-time collaboration
+-- - Web page archives with markdown extraction
+-- - Email messages with structured metadata
+-- - PDF documents and other binary artifacts
+-- - Tasks and project definitions
+--
+-- Key design principles:
+-- - Separate artifact metadata (km.artifacts) from versioned content (km.artifact_revisions)
+-- - Content deduplication via BLAKE3 hashing
+-- - Support for both text content and binary blob references
+-- - Extensible metadata in JSONB for type-specific properties
+--
+-- Artifact types include:
+-- - 'pkm_note': Personal knowledge management notes
+-- - 'webpage_archive': Archived web pages with extracted content
+-- - 'email_message': Email messages with headers and content
+-- - 'pdf_document': PDF files (content extraction optional)
+-- - 'task_item': Actionable tasks with status tracking
+--
+-- Note: This is a simplified implementation. The full TIM specification includes:
+-- - Canonical identifiers for stable references
+-- - Tags denormalization for faster search
+-- - Integration with core.blobs for large content
+-- - Full-text search capabilities via tsvector
 CREATE TABLE IF NOT EXISTS km.artifacts (
     id ULID PRIMARY KEY DEFAULT gen_ulid(),
     artifact_type TEXT NOT NULL,
@@ -109,6 +137,17 @@ CREATE INDEX idx_artifacts_type ON km.artifacts (artifact_type);
 CREATE INDEX idx_artifacts_uri ON km.artifacts (uri) WHERE uri IS NOT NULL;
 
 -- Artifact revisions for version control
+--
+-- Stores immutable content versions for artifacts. Key features:
+-- - Content versions are append-only (no updates)
+-- - BLAKE3 hashing for content integrity and deduplication
+-- - Sequential revision numbers per artifact
+-- - Metadata can include extraction details, Yjs state vectors, etc.
+--
+-- For PKM notes with Yjs integration:
+-- - Content snapshots derived from Yjs document state
+-- - Version identifier references last incorporated Yjs delta
+-- - Periodic snapshots for efficient retrieval
 CREATE TABLE IF NOT EXISTS km.artifact_revisions (
     id ULID PRIMARY KEY DEFAULT gen_ulid(),
     artifact_id ULID NOT NULL REFERENCES km.artifacts(id) ON DELETE CASCADE,

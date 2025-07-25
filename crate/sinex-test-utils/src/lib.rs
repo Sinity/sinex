@@ -615,7 +615,7 @@ mod tests {
     }
     
     #[sinex_test]
-    async fn test_database_isolation_comprehensive(ctx: TestContext) -> TestResult<()> {
+    async fn test_database_isolation(ctx: TestContext) -> TestResult<()> {
         // Create multiple contexts and verify complete isolation
         let contexts = vec![
             TestContext::with_name("isolation_1").await?,
@@ -840,164 +840,20 @@ mod tests {
         assert!(error_result.is_err());
     }
     
-    #[sinex_test]
-    async fn test_edge_case_empty_strings(ctx: TestContext) -> TestResult<()> {
-        // Test empty source/type validation
-        let empty_source = ctx.event()
-            .source("")
-            .type_("test")
-            .insert()
-            .await;
-        assert!(empty_source.is_err());
-        assert!(empty_source.unwrap_err().to_string().contains("source"));
-        
-        let empty_type = ctx.event()
-            .source("test")
-            .type_("")
-            .insert()
-            .await;
-        assert!(empty_type.is_err());
-        assert!(empty_type.unwrap_err().to_string().contains("Event type required"));
-        
-        // Test whitespace-only strings
-        let whitespace_source = ctx.event()
-            .source("   ")
-            .type_("test")
-            .insert()
-            .await;
-        assert!(whitespace_source.is_ok(), "Whitespace source should be allowed");
-        
-        Ok(())
-    }
+    // Note: test_edge_case_empty_strings moved to sinex-events/tests/validation_test.rs
+    // as it tests event validation logic, not the test framework
     
-    #[sinex_test]
-    async fn test_edge_case_very_long_strings(ctx: TestContext) -> TestResult<()> {
-        // Test very long source and type names
-        let long_source = "x".repeat(255);
-        let long_type = format!("type.{}", "x".repeat(200));
-        
-        let event = ctx.event()
-            .source(&long_source)
-            .type_(&long_type)
-            .insert()
-            .await?;
-        
-        assert_eq!(event.source, long_source);
-        assert_eq!(event.event_type, long_type);
-        
-        // Test extremely long payload values
-        let huge_payload = "data".repeat(100_000); // 400KB string
-        let large_event = ctx.event()
-            .source("test")
-            .type_("large.payload")
-            .field("data", &huge_payload)
-            .insert()
-            .await?;
-        
-        assert_eq!(large_event.payload["data"], json!(huge_payload));
-        
-        Ok(())
-    }
+    // Note: test_edge_case_very_long_strings moved to sinex-db/tests/storage_limits_test.rs
+    // as it tests database storage limits, not the test framework
     
-    #[sinex_test]
-    async fn test_edge_case_special_characters(ctx: TestContext) -> TestResult<()> {
-        // Test Unicode in all fields
-        let unicode_cases = vec![
-            ("emoji", "🚀🌟✨", "Hello 世界 🌍"),
-            ("chinese", "中文测试", "这是一个测试"),
-            ("arabic", "اختبار", "هذا اختبار"),
-            ("special", "sp€ci@l", "ñoñó ¿qué?"),
-        ];
-        
-        for (name, source_suffix, data) in unicode_cases {
-            let event = ctx.event()
-                .source(format!("test-{}", source_suffix))
-                .type_(format!("unicode.{}", name))
-                .field("message", data)
-                .field("emoji", "🎉")
-                .insert()
-                .await?;
-            
-            assert!(event.payload["message"].as_str().unwrap().contains(data));
-        }
-        
-        // Test special characters in JSON
-        let special_json = ctx.event()
-            .source("json-special")
-            .type_("test")
-            .field("quotes", r#"Hello "world" with 'quotes'"#)
-            .field("newlines", "line1\nline2\nline3")
-            .field("tabs", "col1\tcol2\tcol3")
-            .field("backslash", "C:\\Users\\test")
-            .insert()
-            .await?;
-        
-        assert!(special_json.payload["quotes"].as_str().unwrap().contains("\"world\""));
-        
-        Ok(())
-    }
+    // Note: test_edge_case_special_characters moved to sinex-events/tests/json_handling_test.rs
+    // as it tests JSON serialization and special character handling, not the test framework
     
-    #[sinex_test]
-    async fn test_edge_case_numeric_boundaries(ctx: TestContext) -> TestResult<()> {
-        // Test numeric edge cases
-        let numeric_event = ctx.event()
-            .source("numeric")
-            .type_("boundaries")
-            .field("i64_max", i64::MAX)
-            .field("i64_min", i64::MIN)
-            .field("u64_max", u64::MAX)
-            .field("f64_max", f64::MAX)
-            .field("f64_min", f64::MIN)
-            .field("f64_inf", f64::INFINITY)
-            .field("f64_neg_inf", f64::NEG_INFINITY)
-            .field("zero", 0)
-            .field("negative_zero", -0.0)
-            .insert()
-            .await?;
-        
-        assert_eq!(numeric_event.payload["i64_max"], json!(i64::MAX));
-        assert_eq!(numeric_event.payload["u64_max"], json!(u64::MAX));
-        assert!(numeric_event.payload["f64_inf"].as_f64().unwrap().is_infinite());
-        
-        Ok(())
-    }
+    // Note: test_edge_case_numeric_boundaries moved to sinex-db/tests/numeric_storage_test.rs
+    // as it tests database numeric type handling, not the test framework
     
-    #[sinex_test]
-    async fn test_edge_case_nested_json(ctx: TestContext) -> TestResult<()> {
-        // Test deeply nested JSON structures
-        let mut nested = json!("leaf");
-        for i in 0..50 {
-            nested = json!({
-                "level": i,
-                "data": nested
-            });
-        }
-        
-        let deep_event = ctx.event()
-            .source("nested")
-            .type_("deep.structure")
-            .payload(json!({
-                "shallow": "value",
-                "deep": nested
-            }))
-            .insert()
-            .await?;
-        
-        assert!(deep_event.payload["deep"].is_object());
-        
-        // Test large arrays
-        let large_array: Vec<i32> = (0..1000).collect();
-        let array_event = ctx.event()
-            .source("array")
-            .type_("large")
-            .field("items", json!(large_array))
-            .insert()
-            .await?;
-        
-        assert_eq!(array_event.payload["items"].as_array().unwrap().len(), 1000);
-        
-        Ok(())
-    }
+    // Note: test_edge_case_nested_json moved to sinex-events/tests/json_complexity_test.rs
+    // as it tests JSON structure handling and limits, not the test framework
     
     #[sinex_test]
     async fn test_edge_case_concurrent_isolation(ctx: TestContext) -> TestResult<()> {
@@ -1054,77 +910,11 @@ mod tests {
         Ok(())
     }
     
-    #[sinex_test]
-    async fn test_edge_case_query_combinations(ctx: TestContext) -> TestResult<()> {
-        // Create diverse events for complex querying
-        for i in 0..20 {
-            ctx.event()
-                .source(if i % 2 == 0 { "even" } else { "odd" })
-                .type_(match i % 3 {
-                    0 => "type.a",
-                    1 => "type.b",
-                    _ => "type.c",
-                })
-                .field("index", i)
-                .field("group", i / 5)
-                .insert()
-                .await?;
-        }
-        
-        // Test various query combinations
-        let queries = vec![
-            (ctx.events().by_source("even").by_type("type.a").fetch().await?, "even + type.a"),
-            (ctx.events().by_source("odd").limit(3).fetch().await?, "odd with limit"),
-            (ctx.events().by_type("type.b").fetch().await?, "all type.b"),
-        ];
-        
-        for (results, description) in queries {
-            println!("Query '{}' returned {} results", description, results.len());
-            assert!(!results.is_empty(), "Query '{}' should return results", description);
-        }
-        
-        // Test count queries
-        let total = ctx.events().count().await?;
-        assert_eq!(total, 20);
-        
-        let even_count = ctx.events().by_source("even").count().await?;
-        assert_eq!(even_count, 10);
-        
-        Ok(())
-    }
+    // Note: test_edge_case_query_combinations moved to sinex-db/tests/query_functionality_test.rs
+    // as it tests database query capabilities, not the test framework
     
-    #[sinex_test]
-    async fn test_edge_case_rapid_operations(ctx: TestContext) -> TestResult<()> {
-        // Test rapid event creation
-        let start = std::time::Instant::now();
-        
-        for i in 0..100 {
-            ctx.event()
-                .source("rapid")
-                .type_("burst")
-                .field("seq", i)
-                .insert()
-                .await?;
-        }
-        
-        let duration = start.elapsed();
-        println!("Created 100 events in {:?}", duration);
-        
-        // Should be reasonably fast
-        assert!(duration.as_secs() < 10, "Event creation too slow");
-        
-        // Test rapid querying
-        let query_start = std::time::Instant::now();
-        
-        for _ in 0..50 {
-            let _ = ctx.events().by_source("rapid").limit(10).fetch().await?;
-        }
-        
-        let query_duration = query_start.elapsed();
-        println!("Executed 50 queries in {:?}", query_duration);
-        
-        Ok(())
-    }
+    // Note: test_edge_case_rapid_operations moved to sinex-db/tests/performance_test.rs
+    // as it tests database performance characteristics, not the test framework
     
     #[sinex_test]
     async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {

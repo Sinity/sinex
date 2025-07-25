@@ -174,9 +174,60 @@ just test-verbose           # Full output for debugging
 
 ## 🔧 Development Workflows
 
+### Sinex DevTools Service
+The `sinex-devtools` service provides a comprehensive development dashboard that runs automatically on system startup:
+
+**What it does**:
+- Runs `mprocs` in a persistent tmux session with multiple monitoring panes
+- **Bacon**: Continuous compilation checking with output to `.claude-outputs/bacon.log`
+- **Claude Activity**: Real-time monitoring of Claude's actions from session logs
+- **Claude Code Monitor**: Live usage metrics and active blocks tracking
+- **Database Activity**: PostgreSQL query monitoring for sinex_dev
+- **Git Status**: Repository state and recent commits
+- **System Resources**: btop for CPU/memory/process monitoring
+
+**Usage**:
+```bash
+sinex-attach               # Attach to running development dashboard
+# Press 'q' to detach from tmux (keeps running in background)
+# Press Ctrl+q to quit mprocs entirely
+```
+
+**Automatic features**:
+- Sets up the sinex_dev database if it doesn't exist
+- Runs migrations on startup
+- Maintains compilation state between sessions
+- Provides instant feedback on code changes via bacon
+- Compilation output available in `.claude-outputs/bacon.log` for scripts
+
+**Important for Claude Code**:
+- **ALWAYS use bacon-aware commands**: Never run `cargo check` or `just check` directly
+- **Use `just qc`**: Quick compilation status check with smart waiting for bacon
+- **Use `just errors`**: Get compilation errors with automatic wait for bacon to finish
+- **Use `just warnings`**: Get compilation warnings with automatic wait
+- **Use `just ce`**: Quick check and show errors in one command
+- **No manual sleeps needed**: Commands automatically wait for bacon to finish (up to 10s)
+- **Avoid triggering builds**: Bacon is already compiling continuously in background
+
+Example workflow:
+```bash
+# After making code changes
+just qc                    # Check compilation status (waits for bacon automatically)
+just errors                # If there are errors, get details
+just warnings              # Check for any warnings
+
+# Or use the combined command:
+just ce                    # Check and show errors immediately
+```
+
+These commands intelligently wait for bacon to finish compiling (checking if the log file was modified in the last 2 seconds) before showing results, eliminating the need for arbitrary sleep commands.
+
 ### Standard Development Cycle
 ```bash
 just dev                   # fmt + check + test-fast
+
+# Or monitor continuously with:
+sinex-attach               # Attach to devtools dashboard
 ```
 
 ### Working with Database Changes
