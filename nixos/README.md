@@ -2,6 +2,47 @@
 
 Complete deployment and operations guide for the Sinex Exocortex personal data capture system.
 
+## Documentation Structure
+
+- **example.nix** - Complete configuration example with all options and defaults
+- **modules/** - Implementation modules:
+  - `sinex-config.nix` - Core configuration interface and PostgreSQL setup
+  - `database.nix` - Database connection pooling and health monitoring  
+  - `satellite-services.nix` - Individual satellite service configurations
+  - `monitoring.nix` - Prometheus/Grafana monitoring setup
+  - `preflight-verification.nix` - Pre-deployment validation checks
+
+## Architectural Documentation
+
+Key architectural decisions and implementation details are documented at their implementation points:
+
+### Database Layer
+- **PostgreSQL Extensions Setup**: [`modules/sinex-config.nix:285-305`](modules/sinex-config.nix#L285-L305)
+  - pgx_ulid configuration for ULID primary keys
+  - TimescaleDB setup for hypertable partitioning  
+  - Optional monotonic ULID generation instructions
+- **TimescaleDB Hypertable Creation**: [`migrations/00000000000002_create_core_tables.sql:1-47`](../migrations/00000000000002_create_core_tables.sql#L1-L47)
+  - Chunk interval optimization guidelines
+  - Compression strategy documentation
+- **ULID Implementation**: [`sinex-ulid/src/lib.rs:188-246`](../crate/sinex-ulid/src/lib.rs#L188-L246)
+  - ULID-UUID casting for foreign keys
+  - Monotonic generation for high concurrency
+
+### Event Processing
+- **Redis Streams Architecture**: [`sinex-satellite-sdk/src/redis_client.rs:1-88`](../crate/sinex-satellite-sdk/src/redis_client.rs#L1-L88)
+  - Supersedes ADR-014 routing cache architecture
+  - Consumer group pattern documentation
+  - Checkpoint hybrid strategy
+- **StatefulStreamProcessor Trait**: [`sinex-satellite-sdk/src/stream_processor.rs:381-502`](../crate/sinex-satellite-sdk/src/stream_processor.rs#L381-L502)
+  - Unified interface for all satellites
+  - Snapshot, historical, and continuous modes
+
+### Satellite Implementations  
+- **Filesystem Monitoring**: [`sinex-fs-watcher/src/unified_processor.rs:1-62`](../crate/sinex-fs-watcher/src/unified_processor.rs#L1-L62)
+  - inotify (Linux) implementation details
+  - FSEvents (macOS) configuration
+  - System limits and overflow handling
+
 ## Quick Start
 
 ### Minimal Deployment
@@ -606,12 +647,192 @@ services.grafana = {
 };
 ```
 
+## TimescaleDB Operational Guidelines
+
+### Chunk Interval Sizing
+
+TimescaleDB partitions data into chunks for efficient time-series storage. Optimal chunk sizing is critical for performance.
+
+**Default Configuration**: 1 day chunks
+
+**Sizing Guidelines**:
+- **Target**: Each chunk should be 10-25% of PostgreSQL RAM allocation
+- **High volume** (>20GB/day): Use 6-12 hour chunks
+- **Medium volume** (1-20GB/day): Use 1 day chunks (default)
+- **Low volume** (<1GB/day): Use 7 day chunks
+
+**Monitor chunk sizes**:
+```sql
+-- View chunk information
+SELECT 
+    chunk_name,
+    table_bytes,
+    index_bytes,
+    total_bytes,
+    pg_size_pretty(total_bytes) as total_size
+FROM timescaledb_information.chunks
+WHERE hypertable_name = 'events'
+ORDER BY range_start DESC
+LIMIT 10;
+
+-- Adjust chunk interval if needed
+SELECT set_chunk_time_interval('core.events', INTERVAL '12 hours');
+```
+
+### Compression Policy
+
+TimescaleDB compression can achieve 90-95% storage reduction on time-series data.
+
+**Enable compression**:
+```sql
+-- Configure compression settings
+ALTER TABLE core.events SET (
+    timescaledb.compress,
+    timescaledb.compress_orderby = 'ts_ingest DESC, event_id',
+    timescaledb.compress_segmentby = 'source, event_type'
+);
+
+-- Add automatic compression for chunks older than 7 days
+SELECT add_compression_policy('core.events', INTERVAL '7 days');
+```
+
+**Compression considerations**:
+- JSONB payloads compress less effectively than structured columns
+- Extract frequently queried fields to dedicated columns for better compression
+- Query performance on compressed data has decompression overhead
+- Use `compress_segmentby` columns that match your common WHERE clauses
+
+### Continuous Aggregates
+
+For frequently-run analytical queries, use continuous aggregates:
+
+```sql
+-- Example: Hourly event counts by source
+CREATE MATERIALIZED VIEW event_counts_hourly
+WITH (timescaledb.continuous) AS
+SELECT 
+    time_bucket('1 hour', ts_ingest) AS hour,
+    source,
+    event_type,
+    COUNT(*) as event_count
+FROM core.events
+GROUP BY hour, source, event_type;
+
+-- Add refresh policy
+SELECT add_continuous_aggregate_policy(
+    'event_counts_hourly',
+    start_offset => INTERVAL '3 hours',
+    end_offset => INTERVAL '1 hour',
+    schedule_interval => INTERVAL '30 minutes'
+);
+```
+
+### Retention Policies
+
+Automatically drop old data:
+
+```sql
+-- Drop chunks older than 1 year
+SELECT add_retention_policy('core.events', INTERVAL '1 year');
+
+-- For infinite retention (default), don't add a policy
+```
+
+## Development Practices
+
+### Creating New Service Modules
+
+When adding a new Sinex service, follow these patterns:
+
+```nix
+# nixos/modules/services/my-new-service.nix
+{ config, lib, pkgs, ... }:
+
+with lib;
+
+let
+  cfg = config.services.sinex.myService;
+  sinexCfg = config.services.sinex;
+in
+{
+  options.services.sinex.myService = {
+    enable = mkEnableOption "Sinex My Service";
+    
+    port = mkOption {
+      type = types.port;
+      default = 2120;
+      description = "Port for the service";
+    };
+    
+    configFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = "Path to service configuration file";
+    };
+  };
+  
+  config = mkIf (sinexCfg.enable && cfg.enable) {
+    systemd.services.sinex-my-service = {
+      description = "Sinex My Service";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" "sinex-ingestd.service" ];
+      
+      serviceConfig = {
+        Type = "simple";
+        User = sinexCfg.database.user;
+        Group = sinexCfg.database.user;
+        ExecStart = "${sinexCfg.package}/bin/sinex-my-service";
+        Restart = "always";
+        RestartSec = "10s";
+        
+        # Resource limits
+        MemoryMax = "512M";
+        CPUQuota = "50%";
+        
+        # Security hardening
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = "read-only";
+        ReadWritePaths = [ sinexCfg.directories.state ];
+      };
+      
+      environment = {
+        DATABASE_URL = sinexCfg.database.url;
+        RUST_LOG = cfg.logLevel or sinexCfg.logLevel;
+        SINEX_CONFIG = cfg.configFile or "${pkgs.writeText "my-service.toml" (builtins.toJSON cfg)}";
+      };
+    };
+    
+    # Add to health checks
+    services.sinex.monitoring.healthChecks = {
+      "sinex-my-service" = {
+        command = "${pkgs.curl}/bin/curl -f http://localhost:${toString cfg.port}/health";
+        interval = "30s";
+        timeout = "5s";
+      };
+    };
+  };
+}
+```
+
+### Best Practices
+
+1. **Service Dependencies**: Always specify proper systemd dependencies
+2. **User/Group**: Use the shared `sinex` user for database access
+3. **Resource Limits**: Apply appropriate memory and CPU quotas
+4. **Security Hardening**: Use systemd security features like PrivateTmp
+5. **Configuration**: Support both inline and file-based configuration
+6. **Health Checks**: Integrate with the monitoring framework
+7. **Logging**: Use structured logging with configurable levels
+
 ## Support & Documentation
 
 - **Architecture**: See `spec/SADI.md` and `plan.md`
 - **Development**: See `CLAUDE.md` for developer reference
 - **API**: Check `cli/README.md` for CLI usage
 - **Issues**: Report to project repository
+- **TimescaleDB**: [Official docs](https://docs.timescale.com/)
+- **Performance tuning**: See TimescaleDB best practices guide
 
 ## Security Considerations
 

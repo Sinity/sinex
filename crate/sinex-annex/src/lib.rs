@@ -1,3 +1,38 @@
+//! Git-annex integration for large file management
+//!
+//! This crate provides integration with git-annex for managing large binary files
+//! within Sinex, using content-addressed storage with deduplication.
+//!
+//! ## Architecture Overview
+//! 
+//! - **Git-annex**: Provides content-addressed storage, deduplication, and integrity checking
+//! - **core.blobs table**: PostgreSQL metadata registry for annexed files
+//! - **BLAKE3 hashing**: Fast content hashing for deduplication
+//! - **Symlink management**: Working tree files replaced by symlinks to annexed content
+//!
+//! ## Workflow
+//!
+//! 1. Large files detected during ingestion (e.g., >100KB)
+//! 2. File added to git-annex repository via `git annex add`
+//! 3. Annex key extracted and metadata stored in core.blobs
+//! 4. Original file location tracked via symlink
+//! 5. Content retrievable via annex key or blob_id
+//!
+//! ## Git-annex Key Format
+//!
+//! Keys follow the pattern: `BACKEND-sSIZE--HASH.ext`
+//! - Example: `SHA256E-s12345--abc123def456.dat`
+//! - Backend: Hash algorithm (SHA256E, BLAKE3, etc.)
+//! - Size: File size in bytes
+//! - Hash: Content hash
+//!
+//! ## Deduplication
+//!
+//! Files with identical content share the same annex object:
+//! - Multiple symlinks can point to same annexed content
+//! - Reduces storage for duplicate files
+//! - BLAKE3 hash used for fast content comparison
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

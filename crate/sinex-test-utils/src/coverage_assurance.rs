@@ -361,3 +361,276 @@ impl PropertyCoverage {
         self.properties_tested.get(property).copied().unwrap_or(0) >= min_cases
     }
 }
+
+// Comprehensive coverage assurance tests
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    
+    #[test]
+    fn test_coverage_tracker_creation() {
+        let tracker = CoverageTracker::new();
+        
+        assert!(tracker.tested_event_types.is_empty());
+        assert!(tracker.validation_rules_tested.is_empty());
+        assert!(tracker.error_conditions_tested.is_empty());
+        assert!(tracker.concurrency_scenarios.is_empty());
+        assert!(tracker.db_operations.is_empty());
+        assert!(tracker.edge_cases.is_empty());
+        assert!(tracker.performance_scenarios.is_empty());
+        assert!(tracker.integration_points.is_empty());
+    }
+    
+    #[test]
+    fn test_event_type_tracking() {
+        CoverageTracker::record_event_type_tested("filesystem", "file.created");
+        CoverageTracker::record_event_type_tested("terminal", "command.executed");
+        CoverageTracker::record_event_type_tested("filesystem", "file.created"); // Duplicate
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.event_types_count >= 2);
+        assert!(report.details.event_types.contains(&("filesystem".to_string(), "file.created".to_string())));
+    }
+    
+    #[test]
+    fn test_validation_rule_tracking() {
+        CoverageTracker::record_validation_rule("non_empty_source");
+        CoverageTracker::record_validation_rule("valid_event_type");
+        CoverageTracker::record_validation_rule("json_schema_valid");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.validation_rules_count >= 3);
+        assert!(report.details.validation_rules.contains("non_empty_source"));
+    }
+    
+    #[test]
+    fn test_error_condition_tracking() {
+        CoverageTracker::record_error_condition("database_connection_failed");
+        CoverageTracker::record_error_condition("redis_timeout");
+        CoverageTracker::record_error_condition("permission_denied");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.error_conditions_count >= 3);
+        assert!(report.details.error_conditions.contains("redis_timeout"));
+    }
+    
+    #[test]
+    fn test_concurrency_scenario_tracking() {
+        CoverageTracker::record_concurrency_scenario("multiple_writers");
+        CoverageTracker::record_concurrency_scenario("reader_writer_lock");
+        CoverageTracker::record_concurrency_scenario("thundering_herd");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.concurrency_scenarios_count >= 3);
+        assert!(report.details.concurrency_scenarios.contains("thundering_herd"));
+    }
+    
+    #[test]
+    fn test_edge_case_tracking() {
+        CoverageTracker::record_edge_case("string_handling", "empty_string");
+        CoverageTracker::record_edge_case("string_handling", "unicode_characters");
+        CoverageTracker::record_edge_case("numeric", "max_value");
+        CoverageTracker::record_edge_case("numeric", "min_value");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.edge_case_categories >= 2);
+        assert!(report.total_edge_cases >= 4);
+        
+        let string_cases = report.details.edge_cases.get("string_handling").unwrap();
+        assert!(string_cases.contains(&"empty_string".to_string()));
+        assert!(string_cases.contains(&"unicode_characters".to_string()));
+    }
+    
+    #[test]
+    fn test_db_operation_tracking() {
+        CoverageTracker::record_db_operation("insert_event");
+        CoverageTracker::record_db_operation("batch_insert");
+        CoverageTracker::record_db_operation("query_by_time_range");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.db_operations_count >= 3);
+    }
+    
+    #[test]
+    fn test_performance_scenario_tracking() {
+        CoverageTracker::record_performance_scenario("high_throughput_ingestion");
+        CoverageTracker::record_performance_scenario("concurrent_queries");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.performance_scenarios_count >= 2);
+    }
+    
+    #[test]
+    fn test_integration_point_tracking() {
+        CoverageTracker::record_integration_point("grpc_interface");
+        CoverageTracker::record_integration_point("redis_pubsub");
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.integration_points_count >= 2);
+    }
+    
+    #[test]
+    fn test_coverage_report_generation() {
+        // Clear and add specific test data
+        CoverageTracker::record_event_type_tested("test", "test.event");
+        CoverageTracker::record_validation_rule("test_rule");
+        CoverageTracker::record_error_condition("test_error");
+        CoverageTracker::record_concurrency_scenario("test_scenario");
+        CoverageTracker::record_edge_case("test_category", "test_case");
+        CoverageTracker::record_db_operation("test_operation");
+        CoverageTracker::record_performance_scenario("test_perf");
+        CoverageTracker::record_integration_point("test_integration");
+        
+        let report = CoverageTracker::get_coverage_report();
+        
+        // Verify all counts are at least 1
+        assert!(report.event_types_count >= 1);
+        assert!(report.validation_rules_count >= 1);
+        assert!(report.error_conditions_count >= 1);
+        assert!(report.concurrency_scenarios_count >= 1);
+        assert!(report.edge_case_categories >= 1);
+        assert!(report.total_edge_cases >= 1);
+        assert!(report.db_operations_count >= 1);
+        assert!(report.performance_scenarios_count >= 1);
+        assert!(report.integration_points_count >= 1);
+    }
+    
+    #[test]
+    fn test_coverage_assertions() {
+        // Set up minimum coverage requirements
+        let min_coverage = CoverageMinimums {
+            event_types: 10,
+            validation_rules: 5,
+            error_conditions: 8,
+            concurrency_scenarios: 3,
+            edge_cases: 15,
+            db_operations: 10,
+            performance_scenarios: 2,
+            integration_points: 5,
+        };
+        
+        // Add some test coverage
+        for i in 0..12 {
+            CoverageTracker::record_event_type_tested(&format!("source_{}", i), "test.event");
+        }
+        
+        for i in 0..6 {
+            CoverageTracker::record_validation_rule(&format!("rule_{}", i));
+        }
+        
+        // Check assertions
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.event_types_count >= min_coverage.event_types);
+        assert!(report.validation_rules_count >= min_coverage.validation_rules);
+    }
+    
+    #[test]
+    fn test_coverage_tracker_singleton() {
+        // Multiple calls should use the same global instance
+        CoverageTracker::record_event_type_tested("singleton", "test");
+        CoverageTracker::record_event_type_tested("singleton", "test2");
+        
+        let report1 = CoverageTracker::get_coverage_report();
+        let report2 = CoverageTracker::get_coverage_report();
+        
+        // Both reports should reflect the same data
+        assert_eq!(report1.event_types_count, report2.event_types_count);
+    }
+    
+    #[test]
+    fn test_category_group_assurance() {
+        let mut assurance = CategoryGroupAssurance::new();
+        
+        // Track different categories
+        assurance.record_category_coverage("authentication", &["login", "logout", "refresh"]);
+        assurance.record_category_coverage("authorization", &["rbac", "permissions"]);
+        assurance.record_category_coverage("data_validation", &["schema", "constraints"]);
+        
+        // Check coverage
+        assert!(assurance.ensure_category_covered("authentication"));
+        assert!(assurance.ensure_category_covered("authorization"));
+        assert!(!assurance.ensure_category_covered("non_existent"));
+        
+        // Check minimum subcategories
+        assert!(assurance.ensure_minimum_subcategories("authentication", 3));
+        assert!(!assurance.ensure_minimum_subcategories("authorization", 3));
+        
+        // Get uncovered categories
+        let required = vec!["authentication", "authorization", "encryption", "audit"];
+        let uncovered = assurance.get_uncovered_categories(&required);
+        assert_eq!(uncovered, vec!["encryption", "audit"]);
+    }
+    
+    #[test]
+    fn test_concurrency_test_coverage() {
+        let mut coverage = ConcurrencyTestCoverage::new();
+        
+        // Record various concurrency patterns
+        coverage.record_concurrency_pattern("reader_writer", 5);
+        coverage.record_concurrency_pattern("producer_consumer", 3);
+        coverage.record_concurrency_pattern("worker_pool", 10);
+        
+        // Record race conditions
+        coverage.record_race_condition_test("counter_increment");
+        coverage.record_race_condition_test("cache_update");
+        
+        // Record stress test
+        coverage.record_stress_test(1000, Duration::from_secs(60));
+        
+        // Verify tracking
+        assert!(coverage.patterns_tested.contains_key("reader_writer"));
+        assert_eq!(*coverage.patterns_tested.get("worker_pool").unwrap(), 10);
+        assert_eq!(coverage.race_conditions_tested.len(), 2);
+        assert!(coverage.stress_test_performed);
+    }
+    
+    #[test]
+    fn test_property_test_coverage() {
+        let mut coverage = PropertyTestCoverage::new();
+        
+        // Record property tests
+        coverage.record_property_tested("event_id_uniqueness", 1000);
+        coverage.record_property_tested("timestamp_ordering", 500);
+        coverage.record_property_tested("payload_validation", 2000);
+        
+        // Check coverage
+        assert_eq!(coverage.get_total_cases(), 3500);
+        assert!(coverage.ensure_minimum_cases("event_id_uniqueness", 900));
+        assert!(!coverage.ensure_minimum_cases("timestamp_ordering", 1000));
+        
+        let properties = coverage.get_tested_properties();
+        assert_eq!(properties.len(), 3);
+        assert_eq!(*properties.get("payload_validation").unwrap(), 2000);
+    }
+    
+    #[test]
+    fn test_edge_case_tracking_detail() {
+        // Test multiple edge cases per category
+        CoverageTracker::record_edge_case("time", "epoch_start");
+        CoverageTracker::record_edge_case("time", "year_2038");
+        CoverageTracker::record_edge_case("time", "leap_second");
+        CoverageTracker::record_edge_case("time", "dst_transition");
+        
+        let report = CoverageTracker::get_coverage_report();
+        let time_cases = report.details.edge_cases.get("time").unwrap();
+        assert_eq!(time_cases.len(), 4);
+        assert!(time_cases.contains(&"leap_second".to_string()));
+    }
+    
+    #[test]
+    fn test_coverage_completeness_check() {
+        // Simulate comprehensive test coverage
+        let sources = vec!["filesystem", "terminal", "clipboard", "window"];
+        let event_types = vec!["created", "updated", "deleted"];
+        
+        for source in &sources {
+            for event_type in &event_types {
+                CoverageTracker::record_event_type_tested(source, &format!("{}.{}", source, event_type));
+            }
+        }
+        
+        let report = CoverageTracker::get_coverage_report();
+        assert!(report.event_types_count >= sources.len() * event_types.len());
+    }
+}

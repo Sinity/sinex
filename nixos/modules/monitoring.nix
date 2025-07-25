@@ -1,4 +1,26 @@
 # Monitoring and observability configuration module
+#
+# ## Observability Stack Architecture (TIM-ObservabilityStackSetup)
+#
+# Implements comprehensive observability for Sinex using:
+# - **Prometheus**: Time-series metrics database with scraping
+# - **Grafana**: Visualization and dashboarding platform
+# - **Node Exporter**: System metrics collection
+# - **Postgres Exporter**: Database metrics collection
+#
+# Key features:
+# - Pre-built Grafana dashboards for event pipeline monitoring
+# - Structured JSON logging with retention policies
+# - Resource monitoring and health checks
+# - Alert rule configuration (when enabled)
+#
+# Metrics architecture:
+# - Sinex services emit metrics as events (not scraped)
+# - Continuous aggregates in TimescaleDB for performance
+# - Grafana queries both PostgreSQL and Prometheus
+#
+# Note: Loki/Promtail for log aggregation is planned but not yet implemented.
+# Currently using systemd journal for centralized logging.
 {
   lib,
   config,

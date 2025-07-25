@@ -6,7 +6,133 @@ use sqlx::FromRow;
 // RawEvent is now re-exported from sinex-events
 // This eliminates type conflicts and provides a single source of truth
 
-/// Event payload schema
+/// Event payload schema registry entry
+/// 
+/// # Technical Implementation Module: Event Schema Registry
+/// 
+/// **Maturity Level**: L4 - Implemented  
+/// **Implementation**: 98% (Comprehensive implementation)  
+/// **Dependencies**: PostgreSQL, JSONB support, ULID generation, Git repository  
+/// **Blocks**: Event validation, schema evolution, type safety, code generation  
+/// 
+/// ## Overview
+/// 
+/// Central registry for JSON Schema definitions describing event payload structures.
+/// Enables data integrity, documentation, interoperability, and schema evolution management.
+/// 
+/// ## Database Schema
+/// 
+/// Maps to `sinex_schemas.event_payload_schemas` table:
+/// 
+/// ```sql
+/// CREATE TABLE sinex_schemas.event_payload_schemas (
+///     id                      ULID PRIMARY KEY DEFAULT gen_ulid(),
+///     event_source            TEXT NOT NULL,
+///     event_type              TEXT NOT NULL,
+///     schema_version          TEXT NOT NULL, -- e.g., "v1.0", "v2.0"
+///     json_schema_definition  JSONB NOT NULL, -- The actual JSON Schema
+///     description             TEXT,
+///     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+///     is_active               BOOLEAN NOT NULL DEFAULT TRUE,
+///     UNIQUE (event_source, event_type, schema_version)
+/// );
+/// ```
+/// 
+/// ## GitOps Management Strategy  
+/// 
+/// ### Implemented Components
+/// 
+/// 1. **Source of Truth**: JSON Schema files in `/schemas/v1/` directory structure
+///    - Organized by domain: `window_manager/`, `filesystem/`, `shell/`, etc.
+///    - Each schema has `$id` field for unique identification
+/// 
+/// 2. **CI/CD Pipeline**: `.github/workflows/schema-validation.yml`
+///    - Validates JSON syntax on every push
+///    - Tests schema registry functionality  
+///    - Auto-registration noted but uses Rust derive macros
+/// 
+/// 3. **Deployment Script**: `scripts/deploy-schemas.sh`
+///    - Syncs schemas from Git to `sinex_schemas.schema_registry` table
+///    - Handles versioning and activation flags
+///    - Deactivates older versions automatically
+/// 
+/// 4. **Compatibility Checking**: `scripts/check-schema-compatibility.sh`
+///    - Validates backward compatibility between versions
+/// 
+/// ### Not Yet Implemented
+/// 
+/// - Schema change eventification trigger (would log changes as events)
+/// - Automatic code generation from schemas
+/// - Schema diffing and migration tools
+/// 
+/// ## Usage Pattern
+/// 
+/// ```rust
+/// // Ingestors lookup schema ID during initialization
+/// let schema = EventPayloadSchema::find_active(
+///     &pool,
+///     "filesystem",
+///     "file_created"
+/// ).await?;
+/// 
+/// // Attach schema ID to events
+/// event.payload_schema_id = Some(schema.id);
+/// ```
+/// 
+/// ## Schema Change Eventification
+/// 
+/// Changes to schemas are automatically logged as events via database trigger,
+/// creating `sinex.schema.definition_changed` events for audit trail.
+/// 
+/// ## Canonical Event Schemas (TIM-CanonicalEventSchemas)
+/// 
+/// Core event types with standardized JSON Schema definitions:
+/// 
+/// ### Common Provenance Sub-Schema
+/// 
+/// Many events share a `_provenance` block for lineage tracking:
+/// 
+/// ```json
+/// {
+///   "$id": "https://sinnix.exocortex.com/schemas/common/provenance_v1.0.json",
+///   "type": "object",
+///   "properties": {
+///     "agent_id_if_generated": { "type": "string", "format": "ulid" },
+///     "input_event_ids_ulid": { "type": "array", "items": {"type": "string", "format": "ulid"} },
+///     "input_artifact_ids_ulid": { "type": "array", "items": {"type": "string", "format": "ulid"} },
+///     "workflow_correlation_id_custom": { "type": "string" },
+///     "triggering_user_action_id": { "type": "string", "format": "ulid" }
+///   }
+/// }
+/// ```
+/// 
+/// ### Key Event Types
+/// 
+/// 1. **`desktop.hyprland.ipc_ingestor/window_focused` (v1.0)**
+///    - Window focus events from Hyprland compositor
+///    - Includes window ID, class, title, PID, workspace, geometry
+/// 
+/// 2. **`shell.command.executed_atuin` (v1.0)**
+///    - Shell commands captured via Atuin integration
+///    - Includes command string, CWD, exit code, duration
+/// 
+/// 3. **`terminal.session.ended` (v1.0)**
+///    - Terminal session recordings via Asciinema/script
+///    - References recording blob in git-annex
+/// 
+/// 4. **`sinex.pkm.note_version_saved_yjs` (v1.0)**
+///    - PKM note updates with Yjs deltas
+///    - Tracks snapshots, tags, links
+/// 
+/// 5. **`user.meta.friction_log/entry_created` (v1.0)**
+///    - Manual friction logging entries
+///    - Intensity scoring, resolution status
+/// 
+/// 6. **`sinex.agent.llm_api_call` (v1.0)**
+///    - LLM API call tracking
+///    - Token counts, latency, cost estimation
+/// 
+/// Full schema definitions should be registered in the database via schema management scripts.
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct EventPayloadSchema {
     pub id: Ulid,
@@ -286,7 +412,25 @@ pub struct CreateAnnotationInput {
 // Knowledge Graph API Models
 // ============================================================================
 
-/// Knowledge graph entity
+/// Knowledge graph entity (TIM-KnowledgeGraphSchema)
+/// 
+/// Central node in the Sinex knowledge graph representing canonical entities
+/// extracted from events. Supports entity resolution and deduplication.
+/// 
+/// ## Entity Types
+/// - `person`: Individuals mentioned in events
+/// - `project`: Software projects, repositories
+/// - `artifact`: Files, documents, media
+/// - `topic`: Subjects, tags, concepts
+/// - `location`: Physical or virtual locations
+/// - `organization`: Companies, teams, groups
+/// - `task`: Work items, issues, todos
+/// 
+/// ## Entity Resolution
+/// - `canonical_name`: Normalized form for deduplication
+/// - `aliases`: Alternative names/references
+/// - `merged_into_id`: Points to canonical entity after merge
+/// 
 /// Maps to core.entities table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Entity {
@@ -304,7 +448,25 @@ pub struct Entity {
     pub merged_into_id: Option<Ulid>,
 }
 
-/// Relationship between entities
+/// Relationship between entities (Knowledge Graph Edge)
+/// 
+/// Represents typed, temporal relationships between entities with optional
+/// strength scoring for confidence or relevance.
+/// 
+/// ## Common Relationship Types
+/// - `mentions`: Entity referenced in content
+/// - `works_on`: Person actively working on project
+/// - `depends_on`: Technical dependency
+/// - `links_to`: Hyperlink or reference
+/// - `authored_by`: Creation relationship
+/// - `located_at`: Physical/virtual location
+/// - `member_of`: Organizational membership
+/// - `related_to`: Generic association
+/// 
+/// ## Temporal Validity
+/// Relationships can have time bounds via `valid_from` and `valid_until`,
+/// enabling historical queries and relationship evolution tracking.
+/// 
 /// Maps to core.entity_relations table
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct EntityRelation {

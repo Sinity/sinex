@@ -6,6 +6,49 @@
 //! - Focus history tracking
 //! - Window state augmentation
 //! - Exponential backoff for connection recovery
+//!
+//! ## Hyprland IPC Interface (TIM-HyprlandIPCInterface)
+//!
+//! ### Socket Locations
+//! - Base path: `$XDG_RUNTIME_DIR/hypr/`
+//! - Instance directory: `$XDG_RUNTIME_DIR/hypr/$HYPRLAND_INSTANCE_SIGNATURE/`
+//! - Command socket (`.socket.sock`): Query state via hyprctl
+//! - Event socket (`.socket2.sock`): Real-time event stream
+//!
+//! ### Event Types
+//! - `activewindow>>`: Window focus changes
+//! - `workspace>>`: Workspace switches
+//! - `createworkspace>>`: New workspace creation
+//! - `destroyworkspace>>`: Workspace removal
+//! - `openwindow>>`: Window creation
+//! - `closewindow>>`: Window destruction
+//! - `monitoradded>>`: Monitor connection
+//!
+//! ### State Augmentation
+//! Events from socket2 are augmented with full window state from hyprctl:
+//! - Window geometry and position
+//! - Workspace assignments
+//! - Monitor associations
+//! - Floating/fullscreen state
+//!
+//! ### Connection Recovery
+//! - Exponential backoff (1s → 2s → 4s → ... → 60s)
+//! - State snapshot on reconnection
+//! - Missed event detection via state comparison
+//!
+//! ## Architectural Decision: IPC-First Implementation (ADR-003)
+//!
+//! We implemented IPC sockets first (before considering a native plugin) because:
+//! - **Easier implementation**: External process parsing text/JSON streams
+//! - **Lower stability risk**: Bugs won't crash the compositor
+//! - **Good event coverage**: ~47 event types available via socket2
+//! - **Language flexibility**: Can use Rust instead of C++
+//!
+//! Current limitations that a future plugin could address:
+//! - Limited data fidelity (summary events require hyprctl queries)
+//! - No access to internal metrics or window textures
+//! - Potential for missed events under high load
+//! - Query overhead for detailed state
 
 use chrono::Utc;
 use serde_json::{json, Value};

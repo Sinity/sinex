@@ -1,6 +1,19 @@
 # Complete NixOS Configuration Example for Sinex
-# This shows ALL available configuration options with their correct default values
-# Most options can be omitted for sensible defaults
+#
+# This file demonstrates ALL available configuration options with their default values.
+# Most options can be omitted for sensible defaults.
+#
+# For implementation details, see:
+# - modules/sinex-config.nix      - Core configuration and PostgreSQL setup
+# - modules/database.nix          - Database connection pooling and health checks
+# - modules/satellite-services.nix - Individual satellite service configurations
+# - modules/monitoring.nix        - Monitoring and alerting setup
+# - modules/preflight-verification.nix - Pre-deployment checks
+#
+# Key architectural decisions are documented at implementation points:
+# - PostgreSQL extension setup: modules/sinex-config.nix (lines 285-305)
+# - TimescaleDB configuration: migrations/00000000000002_create_core_tables.sql
+# - ULID implementation: crate/sinex-ulid/src/lib.rs
 
 { config, lib, pkgs, ... }:
 

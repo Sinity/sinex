@@ -1,5 +1,36 @@
 [build]
 # Build configuration for Sinex
+# Speed optimizations for development
+target-dir = "target"
+incremental = true
+pipelining = true
+# Use all available CPU cores for compilation
+jobs = 8
+
+# Shared build cache across the workspace (experimental)
+[unstable]
+build-std-features = []
+
+# Default rustflags for maximum development speed with cranelift
+[target.x86_64-unknown-linux-gnu]
+rustflags = [
+  "-Z",
+  "codegen-backend=cranelift",  # Ultra-fast cranelift backend
+  "-C",
+  "link-arg=-fuse-ld=mold",     # Fastest linker available
+  "-C",
+  "codegen-units=16",           # Parallel codegen for speed
+  "-C",
+  "incremental=on",             # Enable incremental compilation
+  "-C",
+  "symbol-mangling-version=v0", # Faster symbol mangling
+  "-C",
+  "embed-bitcode=no",           # Skip LTO bitcode embedding
+  "-Z",
+  "share-generics=y",           # Share generic instantiations (nightly)
+  "-Z",
+  "threads=0",                  # Use all threads for compilation
+]
 
 [alias]
 # Make 'cargo test' use nextest for better performance
@@ -11,20 +42,47 @@ test-builtin = ["test"]
 
 # Quick test aliases
 t = ["nextest", "run"]
-tf = ["nextest", "run", "-E", "test(unit::) or test(property::)"]  # Fast tests
-tu = ["nextest", "run", "-E", "test(unit::)"]                      # Unit tests only
-ti = ["nextest", "run", "-E", "test(integration::)"]               # Integration tests
-tp = ["nextest", "run", "-E", "test(property::)"]                  # Property tests
+tf = ["nextest", "run", "-E", "test(unit::) or test(property::)"] # Fast tests
+tu = ["nextest", "run", "-E", "test(unit::)"]                     # Unit tests only
+ti = ["nextest", "run", "-E", "test(integration::)"]              # Integration tests
+tp = ["nextest", "run", "-E", "test(property::)"]                 # Property tests
+
+# Ultra-fast development aliases
+c = ["check", "--workspace", "--profile", "dev-fast"] # Super fast check
+cc = [
+  "check",
+  "--workspace",
+  "--all-targets",
+  "--profile",
+  "dev-fast",
+] # Check all targets
+cf = [
+  "check",
+  "--workspace",
+  "--profile",
+  "dev-fast",
+  "--features",
+] # Check with features
 
 [env]
 # Environment variables for coverage and testing
 CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
 
+# Speed optimizations via environment variables
+CARGO_INCREMENTAL = "1"                # Enable incremental compilation
+RUST_BACKTRACE = "0"                   # Disable backtraces for speed
+RUSTC_WRAPPER = ""                     # Don't use sccache/etc for dev
+CARGO_BUILD_JOBS = "0"                 # Use all CPU cores
+CARGO_NET_GIT_FETCH_WITH_CLI = "false" # Faster git operations
+
+
 [target.'cfg(coverage)']
 # Coverage-specific configuration
 rustflags = [
-    "-C", "instrument-coverage",
-    "-C", "llvm-args=--instrprof-atomic-counter-update-all",
+  "-C",
+  "instrument-coverage",
+  "-C",
+  "llvm-args=--instrprof-atomic-counter-update-all",
 ]
 
 # Coverage profile
@@ -37,3 +95,4 @@ overflow-checks = false
 
 # Coverage exclusions are handled via command line flags in justfile
 # to keep them visible and maintainable
+

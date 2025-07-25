@@ -3,6 +3,9 @@
 //! This crate provides the foundational types, error handling, and constants
 //! that are used throughout the Sinex ecosystem.
 
+pub mod glossary;
+pub mod development;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 pub use sinex_events::RawEvent;
