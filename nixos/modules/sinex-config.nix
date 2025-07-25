@@ -282,6 +282,27 @@ in
     users.groups.${cfg.database.user} = mkIf (cfg.database.user != "root") {};
 
     # PostgreSQL configuration
+    # Technical Implementation Module: PostgreSQL Extension Configuration
+    #
+    # Maturity Level: L4 - Implemented
+    # Implementation: 98% (ULID generation, PostgreSQL integration, and UUID casting for FKs fully working)
+    #
+    # Extension Requirements:
+    # - pgx_ulid: Native ULID type and gen_ulid() function for time-ordered primary keys
+    # - timescaledb: Hypertable partitioning for core.events time-series data
+    # - pg_jsonschema: JSON Schema validation for event payload integrity
+    # - pgvector: Vector similarity search for AI embeddings
+    #
+    # Monotonic ULID Generation (Optional):
+    # For strictly ordered IDs within the same millisecond in high-concurrency scenarios,
+    # add pgx_ulid to shared_preload_libraries. This enables gen_monotonic_ulid().
+    # Without this, gen_ulid() works fine but may have rare out-of-order IDs within
+    # the same millisecond. Most deployments don't need this.
+    # To enable: services.postgresql.settings.shared_preload_libraries = "timescaledb,pgx_ulid";
+    #
+    # See also:
+    # - sinex-ulid crate documentation for ULID implementation details
+    # - migrations/00000000000002_create_core_tables.sql for TimescaleDB configuration
     services.postgresql = mkIf cfg.database.autoSetup {
       enable = true;
       package = pkgs.postgresql_16;

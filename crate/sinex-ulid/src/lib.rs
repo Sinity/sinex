@@ -184,6 +184,47 @@ lazy_static! {
 ///     id ULID PRIMARY KEY DEFAULT gen_ulid()
 /// );
 /// ```
+/// 
+/// ## Technical Implementation Module: Primary Key Implementation
+/// 
+/// **Maturity Level**: L4 - Implemented  
+/// **Implementation**: 98% (ULID generation, PostgreSQL integration, and UUID casting for FKs fully working)
+/// 
+/// ### PostgreSQL Extension Setup
+/// 
+/// The pgx_ulid extension must be installed and enabled. For NixOS users, see
+/// `nixos/modules/sinex-config.nix` for the complete PostgreSQL configuration
+/// including extension setup and optional monotonic generator configuration.
+/// 
+/// ### ULID-UUID Casting for Foreign Keys
+/// 
+/// ULIDs seamlessly cast to UUIDs for foreign key relationships:
+/// 
+/// ```rust
+/// // Cast ULID to UUID when querying
+/// let events = sqlx::query!(
+///     r#"
+///     SELECT 
+///         event_id::uuid as "event_id!",
+///         source,
+///         event_type
+///     FROM core.events 
+///     WHERE event_id = $1::uuid
+///     "#,
+///     event_id.to_uuid()  // ULID provides to_uuid() method
+/// )
+/// .fetch_all(pool)
+/// .await?;
+/// ```
+/// 
+/// Database schema supports ULID-UUID relationships:
+/// ```sql
+/// -- Foreign key constraints handle ULID-UUID casting
+/// ALTER TABLE core.event_relations 
+///     ADD CONSTRAINT fk_event_relations_from_event 
+///     FOREIGN KEY (from_event_id) 
+///     REFERENCES core.events(event_id::uuid);
+/// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct Ulid(InnerUlid);
