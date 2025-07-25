@@ -4,16 +4,35 @@
 //! unifying ingestors and automata as both being "Stateful Stream Processors" with a single
 //! scan(from: Checkpoint, until: TimeHorizon) interface.
 //!
-//! ## Migration Guide
+//! ## Architecture Overview
 //!
-//! For migrating from the old EventSource/Automaton split to this unified architecture,
-//! see `/spec/docs/migration/stream_processor_migration.md`. Key changes include:
+//! The unified architecture eliminates the artificial distinction between ingestors and automata:
 //!
-//! - Single interface: Both ingestors and automata implement `StatefulStreamProcessor`
-//! - Unified checkpoints: Support external positions and internal event IDs
-//! - Time horizons: Replace sensor/scanner split with Historical/Continuous/Snapshot modes
-//! - Startup sequence: Automatic Snapshot → Gap-Fill → Continuous progression
-//! - CLI structure: Standardized service/scan/explore subcommands
+//! - **Single Interface**: Both implement `StatefulStreamProcessor`
+//! - **Unified Checkpoints**: Support external positions (files, APIs) and internal event IDs
+//! - **Time Horizons**: Three modes replace sensor/scanner split:
+//!   - `Snapshot`: Capture current state
+//!   - `Historical`: Process bounded time range
+//!   - `Continuous`: Real-time streaming
+//! - **Startup Sequence**: Automatic Snapshot → Gap-Fill → Continuous progression
+//! - **CLI Structure**: Standardized service/scan/explore subcommands
+//!
+//! ## Checkpoint Types
+//!
+//! ### External Checkpoints (Ingestors)
+//! ```rust
+//! // File position
+//! Checkpoint::external(
+//!     json!({"path": "/var/log/app.log", "offset": 1024}),
+//!     "app.log:1024"
+//! )
+//! ```
+//!
+//! ### Internal Checkpoints (Automata)
+//! ```rust
+//! // Event-based
+//! Checkpoint::internal(event_ulid, message_count)
+//! ```
 
 use crate::{
     checkpoint::CheckpointManager, grpc_client::IngestClient, SatelliteError, SatelliteResult,

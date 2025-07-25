@@ -1,18 +1,11 @@
 # Stream Processor Migration Guide
 
-This document explains how to migrate from the old EventSource/Automaton split to the unified StatefulStreamProcessor architecture implemented in Part 16 of the design discussion.
+## Note
+The key architectural concepts from this migration guide have been extracted to:
+- `/crate/sinex-satellite-sdk/src/stream_processor.rs` - Architecture overview and checkpoint types
+- `/crate/sinex-satellite-sdk/examples/README.md` - Implementation patterns
 
-## Overview
-
-The unified architecture eliminates the artificial distinction between ingestors and automata by recognizing they are both "Stateful Stream Processors" with a single `scan(from: Checkpoint, until: TimeHorizon)` interface.
-
-### Key Changes
-
-1. **Single Interface**: Both ingestors and automata implement `StatefulStreamProcessor`
-2. **Unified Checkpoints**: Support external positions (ingestors) and internal event IDs (automata)
-3. **Time Horizons**: Replace sensor/scanner split with Historical/Continuous/Snapshot modes
-4. **Startup Sequence**: Automatic Snapshot → Gap-Fill → Continuous progression
-5. **CLI Structure**: Standardized service/scan/explore subcommands
+This document contains the detailed migration steps for converting old EventSource/Automaton code to the new architecture.
 
 ## Migration Steps
 

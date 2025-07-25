@@ -738,6 +738,93 @@ SELECT add_retention_policy('core.events', INTERVAL '1 year');
 -- For infinite retention (default), don't add a policy
 ```
 
+## Development Practices
+
+### Creating New Service Modules
+
+When adding a new Sinex service, follow these patterns:
+
+```nix
+# nixos/modules/services/my-new-service.nix
+{ config, lib, pkgs, ... }:
+
+with lib;
+
+let
+  cfg = config.services.sinex.myService;
+  sinexCfg = config.services.sinex;
+in
+{
+  options.services.sinex.myService = {
+    enable = mkEnableOption "Sinex My Service";
+    
+    port = mkOption {
+      type = types.port;
+      default = 2120;
+      description = "Port for the service";
+    };
+    
+    configFile = mkOption {
+      type = types.nullOr types.path;
+      default = null;
+      description = "Path to service configuration file";
+    };
+  };
+  
+  config = mkIf (sinexCfg.enable && cfg.enable) {
+    systemd.services.sinex-my-service = {
+      description = "Sinex My Service";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "postgresql.service" "sinex-ingestd.service" ];
+      
+      serviceConfig = {
+        Type = "simple";
+        User = sinexCfg.database.user;
+        Group = sinexCfg.database.user;
+        ExecStart = "${sinexCfg.package}/bin/sinex-my-service";
+        Restart = "always";
+        RestartSec = "10s";
+        
+        # Resource limits
+        MemoryMax = "512M";
+        CPUQuota = "50%";
+        
+        # Security hardening
+        PrivateTmp = true;
+        ProtectSystem = "strict";
+        ProtectHome = "read-only";
+        ReadWritePaths = [ sinexCfg.directories.state ];
+      };
+      
+      environment = {
+        DATABASE_URL = sinexCfg.database.url;
+        RUST_LOG = cfg.logLevel or sinexCfg.logLevel;
+        SINEX_CONFIG = cfg.configFile or "${pkgs.writeText "my-service.toml" (builtins.toJSON cfg)}";
+      };
+    };
+    
+    # Add to health checks
+    services.sinex.monitoring.healthChecks = {
+      "sinex-my-service" = {
+        command = "${pkgs.curl}/bin/curl -f http://localhost:${toString cfg.port}/health";
+        interval = "30s";
+        timeout = "5s";
+      };
+    };
+  };
+}
+```
+
+### Best Practices
+
+1. **Service Dependencies**: Always specify proper systemd dependencies
+2. **User/Group**: Use the shared `sinex` user for database access
+3. **Resource Limits**: Apply appropriate memory and CPU quotas
+4. **Security Hardening**: Use systemd security features like PrivateTmp
+5. **Configuration**: Support both inline and file-based configuration
+6. **Health Checks**: Integrate with the monitoring framework
+7. **Logging**: Use structured logging with configurable levels
+
 ## Support & Documentation
 
 - **Architecture**: See `spec/SADI.md` and `plan.md`

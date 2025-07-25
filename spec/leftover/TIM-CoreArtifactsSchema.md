@@ -3,19 +3,13 @@
 ## Status Dashboard
 **Maturity Level**: L4 - Implemented
 **Implementation**: 85% (Complete database schema with versioning, missing Rust models and CRUD API layer)
-**Dependencies**: `pgx_ulid` extension, `core.blobs` table, `core.set_updated_at_trigger_func_generic()` trigger function
-**Blocks**: PKM note management, content versioning, artifact-based workflows, content search and discovery
 
-## Implementation Checklist
-- [x] Database migration to create artifact tables (implemented as `km.artifacts` and `km.artifact_revisions`)
-- [ ] Artifact management API (create, update, version, delete)
-- [ ] PKM note Yjs integration (per ADR-004)
-- [ ] Tests for artifact operations and content versioning
-- [ ] Full-text search index setup (tsvector generation)
+## Note
+The core concepts from this TIM have been extracted and documented in:
+- `/migrations/00000000000004_create_knowledge_management.sql` - Artifact schema design documentation
+- Implemented as `km.artifacts` and `km.artifact_revisions` tables
 
-*   **Purpose:** Provides the canonical Data Definition Language (DDL) for `core.artifacts` (representing conceptual documents/items like PKM notes, web pages, emails) and `core.artifact_contents` (storing their versioned textual content or references to content blobs).
-*   **Source:** Derived from original Vision Document Appendix A and Part II.2, refined by ADR-004 and specific content needs.
-*   **Dependencies:** `pgx_ulid` extension. `core.blobs` for optional blob FKs. The `core.set_updated_at_trigger_func_generic()` from `TIM-EventSubstrateDDL.md` is assumed.
+The detailed DDL below shows the original comprehensive design that differs from the current simplified implementation.
 
 ## 1. `core.artifacts` Table
 
