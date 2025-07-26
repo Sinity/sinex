@@ -549,3 +549,55 @@ All event payloads are validated against JSON schemas stored in sinex_schemas.ev
 4. Cache validation results for performance
 
 See crate/sinex-ingestd/src/validation.rs for the implementation.
+
+## Original Migration Structure vs Current km Schema
+
+### Original Tables (core schema from migrations 20250103120011-13):
+1. **core.entities** - Knowledge graph nodes (persons, projects, topics, organizations)
+   - Had: type, name, canonical_name, aliases[], description, metadata, merged_into_id
+   - Types: person, project, topic, organization, location, concept, tool, event
+
+2. **core.entity_relations** - Knowledge graph edges
+   - Had: from_entity_id, to_entity_id, relation_type, strength, valid_from/until
+
+3. **core.event_annotations** - User annotations on events
+   - Had: event_id, annotation_type, content, metadata, created_by
+   - Types: note, correction, context, importance
+
+4. **core.artifacts** - Conceptual documents (PKM notes, web pages, emails)
+   - Had: type, title, source_url, mime_type, blob_id references
+
+5. **core.embedding_cache** - Deduplication cache
+   - Had: text_hash, embedding_model_id, embedding vector, use_count
+
+### Current km Schema (created during reorganization):
+1. **km.concepts** - Similar to core.entities but:
+   - Missing: aliases[], merged_into_id (for deduplication)
+   - Added: embedding vector(1536) directly in table
+   - Different focus: "concepts" vs "entities"
+
+2. **km.relations** - Similar to core.entity_relations but:
+   - Simplified: no temporal validity (valid_from/until)
+   - Changed: confidence instead of strength
+   - Missing: created_from_event_id provenance
+
+3. **km.event_annotations** - Different from core.event_annotations:
+   - Links to concepts (concept_id FK) instead of direct text annotations
+   - Added: confidence score
+   - Missing: ability to annotate without linking to a concept
+
+4. **km.artifacts/artifact_revisions** - Simplified from core.artifacts:
+   - Missing many fields from original design
+   - References non-existent features (Yjs CRDTs)
+
+5. **km.embeddings** - Different from core.embedding_cache:
+   - Generic cache with content_hash instead of text_hash
+   - Missing: use_count, last_used_at for LRU
+   - Different structure than TIM-EmbeddingGenerationModels design
+
+### Summary
+The km schema appears to be a reimplementation created during migration reorganization (commit ffe3fdce) that:
+- Took concepts from the original core.* tables
+- Simplified or modified many aspects
+- Added AI/ML features (embeddings in concepts, llm_interactions)
+- Lost some important features (entity deduplication, temporal validity, direct annotations)
