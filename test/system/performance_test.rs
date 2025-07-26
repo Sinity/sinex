@@ -20,9 +20,9 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
+use sinex_events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_events::{EventFactory, services, event_types};
 use sqlx::Row;
 use std::time::{Duration, Instant};
 
@@ -258,10 +258,8 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
     for i in 0..100 {
         sinex_db::insert_event_with_validator(
             ctx.pool(),
-            &EventFactory::new("concurrent_test").create_event(
-                "process_me",
-                serde_json::json!({ "id": i }),
-            ),
+            &EventFactory::new("concurrent_test")
+                .create_event("process_me", serde_json::json!({ "id": i })),
             None,
         )
         .await?;

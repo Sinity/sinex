@@ -10,50 +10,55 @@
 
 /// Helper functions for extracting values from toml::Value
 mod toml_helpers {
-    use toml::Value as ConfigValue;
     use anyhow::{anyhow, Result};
+    use toml::Value as ConfigValue;
 
     fn navigate_to_value<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a ConfigValue> {
         let parts: Vec<&str> = path.split('.').collect();
         let mut current = config;
-        
+
         for part in &parts {
             current = current
                 .get(part)
                 .ok_or_else(|| anyhow!("Path '{}' not found at '{}'", path, part))?;
         }
-        
+
         Ok(current)
     }
-    
+
     pub fn require_str<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a str> {
         let value = navigate_to_value(config, path)?;
-        value.as_str()
+        value
+            .as_str()
             .ok_or_else(|| anyhow!("Required string field '{}' not found or not a string", path))
     }
-    
+
     pub fn require_u64(config: &ConfigValue, path: &str) -> Result<u64> {
         let value = navigate_to_value(config, path)?;
-        value.as_integer()
+        value
+            .as_integer()
             .and_then(|i| u64::try_from(i).ok())
             .ok_or_else(|| anyhow!("Required u64 field '{}' not found or not a valid u64", path))
     }
-    
+
     pub fn require_i64(config: &ConfigValue, path: &str) -> Result<i64> {
         let value = navigate_to_value(config, path)?;
-        value.as_integer()
+        value
+            .as_integer()
             .ok_or_else(|| anyhow!("Required i64 field '{}' not found or not an integer", path))
     }
-    
+
     pub fn require_bool(config: &ConfigValue, path: &str) -> Result<bool> {
         let value = navigate_to_value(config, path)?;
-        value.as_bool()
+        value
+            .as_bool()
             .ok_or_else(|| anyhow!("Required bool field '{}' not found or not a boolean", path))
     }
-    
+
     pub fn require_array<'a>(config: &'a ConfigValue, path: &str) -> Result<&'a Vec<ConfigValue>> {
         let value = navigate_to_value(config, path)?;
-        value.as_array()
+        value
+            .as_array()
             .ok_or_else(|| anyhow!("Required array field '{}' not found or not an array", path))
     }
 }
@@ -62,13 +67,13 @@ use self::toml_helpers::*;
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::prelude::*;
 use sinex_db::{
     create_annotation, create_artifact, create_entity, create_relation, delete_annotation,
     get_annotation_by_id, get_annotations_for_event, get_artifact_by_id, get_entities_by_type,
     get_entity_relations, get_recent_annotations, get_recent_artifacts, models::*,
     update_annotation_content,
 };
+use sinex_test_utils::prelude::*;
 
 // Helper function to create and insert a test event
 async fn create_and_insert_test_event(

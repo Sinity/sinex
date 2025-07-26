@@ -22,7 +22,29 @@ just migrate
 # Verify workspace builds
 just check
 # or: cargo check --workspace --all-features
+
+# Setup optimized build environment (recommended)
+just setup-fast
 ```
+
+### Build Performance Optimizations
+The project includes several build optimizations:
+
+- **sccache**: Caches compiled dependencies (enabled automatically)
+- **mold linker**: Fast linking for improved build times
+- **Dependency precompilation**: `just precompile` to cache rarely-changing deps
+- **Optimized Docker builds**: Uses cargo-chef for layer caching
+- **Parallel compilation**: Uses all CPU cores by default
+
+Monitor build performance:
+```bash
+just cache-stats      # View sccache effectiveness
+```
+
+### Automatic Optimizations
+- **Dependency precompilation**: Automatically runs when Cargo.lock changes
+- **Compilation tracking**: All cargo invocations are logged to `~/.sinex-analytics/`
+- **Performance analytics**: The compilation daemon tracks all builds in `~/.sinex-compile-logs/`
 
 ### Testing (Hierarchical by Speed)
 ```bash
@@ -174,60 +196,103 @@ just test-verbose           # Full output for debugging
 
 ## 🔧 Development Workflows
 
-### Sinex DevTools Service
-The `sinex-devtools` service provides a comprehensive development dashboard that runs automatically on system startup:
+### AI-Friendly Commands
 
-**What it does**:
-- Runs `mprocs` in a persistent tmux session with multiple monitoring panes
-- **Bacon**: Continuous compilation checking with output to `.claude-outputs/bacon.log`
-- **Claude Activity**: Real-time monitoring of Claude's actions from session logs
-- **Claude Code Monitor**: Live usage metrics and active blocks tracking
-- **Database Activity**: PostgreSQL query monitoring for sinex_dev
-- **Git Status**: Repository state and recent commits
-- **System Resources**: btop for CPU/memory/process monitoring
+**Background compilation daemon** provides structured output for AI agents:
 
-**Usage**:
+**Setup**:
 ```bash
-sinex-attach               # Attach to running development dashboard
-# Press 'q' to detach from tmux (keeps running in background)
-# Press Ctrl+q to quit mprocs entirely
+# The compilation daemon starts automatically when entering nix shell
+# It's idempotent - won't create multiple instances
+
+# Manual controls:
+just compile-start   # Start daemon (idempotent)
+just compile-stop    # Stop daemon
+just compile-status  # Check if running
+
+# The daemon:
+# - Watches for file changes automatically
+# - Logs all compilation results in JSON format
+# - Runs in background without blocking
+# - Persists across shell sessions until stopped
 ```
 
-**Automatic features**:
-- Sets up the sinex_dev database if it doesn't exist
-- Runs migrations on startup
-- Maintains compilation state between sessions
-- Provides instant feedback on code changes via bacon
-- Compilation output available in `.claude-outputs/bacon.log` for scripts
-
-**Important for Claude Code**:
-- **ALWAYS use bacon-aware commands**: Never run `cargo check` or `just check` directly
-- **Use `just qc`**: Quick compilation status check with smart waiting for bacon
-- **Use `just errors`**: Get compilation errors with automatic wait for bacon to finish
-- **Use `just warnings`**: Get compilation warnings with automatic wait
-- **Use `just ce`**: Quick check and show errors in one command
-- **No manual sleeps needed**: Commands automatically wait for bacon to finish (up to 10s)
-- **Avoid triggering builds**: Bacon is already compiling continuously in background
-
-Example workflow:
+**AI Commands** (all in justfile, no separate script needed):
 ```bash
-# After making code changes
-just qc                    # Check compilation status (waits for bacon automatically)
-just errors                # If there are errors, get details
-just warnings              # Check for any warnings
+# Get last compilation status (JSON)
+just ai-status
+# Output: {"status":"failed","errors":3,"warnings":1,"log":"..."}
 
-# Or use the combined command:
-just ce                    # Check and show errors immediately
+# Show compilation errors in simple format
+just ai-errors
+# Output: src/main.rs:45: cannot find value `x` in this scope
+
+# Get project state (branch, changes, compilation)
+just ai-project
+# Output: {"branch":"master","uncommitted":5,"compilation":{"status":"ok"}}
 ```
 
-These commands intelligently wait for bacon to finish compiling (checking if the log file was modified in the last 2 seconds) before showing results, eliminating the need for arbitrary sleep commands.
+**Why this approach is better**:
+1. **Background compilation**: Daemon runs continuously, AI just queries results
+2. **Structured logs**: All compilation output saved as JSON in `~/.sinex-compile-logs/`
+3. **Fast queries**: AI gets instant results without triggering recompilation
+4. **Native tools**: Uses `cargo check --message-format json` directly
+
+**Additional Features**:
+
+**Build.rs Integration**: 
+The `crate/sinex/build.rs` logs compilation metadata:
+- Compilation timestamp
+- Build profile (debug/release)
+- Target architecture
+- Optimization level
+
+**Cargo Timing Analytics**:
+```bash
+# Build with detailed timing information
+cargo build --timings
+
+# View report at: target/cargo-timings/cargo-timing.html
+```
+
+**sccache Statistics**:
+```bash
+# View compilation cache performance
+sccache --show-stats
+```
+
+### Background Compilation
+
+**What happens automatically**:
+- Compilation daemon starts when you enter nix shell
+- Watches all Rust files for changes
+- Compiles in background, saves results as JSON
+- Persists across shell sessions until stopped
+
+**AI Commands**:
+```bash
+just ai-status    # Get last compilation result (instant)
+just ai-errors    # Show errors in simple format
+just ai-project   # Full project state (git + compilation)
+
+# Shortcuts:
+just qc          # Quick check (alias for ai-status)
+just ce          # Check + errors
+just e           # Just errors
+```
+
+**Manual control** (rarely needed):
+```bash
+just compile-stop     # Stop daemon
+just compile-start    # Restart daemon (idempotent)
+just compile-status   # Check if daemon is running
+```
+
+All compilation logs saved to `~/.sinex-compile-logs/` as JSON for analysis.
 
 ### Standard Development Cycle
 ```bash
 just dev                   # fmt + check + test-fast
-
-# Or monitor continuously with:
-sinex-attach               # Attach to devtools dashboard
 ```
 
 ### Working with Database Changes
@@ -292,6 +357,9 @@ cargo build --release      # Optimized builds
 - **SQLX offline errors**: Run `just sqlx-prepare` and commit `.sqlx/`
 - **Flaky tests**: Use `just test-reliable` with limited parallelism
 - **Compilation errors**: Check `compilation.log` via `just errors`
+- **Rust ICE (rustc-ice-*.txt files)**: Run `cargo clean` to fix incremental compilation issues
+  - Cranelift backend can cause ICEs; stable config in `.cargo/config.toml`
+  - Experimental cranelift config saved in `.cargo/config-cranelift.toml`
 
 ### Debugging Commands
 ```bash

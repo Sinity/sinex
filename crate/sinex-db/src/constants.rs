@@ -18,13 +18,13 @@ pub mod tables {
     pub const SOURCE_MATERIAL_REGISTRY: &str = "raw.source_material_registry";
     pub const ANNOTATIONS: &str = "core.annotations";
     pub const EVENT_BLOBS: &str = "core.event_blobs";
-    
+
     // Raw schema tables
     pub const RAW_EVENTS: &str = "raw.events";
-    
+
     // Public schema tables
     pub const MIGRATIONS: &str = "public._sqlx_migrations";
-    
+
     // System tables
     pub const PG_EXTENSION: &str = "pg_extension";
     pub const PG_AVAILABLE_EXTENSIONS: &str = "pg_available_extensions";
@@ -38,7 +38,7 @@ pub mod sql {
     pub const ULID_GENERATE: &str = "ulid_generate()";
     pub const JSON_MATCHES_SCHEMA: &str = "json_matches_schema";
     pub const JSONB_MATCHES_SCHEMA: &str = "jsonb_matches_schema";
-    
+
     // Common patterns
     pub const NOW: &str = "NOW()";
     pub const COUNT_ALL: &str = "COUNT(*)";

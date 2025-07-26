@@ -9,8 +9,8 @@ mod tests {
     use crate::query_builder::{QueryBuilder, QueryParam};
     use chrono::Utc;
     use serde_json::json;
-    use sinex_ulid::Ulid;
     use sinex_test_utils::prelude::*;
+    use sinex_ulid::Ulid;
 
     #[sinex_test]
     async fn test_query_builder_select() {
@@ -221,9 +221,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_query_registry_organization() {
-        use crate::queries::{
-            CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
-        };
+        use crate::queries::{CheckpointQueries, EventQueries, OperationQueries, SchemaQueries};
 
         // Test that all query registries are accessible
         let _event_builder = EventQueries::count_all();

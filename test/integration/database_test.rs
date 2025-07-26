@@ -14,13 +14,13 @@
 // Uses #[sinex_test] for automatic transaction isolation and TestContext
 // for unified database access.
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::{self, assertions, events, generators, schema_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
-use sinex_db::queries::{EventQueries, CheckpointQueries};
+use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{event_types, services, EventFactory};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{self, assertions, events, generators, schema_test_utils};
 use sinex_ulid::Ulid;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -77,11 +77,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
         .iter()
         .map(|&id| {
             let pool = ctx.pool().clone();
-            tokio::spawn(async move {
-                get_event_by_id(&pool, id)
-                    .await
-                    .is_ok()
-            })
+            tokio::spawn(async move { get_event_by_id(&pool, id).await.is_ok() })
         })
         .collect();
 
@@ -90,9 +86,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
     }
 
     // Check total count - use centralized query
-    let (count,): (i64,) = EventQueries::count_all()
-        .fetch_one(ctx.pool())
-        .await?;
+    let (count,): (i64,) = EventQueries::count_all().fetch_one(ctx.pool()).await?;
     assert!(count >= 10);
 
     Ok(())
@@ -266,7 +260,9 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Clean up any previous test data
-    let _ = EventQueries::delete_by_source("chunk_test".to_string()).execute(&pool).await;
+    let _ = EventQueries::delete_by_source("chunk_test".to_string())
+        .execute(&pool)
+        .await;
 
     // Get initial chunk count
     let initial_chunks: i64 = sqlx::query_scalar(
@@ -286,10 +282,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
 
     for (i, ts) in time_periods.iter().enumerate() {
         let factory = EventFactory::new("chunk_test");
-        let event = factory.create_event(
-            &format!("event_type_{}", i),
-            json!({"chunk_test": i}),
-        );
+        let event = factory.create_event(&format!("event_type_{}", i), json!({"chunk_test": i}));
 
         // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
@@ -892,9 +885,10 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     }
 
     // Verify all checkpoints exist
-    let (checkpoint_count,): (i64,) = CheckpointQueries::count_checkpoints_by_processor(automaton_name.to_string())
-        .fetch_one(&pool)
-        .await?;
+    let (checkpoint_count,): (i64,) =
+        CheckpointQueries::count_checkpoints_by_processor(automaton_name.to_string())
+            .fetch_one(&pool)
+            .await?;
 
     assert_eq!(checkpoint_count, 3, "All checkpoints should be created");
 
@@ -902,16 +896,13 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     let latest_checkpoint: (Uuid, Option<String>) = sqlx::query_as(
         r#"SELECT id, last_processed_id FROM core.automaton_checkpoints 
            WHERE automaton_name = $1 
-           ORDER BY updated_at DESC LIMIT 1"#
+           ORDER BY updated_at DESC LIMIT 1"#,
     )
     .bind(automaton_name)
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(
-        latest_checkpoint.1.as_deref(),
-        Some("event_0")
-    );
+    assert_eq!(latest_checkpoint.1.as_deref(), Some("event_0"));
 
     // Cleanup old checkpoints (keeping only the latest)
     let deleted_count = sqlx::query!(

@@ -197,6 +197,7 @@
               bacon
               sqlx-cli
               mold  # Fast linker for compilation speed
+              sccache  # Compilation cache for dependencies
 
               # Python and testing
               python3
@@ -233,6 +234,14 @@
               # Test optimizations (applied per-session in code, not globally)
               export SINEX_TEST_OPTIMIZATIONS="true"
 
+
+              # Setup sccache for faster builds
+              export RUSTC_WRAPPER="sccache"
+              export SCCACHE_DIR="$HOME/.cache/sccache"
+              export SCCACHE_CACHE_SIZE="10G"
+              echo "🚀 sccache enabled for dependency caching"
+
+
               # Setup database if needed
               if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then
                 if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw "$DATABASE_NAME"; then
@@ -249,6 +258,27 @@
                 echo "✅ Database $DATABASE_NAME ready at $DATABASE_URL"
               else
                 echo "⚠️  PostgreSQL not available - database setup skipped"
+              fi
+
+              # Auto-start compilation daemon (idempotent)
+              if [ -f "scripts/compile-daemon.sh" ]; then
+                # Check if already running
+                DAEMON_STATUS=$(./scripts/compile-daemon.sh status 2>/dev/null || echo '{"status":"not_running"}')
+                
+                if echo "$DAEMON_STATUS" | jq -e '.status == "running"' >/dev/null 2>&1; then
+                  DAEMON_PID=$(echo "$DAEMON_STATUS" | jq -r '.pid // "unknown"')
+                  echo "✅ Compilation daemon already running (PID: $DAEMON_PID)"
+                else
+                  # Start the daemon
+                  echo "🔨 Starting compilation daemon..."
+                  if ./scripts/compile-daemon.sh start >/dev/null 2>&1; then
+                    echo "✅ Compilation daemon started"
+                  else
+                    echo "⚠️  Failed to start compilation daemon"
+                  fi
+                fi
+                
+                echo "   Run 'just ai-status' for compilation state, 'just compile-stop' to stop daemon"
               fi
 
               echo "📦 Sinex devShell ready. Run 'just' to see available commands."

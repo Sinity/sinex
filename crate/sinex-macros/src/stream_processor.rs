@@ -251,7 +251,7 @@ impl syn::parse::Parse for StreamProcessorArgs {
                         "stream" => CheckpointType::Stream,
                         "timestamp" => CheckpointType::Timestamp,
                         _ => return Err(SynError::new(
-                            value.span(), 
+                            value.span(),
                             "Invalid checkpoint_type. Must be 'external', 'internal', 'stream', or 'timestamp'"
                         )),
                     });
@@ -394,12 +394,12 @@ impl syn::parse::Parse for StreamProcessorArgs {
                 }
                 _ => {
                     return Err(SynError::new(
-                        key.span(), 
+                        key.span(),
                         format!(
                             "Unknown argument '{}'. Valid arguments: processor_type, checkpoint_type, source, \
                              timeout_secs, max_retries, enable_metrics, enable_circuit_breaker, \
                              circuit_breaker_threshold, recovery_enabled, health_check_interval_secs, \
-                             suppress_warnings, batch_size, memory_limit_mb", 
+                             suppress_warnings, batch_size, memory_limit_mb",
                             key
                         )
                     ));

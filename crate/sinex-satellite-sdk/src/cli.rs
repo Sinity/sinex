@@ -39,7 +39,6 @@ pub struct ProcessorCli {
     #[arg(short, long, action = clap::ArgAction::Count)]
     pub verbose: u8,
 
-
     /// Processor-specific configuration as JSON
     #[arg(long)]
     pub processor_config: Option<String>,
@@ -392,35 +391,36 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     runner.run_service().await?;
                 } else {
                     use crate::coordination::SatelliteCoordination;
-                    
-                    
-                    use uuid::Uuid;
+
                     use std::sync::Arc;
                     use tokio::sync::Mutex;
-                    
+                    use uuid::Uuid;
+
                     // Create coordination with generated instance ID
                     let instance_id = Uuid::new_v4().to_string();
-                    
-                    let mut coordination = SatelliteCoordination::new(
-                        service_name.clone(),
-                        instance_id,
-                        db_pool
-                    );
-                    
+
+                    let mut coordination =
+                        SatelliteCoordination::new(service_name.clone(), instance_id, db_pool);
+
                     // Wrap runner in Arc<Mutex<>> for sharing
                     let runner = Arc::new(Mutex::new(runner));
-                    
+
                     // Run with coordination (hot standby pattern)
-                    coordination.run_coordination_loop(move || {
-                        let runner = runner.clone();
-                        async move {
-                            // Only leader processes events
-                            let mut runner = runner.lock().await;
-                            runner.run_service().await.map_err(|e| {
-                                sinex_core_types::CoreError::Service(format!("Satellite error: {}", e))
-                            })
-                        }
-                    }).await?;
+                    coordination
+                        .run_coordination_loop(move || {
+                            let runner = runner.clone();
+                            async move {
+                                // Only leader processes events
+                                let mut runner = runner.lock().await;
+                                runner.run_service().await.map_err(|e| {
+                                    sinex_core_types::CoreError::Service(format!(
+                                        "Satellite error: {}",
+                                        e
+                                    ))
+                                })
+                            }
+                        })
+                        .await?;
                 }
             }
 
@@ -745,9 +745,9 @@ macro_rules! processor_main {
                     .service_name
                     .clone()
                     .unwrap_or_else(|| "sinex-processor".to_string());
-                
+
                 let heartbeat_emitter = HeartbeatEmitter::new(service_name.clone(), 30);
-                
+
                 // Spawn heartbeat task concurrently
                 tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;
@@ -777,9 +777,9 @@ macro_rules! processor_main {
                     .service_name
                     .clone()
                     .unwrap_or_else(|| "sinex-processor".to_string());
-                
+
                 let heartbeat_emitter = HeartbeatEmitter::new(service_name.clone(), 30);
-                
+
                 // Spawn heartbeat task concurrently
                 tokio::spawn(async move {
                     heartbeat_emitter.start_periodic_heartbeat(None).await;

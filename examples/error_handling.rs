@@ -1,21 +1,21 @@
 //! Error Handling Examples
-//! 
+//!
 //! This file demonstrates proper usage of CoreError from sinex-error
 //! instead of anyhow or raw error handling.
 
+use serde_json::Value;
 use sinex_error::{CoreError, ErrorContext, Result, ResultExt};
-use sinex_events::{RawEvent, EventFactory};
+use sinex_events::{EventFactory, RawEvent};
+use sinex_ulid::Ulid;
 use std::fs;
 use std::path::Path;
-use sinex_ulid::Ulid;
-use serde_json::Value;
 
 /// Example 1: Basic error creation and context
 fn process_event(event: &RawEvent) -> Result<()> {
     // ✅ CORRECT: Using specific CoreError variant
     if event.payload.is_null() {
         return Err(CoreError::Validation(
-            "payload: Event payload cannot be null".to_string()
+            "payload: Event payload cannot be null".to_string(),
         ));
     }
 
@@ -45,11 +45,11 @@ fn validate_event_payload(event_id: Ulid, payload: &Value) -> Result<()> {
 
     // Validate required fields
     let obj = payload.as_object().unwrap();
-    
+
     for required_field in &["timestamp", "source", "data"] {
         if !obj.contains_key(*required_field) {
             return Err(CoreError::Validation(format!(
-                "payload.{}: Required field '{}' is missing", 
+                "payload.{}: Required field '{}' is missing",
                 required_field, required_field
             )));
         }
@@ -61,12 +61,20 @@ fn validate_event_payload(event_id: Ulid, payload: &Value) -> Result<()> {
 /// Example 4: Error propagation with additional context
 async fn process_event_pipeline(event: RawEvent) -> Result<ProcessedEvent> {
     // Step 1: Validate
-    validate_event(&event)
-        .map_err(|e| CoreError::Unknown(format!("Processing event {}: validation failed: {:?}", event.id, e)))?;
+    validate_event(&event).map_err(|e| {
+        CoreError::Unknown(format!(
+            "Processing event {}: validation failed: {:?}",
+            event.id, e
+        ))
+    })?;
 
     // Step 2: Transform
-    let transformed = transform_event(&event)
-        .map_err(|e| CoreError::Unknown(format!("Processing event {}: transformation failed: {:?}", event.id, e)))?;
+    let transformed = transform_event(&event).map_err(|e| {
+        CoreError::Unknown(format!(
+            "Processing event {}: transformation failed: {:?}",
+            event.id, e
+        ))
+    })?;
 
     // Step 3: Persist
     persist_event(&transformed)
@@ -86,7 +94,7 @@ mod satellite_errors {
     pub fn connection_failed(satellite_name: &str, addr: &str) -> CoreError {
         // ✅ CORRECT: Domain-specific error
         CoreError::Network(format!(
-            "Service {} failed to connect to {}", 
+            "Service {} failed to connect to {}",
             satellite_name, addr
         ))
     }
@@ -95,13 +103,10 @@ mod satellite_errors {
         // ✅ CORRECT: Rich error information
         match checkpoint_id {
             Some(id) => CoreError::InvalidState(format!(
-                "Checkpoint {} for automaton {} is corrupted", 
+                "Checkpoint {} for automaton {} is corrupted",
                 id, automaton
             )),
-            None => CoreError::NotFound(format!(
-                "checkpoint for automaton {}", 
-                automaton
-            )),
+            None => CoreError::NotFound(format!("checkpoint for automaton {}", automaton)),
         }
     }
 }
@@ -122,10 +127,12 @@ async fn get_event_with_fallback(
             // Try fallback
             get_event_from_pool(fallback_pool, event_id)
                 .await
-                .map_err(|_| CoreError::Database(format!(
-                    "get_event({}) failed on both primary and fallback",
-                    event_id
-                )))
+                .map_err(|_| {
+                    CoreError::Database(format!(
+                        "get_event({}) failed on both primary and fallback",
+                        event_id
+                    ))
+                })
         }
     }
 }
@@ -143,9 +150,9 @@ fn process_events_batch(events: Vec<RawEvent>) -> Result<BatchResult> {
                 failures.push((
                     event.id,
                     CoreError::Unknown(format!(
-                        "Processing event {}: Batch processing failed: {:?}", 
+                        "Processing event {}: Batch processing failed: {:?}",
                         event.id, e
-                    ))
+                    )),
                 ));
             }
         }
@@ -162,7 +169,7 @@ fn process_events_batch(events: Vec<RawEvent>) -> Result<BatchResult> {
     } else if successes.is_empty() {
         // All failed
         Err(CoreError::Unknown(format!(
-            "Batch operation failed: 0/{} succeeded", 
+            "Batch operation failed: 0/{} succeeded",
             failures.len()
         )))
     } else {
@@ -198,10 +205,12 @@ fn validate_configuration(config: &ConfigData) -> Result<()> {
         .not_empty()
         .into_result()
         .map_err(|e| CoreError::Validation(format!("Invalid endpoint: {:?}", e)))?;
-    
+
     // Additional validation for URL format
     if !config.endpoint.starts_with("http://") && !config.endpoint.starts_with("https://") {
-        return Err(CoreError::Validation("Endpoint must start with http:// or https://".to_string()));
+        return Err(CoreError::Validation(
+            "Endpoint must start with http:// or https://".to_string(),
+        ));
     }
 
     Ok(())

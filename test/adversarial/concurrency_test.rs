@@ -11,8 +11,8 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::events;
 use chrono::Utc;
+use sinex_test_utils::events;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::time::Instant;
@@ -302,10 +302,10 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
                 // Try to increment counter atomically
                 let update_result = sqlx::query!(
                     r#"
-                    UPDATE core.events 
+                    UPDATE core.events
                     SET payload = jsonb_set(
-                        payload, 
-                        '{counter}', 
+                        payload,
+                        '{counter}',
                         ((payload->>'counter')::int + 1)::text::jsonb
                     )
                     WHERE event_id::uuid = $1::uuid
@@ -648,11 +648,11 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
                 // Try to claim next available work item
                 let claim_result = sqlx::query!(
                     r#"
-                    UPDATE core.events 
+                    UPDATE core.events
                     SET payload = payload || jsonb_build_object('claimed_by', $1::text, 'start_time', $2::text)
                     WHERE event_id::uuid IN (
-                        SELECT event_id::uuid FROM core.events 
-                        WHERE source = 'load_balance_test' 
+                        SELECT event_id::uuid FROM core.events
+                        WHERE source = 'load_balance_test'
                         AND NOT (payload ? 'claimed_by')
                         ORDER BY (payload->>'priority')::int DESC
                         LIMIT 1

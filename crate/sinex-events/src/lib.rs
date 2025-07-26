@@ -34,7 +34,7 @@ pub use strongly_typed_events::{
 };
 
 // Re-export all constants for convenient access
-pub use constants::{event_types, sources, services, paths, config, test_constants, git_annex};
+pub use constants::{config, event_types, git_annex, paths, services, sources, test_constants};
 
 // Common type aliases
 pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;

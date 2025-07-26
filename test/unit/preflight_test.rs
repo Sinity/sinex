@@ -2,8 +2,8 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::prelude::*;
 use sinex_preflight::*;
+use sinex_test_utils::prelude::*;
 use std::env;
 use std::fs;
 use std::time::Duration;

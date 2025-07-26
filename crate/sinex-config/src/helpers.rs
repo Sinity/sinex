@@ -17,7 +17,6 @@ impl Default for DatabaseConfig {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ObservabilityConfig {
     pub log_level: String,

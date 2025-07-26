@@ -6,7 +6,7 @@ use sinex_db::queries::SourceMaterialQueries;
 use sinex_db::{annotations, knowledge_graph, DbPool};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 pub struct PkmService {
     pool: DbPool,
@@ -62,14 +62,16 @@ impl PkmService {
         created_by: &str,
     ) -> ServiceResult<Vec<Ulid>> {
         // Verify source material exists
-        let source_material: Option<sinex_db::models::SourceMaterialRecord> = SourceMaterialQueries::get_by_id(source_material_id)
-            .fetch_optional(&self.pool)
-            .await?;
+        let source_material: Option<sinex_db::models::SourceMaterialRecord> =
+            SourceMaterialQueries::get_by_id(source_material_id)
+                .fetch_optional(&self.pool)
+                .await?;
 
         if source_material.is_none() {
-            return Err(crate::error::ServiceError::NotFound(
-                format!("Source material {} not found", source_material_id)
-            ));
+            return Err(crate::error::ServiceError::NotFound(format!(
+                "Source material {} not found",
+                source_material_id
+            )));
         }
 
         let mut entity_ids = Vec::new();
@@ -114,7 +116,7 @@ impl PkmService {
         source_material_id: Option<Ulid>,
     ) -> ServiceResult<Ulid> {
         let mut metadata = serde_json::json!(properties);
-        
+
         if let Some(sm_id) = source_material_id {
             metadata["source_material_id"] = serde_json::json!(sm_id.to_string());
         }
@@ -157,14 +159,14 @@ impl PkmService {
     ) -> ServiceResult<Ulid> {
         // Calculate checksum
         let checksum = blake3::hash(content).to_hex().to_string();
-        
+
         // Check if already exists
-        let existing: Option<sinex_db::models::SourceMaterialRecord> = SourceMaterialQueries::find_by_checksum(checksum.clone())
-            .fetch_optional(&self.pool)
-            .await?;
-        
-        if let Some(existing) = existing 
-        {
+        let existing: Option<sinex_db::models::SourceMaterialRecord> =
+            SourceMaterialQueries::find_by_checksum(checksum.clone())
+                .fetch_optional(&self.pool)
+                .await?;
+
+        if let Some(existing) = existing {
             debug!(
                 blob_id = %existing.blob_id,
                 "Source material already exists with same checksum"
@@ -180,18 +182,19 @@ impl PkmService {
         };
 
         // Insert new source material
-        let source_material: sinex_db::models::SourceMaterialRecord = SourceMaterialQueries::insert(
-            material_type.to_string(),
-            source_uri.map(String::from),
-            Some(content.len() as i64),
-            Some(checksum),
-            mime_type.map(String::from),
-            None, // encoding - could be detected
-            metadata,
-            Some(content_preview),
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let source_material: sinex_db::models::SourceMaterialRecord =
+            SourceMaterialQueries::insert(
+                material_type.to_string(),
+                source_uri.map(String::from),
+                Some(content.len() as i64),
+                Some(checksum),
+                mime_type.map(String::from),
+                None, // encoding - could be detected
+                metadata,
+                Some(content_preview),
+            )
+            .fetch_one(&self.pool)
+            .await?;
 
         info!(
             blob_id = %source_material.blob_id,
@@ -210,13 +213,14 @@ impl PkmService {
         source_uri: Option<&str>,
         metadata: serde_json::Value,
     ) -> ServiceResult<Ulid> {
-        let source_material: sinex_db::models::SourceMaterialRecord = SourceMaterialQueries::register_in_flight(
-            material_type.to_string(),
-            source_uri.map(String::from),
-            metadata,
-        )
-        .fetch_one(&self.pool)
-        .await?;
+        let source_material: sinex_db::models::SourceMaterialRecord =
+            SourceMaterialQueries::register_in_flight(
+                material_type.to_string(),
+                source_uri.map(String::from),
+                metadata,
+            )
+            .fetch_one(&self.pool)
+            .await?;
 
         info!(
             blob_id = %source_material.blob_id,
@@ -235,7 +239,7 @@ impl PkmService {
         mime_type: Option<&str>,
     ) -> ServiceResult<()> {
         let checksum = blake3::hash(content).to_hex().to_string();
-        
+
         let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
             Some(String::from_utf8_lossy(&content[..content.len().min(500)]).to_string())
         } else {
@@ -268,26 +272,30 @@ impl PkmService {
         material_type: Option<&str>,
         limit: Option<i64>,
     ) -> ServiceResult<Vec<serde_json::Value>> {
-        let materials: Vec<sinex_db::models::SourceMaterialRecord> = SourceMaterialQueries::get_recent(
-            material_type.map(String::from),
-            limit.or(Some(50)),
-            None,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let materials: Vec<sinex_db::models::SourceMaterialRecord> =
+            SourceMaterialQueries::get_recent(
+                material_type.map(String::from),
+                limit.or(Some(50)),
+                None,
+            )
+            .fetch_all(&self.pool)
+            .await?;
 
-        Ok(materials.into_iter().map(|m| {
-            serde_json::json!({
-                "blob_id": m.blob_id.to_string(),
-                "material_type": m.material_type,
-                "source_uri": m.source_uri,
-                "ingestion_time": m.ingestion_time,
-                "file_size_bytes": m.file_size_bytes,
-                "mime_type": m.mime_type,
-                "metadata": m.metadata,
-                "content_preview": m.content_preview,
+        Ok(materials
+            .into_iter()
+            .map(|m| {
+                serde_json::json!({
+                    "blob_id": m.blob_id.to_string(),
+                    "material_type": m.material_type,
+                    "source_uri": m.source_uri,
+                    "ingestion_time": m.ingestion_time,
+                    "file_size_bytes": m.file_size_bytes,
+                    "mime_type": m.mime_type,
+                    "metadata": m.metadata,
+                    "content_preview": m.content_preview,
+                })
             })
-        }).collect())
+            .collect())
     }
 
     /// Search source materials by metadata
@@ -296,21 +304,22 @@ impl PkmService {
         key: &str,
         value: serde_json::Value,
     ) -> ServiceResult<Vec<serde_json::Value>> {
-        let materials: Vec<sinex_db::models::SourceMaterialRecord> = SourceMaterialQueries::get_by_metadata(
-            key.to_string(),
-            value,
-        )
-        .fetch_all(&self.pool)
-        .await?;
+        let materials: Vec<sinex_db::models::SourceMaterialRecord> =
+            SourceMaterialQueries::get_by_metadata(key.to_string(), value)
+                .fetch_all(&self.pool)
+                .await?;
 
-        Ok(materials.into_iter().map(|m| {
-            serde_json::json!({
-                "blob_id": m.blob_id.to_string(),
-                "material_type": m.material_type,
-                "source_uri": m.source_uri,
-                "ingestion_time": m.ingestion_time,
-                "metadata": m.metadata,
+        Ok(materials
+            .into_iter()
+            .map(|m| {
+                serde_json::json!({
+                    "blob_id": m.blob_id.to_string(),
+                    "material_type": m.material_type,
+                    "source_uri": m.source_uri,
+                    "ingestion_time": m.ingestion_time,
+                    "metadata": m.metadata,
+                })
             })
-        }).collect())
+            .collect())
     }
 }

@@ -1,18 +1,18 @@
 // Demonstration of the snapshot testing capabilities
 // Run with: cargo run --example snapshot_demo
 
+use chrono::Utc;
 use serde_json::{json, Value};
 use sinex_ulid::Ulid;
-use chrono::Utc;
 use std::str::FromStr;
 
 fn main() {
     println!("=== Sinex Snapshot Testing Demo ===\n");
-    
+
     demo_basic_snapshot();
     demo_redaction_features();
     demo_builder_api();
-    
+
     println!("\n✓ Snapshot testing is fully functional!");
     println!("\nTo use in tests:");
     println!("  assert_snapshot!(value, \"name\");");
@@ -22,16 +22,16 @@ fn main() {
 fn demo_basic_snapshot() {
     println!("1. Basic Snapshot Testing:");
     println!("-------------------------");
-    
+
     let data = json!({
         "name": "John Doe",
         "age": 30,
         "active": true
     });
-    
+
     println!("Original data:");
     println!("{}", serde_json::to_string_pretty(&data).unwrap());
-    
+
     println!("\nIn a test, you would write:");
     println!("  assert_snapshot!(data, \"user_profile\");");
     println!("\nThis creates/compares with: test/snapshots/module/user_profile.snap");
@@ -40,7 +40,7 @@ fn demo_basic_snapshot() {
 fn demo_redaction_features() {
     println!("\n2. Automatic Redaction Features:");
     println!("--------------------------------");
-    
+
     let data = json!({
         "id": Ulid::new().to_string(),
         "created_at": Utc::now().to_rfc3339(),
@@ -51,17 +51,17 @@ fn demo_redaction_features() {
             "last_seen": Utc::now().to_rfc3339(),
         }
     });
-    
+
     println!("Original data with dynamic values:");
     println!("{}", serde_json::to_string_pretty(&data).unwrap());
-    
+
     // Simulate redaction
     let mut redacted = data.clone();
     apply_redactions(&mut redacted);
-    
+
     println!("\nAfter automatic redaction:");
     println!("{}", serde_json::to_string_pretty(&redacted).unwrap());
-    
+
     println!("\nRedactions applied:");
     println!("  • ULIDs → ULID_0001, ULID_0002, etc.");
     println!("  • Timestamps → 2024-01-01T00:00:00Z");
@@ -71,7 +71,7 @@ fn demo_redaction_features() {
 fn demo_builder_api() {
     println!("\n3. Snapshot Builder API:");
     println!("-----------------------");
-    
+
     let data = json!({
         "id": Ulid::new().to_string(),
         "password": "secret123",
@@ -81,7 +81,7 @@ fn demo_builder_api() {
             "environment": "production"
         }
     });
-    
+
     println!("Using the builder API for custom redactions:");
     println!("\n  snapshot(data)");
     println!("    .name(\"api_response\")");
@@ -90,7 +90,7 @@ fn demo_builder_api() {
     println!("    .redact_field(\"password\", json!(\"[REDACTED]\"))");
     println!("    .redact_field(\"api_key\", json!(\"sk_[REDACTED]\"))");
     println!("    .assert();");
-    
+
     // Simulate custom redaction
     let mut redacted = data.clone();
     apply_redactions(&mut redacted);
@@ -98,7 +98,7 @@ fn demo_builder_api() {
         obj.insert("password".to_string(), json!("[REDACTED]"));
         obj.insert("api_key".to_string(), json!("sk_[REDACTED]"));
     }
-    
+
     println!("\nResult after custom redactions:");
     println!("{}", serde_json::to_string_pretty(&redacted).unwrap());
 }

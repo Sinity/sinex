@@ -43,7 +43,6 @@ pub struct IngestdConfig {
 }
 
 impl IngestdConfig {
-
     /// Create configuration from command line arguments
     pub fn from_args(
         database_url: Option<String>,

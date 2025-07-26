@@ -34,7 +34,7 @@ where
         }
 
         tokio::time::sleep(backoff).await;
-        
+
         // Exponential backoff with max of 1 second
         backoff = (backoff * 2).min(Duration::from_secs(1));
     }
@@ -50,18 +50,17 @@ pub async fn wait_for_service_ready<F, Fut>(
     service_name: &str,
     health_check: F,
     timeout_secs: u64,
-) -> Result<()> 
+) -> Result<()>
 where
     F: Fn() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
     wait_for_condition(
-        || async {
-            health_check().await.map(|_| true)
-        },
+        || async { health_check().await.map(|_| true) },
         timeout_secs,
         &format!("{} readiness", service_name),
-    ).await
+    )
+    .await
 }
 
 /// Wait for a specific duration with cancellation support
@@ -76,23 +75,20 @@ pub async fn wait_with_cancel(
 }
 
 /// Wait for multiple conditions to be met
-pub async fn wait_for_all<F, Fut>(
-    conditions: Vec<(&str, F)>,
-    timeout_secs: u64,
-) -> Result<()>
+pub async fn wait_for_all<F, Fut>(conditions: Vec<(&str, F)>, timeout_secs: u64) -> Result<()>
 where
     F: Fn() -> Fut + Clone,
     Fut: std::future::Future<Output = Result<bool>>,
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
-    
+
     let mut pending: Vec<(&str, F)> = conditions;
     let mut backoff = Duration::from_millis(10);
 
     while !pending.is_empty() && start.elapsed() < timeout_duration {
         let mut still_pending = Vec::new();
-        
+
         for (name, condition_fn) in pending {
             match condition_fn().await {
                 Ok(true) => {
@@ -107,9 +103,9 @@ where
                 }
             }
         }
-        
+
         pending = still_pending;
-        
+
         if !pending.is_empty() {
             tokio::time::sleep(backoff).await;
             backoff = (backoff * 2).min(Duration::from_secs(1));
@@ -140,14 +136,18 @@ where
     Fut: std::future::Future<Output = Result<T>>,
 {
     let mut delay = initial_delay;
-    
+
     for attempt in 1..=max_attempts {
         match operation().await {
             Ok(result) => return Ok(result),
             Err(e) if attempt < max_attempts => {
                 tracing::warn!(
                     "Attempt {}/{} for {} failed: {}. Retrying in {:?}",
-                    attempt, max_attempts, operation_name, e, delay
+                    attempt,
+                    max_attempts,
+                    operation_name,
+                    e,
+                    delay
                 );
                 tokio::time::sleep(delay).await;
                 delay = (delay * 2).min(max_delay);
@@ -160,7 +160,7 @@ where
             }
         }
     }
-    
+
     unreachable!()
 }
 
@@ -198,9 +198,7 @@ where
         // Early: starts with 50ms minimum for reasonable delays
         // Later: backs off proportionally to elapsed time
         let elapsed = start.elapsed();
-        let adaptive_delay = Duration::from_millis(
-            50.max(elapsed.as_millis() as u64 / 10)
-        );
+        let adaptive_delay = Duration::from_millis(50.max(elapsed.as_millis() as u64 / 10));
         tokio::time::sleep(adaptive_delay).await;
     }
 
@@ -224,13 +222,13 @@ where
 {
     let start = Instant::now();
     let timeout_duration = Duration::from_secs(timeout_secs);
-    
+
     let mut pending: Vec<(&str, F)> = conditions;
     let mut backoff = Duration::from_millis(50);
 
     while !pending.is_empty() && start.elapsed() < timeout_duration {
         let mut still_pending = Vec::new();
-        
+
         for (name, condition_fn) in pending {
             match condition_fn().await {
                 Ok(true) => {
@@ -245,16 +243,15 @@ where
                 }
             }
         }
-        
+
         pending = still_pending;
-        
+
         if !pending.is_empty() {
             tokio::time::sleep(backoff).await;
             // Use adaptive backoff for multiple condition waiting too
             let elapsed = start.elapsed();
-            backoff = Duration::from_millis(
-                50.max(elapsed.as_millis() as u64 / 10)
-            ).min(Duration::from_secs(1));
+            backoff = Duration::from_millis(50.max(elapsed.as_millis() as u64 / 10))
+                .min(Duration::from_secs(1));
         }
     }
 

@@ -4,12 +4,12 @@
 // channel extension traits, backpressure management, and monitoring capabilities.
 
 use crate::prelude::*;
+use sinex_channel::{BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt};
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::fmt::Debug;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use sinex_channel::{ChannelMonitor, ChannelSenderExt, ChannelReceiverExt, BackpressureManager};
 
 /// Test channel setup with monitoring capabilities
 pub struct TestChannelSetup<T> {
@@ -63,7 +63,7 @@ pub mod behavior {
         T: Send + PartialEq + Debug + Clone,
     {
         let expected_value = test_value.clone();
-        
+
         // Send the value with context using the trait method
         sender.send_or_log(test_value, test_name).await?;
 
@@ -72,7 +72,10 @@ pub mod behavior {
             .recv_timeout(Duration::from_secs(1))
             .await
             .map_err(|e| {
-                CoreError::Unknown(format!("Failed to receive from channel in test {}: {}", test_name, e))
+                CoreError::Unknown(format!(
+                    "Failed to receive from channel in test {}: {}",
+                    test_name, e
+                ))
             })?
             .ok_or_else(|| {
                 CoreError::Unknown(format!("Channel closed unexpectedly in test {}", test_name))
@@ -106,15 +109,15 @@ pub mod behavior {
         ) {
             (true, true) => Ok(()),   // Expected timeout
             (false, false) => Ok(()), // Expected receive
-            (false, true) => Err(
-                CoreError::validation("Expected timeout but received value")
-                    .with_context("timeout_duration", format!("{:?}", timeout))
-                    .build().into()
-            ),
+            (false, true) => Err(CoreError::validation("Expected timeout but received value")
+                .with_context("timeout_duration", format!("{:?}", timeout))
+                .build()
+                .into()),
             (true, false) => Err(
                 CoreError::validation("Expected receive but got timeout/close")
                     .with_context("timeout_duration", format!("{:?}", timeout))
-                    .build().into()
+                    .build()
+                    .into(),
             ),
         }
     }
@@ -143,12 +146,13 @@ pub mod behavior {
             let batch = receiver.recv_batch(max_batch_size, batch_timeout).await;
 
             if batch.is_empty() {
-                return Err(
-                    CoreError::validation("Received empty batch before all items collected")
-                        .with_context("total_received", total_received)
-                        .with_context("expected_total", items.len())
-                        .build().into()
-                );
+                return Err(CoreError::validation(
+                    "Received empty batch before all items collected",
+                )
+                .with_context("total_received", total_received)
+                .with_context("expected_total", items.len())
+                .build()
+                .into());
             }
 
             total_received += batch.len();
@@ -159,13 +163,19 @@ pub mod behavior {
                 return Err(
                     CoreError::validation("Too many batches - possible infinite loop")
                         .with_context("batch_count", batch_count)
-                        .build().into()
+                        .build()
+                        .into(),
                 );
             }
         }
 
         if total_received != items.len() {
-            return Err(CoreError::Unknown(format!("Batch receive count mismatch: {} != {}", total_received, items.len())).into());
+            return Err(CoreError::Unknown(format!(
+                "Batch receive count mismatch: {} != {}",
+                total_received,
+                items.len()
+            ))
+            .into());
         }
         Ok(())
     }
@@ -191,7 +201,12 @@ pub mod behavior {
         let drained = receiver.drain_all().await;
 
         if drained.len() != items.len() {
-            return Err(CoreError::Unknown(format!("Drain count mismatch: {} != {}", drained.len(), items.len())).into());
+            return Err(CoreError::Unknown(format!(
+                "Drain count mismatch: {} != {}",
+                drained.len(),
+                items.len()
+            ))
+            .into());
         }
         Ok(())
     }
@@ -211,13 +226,13 @@ pub mod backpressure {
         T: Send + Clone,
     {
         let mut backpressure_manager = BackpressureManager::new(10, 5);
-        let mut successful_sends = 0;
+        let mut _successful_sends = 0;
         let mut timeouts = 0;
 
         for item in test_items {
             match sender.send_timeout(item, expected_timeout).await {
                 Ok(()) => {
-                    successful_sends += 1;
+                    _successful_sends += 1;
                     backpressure_manager.check_and_wait(0).await; // Low queue depth
                 }
                 Err(_) => {
@@ -229,7 +244,10 @@ pub mod backpressure {
 
         // Validate that we got some timeouts (indicating backpressure)
         if timeouts == 0 {
-            return Err(CoreError::Unknown("Expected some timeouts due to backpressure".to_string()).into());
+            return Err(CoreError::Unknown(
+                "Expected some timeouts due to backpressure".to_string(),
+            )
+            .into());
         }
 
         Ok(())
@@ -245,9 +263,9 @@ pub mod backpressure {
         T: Send + Clone,
     {
         let mut queue = Vec::new();
-        let mut successful_immediate = 0;
-        let mut queued = 0;
-        let mut rejected = 0;
+        let mut _successful_immediate = 0;
+        let mut _queued = 0;
+        let mut _rejected = 0;
 
         for item in items {
             match sender
@@ -256,20 +274,25 @@ pub mod backpressure {
             {
                 Ok(()) => {
                     if queue.is_empty() {
-                        successful_immediate += 1;
+                        _successful_immediate += 1;
                     } else {
-                        queued += 1;
+                        _queued += 1;
                     }
                 }
                 Err(_) => {
-                    rejected += 1;
+                    _rejected += 1;
                 }
             }
         }
 
         // Validate queue behavior
         if queue.len() > max_queue_size {
-            return Err(CoreError::Unknown(format!("Queue size {} exceeds maximum {}", queue.len(), max_queue_size)).into());
+            return Err(CoreError::Unknown(format!(
+                "Queue size {} exceeds maximum {}",
+                queue.len(),
+                max_queue_size
+            ))
+            .into());
         }
 
         Ok(())
@@ -291,7 +314,11 @@ pub mod backpressure {
 
         // Should have some delay due to high queue depths
         if total_time <= Duration::from_millis(10) {
-            return Err(CoreError::Unknown(format!("Adaptive backpressure should introduce some delay, but total time was {:?}", total_time)).into());
+            return Err(CoreError::Unknown(format!(
+                "Adaptive backpressure should introduce some delay, but total time was {:?}",
+                total_time
+            ))
+            .into());
         }
 
         Ok(())
@@ -418,9 +445,9 @@ pub mod performance {
 
         // Wait for all senders to complete
         for handle in handles {
-            handle.await.map_err(|e| {
-                CoreError::Unknown(format!("Concurrent sender task failed: {}", e))
-            })?;
+            handle
+                .await
+                .map_err(|e| CoreError::Unknown(format!("Concurrent sender task failed: {}", e)))?;
         }
 
         let successes = success_counter.load(Ordering::Relaxed);
@@ -431,7 +458,8 @@ pub mod performance {
             return Err(CoreError::Unknown(format!(
                 "Operation count mismatch: successes: {}, errors: {}, expected: {}",
                 successes, errors, total_expected
-            )).into());
+            ))
+            .into());
         }
 
         Ok(())
@@ -472,7 +500,8 @@ pub mod monitoring {
             return Err(CoreError::Unknown(format!(
                 "Send count should have increased: initial: {}, final: {}",
                 initial_stats.sent, final_stats.sent
-            )).into());
+            ))
+            .into());
         }
 
         if final_stats.sent - initial_stats.sent != test_items.len() as u64 {
@@ -480,7 +509,8 @@ pub mod monitoring {
                 "Send count mismatch: delta: {}, items: {}",
                 final_stats.sent - initial_stats.sent,
                 test_items.len()
-            )).into());
+            ))
+            .into());
         }
 
         Ok(())
@@ -709,88 +739,84 @@ mod comprehensive_tests {
     use super::*;
     use crate::prelude::*;
     use tokio::sync::mpsc;
-    
+
     #[sinex_test]
     async fn test_channel_setup_creation(_ctx: TestContext) -> TestResult<()> {
         // Test different channel setup methods
         let zero_cap = TestChannelSetup::<i32>::zero_capacity();
         assert_eq!(zero_cap.monitor.stats().sent, 0);
         assert_eq!(zero_cap.monitor.stats().received, 0);
-        
+
         let small_cap = TestChannelSetup::<String>::small_capacity();
         assert_eq!(small_cap.monitor.stats().errors, 0);
-        
+
         let large_cap = TestChannelSetup::<Vec<u8>>::large_capacity();
         assert_eq!(large_cap.monitor.queue_depth(), 0);
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_basic_send_receive_behavior(_ctx: TestContext) -> TestResult<()> {
         let mut setup = TestChannelSetup::<String>::new(10);
-        
+
         // Test successful send/receive
         behavior::test_basic_send_receive(
             &setup.sender,
             &mut setup.receiver,
             "test_message".to_string(),
-            "basic_test"
-        ).await?;
-        
+            "basic_test",
+        )
+        .await?;
+
         // Monitor should track the operation
         assert_eq!(setup.monitor.stats().sent, 0); // Not tracked by test function
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_channel_timeout_behavior(_ctx: TestContext) -> TestResult<()> {
         let mut setup = TestChannelSetup::<i32>::new(1);
-        
+
         // Test timeout when no data
-        behavior::test_channel_timeout(
-            &mut setup.receiver,
-            Duration::from_millis(100),
-            true
-        ).await?;
-        
+        behavior::test_channel_timeout(&mut setup.receiver, Duration::from_millis(100), true)
+            .await?;
+
         // Send data and test no timeout
         setup.sender.send(42).await?;
-        behavior::test_channel_timeout(
-            &mut setup.receiver,
-            Duration::from_millis(100),
-            false
-        ).await?;
-        
+        behavior::test_channel_timeout(&mut setup.receiver, Duration::from_millis(100), false)
+            .await?;
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_backpressure_handling(_ctx: TestContext) -> TestResult<()> {
         let setup = TestChannelSetup::<i32>::zero_capacity();
         let backpressure = BackpressureManager::new(
             10, // high watermark
-            5   // low watermark
+            5,  // low watermark
         );
-        
+
         // Test backpressure detection
         let result = backpressure::test_backpressure_management(
             &setup.sender,
             vec![1, 2, 3, 4, 5],
-            Duration::from_millis(10)
-        ).await;
-        
+            Duration::from_millis(10),
+        )
+        .await;
+
         // Should handle backpressure appropriately
         assert!(result.is_ok());
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_batch_receive_operations(_ctx: TestContext) -> TestResult<()> {
         let mut setup = TestChannelSetup::<String>::new(20);
-        
+
         // Send multiple items
         let items = vec![
             "item1".to_string(),
@@ -799,110 +825,114 @@ mod comprehensive_tests {
             "item4".to_string(),
             "item5".to_string(),
         ];
-        
+
         for item in &items {
             setup.sender.send(item.clone()).await?;
         }
-        
+
         // Test batch receive
         behavior::test_batch_receive(
             &setup.sender,
             &mut setup.receiver,
             items,
-            5,  // max_batch_size
-            Duration::from_secs(1)
-        ).await?;
-        
+            5, // max_batch_size
+            Duration::from_secs(1),
+        )
+        .await?;
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_channel_monitoring(_ctx: TestContext) -> TestResult<()> {
         let monitor = Arc::new(ChannelMonitor::new());
-        
+
         // Record various operations
         monitor.record_send();
         monitor.record_send();
         monitor.record_receive();
         monitor.record_error("test error".to_string());
-        
+
         let stats = monitor.stats();
         assert_eq!(stats.sent, 2);
         assert_eq!(stats.received, 1);
         assert_eq!(stats.errors, 1);
         assert_eq!(stats.queue_depth, 1); // 2 sent - 1 received
         assert_eq!(stats.last_error, Some("test error".to_string()));
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_channel_extension_traits(_ctx: TestContext) -> TestResult<()> {
         let (sender, mut receiver) = mpsc::channel::<i32>(5);
-        
+
         // Test send_or_log
         sender.send_or_log(42, "test_context").await?;
-        
+
         // Test send_timeout
         sender.send_timeout(43, Duration::from_secs(1)).await?;
-        
+
         // Test try_send_or_queue
         let mut queue = Vec::new();
         sender.try_send_or_queue(44, &mut queue, 10).await?;
-        
+
         // Test recv_timeout
         let received = receiver.recv_timeout(Duration::from_secs(1)).await?;
         assert_eq!(received, Some(42));
-        
+
         // Test recv_batch
         let batch = receiver.recv_batch(5, Duration::from_millis(100)).await;
         assert!(batch.len() >= 2); // Should have at least 43 and 44
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_channel_error_handling(_ctx: TestContext) -> TestResult<()> {
         let (sender, receiver) = mpsc::channel::<String>(1);
-        
+
         // Drop receiver to cause send errors
         drop(receiver);
-        
+
         // send_or_log should handle the error gracefully
         let result = sender.send_or_log("test".to_string(), "error_test").await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Channel send failed"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Channel send failed"));
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_channel_drain_operations(_ctx: TestContext) -> TestResult<()> {
         let (sender, mut receiver) = mpsc::channel::<i32>(10);
-        
+
         // Send multiple items
         for i in 0..5 {
             sender.send(i).await?;
         }
-        
+
         // Test drain_all
         let drained = receiver.drain_all().await;
         assert_eq!(drained.len(), 5);
         assert_eq!(drained, vec![0, 1, 2, 3, 4]);
-        
+
         // Channel should be empty now
         let empty = receiver.drain_all().await;
         assert!(empty.is_empty());
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_concurrent_channel_operations(_ctx: TestContext) -> TestResult<()> {
         let setup = TestChannelSetup::<i32>::new(100);
         let sender = setup.sender.clone();
         let monitor = setup.monitor.clone();
-        
+
         // Spawn multiple senders
         let mut handles = vec![];
         for i in 0..10 {
@@ -917,52 +947,58 @@ mod comprehensive_tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all senders
         for handle in handles {
             handle.await??;
         }
-        
+
         // Verify monitoring
         assert_eq!(monitor.stats().sent, 100);
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_channel_queue_management(_ctx: TestContext) -> TestResult<()> {
         let (sender, mut receiver) = mpsc::channel::<String>(2);
         let mut queue = Vec::new();
-        
+
         // Fill channel
         sender.send("first".to_string()).await?;
         sender.send("second".to_string()).await?;
-        
+
         // These should go to queue
-        sender.try_send_or_queue("third".to_string(), &mut queue, 5).await?;
-        sender.try_send_or_queue("fourth".to_string(), &mut queue, 5).await?;
-        
+        sender
+            .try_send_or_queue("third".to_string(), &mut queue, 5)
+            .await?;
+        sender
+            .try_send_or_queue("fourth".to_string(), &mut queue, 5)
+            .await?;
+
         assert_eq!(queue.len(), 2);
-        
+
         // Drain one item
         let _ = receiver.recv().await;
-        
+
         // Try again - should move one from queue
-        sender.try_send_or_queue("fifth".to_string(), &mut queue, 5).await?;
-        
+        sender
+            .try_send_or_queue("fifth".to_string(), &mut queue, 5)
+            .await?;
+
         // Queue should have fewer items now
         assert!(queue.len() < 2);
-        
+
         Ok(())
     }
-    
+
     #[test]
     fn test_channel_monitor_thread_safety() {
         use std::thread;
-        
+
         let monitor = Arc::new(ChannelMonitor::new());
         let mut handles = vec![];
-        
+
         // Spawn threads that increment counters
         for _ in 0..10 {
             let monitor_clone = monitor.clone();
@@ -974,12 +1010,12 @@ mod comprehensive_tests {
             });
             handles.push(handle);
         }
-        
+
         // Wait for all threads
         for handle in handles {
             handle.join().unwrap();
         }
-        
+
         // Verify counts
         let stats = monitor.stats();
         assert_eq!(stats.sent, 1000);

@@ -3,7 +3,7 @@
 //! Monitors for asciinema recording files and tracks session lifecycle
 //!
 //! ## Asciinema Format Details
-//! 
+//!
 //! ### File Format (v2)
 //! ```json
 //! {"version": 2, "width": 80, "height": 24, "timestamp": 1234567890, ...}
@@ -30,6 +30,7 @@
 //! - Metadata includes dimensions, duration, command
 
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
@@ -39,7 +40,6 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Recording session information
 #[derive(Debug)]
@@ -403,10 +403,7 @@ end
                 });
 
                 let factory = EventFactory::new(sinex_events::sources::SHELL_ASCIINEMA);
-                let event = factory.create_event(
-                    "session.started",
-                    payload,
-                );
+                let event = factory.create_event("session.started", payload);
 
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
@@ -448,10 +445,7 @@ end
                         });
 
                         let factory = EventFactory::new(sinex_events::sources::SHELL_ASCIINEMA);
-                        let event = factory.create_event(
-                            "session.ended",
-                            payload,
-                        );
+                        let event = factory.create_event("session.ended", payload);
 
                         if tx.send(event).is_err() {
                             warn!("Event channel closed");

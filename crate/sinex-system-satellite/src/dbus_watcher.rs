@@ -3,6 +3,7 @@
 //! Monitors D-Bus signals using external dbus-monitor command
 
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
@@ -11,7 +12,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// D-Bus watcher
 pub struct DbusWatcher {
@@ -45,12 +45,10 @@ impl DbusWatcher {
                 "message.received"
             };
 
-            Some(
-                {
-                    let factory = EventFactory::new(sinex_events::sources::DBUS);
-                    factory.create_event(event_type, payload)
-                }
-            )
+            Some({
+                let factory = EventFactory::new(sinex_events::sources::DBUS);
+                factory.create_event(event_type, payload)
+            })
         } else {
             None
         }

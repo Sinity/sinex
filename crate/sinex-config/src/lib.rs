@@ -14,10 +14,7 @@ mod integration_test;
 
 // Re-export main types
 pub use duration_parser::parse_duration;
-pub use helpers::{
-    ConfigFactory, DatabaseConfig,
-    ObservabilityConfig, SourcesConfig,
-};
+pub use helpers::{ConfigFactory, DatabaseConfig, ObservabilityConfig, SourcesConfig};
 
 pub use validation_framework::{
     create_sinex_validator, ConfigurationValidator, CrossFieldCondition, CrossFieldRule,

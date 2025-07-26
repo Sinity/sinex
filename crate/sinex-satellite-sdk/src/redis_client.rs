@@ -1,30 +1,30 @@
 //! Redis Streams client for message bus communication
-//! 
+//!
 //! # Architectural Decision: Event Processing via Redis Streams (Supersedes ADR-002)
-//! 
+//!
 //! **Status**: Implemented  
 //! **Implementation Date**: 2025-07-17  
 //! **Supersedes**: ADR-002 (PostgreSQL Work Queue)
-//! 
+//!
 //! ## Context
-//! 
+//!
 //! Originally planned to use PostgreSQL work queue with polling for event
 //! processing notification. This approach had limitations:
 //! - Polling latency impacted real-time processing
 //! - Database load from frequent polling
 //! - Complex retry and failure handling
 //! - Limited scalability for consumer groups
-//! 
+//!
 //! ## Decision
-//! 
+//!
 //! Implemented Redis Streams as the message bus for event distribution:
 //! - Events flow: gRPC → PostgreSQL → Redis Streams → Consumer Groups
 //! - Push-based processing eliminates polling
 //! - Native consumer groups for horizontal scaling
 //! - Built-in retry and acknowledgment mechanisms
-//! 
+//!
 //! ## Architecture
-//! 
+//!
 //! ```text
 //! ┌──────────────┐     ┌─────────────┐     ┌──────────────┐
 //! │  Satellites  │────▶│   ingestd   │────▶│  PostgreSQL  │
@@ -41,47 +41,47 @@
 //!                      │   (Automata)   │                     │  (Analytics)   │
 //!                      └────────────────┘                     └────────────────┘
 //! ```
-//! 
+//!
 //! ## Benefits Over Original Design
-//! 
+//!
 //! - **Sub-second latency**: Push-based processing vs polling
 //! - **Horizontal scaling**: Native consumer groups
 //! - **Reduced DB load**: No polling queries
 //! - **Built-in reliability**: Automatic retries and acknowledgments
 //! - **Real-time processing**: Immediate event distribution
-//! 
+//!
 //! ## Implementation Details
-//! 
+//!
 //! - Stream key pattern: `sinex:events:{event_type}`
 //! - Consumer group pattern: `{processor_name}_group`
 //! - Checkpoint hybrid: Redis for progress, PostgreSQL for durability
 //! - Automatic dead letter queue handling
 //! - Configurable batch sizes and timeouts
-//! 
+//!
 //! ## Historical Context: Routing Cache Architecture (ADR-014)
-//! 
+//!
 //! **Status**: Superseded by this Redis Streams implementation
-//! 
+//!
 //! The original architecture used complex routing caches and work queues:
 //! - Per-row triggers for event routing (15-50ms latency)
 //! - Materialized view `routing_cache` for agent mappings
 //! - Batch router process running every 1-5 seconds
 //! - Work queue with `SELECT FOR UPDATE SKIP LOCKED`
-//! 
+//!
 //! This approach had limitations:
 //! - High database lock contention
 //! - Complex trigger logic difficult to test
 //! - Poor observability into routing decisions
 //! - Limited scalability under high event volumes
-//! 
+//!
 //! The Redis Streams architecture eliminates these issues by:
 //! - Moving routing logic out of the database
 //! - Using native Redis consumer groups for load balancing
 //! - Providing built-in retry and acknowledgment mechanisms
 //! - Achieving sub-second latency with push-based processing
-//! 
+//!
 //! ## Related Components
-//! 
+//!
 //! - [`StatefulStreamProcessor`](crate::stream_processor::StatefulStreamProcessor) - Unified processor interface
 //! - [`CheckpointManager`](crate::checkpoint::CheckpointManager) - Hybrid Redis/PostgreSQL checkpointing
 //! - [`sinex_events::RawEvent`] - Event structure distributed via streams

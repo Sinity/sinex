@@ -3,13 +3,13 @@
 // These tests verify that the satellite services can communicate
 // properly and that the overall system works as expected.
 
-use sinex_test_utils::prelude::*;
 use anyhow::Result;
-use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient, SatelliteResult};
-use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
+use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{event_types, services, EventFactory};
+use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient, SatelliteResult};
 use sinex_test_macros::sinex_test;
+use sinex_test_utils::prelude::*;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 use uuid;
@@ -58,7 +58,10 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
     )
     .fetch_one(ctx.pool())
     .await?;
-    assert!(table_check.unwrap_or(false), "automaton_checkpoints table should exist");
+    assert!(
+        table_check.unwrap_or(false),
+        "automaton_checkpoints table should exist"
+    );
     info!("✓ New database schema is in place");
 
     // Test 4: Test checkpoint functionality
@@ -149,7 +152,7 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
     let mut canonical_event = factory.create_event("command.canonical", canonical_payload);
     canonical_event.id = canonical_event_id;
     canonical_event.ts_orig = Some(chrono::Utc::now());
-    
+
     sinex_db::insert_event(ctx.pool(), &canonical_event).await?;
 
     info!("✓ Canonical event created from raw event");
@@ -237,9 +240,10 @@ async fn test_checkpoint_functionality(pool: &sqlx::PgPool) -> AnyhowResult<()> 
     assert_eq!(loaded.processed_count, checkpoint.processed_count);
 
     // Test checkpoint stats via centralized queries
-    let (checkpoint_count,): (i64,) = CheckpointQueries::count_checkpoints_by_processor("test-checkpoint-automaton".to_string())
-        .fetch_one(&pool)
-        .await?;
+    let (checkpoint_count,): (i64,) =
+        CheckpointQueries::count_checkpoints_by_processor("test-checkpoint-automaton".to_string())
+            .fetch_one(&pool)
+            .await?;
     assert!(checkpoint_count > 0, "Should have checkpoint records");
 
     info!("Checkpoint functionality test passed");

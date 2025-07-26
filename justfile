@@ -17,12 +17,21 @@ default:
     @echo "  just test-all    - All tests including VM (~10-15min)"
     @echo ""
     @echo "🔧 Development:"
+    @echo "  just monitor     - Attach to development dashboard"
     @echo "  just qc          - Quick compilation check (from bacon)"
     @echo "  just errors      - Show compilation errors"
     @echo "  just warnings    - Show compilation warnings"
     @echo "  just fmt         - Format code"
     @echo "  just lint        - Lint with clippy"
     @echo "  just build       - Build debug binaries"
+    @echo "  just fast-build  - Build with all optimizations"
+    @echo "  just clean       - Clean artifacts and logs"
+    @echo ""
+    @echo "⚡ Performance:"
+    @echo "  just setup-fast  - Setup optimized environment"
+    @echo "  just precompile  - Precompile dependencies"
+    @echo "  just cache-stats - Show sccache statistics"
+    @echo "  just benchmark   - Run build benchmarks"
     @echo ""
     @echo "🗄️  Database:"
     @echo "  just migrate     - Run migrations"
@@ -107,25 +116,26 @@ test FILE="" *ARGS:
         cargo nextest run -- {{ARGS}}; \
     fi
 
-# 📁 Run specific test file or module
-test-individual FILE *ARGS:
-    @echo "📁 Running test file: {{FILE}}"
-    cargo nextest run -E "test({{FILE}})" -- {{ARGS}}
+# 📁 Test a specific file (finds tests in the file)
+test-file FILE *ARGS:
+    @echo "📁 Running tests in file: {{FILE}}"
+    @# Convert file path to test pattern
+    @if [[ "{{FILE}}" == *".rs" ]]; then \
+        # Extract crate name and module path \
+        if [[ "{{FILE}}" == crate/* ]]; then \
+            crate=$$(echo "{{FILE}}" | cut -d/ -f2); \
+            echo "Testing in crate: $$crate"; \
+            cd "crate/$$crate" && cargo nextest run -- {{ARGS}}; \
+        else \
+            echo "Testing file: {{FILE}}"; \
+            cargo nextest run -- {{ARGS}}; \
+        fi; \
+    else \
+        echo "⚠️  Not a Rust file: {{FILE}}"; \
+    fi
 
-# ⏱️ Run tests with custom timeout (in seconds)
-test-timeout SECONDS *ARGS:
-    @echo "⏱️ Running tests with {{SECONDS}}s timeout..."
-    NEXTEST_PROFILE=default cargo nextest run --config 'profile.default.slow-timeout.period="{{SECONDS}}s"' -- {{ARGS}}
 
-# 👀 Watch tests - Re-run tests on file changes
-watch *ARGS:
-    @echo "👀 Watching for changes, running tests with filter: {{ARGS}}"
-    cargo watch -x "nextest run -- {{ARGS}}"
 
-# ⚡👀 Watch fast tests only - Re-run unit + property tests on changes
-watch-fast *ARGS:
-    @echo "⚡👀 Watching for changes, running fast tests only..."
-    cargo watch -x "nextest run -E 'test(unit::) or test(property::)' -- {{ARGS}}"
 
 
 # 🚦 Pre-edit status check (call before making changes)
@@ -353,60 +363,22 @@ release:
     cargo build --release --workspace --all-features 2>&1 | tee build-release.log
     @echo "✅ Output saved to build-release.log"
 
-# 📊 Analyze compilation errors from bacon output
+
+# 📊 Show recent compilation errors
 errors:
-    @echo "📊 Analyzing compilation errors from bacon..."
-    @# Simple wait for bacon to finish
-    @if [ -f .claude-outputs/bacon.log ]; then \
-        count=0; \
-        while find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q . && [ $$count -lt 10 ]; do \
-            echo "⏳ Waiting for bacon to finish..."; \
-            sleep 1; \
-            count=$$\(\(count + 1\)\); \
-        done; \
-        errors=$$(rg -c 'error\[E[0-9]+\]:' .claude-outputs/bacon.log 2>/dev/null || echo 0); \
-        echo "Found $$errors errors"; \
-        echo ""; \
-        echo "Error summary:"; \
-        rg 'error\[E[0-9]+\]:' .claude-outputs/bacon.log | tail -20 | sort | uniq -c || echo "No errors found"; \
-    else \
-        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
-    fi
+    @just ai-errors
 
-# 🔍 Show compilation warnings from bacon
+# 🔍 Show compilation warnings
 warnings:
-    @echo "🔍 Showing compilation warnings from bacon..."
-    @# Simple wait for bacon to finish
-    @if [ -f .claude-outputs/bacon.log ]; then \
-        count=0; \
-        while find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q . && [ $$count -lt 10 ]; do \
-            echo "⏳ Waiting for bacon to finish..."; \
-            sleep 1; \
-            count=$$\(\(count + 1\)\); \
-        done; \
-        warnings=$$(rg -c 'warning:' .claude-outputs/bacon.log 2>/dev/null || echo 0); \
-        echo "Found $$warnings warnings"; \
-        echo ""; \
-        rg 'warning:' .claude-outputs/bacon.log | tail -20 || echo "No warnings found"; \
+    @echo "🔍 Showing compilation warnings..."
+    @if [ -f "$HOME/.sinex-compile-logs/last-result.json" ]; then \
+        log=$(jq -r '.log' "$HOME/.sinex-compile-logs/last-result.json" 2>/dev/null); \
+        if [ -n "$log" ] && [ -f "$log" ]; then \
+            echo "Warnings: $(jq -r '.warnings // 0' "$HOME/.sinex-compile-logs/last-result.json")"; \
+            jq -r 'select(.message.level == "warning") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' "$log" 2>/dev/null | head -10 || echo "No warnings"; \
+        fi; \
     else \
-        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
-    fi
-
-# 📊 Analyze warnings by category from bacon
-warnings-summary:
-    @echo "📊 Warning summary from bacon:"
-    @# Wait for bacon to finish
-    @while [ -f .claude-outputs/bacon.log ] && find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q .; do \
-        echo "⏳ Waiting for bacon..."; \
-        sleep 1; \
-    done
-    @if [ -f .claude-outputs/bacon.log ]; then \
-        echo "Total warnings: $(rg -c 'warning:' .claude-outputs/bacon.log || echo 0)"; \
-        echo ""; \
-        echo "By type:"; \
-        rg 'warning:' .claude-outputs/bacon.log | sed 's/warning: //' | cut -d' ' -f1-3 | sort | uniq -c | sort -rn | head -20; \
-    else \
-        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
+        echo "No compilation results. Run 'just compile-start' first"; \
     fi
 
 
@@ -437,17 +409,58 @@ coverage-html:
 
 # === Utilities ===
 
-# 🧹 Clean all build artifacts and caches
+# 🔗 Install git hooks
+install-hooks:
+    @echo "🔗 Installing git hooks..."
+    @git config core.hooksPath .githooks
+    @chmod +x .githooks/pre-commit
+    @echo "✅ Git hooks installed! Pre-commit will check formatting."
+
+# 📊 Monitor development dashboard (attach to sinex-devtools)
+monitor:
+    @echo "📊 Attaching to development dashboard..."
+    @echo "Press 'q' to detach, Ctrl+q to quit mprocs"
+    @tmux attach-session -t sinex-mprocs || echo "⚠️  No session found. Is sinex-devtools running?"
+
+# 🖥️ Alias for monitor
+mprocs: monitor
+
+# 🧹 Clean all build artifacts, caches, and logs
 clean:
-    @echo "🧹 Cleaning build artifacts..."
+    @echo "🧹 Cleaning build artifacts and logs..."
     cargo clean
+    rm -rf .claude-outputs/*.log
+    rm -f compilation*.log build*.log fix.log check-file.log
+    rm -rf target/nextest/
+    rm -rf target/llvm-cov/
+    @echo "✅ Cleaned build artifacts and logs"
+
+# 📚 Generate and open documentation
+docs:
+    @echo "📚 Building documentation..."
+    cargo doc --workspace --all-features --no-deps
+    @echo "📚 Opening documentation in browser..."
+    @open target/doc/sinex/index.html || xdg-open target/doc/sinex/index.html || echo "📚 Documentation at: target/doc/sinex/index.html"
+
+
 
 # 📦 Update all dependencies to latest compatible versions
 update:
     @echo "📦 Updating dependencies..."
     cargo update
 
+# 🚀 Show sccache statistics
+cache-stats:
+    @echo "🚀 sccache statistics:"
+    @sccache --show-stats || echo "sccache not available"
+
+
 # === Common Workflows ===
+
+# 🎯 Run command in specific crate directory
+in CRATE CMD *ARGS:
+    @echo "🎯 Running '{{CMD}} {{ARGS}}' in {{CRATE}}..."
+    @cd crate/{{CRATE}} && {{CMD}} {{ARGS}}
 
 # ⚡ Quick development cycle - Format, check, and run fast tests
 dev: fmt qc test-fast
@@ -457,6 +470,17 @@ pre-commit: fmt lint qc test-fast
 
 # 🔄 CI-style validation - All tests except VM (for automation)
 ci: fmt lint test-unit test-integration test-system test-property test-performance test-adversarial
+
+# 🚀 PR validation - Run same checks as CI would
+pr-check:
+    @echo "🚀 Running PR validation checks..."
+    @echo "This runs the same checks that CI will run on your PR"
+    just fmt
+    just lint
+    just qc
+    just test-unit
+    just test-integration
+    @echo "✅ PR validation passed! Safe to push."
 
 
 
@@ -487,42 +511,16 @@ test-dev:
 
 # === Development Helpers ===
 
-
-
-# 🏃 Quick check - check bacon compilation status
+# 🏃 Quick compilation check
 qc:
-    @echo "🏃 Checking compilation status from bacon..."
-    @# Simple wait for bacon to settle
-    @if [ -f .claude-outputs/bacon.log ]; then \
-        count=0; \
-        while find .claude-outputs/bacon.log -newermt '-2 seconds' 2>/dev/null | grep -q . && [ $$count -lt 5 ]; do \
-            echo "⏳ Bacon is compiling..."; \
-            sleep 1; \
-            count=$$\(\(count + 1\)\); \
-        done; \
-        if tail -50 .claude-outputs/bacon.log | rg -q "error\[E[0-9]+\]:"; then \
-            echo "❌ Compilation failed with errors:"; \
-            tail -50 .claude-outputs/bacon.log | rg "error\[E[0-9]+\]:" | head -5; \
-            echo ""; \
-            echo "Run 'just errors' for full error details"; \
-        elif tail -50 .claude-outputs/bacon.log | rg -q "warning:"; then \
-            echo "⚠️  Compilation succeeded with warnings"; \
-            echo "Run 'just warnings' for details"; \
-        elif tail -20 .claude-outputs/bacon.log | rg -q "(✓|success|compiled|Finished)"; then \
-            echo "✅ Compilation successful"; \
-        else \
-            echo "🔍 Compilation status unclear. Showing recent output:"; \
-            tail -10 .claude-outputs/bacon.log; \
-        fi; \
-    else \
-        echo "⚠️  No bacon.log found. Is sinex-devtools running? Try 'sinex-attach'"; \
-    fi
+    @echo "🏃 Checking compilation status..."
+    @just ai-status
 
-# 🔍 Check and show errors immediately from bacon
+# 🔍 Check and show errors immediately
 ce:
-    @echo "🔍 Checking for errors from bacon..."
-    @just qc > /dev/null 2>&1 || true
-    @just errors
+    @echo "🔍 Checking for errors..."
+    @just ai-status
+    @just ai-errors
 
 
 
@@ -564,6 +562,15 @@ list-tests:
 
 
 
+# === Environment Management ===
+
+# 🧹 Clean sccache
+cache-clean:
+    @echo "🧹 Cleaning sccache..."
+    @sccache --stop-server 2>/dev/null || true
+    @rm -rf ~/.cache/sccache
+    @echo "✅ sccache cleaned"
+
 # === Aliases ===
 alias t := test
 alias b := build
@@ -573,4 +580,48 @@ alias ti := test-integration
 alias tp := test-pkg
 alias e := errors
 alias w := warnings
-alias ws := warnings-summary
+
+# === AI-Friendly Commands (Machine-Readable Output) ===
+
+# 🤖 Get compilation status from daemon (JSON output)
+ai-status:
+    @./scripts/compile-daemon.sh last
+
+# 🔍 Show compilation errors in simple format
+ai-errors:
+    @if [ -f "$HOME/.sinex-compile-logs/last-result.json" ]; then \
+        log=$(jq -r '.log' "$HOME/.sinex-compile-logs/last-result.json" 2>/dev/null); \
+        if [ -n "$log" ] && [ -f "$log" ]; then \
+            jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' "$log" 2>/dev/null | head -10 || echo "No errors"; \
+        else \
+            echo "No compilation log found"; \
+        fi; \
+    else \
+        echo "No compilation results. Run 'just compile-start' first"; \
+    fi
+
+# 📊 Project state with git and compilation info (JSON)
+ai-project:
+    @echo -n '{"branch":"'$(git branch --show-current 2>/dev/null || echo "unknown")'",'
+    @echo -n '"uncommitted":'$(git status --porcelain 2>/dev/null | wc -l)','
+    @echo -n '"compilation":'
+    @./scripts/compile-daemon.sh last 2>/dev/null || echo '{"status":"unknown"}'
+    @echo -n '}'
+    @echo
+
+# === Background Compilation Daemon ===
+
+# 🚀 Start background compilation daemon
+compile-start:
+    @./scripts/compile-daemon.sh start
+
+# 🛑 Stop compilation daemon
+compile-stop:
+    @./scripts/compile-daemon.sh stop
+
+# 📊 Check daemon status
+compile-status:
+    @./scripts/compile-daemon.sh status
+
+# 🔄 Restart compilation daemon
+compile-restart: compile-stop compile-start

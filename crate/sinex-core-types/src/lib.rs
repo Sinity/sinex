@@ -2,9 +2,48 @@
 //!
 //! This crate provides the foundational types, error handling, and constants
 //! that are used throughout the Sinex ecosystem.
+//!
+//! # Core Philosophy: Deep Oneness and Auditable Metacognition
+//!
+//! Sinex is built on four fundamental pillars that guide all architectural decisions:
+//!
+//! ## 1. Deep Oneness
+//!
+//! Dissolving artificial distinctions to reveal underlying unity:
+//! - **One event stream** (`core.events`) - no separation between raw and synthesis
+//! - **One processing primitive** (`StatefulStreamProcessor`) - all components are stream processors
+//! - **One data lifecycle** (Stage → Replay → Synthesis → Curation → Action)
+//!
+//! ## 2. Declarative Core
+//!
+//! Logic as data, not code:
+//! - System behavior described through configuration and patterns
+//! - Imperative code reserved for inherently complex operations
+//! - Evolution toward SQL-as-Automaton and Prompt-as-Automaton
+//!
+//! ## 3. Human-in-the-Loop
+//!
+//! Acknowledging imperfection, empowering users:
+//! - Faithful recording of messy reality without premature cleverness
+//! - Automated resolution where possible, human judgment when needed
+//! - Users as final arbiters of meaning through curation
+//!
+//! ## 4. Auditable Metacognition
+//!
+//! Complete thought process preservation:
+//! - Data provenance via `source_event_ids` chains
+//! - Intent provenance via `core.operations_log`
+//! - System remembers not just facts but why it changed its mind
+//!
+//! # Sentient Archive Vision
+//!
+//! Sinex transcends traditional data capture by implementing a "sentient archive" -
+//! a system that not only captures but understands and participates in the user's
+//! digital experience. Through its satellite constellation architecture and deep
+//! philosophical principles, Sinex creates an external augmentation of human cognition.
 
-pub mod glossary;
 pub mod development;
+pub mod glossary;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -68,7 +107,7 @@ pub mod wait_helpers {
             if condition().await {
                 return Ok(());
             }
-            
+
             tokio::time::sleep(delay).await;
             delay = (delay * 2).min(max_delay);
         }
@@ -346,7 +385,7 @@ pub trait MetricsEmitter {
 
 /// Utility functions for working with paths
 pub mod path_utils {
-    
+
     use std::path::{Path, PathBuf};
 
     /// Normalize a path by resolving . and .. components
@@ -390,20 +429,8 @@ pub mod json_utils {
     /// Calculate the depth of a JSON value
     pub fn calculate_depth(value: &JsonValue) -> usize {
         match value {
-            JsonValue::Object(map) => {
-                1 + map
-                    .values()
-                    .map(calculate_depth)
-                    .max()
-                    .unwrap_or(0)
-            }
-            JsonValue::Array(arr) => {
-                1 + arr
-                    .iter()
-                    .map(calculate_depth)
-                    .max()
-                    .unwrap_or(0)
-            }
+            JsonValue::Object(map) => 1 + map.values().map(calculate_depth).max().unwrap_or(0),
+            JsonValue::Array(arr) => 1 + arr.iter().map(calculate_depth).max().unwrap_or(0),
             _ => 1,
         }
     }
@@ -415,9 +442,7 @@ pub mod json_utils {
             JsonValue::Bool(_) => 5,
             JsonValue::Number(_) => 8,
             JsonValue::String(s) => 8 + s.len(),
-            JsonValue::Array(arr) => {
-                24 + arr.iter().map(estimate_size).sum::<usize>()
-            }
+            JsonValue::Array(arr) => 24 + arr.iter().map(estimate_size).sum::<usize>(),
             JsonValue::Object(map) => {
                 24 + map
                     .iter()
@@ -437,7 +462,7 @@ pub mod test_utils {
     pub async fn create_test_pool() -> Result<DbPool> {
         let database_url = std::env::var("DATABASE_URL")
             .unwrap_or_else(|_| "postgresql:///sinex_test".to_string());
-        
+
         sqlx::PgPool::connect(&database_url)
             .await
             .map_err(|e| CoreError::Database(e.to_string()))

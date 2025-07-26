@@ -52,6 +52,7 @@
 
 use chrono::Utc;
 use serde_json::{json, Value};
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
@@ -63,7 +64,6 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Enhanced window information with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -493,10 +493,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "window.focused",
-                payload,
-            );
+            let event = factory.create_event("window.focused", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -531,10 +528,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "window.opened",
-                payload,
-            );
+            let event = factory.create_event("window.opened", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -573,10 +567,7 @@ impl WindowManagerWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-        let event = factory.create_event(
-            "window.closed",
-            payload,
-        );
+        let event = factory.create_event("window.closed", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -603,10 +594,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "window.moved",
-                payload,
-            );
+            let event = factory.create_event("window.moved", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -636,10 +624,7 @@ impl WindowManagerWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-        let event = factory.create_event(
-            "workspace.switched",
-            payload,
-        );
+        let event = factory.create_event("workspace.switched", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -666,10 +651,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "monitor.focused",
-                payload,
-            );
+            let event = factory.create_event("monitor.focused", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -709,10 +691,7 @@ impl WindowManagerWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-        let event = factory.create_event(
-            "state.captured",
-            payload,
-        );
+        let event = factory.create_event("state.captured", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");

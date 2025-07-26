@@ -131,7 +131,13 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
         .unwrap_or_default();
 
     let relation_id = service
-        .link_entities(from_entity_id, to_entity_id, relationship_type, properties, None)
+        .link_entities(
+            from_entity_id,
+            to_entity_id,
+            relationship_type,
+            properties,
+            None,
+        )
         .await?;
 
     Ok(json!({ "relation_id": relation_id.to_string() }))

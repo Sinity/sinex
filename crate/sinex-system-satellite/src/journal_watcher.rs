@@ -3,6 +3,7 @@
 //! Monitors systemd journal entries in real-time
 
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
@@ -12,7 +13,6 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Journal watcher
 pub struct JournalWatcher {
@@ -90,10 +90,7 @@ impl JournalWatcher {
 
                 Some({
                     let factory = EventFactory::new(sinex_events::sources::JOURNALD);
-                    factory.create_event(
-                        "entry.written",
-                        payload,
-                    )
+                    factory.create_event("entry.written", payload)
                 })
             }
             Err(e) => {

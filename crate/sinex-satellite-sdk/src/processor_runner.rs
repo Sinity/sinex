@@ -5,7 +5,8 @@
 
 use crate::{
     checkpoint::{CheckpointManager, CheckpointState},
-    stream_processor::{ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon}, SatelliteResult,
+    stream_processor::{ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon},
+    SatelliteResult,
 };
 use chrono::Utc;
 use std::collections::HashMap;
@@ -154,7 +155,9 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
             data: None, // No checkpoint data in ScanReport
             version: 2,
         };
-        self.checkpoint_manager.save_checkpoint(&checkpoint_state).await?;
+        self.checkpoint_manager
+            .save_checkpoint(&checkpoint_state)
+            .await?;
 
         // Phase 3: Continuous
         info!("Phase 3: Entering continuous processing mode");
@@ -167,7 +170,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
         let _last_checkpoint = self.checkpoint_manager.load_checkpoint().await?;
 
         info!("Automaton starting continuous processing from last checkpoint");
-        
+
         // Automata go directly to continuous mode - no snapshot or gap-fill needed
         // Their "world" is the event stream which is already complete in the database
         self.run_continuous_with_checkpointing().await
@@ -189,7 +192,9 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                 let args = self.config.scan_args.clone();
                 async move {
                     let mut processor = processor.lock().await;
-                    processor.scan(checkpoint, TimeHorizon::Continuous, args).await
+                    processor
+                        .scan(checkpoint, TimeHorizon::Continuous, args)
+                        .await
                 }
             };
 
@@ -199,7 +204,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                     match scan_result {
                         Ok(report) => {
                             info!("Continuous scan completed: {} events", report.events_processed);
-                            
+
                             // Save final checkpoint
                             let checkpoint_state = CheckpointState {
                                 checkpoint: report.final_checkpoint,
@@ -209,7 +214,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                                 version: 2,
                             };
                             self.checkpoint_manager.save_checkpoint(&checkpoint_state).await?;
-                            
+
                             // If continuous scan completed, it might mean we hit a boundary
                             // or the processor decided to yield. Continue the loop.
                             continue;
@@ -220,7 +225,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                         }
                     }
                 }
-                
+
                 _ = checkpoint_timer.tick() => {
                     // Periodic checkpoint save
                     if let Ok(processor) = self.processor.lock().await.current_checkpoint().await {
@@ -231,7 +236,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                             data: None,
                             version: 2,
                         };
-                        
+
                         if let Err(e) = self.checkpoint_manager.save_checkpoint(&checkpoint_state).await {
                             warn!("Failed to save periodic checkpoint: {}", e);
                         } else {
@@ -239,7 +244,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                         }
                     }
                 }
-                
+
                 _ = async {
                     match &mut self.shutdown_signal {
                         Some(signal) => signal.await,
@@ -247,7 +252,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                     }
                 }, if self.config.enable_shutdown_handler => {
                     info!("Received shutdown signal, saving final checkpoint...");
-                    
+
                     // Save current checkpoint before shutdown
                     if let Ok(processor) = self.processor.lock().await.current_checkpoint().await {
                         let checkpoint_state = CheckpointState {
@@ -257,12 +262,12 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
                             data: None,
                             version: 2,
                         };
-                        
+
                         if let Err(e) = self.checkpoint_manager.save_checkpoint(&checkpoint_state).await {
                             error!("Failed to save shutdown checkpoint: {}", e);
                         }
                     }
-                    
+
                     return Ok(());
                 }
             }
@@ -273,7 +278,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
     async fn run_scan(&mut self) -> SatelliteResult<()> {
         let mut processor = self.processor.lock().await;
         let processor_name = processor.processor_name().to_string();
-        
+
         info!("Running bounded scan for '{}'", processor_name);
 
         // For scan mode, we expect the scan args to contain the time boundaries
@@ -299,15 +304,15 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
     async fn run_explore(&mut self) -> SatelliteResult<()> {
         let processor = self.processor.lock().await;
         let processor_name = processor.processor_name().to_string();
-        
+
         info!("Running exploration mode for '{}'", processor_name);
 
         // Exploration mode is processor-specific
         // This would typically involve the ExplorationProvider trait
         // For now, we just log that we're in explore mode
-        
+
         warn!("Exploration mode not yet fully implemented");
-        
+
         Ok(())
     }
 }

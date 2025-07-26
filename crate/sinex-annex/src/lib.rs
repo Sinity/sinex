@@ -4,7 +4,7 @@
 //! within Sinex, using content-addressed storage with deduplication.
 //!
 //! ## Architecture Overview
-//! 
+//!
 //! - **Git-annex**: Provides content-addressed storage, deduplication, and integrity checking
 //! - **core.blobs table**: PostgreSQL metadata registry for annexed files
 //! - **BLAKE3 hashing**: Fast content hashing for deduplication

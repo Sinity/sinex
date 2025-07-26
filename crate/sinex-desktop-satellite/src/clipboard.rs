@@ -32,6 +32,7 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 use serde_json::json;
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core_types::{RawEvent, Timestamp};
+use sinex_events::constants::sources;
 use sinex_events::EventFactory;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::VecDeque;
@@ -40,7 +41,6 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Rich clipboard content information
 #[derive(Debug, Clone)]

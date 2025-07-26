@@ -11,19 +11,16 @@ jobs = 8
 [unstable]
 build-std-features = []
 
-# Default rustflags for maximum development speed with cranelift
+# Default rustflags for stable, fast development
+# NOTE: Cranelift backend disabled due to ICE issues - see config-cranelift.toml for experimental version
 [target.x86_64-unknown-linux-gnu]
 rustflags = [
-  "-Z",
-  "codegen-backend=cranelift",  # Ultra-fast cranelift backend
   "-C",
   "link-arg=-fuse-ld=mold",     # Fastest linker available
   "-C",
   "codegen-units=16",           # Parallel codegen for speed
   "-C",
   "incremental=on",             # Enable incremental compilation
-  "-C",
-  "symbol-mangling-version=v0", # Faster symbol mangling
   "-C",
   "embed-bitcode=no",           # Skip LTO bitcode embedding
   "-Z",
@@ -71,7 +68,7 @@ CARGO_LLVM_COV_TARGET_DIR = { value = "target/llvm-cov", relative = true }
 # Speed optimizations via environment variables
 CARGO_INCREMENTAL = "1"                # Enable incremental compilation
 RUST_BACKTRACE = "0"                   # Disable backtraces for speed
-RUSTC_WRAPPER = ""                     # Don't use sccache/etc for dev
+# RUSTC_WRAPPER set dynamically in nix shell for sccache
 CARGO_BUILD_JOBS = "0"                 # Use all CPU cores
 CARGO_NET_GIT_FETCH_WITH_CLI = "false" # Faster git operations
 

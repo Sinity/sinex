@@ -1,18 +1,18 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion, BenchmarkId, Throughput};
-use sinex_events::{EventFactory, RawEvent};
-use sinex_db::queries::EventQueries;
-use sinex_ulid::Ulid;
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use serde_json::json;
+use sinex_db::queries::EventQueries;
+use sinex_events::{EventFactory, RawEvent};
+use sinex_ulid::Ulid;
 use tokio::runtime::Runtime;
 
 /// Benchmark single event creation and validation
 fn bench_event_creation(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_creation");
-    
+
     // Benchmark different payload sizes
     for size in [10, 100, 1000, 10000].iter() {
         let payload = generate_payload(*size);
-        
+
         group.throughput(Throughput::Elements(1));
         group.bench_with_input(
             BenchmarkId::new("payload_size", size),
@@ -26,7 +26,7 @@ fn bench_event_creation(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -34,7 +34,7 @@ fn bench_event_creation(c: &mut Criterion) {
 fn bench_batch_processing(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let mut group = c.benchmark_group("batch_processing");
-    
+
     // Test different batch sizes
     for batch_size in [10, 100, 1000].iter() {
         group.throughput(Throughput::Elements(*batch_size as u64));
@@ -49,7 +49,7 @@ fn bench_batch_processing(c: &mut Criterion) {
                                 .create_event("batch.test", json!({"index": i}))
                         })
                         .collect();
-                    
+
                     // Simulate batch validation
                     for event in &events {
                         validate_event(black_box(event));
@@ -58,21 +58,21 @@ fn bench_batch_processing(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// Benchmark ULID generation performance
 fn bench_ulid_generation(c: &mut Criterion) {
     let mut group = c.benchmark_group("ulid_generation");
-    
+
     group.bench_function("single_ulid", |b| {
         b.iter(|| {
             let ulid = Ulid::new();
             black_box(ulid);
         });
     });
-    
+
     group.bench_function("ulid_to_uuid", |b| {
         let ulid = Ulid::new();
         b.iter(|| {
@@ -80,7 +80,7 @@ fn bench_ulid_generation(c: &mut Criterion) {
             black_box(uuid);
         });
     });
-    
+
     group.bench_function("ulid_ordering", |b| {
         let ulids: Vec<Ulid> = (0..100).map(|_| Ulid::new()).collect();
         b.iter(|| {
@@ -89,14 +89,14 @@ fn bench_ulid_generation(c: &mut Criterion) {
             black_box(sorted);
         });
     });
-    
+
     group.finish();
 }
 
 /// Benchmark JSON validation performance
 fn bench_json_validation(c: &mut Criterion) {
     let mut group = c.benchmark_group("json_validation");
-    
+
     let schema = json!({
         "type": "object",
         "properties": {
@@ -106,7 +106,7 @@ fn bench_json_validation(c: &mut Criterion) {
         },
         "required": ["name", "age"]
     });
-    
+
     for complexity in ["simple", "nested", "large"].iter() {
         let payload = match *complexity {
             "simple" => json!({"name": "test", "age": 25}),
@@ -124,7 +124,7 @@ fn bench_json_validation(c: &mut Criterion) {
             "large" => generate_large_payload(),
             _ => unreachable!(),
         };
-        
+
         group.bench_with_input(
             BenchmarkId::new("payload_complexity", complexity),
             &payload,
@@ -135,7 +135,7 @@ fn bench_json_validation(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
@@ -143,7 +143,7 @@ fn bench_json_validation(c: &mut Criterion) {
 fn bench_checkpoint_operations(c: &mut Criterion) {
     let runtime = Runtime::new().unwrap();
     let mut group = c.benchmark_group("checkpoint_operations");
-    
+
     group.bench_function("checkpoint_serialization", |b| {
         let checkpoint_data = json!({
             "processed_count": 10000,
@@ -156,13 +156,13 @@ fn bench_checkpoint_operations(c: &mut Criterion) {
                 }
             }
         });
-        
+
         b.iter(|| {
             let serialized = serde_json::to_vec(black_box(&checkpoint_data)).unwrap();
             black_box(serialized);
         });
     });
-    
+
     group.finish();
 }
 

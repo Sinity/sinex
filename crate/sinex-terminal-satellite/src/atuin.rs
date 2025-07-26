@@ -8,14 +8,14 @@ use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rusqlite::{Connection, Row};
 use serde_json::json;
-use sinex_events::{EventFactory, RawEvent, event_types};
+use sinex_events::constants::sources;
+use sinex_events::{event_types, EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{self, Instant};
-use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources}; // event_types already imported above
+use tracing::{debug, error, info, warn}; // event_types already imported above
 
 /// Configuration for Atuin watcher
 #[derive(Debug, Clone)]
@@ -289,10 +289,7 @@ impl AtuinWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::SHELL_ATUIN);
-        let event = factory.create_event(
-            event_types::shell::COMMAND_EXECUTED,
-            payload,
-        );
+        let event = factory.create_event(event_types::shell::COMMAND_EXECUTED, payload);
 
         Ok(event)
     }

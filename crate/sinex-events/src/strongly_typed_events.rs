@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use crate::{EventSender, RawEvent};
 
 // Define our own error type to avoid circular dependency on sinex-core
-use thiserror::Error;
 use crate::event_types;
+use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum TypedEventError {
@@ -645,7 +645,9 @@ impl TypedFilesystemEventBuilder {
             permissions,
         };
 
-        let event = TypedEventBuilder::new(self.source, event_types::filesystem::FILE_CREATED, payload).build();
+        let event =
+            TypedEventBuilder::new(self.source, event_types::filesystem::FILE_CREATED, payload)
+                .build();
         EventEnvelope::FileCreated(event)
     }
 
@@ -662,7 +664,9 @@ impl TypedFilesystemEventBuilder {
             modification_type: modification_type.into(),
         };
 
-        let event = TypedEventBuilder::new(self.source, event_types::filesystem::FILE_MODIFIED, payload).build();
+        let event =
+            TypedEventBuilder::new(self.source, event_types::filesystem::FILE_MODIFIED, payload)
+                .build();
         EventEnvelope::FileModified(event)
     }
 
@@ -672,7 +676,9 @@ impl TypedFilesystemEventBuilder {
             deleted_at: Utc::now(),
         };
 
-        let event = TypedEventBuilder::new(self.source, event_types::filesystem::FILE_DELETED, payload).build();
+        let event =
+            TypedEventBuilder::new(self.source, event_types::filesystem::FILE_DELETED, payload)
+                .build();
         EventEnvelope::FileDeleted(event)
     }
 
@@ -858,9 +864,10 @@ mod tests {
             permissions: Some(0o644),
         };
 
-        let event = TypedEventBuilder::new(sources::FS, event_types::filesystem::FILE_CREATED, payload)
-            .with_host("test-host")
-            .build();
+        let event =
+            TypedEventBuilder::new(sources::FS, event_types::filesystem::FILE_CREATED, payload)
+                .with_host("test-host")
+                .build();
 
         assert_eq!(event.source, sources::FS);
         assert_eq!(event.event_type, event_types::filesystem::FILE_CREATED);

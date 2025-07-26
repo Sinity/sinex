@@ -23,7 +23,7 @@ impl MetricsQueries {
             .execute(pool)
             .await
             .map_err(|e| db_error(e, "create sinex schema"))?;
-        
+
         Ok(())
     }
 
@@ -47,7 +47,7 @@ impl MetricsQueries {
         .execute(pool)
         .await
         .map_err(|e| db_error(e, "create metrics table"))?;
-        
+
         Ok(())
     }
 
@@ -74,7 +74,7 @@ impl MetricsQueries {
         .execute(pool)
         .await
         .map_err(|e| db_error(e, "create metrics namespace index"))?;
-        
+
         Ok(())
     }
 
@@ -120,8 +120,11 @@ impl MetricsQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn delete_older_than(older_than: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::delete("sinex.metrics")
-            .where_op("timestamp", "<", QueryParam::Timestamp(older_than))
+        QueryBuilder::delete("sinex.metrics").where_op(
+            "timestamp",
+            "<",
+            QueryParam::Timestamp(older_than),
+        )
     }
 
     /// Query metrics with various filters

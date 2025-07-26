@@ -88,6 +88,13 @@ Documentation that no longer reflects current architecture:
 
 ### Step 4: Extract and Mark Content
 
+**CRITICAL PRINCIPLE**: Only remove content that was actually extracted. Everything else MUST remain in the archived document, including:
+- Theoretical discussions and rationale
+- Alternative approaches considered
+- Historical context and decision reasoning
+- References and citations
+- Any content not directly moved elsewhere
+
 #### For Actually Implemented Features
 
 1. **Find the implementation**:
@@ -107,6 +114,10 @@ Documentation that no longer reflects current architecture:
    ```markdown
    [EXTRACTED to crate/sinex-xyz/src/lib.rs - Technical implementation details]
    ~~Original content that was extracted~~
+   
+   [PRESERVED - Rationale and theoretical discussion below]
+   ## Why This Approach
+   [Keep all theoretical content, alternatives, etc.]
    ```
 
 #### For Unimplemented Designs
@@ -182,8 +193,9 @@ Documentation that no longer reflects current architecture:
 
 1. **Process the file with markers**:
    - Leave all extraction markers in place
-   - Keep any unextracted content
-   - The file now shows what was moved where
+   - **KEEP ALL UNEXTRACTED CONTENT** - This is critical!
+   - The file should retain all theoretical discussions, rationale, alternatives
+   - Only remove content that was literally copied elsewhere
 
 2. **Move to archive**:
    ```bash
@@ -201,6 +213,18 @@ Documentation that no longer reflects current architecture:
    - Feature not yet implemented (verified no code exists)
    - Moved processed file to archive with markers"
    ```
+
+### What Archive Files Should Contain
+
+Archived files are NOT trash! They should contain:
+- All theoretical background and rationale
+- Alternative approaches that were considered
+- Historical context about why decisions were made
+- References to original sources (UG sections, etc.)
+- Any content that wasn't directly extracted elsewhere
+- Extraction markers showing what was moved
+
+The archive serves as historical documentation that explains the "why" behind designs, even if the "how" has been extracted elsewhere.
 
 ### Step 5: Update References
 

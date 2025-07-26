@@ -4,8 +4,8 @@
 // These tests focus specifically on unacknowledged message recovery patterns
 // and edge cases that can occur in production environments.
 
+use redis::{cmd, AsyncCommands, RedisResult};
 use sinex_test_utils::prelude::*;
-use redis::{AsyncCommands, RedisResult, cmd};
 
 /// Test basic PEL recovery after consumer failure
 #[sinex_test]
@@ -58,9 +58,8 @@ async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
         .collect();
 
     // Verify messages are in PEL
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let pel_info: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(pel_info.count(), 5, "All messages should be in PEL");
 
@@ -86,9 +85,8 @@ async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
     }
 
     // Verify PEL is now empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let final_pel: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(final_pel.count(), 0, "PEL should be empty after recovery");
 
@@ -153,9 +151,8 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
     }
 
     // Verify PEL has 3 remaining messages
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let pel_info: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(pel_info.count(), 3, "3 messages should remain in PEL");
 
@@ -182,9 +179,8 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
     }
 
     // Verify PEL is empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let final_pel: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(final_pel.count(), 0, "PEL should be empty");
 
@@ -243,9 +239,8 @@ async fn test_multi_consumer_pel_recovery(ctx: TestContext) -> TestResult {
     }
 
     // Verify total PEL count
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let pel_info: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(
         pel_info.count(),
@@ -287,17 +282,14 @@ async fn test_multi_consumer_pel_recovery(ctx: TestContext) -> TestResult {
     // Other consumers ACK their messages normally
     for (consumer, id) in &all_message_ids {
         if consumer != "consumer-2" {
-            let ack_result: i64 = redis_client
-                .xack(stream_key, group_name, &[id])
-                .await?;
+            let ack_result: i64 = redis_client.xack(stream_key, group_name, &[id]).await?;
             assert_eq!(ack_result, 1);
         }
     }
 
     // Verify PEL is empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let final_pel: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(final_pel.count(), 0, "PEL should be empty");
 
@@ -381,7 +373,11 @@ async fn test_idle_timeout_pel_recovery(ctx: TestContext) -> TestResult {
         )
         .await?;
 
-    assert_eq!(claimed.len(), 3, "Should claim all messages after idle time");
+    assert_eq!(
+        claimed.len(),
+        3,
+        "Should claim all messages after idle time"
+    );
 
     // ACK messages
     for claim in claimed {
@@ -460,18 +456,19 @@ async fn test_forced_pel_takeover(ctx: TestContext) -> TestResult {
     // Verify messages are now owned by takeover consumer
     // ACK messages as takeover consumer
     for id in &read_ids {
-        let ack_result: i64 = redis_client
-            .xack(stream_key, group_name, &[id])
-            .await?;
+        let ack_result: i64 = redis_client.xack(stream_key, group_name, &[id]).await?;
         assert_eq!(ack_result, 1, "Takeover consumer should be able to ACK");
     }
 
     // Verify PEL is empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let final_pel: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
-    assert_eq!(final_pel.count(), 0, "PEL should be empty after forced takeover");
+    assert_eq!(
+        final_pel.count(),
+        0,
+        "PEL should be empty after forced takeover"
+    );
 
     Ok(())
 }
@@ -527,13 +524,7 @@ async fn test_pel_redelivery_count(ctx: TestContext) -> TestResult {
 
     // Final recovery with successful processing
     let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
-        .xclaim(
-            stream_key,
-            group_name,
-            "final-consumer",
-            1,
-            &[&message_id],
-        )
+        .xclaim(stream_key, group_name, "final-consumer", 1, &[&message_id])
         .await?;
 
     assert_eq!(claimed.len(), 1, "Should claim the message");
@@ -609,7 +600,7 @@ async fn test_concurrent_pel_claims(ctx: TestContext) -> TestResult {
         let stream_key = stream_key.to_string();
         let group_name = group_name.to_string();
         let recovery_consumer = recovery_consumer.to_string();
-        
+
         // Each recovery consumer tries to claim a portion of messages
         let start_idx = idx * 3;
         let end_idx = (idx + 1) * 3;
@@ -657,9 +648,8 @@ async fn test_concurrent_pel_claims(ctx: TestContext) -> TestResult {
     );
 
     // Verify PEL is empty
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let final_pel: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(final_pel.count(), 0, "PEL should be empty");
 
@@ -740,15 +730,14 @@ async fn test_production_pel_recovery_patterns(ctx: TestContext) -> TestResult {
     }
 
     // Check PEL status
-    let pel_info: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let pel_info: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     println!("PEL contains {} unprocessed messages", pel_info.count());
 
     // Recovery process - claim old messages based on priority
     let pending_ids: Vec<String> = message_ids.keys().cloned().collect();
-    
+
     // Recovery consumer claims all pending messages
     let claimed: Vec<redis::streams::StreamClaimReply> = redis_client
         .xclaim(
@@ -770,9 +759,8 @@ async fn test_production_pel_recovery_patterns(ctx: TestContext) -> TestResult {
     }
 
     // Final verification
-    let final_pel: redis::streams::StreamPendingReply = redis_client
-        .xpending(stream_key, group_name)
-        .await?;
+    let final_pel: redis::streams::StreamPendingReply =
+        redis_client.xpending(stream_key, group_name).await?;
 
     assert_eq!(
         final_pel.count(),
