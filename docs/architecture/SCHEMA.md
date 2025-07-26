@@ -255,7 +255,9 @@ External data provenance tracking. Critical for maintaining the chain of custody
 
 ## Knowledge Management Tables
 
-⚠️ **WARNING**: The km schema contains a mix of implemented and potentially obsolete tables. km.artifacts and km.artifact_revisions appear to be AI-generated or from an abandoned design. The knowledge graph functionality (concepts, relations, embeddings) is legitimate.
+⚠️ **WARNING**: The km schema contains both legitimate tables and mistakenly added ones:
+- ✅ **Legitimate**: concepts, relations, event_annotations, embeddings, llm_interactions (knowledge graph functionality)
+- ❌ **Mistakenly Added**: artifacts, artifact_revisions (added during migration reorganization from TIM design docs, never intended for implementation)
 
 ### km.concepts
 Knowledge graph concepts with embeddings. Central to the knowledge management system.
@@ -319,8 +321,8 @@ Links events to concepts. Enables semantic tagging and knowledge extraction from
 
 **Design Note**: This links events to knowledge concepts. The TIM proposed direct text annotations without concept requirement, which could be a future enhancement.
 
-### km.artifacts ⚠️ POTENTIALLY OBSOLETE
-**WARNING**: These tables exist in the migration but may be AI-generated or from an abandoned design. The architecture changed to not implement artifact management as originally conceived. Events are the primary data model.
+### km.artifacts ⚠️ INCORRECTLY ADDED
+**WARNING**: These tables were mistakenly added during migration reorganization (commit ffe3fdce) based on the TIM-CoreArtifactsSchema design document. They were never part of the actual implementation and appear to be AI-generated during documentation work. The architecture uses events as the primary data model, not artifacts.
 
 Versioned knowledge documents (if implemented).
 - **id**: ULID (PK)
@@ -337,8 +339,8 @@ Versioned knowledge documents (if implemented).
 - Support multiple artifact types with type-specific metadata
 - Integration with Yjs CRDTs for real-time collaboration (never implemented)
 
-### km.artifact_revisions ⚠️ POTENTIALLY OBSOLETE
-**WARNING**: Part of the potentially obsolete artifact system.
+### km.artifact_revisions ⚠️ INCORRECTLY ADDED
+**WARNING**: Like km.artifacts, this table was mistakenly added during migration reorganization and was never intended to be implemented.
 
 Content versions for artifacts (if implemented).
 - **revision_id**: ULID (PK)
@@ -472,7 +474,7 @@ The database schema has evolved through several migrations:
 1. **00000000000001_initial_schema.sql**: Basic setup with pgx_ulid
 2. **00000000000002_create_core_tables.sql**: Core event storage, entities
 3. **00000000000003_create_domains.sql**: Domain-specific event tables
-4. **00000000000004_create_knowledge_management.sql**: KM tables (partially obsolete)
+4. **00000000000004_create_knowledge_management.sql**: KM tables (contains mistakenly added artifact tables)
 5. **00000000000005_create_sinex_schemas.sql**: Schema registry
 6. **00000000000006_create_metrics_schema.sql**: Telemetry tables
 7. **00000000000007_create_raw_schema.sql**: Source material tracking
