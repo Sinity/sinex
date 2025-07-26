@@ -226,6 +226,19 @@ Archived files are NOT trash! They should contain:
 
 The archive serves as historical documentation that explains the "why" behind designs, even if the "how" has been extracted elsewhere.
 
+#### Archive Contents
+
+- **Architecture Decision Records (ADRs)**: Original design decisions that have been implemented
+- **Technical Implementation Modules (TIMs)**: Detailed specifications with extraction markers showing where content was moved
+- **Migration Guides**: Like `stream_processor_migration.md` with key concepts extracted to code
+- **Unimplemented Designs**: Features that may be revisited in the future
+
+These files are kept for:
+1. **Historical Context**: Understanding design evolution
+2. **Future Reference**: Unimplemented features may be revisited
+3. **Detailed Specifications**: Contains implementation details beyond what's in code
+4. **Alternative Approaches**: Documents paths not taken
+
 ### Step 5: Update References
 
 1. **Update cross-document links**
