@@ -49,6 +49,33 @@
 //! - Combination gives both structure and completeness
 //!
 //! Data correlation happens via timestamps, CWD, and session IDs.
+//!
+//! ## Future Enhancements (Not Yet Implemented)
+//!
+//! ### Session Correlation
+//! - Environment variable tracking (`SINEX_TERMINAL_SESSION_ULID`)
+//! - Cross-process command correlation
+//! - Unified session IDs between Atuin and Asciinema
+//!
+//! ### Privacy and Filtering
+//! - Regex-based sensitive command filtering
+//! - Password/secret redaction in recordings
+//! - User-configurable privacy rules
+//! - Audit mode vs full capture mode
+//! - Directory-based recording exclusions
+//!
+//! ### Command Analysis
+//! - Automatic command type categorization (git, docker, npm, etc.)
+//! - Frequency analysis and productivity metrics
+//! - Error rate tracking by command type
+//! - Command sequence pattern detection
+//! - Common workflow identification
+//!
+//! ### Performance Optimizations
+//! - Adaptive batch sizes based on system load
+//! - Parallel processing of multiple terminal sources
+//! - Cross-source deduplication
+//! - Incremental checkpointing during large imports
 
 mod atuin;
 mod history;

@@ -66,8 +66,7 @@ impl VerificationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn delete_test_event(event_id: Ulid) -> QueryBuilder {
-        QueryBuilder::delete(tables::EVENTS)
-            .where_eq("event_id", QueryParam::Ulid(event_id))
+        QueryBuilder::delete(tables::EVENTS).where_eq("event_id", QueryParam::Ulid(event_id))
     }
 
     /// Delete test events by source and event type
@@ -85,8 +84,7 @@ impl VerificationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn cleanup_by_source(source: String) -> QueryBuilder {
-        QueryBuilder::delete(tables::EVENTS)
-            .where_eq("source", QueryParam::String(source))
+        QueryBuilder::delete(tables::EVENTS).where_eq("source", QueryParam::String(source))
     }
 
     /// Count events by source and phase
@@ -183,10 +181,11 @@ impl VerificationQueries {
 
     /// Test JSON schema validation functionality
     pub async fn test_json_schema_validation(pool: &PgPool) -> DbResult<bool> {
-        let row = sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| db_error(e, "test JSON schema validation"))?;
+        let row =
+            sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| db_error(e, "test JSON schema validation"))?;
 
         Ok(row.valid.unwrap_or(false))
     }

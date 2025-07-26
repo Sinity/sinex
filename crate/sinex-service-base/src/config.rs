@@ -348,7 +348,6 @@ impl Default for ConfigManager {
     }
 }
 
-
 /// Parse environment variable value to appropriate JSON type
 fn parse_env_value(value: &str) -> serde_json::Value {
     // Try to parse as different types in order of preference

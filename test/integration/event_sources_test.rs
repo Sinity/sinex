@@ -1,17 +1,18 @@
-use sinex_test_utils::mocks::mock_ingestd::MockIngestdBuilder;
-use sinex_test_utils::prelude::*;
+use async_trait::async_trait;
 use sinex_satellite_sdk::{
     EventSourceConfig, IngestClient, StatefulStreamProcessor, StreamProcessorRunner,
 };
+use sinex_test_utils::mocks::mock_ingestd::MockIngestdBuilder;
+use sinex_test_utils::prelude::*;
 use std::time::Duration;
-use tokio::time::{sleep, timeout};
 use tokio::sync::mpsc;
-use async_trait::async_trait;
+use tokio::time::{sleep, timeout};
 
 // EventSource trait definition for test event sources
 #[async_trait]
 trait EventSource: Send + Sync {
-    async fn stream_events(&mut self, tx: mpsc::Sender<sinex_events::RawEvent>) -> AnyhowResult<()>;
+    async fn stream_events(&mut self, tx: mpsc::Sender<sinex_events::RawEvent>)
+        -> AnyhowResult<()>;
 }
 
 /// Satellite-based event source integration tests
@@ -175,9 +176,7 @@ async fn test_satellite_basic_initialization(ctx: TestContext) -> TestResult {
     let (tx, mut rx) = mpsc::channel(100);
 
     // Stream some events
-    let handle = tokio::spawn(async move {
-        satellite.stream_events(tx).await
-    });
+    let handle = tokio::spawn(async move { satellite.stream_events(tx).await });
 
     // Verify we can receive events
     let mut event_count = 0;
@@ -205,9 +204,7 @@ async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> TestResu
     // Create a channel to collect events
     let (tx, mut rx) = mpsc::channel(100);
     // Start the satellite in a background task
-    let satellite_handle = tokio::spawn(async move { 
-        satellite.stream_events(tx).await 
-    });
+    let satellite_handle = tokio::spawn(async move { satellite.stream_events(tx).await });
 
     // Collect events from the channel
     let mut events = Vec::new();
@@ -279,7 +276,7 @@ async fn test_multi_satellite_coordination(ctx: TestContext) -> TestResult {
                 }
             }
         }
-        
+
         timeout_count += 1;
         if fs_handle.is_finished() && cmd_handle.is_finished() {
             break;
@@ -353,7 +350,8 @@ async fn test_satellite_operational_modes(ctx: TestContext) -> TestResult {
     let mut sensor_satellite = TestFilesystemSatellite::new(100); // Large number to ensure continuous operation
 
     // Start sensor mode in background
-    let sensor_handle = tokio::spawn(async move { sensor_satellite.stream_events(sensor_tx).await });
+    let sensor_handle =
+        tokio::spawn(async move { sensor_satellite.stream_events(sensor_tx).await });
 
     // Wait a bit for sensor mode to start producing events
     tokio::time::sleep(std::time::Duration::from_millis(500)).await;

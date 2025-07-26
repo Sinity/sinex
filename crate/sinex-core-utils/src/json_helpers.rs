@@ -75,9 +75,7 @@ pub fn extract_field<T: DeserializeOwned>(
     serde_json::from_value(field_value.clone()).map_err(|e| {
         CoreError::Serialization(format!(
             "Failed to deserialize field: {} (operation: {}): {}",
-            field_name,
-            operation,
-            e
+            field_name, operation, e
         ))
     })
 }
@@ -91,9 +89,7 @@ pub fn to_json_value<T: serde::Serialize>(
     serde_json::to_value(value).map_err(|e| {
         CoreError::Serialization(format!(
             "Failed to serialize {} (operation: {}): {}",
-            context_type,
-            operation,
-            e
+            context_type, operation, e
         ))
     })
 }

@@ -3,6 +3,7 @@
 //! Captures terminal scrollback content with chunking and git-annex integration
 
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
@@ -12,7 +13,6 @@ use tokio::fs;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Terminal scrollback content
 #[derive(Debug)]
@@ -424,10 +424,7 @@ impl ScrollbackWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::SHELL_SCROLLBACK);
-        let event = factory.create_event(
-            "output.captured",
-            payload,
-        );
+        let event = factory.create_event("output.captured", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");

@@ -7,9 +7,9 @@
 //! maintainability and reduced boilerplate.
 use crate::queries::EventQueries;
 use crate::query_helpers::uuid_to_ulid;
+use crate::query_helpers::{DbError, DbResult};
 use crate::validation::EventValidator;
 use crate::DbPoolRef;
-use crate::query_helpers::{DbResult, DbError};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sinex_events::RawEvent;
@@ -88,7 +88,9 @@ pub async fn insert_event_with_validator(
 ) -> DbResult<RawEvent> {
     // Validate if validator provided
     if let Some(validator) = validator {
-        validator.validate(event).map_err(|e| DbError::Transaction(format!("Validation failed: {}", e)))?;
+        validator
+            .validate(event)
+            .map_err(|e| DbError::Transaction(format!("Validation failed: {}", e)))?;
     }
 
     let record = EventQueries::insert_event_with_source_ids(
@@ -110,9 +112,7 @@ pub async fn insert_event_with_validator(
 /// Count total number of events in the database
 // #[sinex_macros::auto_db_metrics(operation = "count_events")]
 pub async fn count_events(pool: DbPoolRef<'_>) -> DbResult<i64> {
-    let (count,) = EventQueries::count_all()
-        .fetch_one::<(i64,)>(pool)
-        .await?;
+    let (count,) = EventQueries::count_all().fetch_one::<(i64,)>(pool).await?;
 
     Ok(count)
 }
@@ -127,9 +127,10 @@ pub async fn insert_event_with_blob(
 ) -> DbResult<RawEvent> {
     // Validate if validator provided
     if let Some(validator) = validator {
-        validator.validate(event).map_err(|e| DbError::Transaction(format!("Validation failed: {}", e)))?;
+        validator
+            .validate(event)
+            .map_err(|e| DbError::Transaction(format!("Validation failed: {}", e)))?;
     }
-
 
     let record = EventQueries::insert_event_with_blob(
         event.source.clone(),
@@ -205,7 +206,9 @@ pub async fn get_events_with_blobs(
                         source_material_offset_start: record.source_material_offset_start,
                         source_material_offset_end: record.source_material_offset_end,
                         anchor_byte: record.anchor_byte,
-                        associated_blob_ids: Some(blob_ids.iter().map(|id| uuid_to_ulid(*id)).collect()),
+                        associated_blob_ids: Some(
+                            blob_ids.iter().map(|id| uuid_to_ulid(*id)).collect(),
+                        ),
                     };
                     let blob_id = uuid_to_ulid(*first_blob_uuid);
                     return Some((event, blob_id));
@@ -235,9 +238,7 @@ pub async fn attach_blob_to_event(
 /// Remove blob attachment from an event
 // #[sinex_macros::auto_db_metrics(operation = "detach_blob_from_event")]
 pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> DbResult<()> {
-    EventQueries::detach_blob(event_id)
-        .execute(pool)
-        .await?;
+    EventQueries::detach_blob(event_id).execute(pool).await?;
 
     Ok(())
 }
@@ -245,10 +246,10 @@ pub async fn detach_blob_from_event(pool: DbPoolRef<'_>, event_id: Ulid) -> DbRe
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::prelude::*;
-    use sinex_test_utils::{TestContext, TestConfig, database_pool};
-    use serde_json::json;
     use chrono::Utc;
+    use serde_json::json;
+    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{database_pool, TestConfig, TestContext};
 
     #[sinex_test]
     async fn test_insert_event_basic(ctx: TestContext) -> TestResult {
@@ -280,7 +281,8 @@ mod tests {
     #[sinex_test]
     async fn test_get_event_by_id(ctx: TestContext) -> TestResult {
         // Insert a test event first
-        let event = ctx.event()
+        let event = ctx
+            .event()
             .source("get.test")
             .type_("test.get")
             .field("data", "test")
@@ -290,7 +292,7 @@ mod tests {
         // Retrieve it by ID
         let retrieved = get_event_by_id(ctx.pool(), event.id).await?;
         assert!(retrieved.is_some());
-        
+
         let retrieved_event = retrieved.unwrap();
         assert_eq!(retrieved_event.id, event.id);
         assert_eq!(retrieved_event.source, "get.test");
@@ -301,7 +303,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_count_events(ctx: TestContext) -> TestResult {
-        // Insert multiple events  
+        // Insert multiple events
         for i in 0..5 {
             ctx.event()
                 .source("count.test")

@@ -10,12 +10,12 @@
 //
 // Transformed from 22 verbose ULID tests + many event tests into concise property tests
 
+use proptest::prelude::*;
+use sinex_error::{CoreError, Result as CoreResult, ResultExt};
+use sinex_events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::property_helpers::*;
 use sinex_test_utils::test_macros::*;
-use proptest::prelude::*;
-use sinex_error::{CoreError, Result as CoreResult, ResultExt};
-use sinex_events::{sources, EventFactory, event_types};
 
 // =============================================================================
 // PROPERTY-BASED TESTS FOR ULID ORDERING (Replaces 22 individual tests)
@@ -29,19 +29,19 @@ sinex_proptest_sync! {
         // ULID strings should maintain lexicographic ordering
         let mut sorted_ulids = ulids.clone();
         sorted_ulids.sort();
-        
+
         let mut sorted_strings: Vec<String> = ulids.iter()
             .map(|u| u.to_string())
             .collect();
         sorted_strings.sort();
-        
+
         let expected_strings: Vec<String> = sorted_ulids.iter()
             .map(|u| u.to_string())
             .collect();
-            
-        prop_assert_eq!(sorted_strings, expected_strings, 
+
+        prop_assert_eq!(sorted_strings, expected_strings,
                        "ULID string ordering should match ULID ordering");
-        
+
         // Verify string format
         for ulid in &ulids {
             prop_assert_eq!(ulid.to_string().len(), 26, "ULID string should be 26 chars");
@@ -57,11 +57,11 @@ sinex_proptest_sync! {
         let ulid = Ulid::from_datetime(ts);
         let extracted_ts = ulid.timestamp_ms();
         let expected_ms = ts.timestamp_millis() as u64;
-        
+
         // ULID timestamp should match within millisecond precision
         prop_assert_eq!(extracted_ts, expected_ms,
                        "ULID should preserve timestamp with millisecond precision");
-        
+
         // Round-trip conversion should work
         let ulid_str = ulid.to_string();
         let parsed = Ulid::from_string(&ulid_str);
@@ -121,7 +121,7 @@ sinex_proptest_sync! {
         payload in event_payloads()
     ) {
         let event = EventFactory::new(source).create_event(&event_type, payload.clone());
-        
+
         // All generated events should have required fields
         prop_assert_eq!(event.source, source);
         prop_assert_eq!(event.event_type, event_type);
@@ -136,10 +136,38 @@ sinex_proptest_sync! {
 parameterized_test!(
     test_event_creation_by_type,
     vec![
-        ("filesystem", (sources::FS, event_types::filesystem::FILE_CREATED, json!({"path": "/test/file.txt"}))),
-        ("shell", (sources::SHELL_KITTY, event_types::shell::COMMAND_EXECUTED, json!({"command": "ls"}))),
-        ("window", (sources::WM_HYPRLAND, event_types::window_manager::WINDOW_FOCUSED, json!({"window_class": "firefox"}))),
-        ("clipboard", (sources::CLIPBOARD, event_types::clipboard::COPIED, json!({"content_type": "text/plain"}))),
+        (
+            "filesystem",
+            (
+                sources::FS,
+                event_types::filesystem::FILE_CREATED,
+                json!({"path": "/test/file.txt"})
+            )
+        ),
+        (
+            "shell",
+            (
+                sources::SHELL_KITTY,
+                event_types::shell::COMMAND_EXECUTED,
+                json!({"command": "ls"})
+            )
+        ),
+        (
+            "window",
+            (
+                sources::WM_HYPRLAND,
+                event_types::window_manager::WINDOW_FOCUSED,
+                json!({"window_class": "firefox"})
+            )
+        ),
+        (
+            "clipboard",
+            (
+                sources::CLIPBOARD,
+                event_types::clipboard::COPIED,
+                json!({"content_type": "text/plain"})
+            )
+        ),
     ],
     |_pool: &DbPool, (_name, (source, event_type, payload)): (&str, (&str, &str, Value))| async move {
         let event = EventFactory::new(source).create_event(event_type, payload);
@@ -160,8 +188,14 @@ parameterized_test!(
     vec![
         ("database", CoreError::Database("Connection failed".into())),
         ("validation", CoreError::Validation("Invalid format".into())),
-        ("serialization", CoreError::Serialization("Parse error".into())),
-        ("configuration", CoreError::Configuration("Missing key".into())),
+        (
+            "serialization",
+            CoreError::Serialization("Parse error".into())
+        ),
+        (
+            "configuration",
+            CoreError::Configuration("Missing key".into())
+        ),
         ("io", CoreError::Io("File not found".into())),
         ("unknown", CoreError::Unknown("Mystery error".into())),
     ],
@@ -182,17 +216,17 @@ sinex_proptest_sync! {
         )
     ) {
         let mut error = CoreError::validation(&base_msg);
-        
+
         for (key, value) in &contexts {
             error = error.with_context(key, value);
         }
-        
+
         let built = error.build();
         let error_string = built.to_string();
-        
+
         // Base message should be present
         prop_assert!(error_string.contains(&base_msg));
-        
+
         // All context values should be present
         for (_, value) in &contexts {
             prop_assert!(error_string.contains(value));
@@ -212,22 +246,21 @@ test_concurrent_operations!(
         let source = format!("task-{}", task_id);
         let events: Vec<RawEvent> = (0..5)
             .map(|i| {
-                EventFactory::new(&source).create_event(
-                    "concurrent.test",
-                    json!({ "task": task_id, "index": i })
-                )
+                EventFactory::new(&source)
+                    .create_event("concurrent.test", json!({ "task": task_id, "index": i }))
             })
             .collect();
-        
+
         // Verify all events have unique IDs
         let ids: HashSet<_> = events.iter().map(|e| e.id).collect();
         assert_eq!(ids.len(), events.len());
-        
+
         Ok(events)
     },
     |_pool: &Arc<DbPool>, results: &[Vec<RawEvent>]| async move {
         // Verify no ID collisions across all tasks
-        let all_ids: HashSet<_> = results.iter()
+        let all_ids: HashSet<_> = results
+            .iter()
             .flat_map(|task_events| task_events.iter().map(|e| e.id))
             .collect();
         let total_events: usize = results.iter().map(|v| v.len()).sum();
@@ -247,10 +280,10 @@ sinex_proptest_sync! {
         // Verify ULID ordering matches timestamp ordering
         for window in batch.windows(2) {
             let (prev, curr) = (&window[0], &window[1]);
-            
+
             // ULIDs should be ordered
             prop_assert!(prev.id <= curr.id);
-            
+
             // Timestamps should be ordered
             if let (Some(prev_ts), Some(curr_ts)) = (prev.ts_orig, curr.ts_orig) {
                 prop_assert!(prev_ts <= curr_ts);
@@ -275,7 +308,7 @@ sinex_proptest_sync! {
         // Events should still have valid structure
         prop_assert!(event.id != Ulid::nil());
         prop_assert_eq!(event.id.to_string().len(), 26);
-        
+
         // Source validation would catch empty sources
         if event.source.is_empty() {
             // This would be caught by validation layer
@@ -310,13 +343,13 @@ stateful_proptest! {
         create_event(source: String, event_type: String) => {
             let event = EventFactory::new(&source).create_event(&event_type, json!({}));
             state.push(event.clone());
-            
+
             // State invariants
             assert!(state.iter().all(|e| e.id != Ulid::nil()));
             assert!(state.windows(2).all(|w| w[0].id != w[1].id));
             assert!(state.iter().all(|e| e.id.to_string().len() == 26));
         },
-        
+
         clear() => {
             state.clear();
             assert!(state.is_empty());
@@ -332,21 +365,24 @@ stateful_proptest! {
 async fn test_realistic_user_activity_scenario(ctx: TestContext) -> TestResult {
     // Use property-generated realistic activity
     let mut runner = proptest::test_runner::TestRunner::default();
-    let activity = user_activity_batch().new_tree(&mut runner).unwrap().current();
-    
+    let activity = user_activity_batch()
+        .new_tree(&mut runner)
+        .unwrap()
+        .current();
+
     // Insert all events
     ctx.insert_events(&activity).await?;
-    
+
     // Verify temporal ordering preserved
     let events = ctx.query_events().await?;
     for window in events.windows(2) {
         assert!(window[0].ts_orig <= window[1].ts_orig);
     }
-    
+
     // Verify event types match expected patterns
     let event_types: HashSet<_> = events.iter().map(|e| &e.event_type).collect();
     assert!(!event_types.is_empty());
-    
+
     Ok(())
 }
 
@@ -361,7 +397,7 @@ configured_proptest! {
     ) {
         let size_bytes = events.payload.to_string().len();
         let size_class = events.payload["size_class"].as_str().unwrap_or("unknown");
-        
+
         match size_class {
             "small" => assert!(size_bytes < 2_000),
             "medium" => assert!(size_bytes < 20_000),
@@ -381,18 +417,18 @@ async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> TestRes
     // Both methods should produce equivalent events
     let factory_event = EventFactory::new(sources::FS).create_event(
         event_types::filesystem::FILE_CREATED,
-        json!({ "path": "/test.txt" })
+        json!({ "path": "/test.txt" }),
     );
-    
+
     let builder_event = TestEventBuilder::new(sources::FS, event_types::filesystem::FILE_CREATED)
         .with_payload(json!({ "path": "/test.txt" }))
         .build();
-    
+
     // Should have same structure (except IDs and timestamps)
     assert_eq!(factory_event.source, builder_event.source);
     assert_eq!(factory_event.event_type, builder_event.event_type);
     assert_eq!(factory_event.payload, builder_event.payload);
-    
+
     Ok(())
 }
 
@@ -403,26 +439,32 @@ async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> TestRes
 #[sinex_test]
 async fn test_event_invariants_across_sources(ctx: TestContext) -> TestResult {
     // Generate events from all sources
-    let sources = vec![sources::FS, sources::SHELL_KITTY, sources::WM_HYPRLAND, sources::CLIPBOARD];
-    
+    let sources = vec![
+        sources::FS,
+        sources::SHELL_KITTY,
+        sources::WM_HYPRLAND,
+        sources::CLIPBOARD,
+    ];
+
     for source in sources {
-        let events = ctx.events()
+        let events = ctx
+            .events()
             .generic(source, "test.invariant")
             .payload(json!({ "test": true }))
             .build();
-        
+
         // All events should satisfy base invariants
         assert_events_equivalent(&events, &events); // Self-equivalence
         assert_validation_passes(&events)?;
     }
-    
+
     Ok(())
 }
 
 #[cfg(test)]
 mod event_property_tests {
     use super::*;
-    
+
     property_suite! {
         name: event_structural_properties,
         given: arbitrary_event(),

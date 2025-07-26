@@ -3,11 +3,11 @@
 //! This module provides database persistence for metrics data using the sinex.* namespace.
 
 use chrono::{DateTime, Utc};
-use sinex_core_types::{MetricsEntry, MetricsAggregation};
+use sinex_core_types::{MetricsAggregation, MetricsEntry};
+use sinex_db::queries::metrics::{AggregationRecord, MetricRecord};
+use sinex_db::queries::MetricsQueries;
 use sinex_error::CoreError;
 use sqlx::PgPool;
-use sinex_db::queries::MetricsQueries;
-use sinex_db::queries::metrics::{MetricRecord, AggregationRecord};
 
 /// Simple error type for metrics operations
 pub type MetricsError = CoreError;
@@ -69,12 +69,16 @@ impl MetricsStorage {
         }
 
         // Use a transaction for batch insert
-        let mut tx = self.pool.begin().await
+        let mut tx = self
+            .pool
+            .begin()
+            .await
             .map_err(|e| CoreError::Database(format!("Failed to begin transaction: {}", e)))?;
 
         for entry in &entries {
-            let labels_json = serde_json::to_value(&entry.labels)
-                .map_err(|e| CoreError::Serialization(format!("Failed to serialize labels: {}", e)))?;
+            let labels_json = serde_json::to_value(&entry.labels).map_err(|e| {
+                CoreError::Serialization(format!("Failed to serialize labels: {}", e))
+            })?;
 
             MetricsQueries::insert_metric(
                 entry.id,
@@ -90,7 +94,8 @@ impl MetricsStorage {
             .await?;
         }
 
-        tx.commit().await
+        tx.commit()
+            .await
             .map_err(|e| CoreError::Database(format!("Failed to commit metrics batch: {}", e)))?;
 
         Ok(())
@@ -124,9 +129,9 @@ impl MetricsStorage {
         let entries = records
             .into_iter()
             .map(|record: MetricRecord| {
-                let labels: HashMap<String, String> = serde_json::from_value(record.labels)
-                    .unwrap_or_default();
-                
+                let labels: HashMap<String, String> =
+                    serde_json::from_value(record.labels).unwrap_or_default();
+
                 MetricsEntry {
                     id: Ulid::from_uuid(record.id),
                     metric_name: record.metric_name,
@@ -152,7 +157,6 @@ impl MetricsStorage {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> Result<MetricsAggregation, MetricsError> {
-
         let record: AggregationRecord = MetricsQueries::get_aggregation(
             metric_name.to_string(),
             namespace.map(String::from),

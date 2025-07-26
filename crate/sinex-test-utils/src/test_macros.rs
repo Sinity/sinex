@@ -5,7 +5,7 @@
 // For property testing, use standard proptest directly.
 
 // Property testing with sinex_test:
-// 
+//
 // 1. For pure functions (no database): Use standard proptest within #[sinex_test]
 //    - Fast: thousands of iterations
 //    - Example: testing builders, validators, parsers
@@ -44,15 +44,15 @@
 macro_rules! parameterized {
     ([$($case:expr),* $(,)?], |$param:pat_param| $body:block) => {{
         let cases = vec![$($case),*];
-        
+
         for (case_idx, $param) in cases.into_iter().enumerate() {
             // Build descriptive name from the case
             let case_name = format!("Case {}", case_idx);
             eprintln!("Running parameterized test: {}", case_name);
-            
+
             // ctx available from outer scope
             let result: $crate::TestResult<()> = async { $body }.await;
-            
+
             // Add context to any errors
             result.map_err(|e| {
                 ::sinex_error::CoreError::Unknown(format!(

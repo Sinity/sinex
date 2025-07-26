@@ -9,9 +9,9 @@ use crate::query_builder::{QueryBuilder, QueryParam};
 use crate::query_helpers::{db_error, DbResult};
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+use sinex_events::constants::event_types;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
-use sinex_events::constants::{event_types};
 
 /// Event query registry with centralized event operations
 pub struct EventQueries;
@@ -605,10 +605,7 @@ impl EventQueries {
         end_time: DateTime<Utc>,
     ) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_type",
-                "COUNT(*) as count",
-            ])
+            .columns(&["event_type", "COUNT(*) as count"])
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
             .group_by("event_type")
@@ -621,10 +618,7 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<(String, i64)>(pool)`
     pub fn count_by_type_all_time() -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_type",
-                "COUNT(*) as count",
-            ])
+            .columns(&["event_type", "COUNT(*) as count"])
             .group_by("event_type")
             .order_by("count", "DESC")
     }
@@ -639,15 +633,22 @@ impl EventQueries {
         limit: i64,
     ) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "payload->>'command' as command",
-                "COUNT(*) as count",
-            ])
-            .where_eq("source", QueryParam::String("canonical.terminal".to_string()))
-            .where_eq("event_type", QueryParam::String("command.canonical".to_string()))
+            .columns(&["payload->>'command' as command", "COUNT(*) as count"])
+            .where_eq(
+                "source",
+                QueryParam::String("canonical.terminal".to_string()),
+            )
+            .where_eq(
+                "event_type",
+                QueryParam::String("command.canonical".to_string()),
+            )
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
-            .where_op("payload->>'command'", "IS NOT", QueryParam::String("NULL".to_string()))
+            .where_op(
+                "payload->>'command'",
+                "IS NOT",
+                QueryParam::String("NULL".to_string()),
+            )
             .group_by("payload->>'command'")
             .order_by("count", "DESC")
             .limit(limit)
@@ -659,13 +660,20 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<CommandCountRecord>(pool)`
     pub fn top_commands_all_time(limit: i64) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "payload->>'command' as command",
-                "COUNT(*) as count",
-            ])
-            .where_eq("source", QueryParam::String("canonical.terminal".to_string()))
-            .where_eq("event_type", QueryParam::String("command.canonical".to_string()))
-            .where_op("payload->>'command'", "IS NOT", QueryParam::String("NULL".to_string()))
+            .columns(&["payload->>'command' as command", "COUNT(*) as count"])
+            .where_eq(
+                "source",
+                QueryParam::String("canonical.terminal".to_string()),
+            )
+            .where_eq(
+                "event_type",
+                QueryParam::String("command.canonical".to_string()),
+            )
+            .where_op(
+                "payload->>'command'",
+                "IS NOT",
+                QueryParam::String("NULL".to_string()),
+            )
             .group_by("payload->>'command'")
             .order_by("count", "DESC")
             .limit(limit)
@@ -688,7 +696,10 @@ impl EventQueries {
                 "host as \"host!\"",
             ])
             .where_eq("source", QueryParam::String(process_name))
-            .where_eq("event_type", QueryParam::String(event_types::sinex::PROCESS_HEARTBEAT.to_string()))
+            .where_eq(
+                "event_type",
+                QueryParam::String(event_types::sinex::PROCESS_HEARTBEAT.to_string()),
+            )
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
             .order_by("ts_ingest", "DESC")

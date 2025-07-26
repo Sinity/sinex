@@ -126,20 +126,20 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> TestResult {
         let ulids_clone = ulids.clone();
         let handle = std::thread::spawn(move || {
             let mut local_ulids = Vec::new();
-            
+
             // Each "process" generates ULIDs rapidly
             for _ in 0..100 {
                 let ulid = Ulid::new();
                 local_ulids.push(ulid);
-                
+
                 // Small delay to simulate realistic timing
                 std::thread::sleep(StdDuration::from_nanos(1000));
             }
-            
+
             // Collect all ULIDs
             ulids_clone.lock().unwrap().extend(local_ulids);
         });
-        
+
         process_handles.push(handle);
     }
 
@@ -300,7 +300,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult {
         max_serialization_time < StdDuration::from_secs(5),
         "Should not take too long to serialize"
     );
-    
+
     Ok(())
 }
 
@@ -309,7 +309,7 @@ async fn test_json_billion_laughs_attack(ctx: TestContext) -> TestResult {
 async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult {
     // Create deeply nested JSON structure
     let mut deep_json = json!("core");
-    
+
     // Create nested structure
     for depth in 0..1000 {
         deep_json = json!({
@@ -317,14 +317,14 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult {
             "nested": deep_json
         });
     }
-    
+
     // Test serialization time and memory usage
     let start = Instant::now();
     let serialization_result = std::panic::catch_unwind(|| {
         serde_json::to_string(&deep_json)
     });
     let elapsed = start.elapsed();
-    
+
     match serialization_result {
         Ok(Ok(json_str)) => {
             println!(
@@ -332,7 +332,7 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult {
                 json_str.len(),
                 elapsed
             );
-            
+
             // Should not take too long
             assert!(
                 elapsed < StdDuration::from_secs(5),
@@ -347,16 +347,16 @@ async fn test_json_depth_bomb_attack(ctx: TestContext) -> TestResult {
             panic!("Deep JSON should not cause panic");
         }
     }
-    
+
     // Test with validator
     let validator = EventValidator::new();
     let validation_result = validator.validate_with_rules("test", "deep.json", &deep_json);
-    
+
     match validation_result {
         Ok(_) => println!("Deep JSON accepted by validator"),
         Err(e) => println!("Deep JSON rejected by validator: {}", e),
     }
-    
+
     Ok(())
 }
 
@@ -403,7 +403,7 @@ async fn test_ulid_extreme_future_date(ctx: TestContext) -> TestResult {
         ulid > current_ulid,
         "Future date ULID should be greater than current ULID"
     );
-    
+
     Ok(())
 }
 
@@ -446,7 +446,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> TestResult {
 
     // This might FAIL if random generation has issues
     assert_eq!(ulids.len(), unique.len(), "Found duplicate ULIDs!");
-    
+
     Ok(())
 }
 
@@ -462,7 +462,7 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult {
 
     // This might fail if implementation assumes positive timestamps
     assert_eq!(ulid.timestamp().timestamp(), 0, "Epoch timestamp corrupted");
-    
+
     Ok(())
 }
 
@@ -471,37 +471,37 @@ async fn test_ulid_zero_timestamp(ctx: TestContext) -> TestResult {
 async fn test_ulid_collision_resistance(ctx: TestContext) -> TestResult {
     let collision_attempts = 100_000;
     let mut ulids = HashSet::new();
-    
+
     // Generate many ULIDs rapidly to test collision resistance
     for _ in 0..collision_attempts {
         let ulid = Ulid::new();
-        
+
         if !ulids.insert(ulid) {
             panic!("ULID collision detected after {} attempts!", ulids.len());
         }
     }
-    
+
     println!(
         "Generated {} ULIDs with no collisions",
         collision_attempts
     );
-    
+
     // Test with same timestamp
     let fixed_time = Utc::now();
     let mut timestamp_ulids = HashSet::new();
-    
+
     for _ in 0..10_000 {
         let ulid = Ulid::from_datetime(fixed_time);
-        
+
         if !timestamp_ulids.insert(ulid) {
             panic!("ULID collision with fixed timestamp after {} attempts!", timestamp_ulids.len());
         }
     }
-    
+
     println!(
         "Generated {} ULIDs with fixed timestamp, no collisions",
         timestamp_ulids.len()
     );
-    
+
     Ok(())
 }

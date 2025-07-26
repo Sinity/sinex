@@ -17,12 +17,12 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_events::constants::sources;
 use sinex_events::EventFactory;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info, warn};
-use sinex_events::constants::{sources};
 
 /// Example filesystem processor implementing unified stream processor interface
 #[derive(Debug)]

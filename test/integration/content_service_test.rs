@@ -13,12 +13,12 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::resources::{create_test_file, temp_dir};
 use futures;
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_db::artifacts;
 use sinex_services::{ContentService, ServiceError};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::resources::{create_test_file, temp_dir};
 use std::path::Path;
 use std::sync::Arc;
 use tempfile::TempDir;

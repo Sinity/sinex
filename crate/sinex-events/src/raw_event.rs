@@ -72,7 +72,6 @@ impl RawEvent {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,14 +95,15 @@ mod tests {
     #[test]
     fn test_event_factory_with_optional_fields() {
         use crate::{event_types, sources};
-        
+
         let payload = json!({"data": 42});
         let test_id = Ulid::new();
         let test_schema_id = Ulid::new();
         let test_timestamp = chrono::Utc::now();
 
         let factory = EventFactory::new(sources::FS);
-        let mut event = factory.create_event(event_types::filesystem::FILE_CREATED, payload.clone());
+        let mut event =
+            factory.create_event(event_types::filesystem::FILE_CREATED, payload.clone());
         event.id = test_id;
         event.host = "test-host".to_string();
         event.ingestor_version = Some("1.0.0".to_string());

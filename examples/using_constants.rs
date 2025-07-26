@@ -1,11 +1,11 @@
 //! Using Constants Examples
-//! 
+//!
 //! This file demonstrates proper usage of constants from sinex-events
 //! instead of hardcoding string literals throughout the code.
 
-use sinex_events::{event_types, sources, services, RawEvent, EventFactory};
-use sinex_ulid::Ulid;
 use serde_json::json;
+use sinex_events::{event_types, services, sources, EventFactory, RawEvent};
+use sinex_ulid::Ulid;
 
 /// Example 1: Using event type constants
 fn create_heartbeat_event(sequence: u64) -> RawEvent {
@@ -15,13 +15,16 @@ fn create_heartbeat_event(sequence: u64) -> RawEvent {
 
     // ✅ CORRECT: Using constants
     let factory = EventFactory::new(sources::SINEX);
-    factory.create_event(event_types::sinex::PROCESS_HEARTBEAT, json!({ "sequence": sequence }))
+    factory.create_event(
+        event_types::sinex::PROCESS_HEARTBEAT,
+        json!({ "sequence": sequence }),
+    )
 }
 
 /// Example 2: Checking event types
 fn is_system_event(event: &RawEvent) -> bool {
     // ❌ WRONG: Hardcoded comparisons
-    // event.event_type == "process.start" 
+    // event.event_type == "process.start"
     //     || event.event_type == "process.heartbeat"
     //     || event.event_type == "process.stop"
 
@@ -62,12 +65,13 @@ fn create_terminal_event(terminal_type: TerminalType, content: &str) -> RawEvent
     // ✅ CORRECT: Using predefined constants
     let source = match terminal_type {
         TerminalType::Kitty => sources::TERMINAL_KITTY,
-        TerminalType::Alacritty => sources::TERMINAL_KITTY /* TODO: Add ALACRITTY constant */,
-        TerminalType::WezTerm => sources::TERMINAL_KITTY /* TODO: Add WEZTERM constant */,
+        TerminalType::Alacritty => sources::TERMINAL_KITTY, /* TODO: Add ALACRITTY constant */
+        TerminalType::WezTerm => sources::TERMINAL_KITTY,   /* TODO: Add WEZTERM constant */
     };
 
     let factory = EventFactory::new(source);
-    factory.terminal()
+    factory
+        .terminal()
         .command_output(content)
         .timestamp(chrono::Utc::now())
         .build_executed()
@@ -99,7 +103,8 @@ fn filter_knowledge_events(events: Vec<RawEvent>) -> Vec<RawEvent> {
     //     .collect()
 
     // ✅ CORRECT: Using constant prefixes
-    events.into_iter()
+    events
+        .into_iter()
         .filter(|e| {
             matches!(
                 e.event_type.as_str(),
@@ -163,14 +168,8 @@ fn create_default_config() -> Config {
             event_types::filesystem::FILE_MODIFIED.to_string(),
             event_types::sinex::PROCESS_STARTED.to_string(),
         ],
-        sources: vec![
-            sources::FS.to_string(),
-            sources::TERMINAL_KITTY.to_string(),
-        ],
-        services: vec![
-            services::INGESTD.to_string(),
-            services::GATEWAY.to_string(),
-        ],
+        sources: vec![sources::FS.to_string(), sources::TERMINAL_KITTY.to_string()],
+        services: vec![services::INGESTD.to_string(), services::GATEWAY.to_string()],
     }
 }
 
@@ -180,18 +179,13 @@ fn handle_event(event: &RawEvent) -> Result<(), sinex_error::CoreError> {
 
     match (event.source.as_str(), event.event_type.as_str()) {
         // ✅ CORRECT: Pattern matching with constants
-        (sources::FS, event_types::filesystem::FILE_CREATED) => {
-            handle_file_created(event)
-        }
-        (sources::FS, event_types::filesystem::FILE_DELETED) => {
-            handle_file_deleted(event)
-        }
-        (sources::TERMINAL_KITTY | sources::TERMINAL_KITTY /* TODO: Add ALACRITTY constant */, event_types::shell::COMMAND_OUTPUT) => {
-            handle_terminal_output(event)
-        }
-        (sources::SINEX, event_types::sinex::PROCESS_HEARTBEAT) => {
-            handle_heartbeat(event)
-        }
+        (sources::FS, event_types::filesystem::FILE_CREATED) => handle_file_created(event),
+        (sources::FS, event_types::filesystem::FILE_DELETED) => handle_file_deleted(event),
+        (
+            sources::TERMINAL_KITTY | sources::TERMINAL_KITTY, /* TODO: Add ALACRITTY constant */
+            event_types::shell::COMMAND_OUTPUT,
+        ) => handle_terminal_output(event),
+        (sources::SINEX, event_types::sinex::PROCESS_HEARTBEAT) => handle_heartbeat(event),
         _ => {
             // Unknown event type/source combination
             Err(CoreError::Unknown(format!(

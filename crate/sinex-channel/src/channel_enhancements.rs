@@ -222,7 +222,7 @@ pub struct DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_events::{RawEvent, EventFactory};
+    use sinex_events::{EventFactory, RawEvent};
 
     #[tokio::test]
     async fn test_enhanced_event_sender() {

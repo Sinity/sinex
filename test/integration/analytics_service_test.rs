@@ -3,10 +3,10 @@
 // Tests all analytics methods with focus on aggregation logic,
 // time-based filtering, and accurate data insights.
 
-use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
 use chrono::{Duration, Utc};
+use sinex_events::{event_types, services, EventFactory};
 use sinex_services::AnalyticsService;
+use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 
 /// Helper to create test events with specific timestamps and content
@@ -19,10 +19,10 @@ async fn create_analytics_test_event(
 ) -> TestResult {
     let factory = EventFactory::new(source);
     let mut event = factory.create_event(event_type, payload_content);
-    
+
     // Set host
     event.host = "analytics-test-host".to_string();
-    
+
     // Set timestamp if provided
     if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;

@@ -3,12 +3,12 @@
 //! Monitors hardware device events via udev
 
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
-use sinex_events::constants::{sources};
 
 /// udev watcher
 pub struct UdevWatcher {

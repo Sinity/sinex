@@ -185,6 +185,37 @@ in
     };
 
     # Security configuration
+    #
+    # The Sinex security model implements defense-in-depth with multiple layers:
+    #
+    # ## Process Isolation
+    # Each satellite runs with minimal privileges through systemd hardening:
+    # - NoNewPrivileges: Prevents privilege escalation
+    # - ProtectSystem: Read-only system directories
+    # - SystemCallFilter: Restricts available system calls
+    # - PrivateTmp: Isolated temporary directories
+    #
+    # ## Trust Boundaries
+    # Clear separation between components:
+    # - Satellites → ingestd: gRPC with Unix socket permissions
+    # - ingestd → PostgreSQL: Database role separation
+    # - Automata → Redis: Consumer group isolation
+    # - User → Gateway: API authentication (future)
+    #
+    # ## Resource Limits
+    # Prevents resource exhaustion attacks:
+    # - Memory limits per service (MemoryMax)
+    # - CPU quotas (CPUQuota)
+    # - File descriptor limits
+    # - Rate limiting on event ingestion
+    #
+    # ## Data Sanitization
+    # Multiple layers of privacy protection:
+    # - Input sanitization: Redact secrets before storage
+    # - Environment variable filtering
+    # - Command argument scrubbing
+    # - Access control: Source-based permissions
+    #
     security = {
       level = mkOption {
         type = types.enum [ "minimal" "balanced" "strict" ];
@@ -194,6 +225,25 @@ in
           - minimal: Basic security, maximum functionality
           - balanced: Reasonable security with event monitoring capabilities
           - strict: Maximum security, may restrict some monitoring features
+          
+          Each level applies different systemd hardening options:
+          
+          Minimal:
+          - Basic sandboxing (PrivateTmp, ProtectHome)
+          - No network isolation
+          - Full filesystem access for monitoring
+          
+          Balanced (recommended):
+          - Process isolation (NoNewPrivileges, ProtectSystem)
+          - Limited system call filtering
+          - Restricted but functional device access
+          - Memory and CPU limits enforced
+          
+          Strict:
+          - Full sandboxing (PrivateDevices, ProtectKernelTunables)
+          - Aggressive system call filtering
+          - Minimal filesystem access
+          - May break some event sources
         '';
       };
 
@@ -213,6 +263,86 @@ in
         type = types.bool;
         default = true;
         description = "Allow device access for hardware event monitoring";
+      };
+
+      # Privacy features configuration
+      sanitization = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable automatic sanitization of sensitive data";
+        };
+
+        secretPatterns = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "password[=:]\\s*\\S+"
+            "token[=:]\\s*\\S+"
+            "api[_-]?key[=:]\\s*\\S+"
+            "secret[=:]\\s*\\S+"
+          ];
+          description = "Regex patterns for detecting secrets to redact";
+        };
+
+        envVarFilter = mkOption {
+          type = types.listOf types.str;
+          default = [
+            "PASSWORD"
+            "TOKEN"
+            "SECRET"
+            "API_KEY"
+            "PRIVATE_KEY"
+          ];
+          description = "Environment variables to filter from command captures";
+        };
+      };
+
+      # Access control
+      accessControl = {
+        enable = mkOption {
+          type = types.bool;
+          default = false;
+          description = "Enable source-based access control";
+        };
+
+        rules = mkOption {
+          type = types.listOf (types.submodule {
+            options = {
+              source = mkOption {
+                type = types.str;
+                description = "Event source pattern to match";
+              };
+              allow = mkOption {
+                type = types.listOf types.str;
+                default = [ "*" ];
+                description = "Allowed users/roles for this source";
+              };
+            };
+          });
+          default = [];
+          description = "Access control rules by event source";
+        };
+      };
+
+      # Audit configuration
+      audit = {
+        enable = mkOption {
+          type = types.bool;
+          default = true;
+          description = "Enable security audit logging";
+        };
+
+        logLevel = mkOption {
+          type = types.enum [ "info" "warn" "error" ];
+          default = "warn";
+          description = "Security audit log level";
+        };
+
+        retentionDays = mkOption {
+          type = types.int;
+          default = 90;
+          description = "Days to retain security audit logs";
+        };
       };
     };
 

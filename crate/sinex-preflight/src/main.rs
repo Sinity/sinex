@@ -9,12 +9,12 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
 use sinex_db::queries::EventQueries;
+use sinex_events::constants::{event_types, sources};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use sinex_events::constants::{event_types, sources};
 
 mod configuration;
 mod database;
@@ -524,7 +524,7 @@ async fn generate_verification_report(
 
     let end_time = chrono::Utc::now();
     let start_time = end_time - chrono::Duration::hours(24);
-    
+
     #[derive(sqlx::FromRow)]
     struct HeartbeatRow {
         id: sinex_ulid::Ulid,
@@ -532,15 +532,12 @@ async fn generate_verification_report(
         payload: serde_json::Value,
         host: String,
     }
-    
-    let recent_verifications: Vec<HeartbeatRow> = EventQueries::get_process_heartbeats(
-        "sinex-preflight".to_string(),
-        start_time,
-        end_time,
-    )
-    .fetch_all(&pool)
-    .await
-    .context("Failed to fetch verification history")?;
+
+    let recent_verifications: Vec<HeartbeatRow> =
+        EventQueries::get_process_heartbeats("sinex-preflight".to_string(), start_time, end_time)
+            .fetch_all(&pool)
+            .await
+            .context("Failed to fetch verification history")?;
 
     let report = if detailed {
         serde_json::json!({
@@ -563,7 +560,9 @@ async fn generate_verification_report(
                 println!(
                     "  {} - {} ({})",
                     verification.timestamp.to_string(),
-                    verification.payload.get("health_status")
+                    verification
+                        .payload
+                        .get("health_status")
                         .and_then(|v| v.as_str())
                         .unwrap_or("UNKNOWN"),
                     verification.id.to_string()

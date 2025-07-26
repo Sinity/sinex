@@ -81,7 +81,6 @@
 // System tests use dedicated test databases and may create temporary files.
 // Tests are designed to be idempotent and clean up after themselves.
 
-
 // === Complete System Validation ===
 
 mod external_test;

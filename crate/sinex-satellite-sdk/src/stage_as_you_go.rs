@@ -3,6 +3,55 @@
 //! This module provides helpers for implementing the Stage-as-You-Go pattern where
 //! source material is registered in-flight as events are being created, enabling
 //! real-time provenance tracking without waiting for full ingestion completion.
+//!
+//! # Stage-as-You-Go Pattern
+//!
+//! This critical architectural pattern ensures zero provenance gaps for real-time streams.
+//! It solves the fundamental problem of maintaining data lineage when events are being
+//! processed and emitted before the complete source material is available.
+//!
+//! ## The Problem
+//!
+//! Traditional approaches face a dilemma:
+//! - **Option 1**: Wait for complete ingestion before emitting events (high latency)
+//! - **Option 2**: Emit events immediately without provenance (broken lineage)
+//!
+//! ## The Solution
+//!
+//! Stage-as-You-Go allows immediate event emission with full provenance by:
+//!
+//! ```rust
+//! // 1. Create in-flight source material record on startup
+//! let blob_id = source_material_registry.create_in_flight().await?;
+//!
+//! // 2. Emit events immediately with provenance
+//! let event = RawEvent {
+//!     source_material_id: Some(blob_id),
+//!     // ... events flow in real-time
+//! };
+//!
+//! // 3. Periodically finalize chunks (e.g., every 5 minutes)
+//! source_material_registry.finalize_chunk(blob_id).await?;
+//! ```
+//!
+//! ## Key Benefits
+//!
+//! - **Real-time Processing**: No delay for event emission
+//! - **Complete Provenance**: Every event linked to its source
+//! - **Incremental Updates**: Source material details filled in as available
+//! - **Crash Recovery**: In-flight records can be resumed or finalized
+//!
+//! ## Implementation Pattern
+//!
+//! 1. **Register In-Flight**: Create placeholder source material with initial metadata
+//! 2. **Process & Emit**: Process data and emit events with source_material_id
+//! 3. **Finalize**: Update source material with complete details (size, checksum, etc.)
+//!
+//! ## Example Use Cases
+//!
+//! - **Log Tailing**: Emit log events as lines arrive, finalize after rotation
+//! - **Terminal Sessions**: Track commands immediately, finalize on session end
+//! - **Network Streams**: Process packets in real-time, finalize on connection close
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
 use sinex_db::queries::SourceMaterialQueries;
@@ -39,20 +88,21 @@ impl StageAsYouGoContext {
         source_uri: Option<&str>,
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
-        let result: sinex_db::models::SourceMaterialRecord = SourceMaterialQueries::register_in_flight(
-            material_type.to_string(),
-            source_uri.map(String::from),
-            initial_metadata,
-        )
-        .fetch_one::<sinex_db::models::SourceMaterialRecord>(&self.db_pool)
-        .await
-        .map_err(|e| {
-            SatelliteError::General(anyhow::anyhow!(
-                "Failed to register in-flight source material: {}",
-                e
-            ))
-        })?;
-        
+        let result: sinex_db::models::SourceMaterialRecord =
+            SourceMaterialQueries::register_in_flight(
+                material_type.to_string(),
+                source_uri.map(String::from),
+                initial_metadata,
+            )
+            .fetch_one::<sinex_db::models::SourceMaterialRecord>(&self.db_pool)
+            .await
+            .map_err(|e| {
+                SatelliteError::General(anyhow::anyhow!(
+                    "Failed to register in-flight source material: {}",
+                    e
+                ))
+            })?;
+
         let blob_id = result.blob_id;
 
         info!(
@@ -113,7 +163,7 @@ impl StageAsYouGoContext {
         encoding: Option<&str>,
     ) -> SatelliteResult<()> {
         let checksum = blake3::hash(content).to_hex().to_string();
-        
+
         let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
             Some(String::from_utf8_lossy(&content[..content.len().min(500)]).to_string())
         } else {
@@ -201,11 +251,10 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
         let start_time = std::time::Instant::now();
 
         // Step 1: Register in-flight source material
-        let source_material_id = self.context.register_in_flight(
-            "log_file",
-            source_uri,
-            metadata,
-        ).await?;
+        let source_material_id = self
+            .context
+            .register_in_flight("log_file", source_uri, metadata)
+            .await?;
 
         // Step 2: Process content line by line, emitting events with provenance
         let mut event_ids = Vec::new();
@@ -225,34 +274,41 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             let offset_end = offset_start + line.len() as i64;
 
             // Create event for this log line
-            let event = sinex_events::EventFactory::new(&self.source)
-                .create_event("log.line", serde_json::json!({
+            let event = sinex_events::EventFactory::new(&self.source).create_event(
+                "log.line",
+                serde_json::json!({
                     "line": line,
                     "line_number": line_num + 1,
                     "offset_start": offset_start,
                     "offset_end": offset_end,
                     "source_material_id": source_material_id.to_string(),
                     "source_uri": source_uri,
-                }));
+                }),
+            );
 
             // Emit with provenance
-            let event_id = self.context.emit_event_with_provenance(
-                event,
-                source_material_id,
-                Some(offset_start),
-                Some(offset_end),
-            ).await?;
+            let event_id = self
+                .context
+                .emit_event_with_provenance(
+                    event,
+                    source_material_id,
+                    Some(offset_start),
+                    Some(offset_end),
+                )
+                .await?;
 
             event_ids.push(event_id);
         }
 
         // Step 3: Finalize source material with complete details
-        self.context.finalize_source_material(
-            source_material_id,
-            content,
-            Some("text/plain"),
-            Some("utf-8"),
-        ).await?;
+        self.context
+            .finalize_source_material(
+                source_material_id,
+                content,
+                Some("text/plain"),
+                Some("utf-8"),
+            )
+            .await?;
 
         Ok(StageAsYouGoResult {
             source_material_id,

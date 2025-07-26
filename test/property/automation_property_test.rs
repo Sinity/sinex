@@ -2,9 +2,9 @@
 //
 // Tests that verify automaton processing, state management, and coordination properties
 
-use sinex_test_utils::prelude::*;
 use crate::property::strategies::*;
 use proptest::prelude::*;
+use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;

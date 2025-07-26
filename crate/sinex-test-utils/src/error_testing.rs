@@ -1,25 +1,25 @@
 // Error Testing Utilities - Harmonized with TestContext
 //
-// Provides comprehensive error testing that integrates seamlessly 
+// Provides comprehensive error testing that integrates seamlessly
 // with the unified test infrastructure using production ErrorContext patterns.
 
 use crate::prelude::*;
-use sinex_error::{CoreError, ResultExt};
-use sinex_core_types::RawEvent;
 use serde_json::Value;
+use sinex_core_types::RawEvent;
+use sinex_error::CoreError;
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext
 pub trait ErrorAssertions<T> {
     /// Assert result contains specific error text
     fn assert_contains_error(self, text: &str) -> TestResult<T>;
-    
+
     /// Assert result is specific error type
     fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(self) -> TestResult<T>;
-    
+
     /// Assert result fails with any error
     fn assert_fails(self) -> TestResult<CoreError>;
-    
+
     /// Assert result succeeds (inverse of assert_fails)
     fn assert_succeeds(self) -> TestResult<T>;
 }
@@ -44,7 +44,7 @@ impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
             }
         }
     }
-    
+
     fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(self) -> TestResult<T> {
         match self {
             Ok(val) => Err(CoreError::Validation(format!(
@@ -59,7 +59,7 @@ impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
             }
         }
     }
-    
+
     fn assert_fails(self) -> TestResult<CoreError> {
         match self {
             Ok(val) => Err(CoreError::Validation(format!(
@@ -69,7 +69,7 @@ impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
             Err(err) => Ok(err),
         }
     }
-    
+
     fn assert_succeeds(self) -> TestResult<T> {
         match self {
             Ok(val) => Ok(val),
@@ -90,7 +90,7 @@ impl<'ctx> ValidationTester<'ctx> {
     pub fn new(ctx: &'ctx TestContext) -> Self {
         Self { ctx }
     }
-    
+
     /// Test that payload validation fails with expected pattern
     pub async fn test_invalid_payload(
         &self,
@@ -99,17 +99,19 @@ impl<'ctx> ValidationTester<'ctx> {
         payload: Value,
         expected_error: &str,
     ) -> TestResult<()> {
-        let result = self.ctx.event()
+        let result = self
+            .ctx
+            .event()
             .source(source)
             .type_(event_type)
             .payload(payload)
             .insert()
             .await;
-            
+
         result.assert_contains_error(expected_error)?;
         Ok(())
     }
-    
+
     /// Test that payload validation succeeds  
     pub async fn test_valid_payload(
         &self,
@@ -117,14 +119,15 @@ impl<'ctx> ValidationTester<'ctx> {
         event_type: &str,
         payload: Value,
     ) -> TestResult<RawEvent> {
-        self.ctx.event()
+        self.ctx
+            .event()
             .source(source)
             .type_(event_type)
             .payload(payload)
             .insert()
             .await
     }
-    
+
     /// Test batch of validation cases using production error context
     pub async fn test_validation_cases(
         &self,
@@ -132,11 +135,12 @@ impl<'ctx> ValidationTester<'ctx> {
     ) -> TestResult<()> {
         for (case_name, payload, expected_error) in cases {
             tracing::debug!("Testing validation case: {}", case_name);
-            
+
             if let Some(error_text) = expected_error {
-                self.test_invalid_payload("test", "validation", payload.clone(), error_text).await
+                self.test_invalid_payload("test", "validation", payload.clone(), error_text)
+                    .await
                     .map_err(|e| CoreError::Unknown(format!("Validation test case failed: {}", e)))
-                    .map_err(|e| 
+                    .map_err(|e| {
                         CoreError::validation("Batch validation case failed")
                             .with_context("case_name", case_name)
                             .with_context("expected_error", error_text)
@@ -144,21 +148,22 @@ impl<'ctx> ValidationTester<'ctx> {
                             .with_source(e)
                             .with_operation("batch_validation_test")
                             .build()
-                    )?;
+                    })?;
             } else {
-                self.test_valid_payload("test", "validation", payload.clone()).await
+                self.test_valid_payload("test", "validation", payload.clone())
+                    .await
                     .map_err(|e| CoreError::Unknown(format!("Valid payload test failed: {}", e)))
-                    .map_err(|e|
+                    .map_err(|e| {
                         CoreError::validation("Expected valid payload but validation failed")
                             .with_context("case_name", case_name)
                             .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
                             .build()
-                    )?;
+                    })?;
             }
         }
-        
+
         Ok(())
     }
 }
@@ -172,7 +177,7 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
     pub fn new(ctx: &'ctx TestContext) -> Self {
         Self { ctx }
     }
-    
+
     /// Test constraint violation scenarios
     pub async fn test_constraint_violation(
         &self,
@@ -183,12 +188,9 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
         result.assert_contains_error(constraint_name)?;
         Ok(())
     }
-    
+
     /// Test foreign key violations
-    pub async fn test_foreign_key_violation<F, Fut>(
-        &self,
-        operation: F,
-    ) -> TestResult<()>
+    pub async fn test_foreign_key_violation<F, Fut>(&self, operation: F) -> TestResult<()>
     where
         F: FnOnce() -> Fut,
         Fut: std::future::Future<Output = TestResult<()>>,
@@ -208,7 +210,7 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
     pub fn new(ctx: &'ctx TestContext) -> Self {
         Self { ctx }
     }
-    
+
     /// Test race conditions by running operations concurrently
     pub async fn test_race_condition<F, Fut, T>(
         &self,
@@ -222,30 +224,31 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
     {
         use std::sync::Arc;
         use tokio::task::JoinSet;
-        
+
         let operation = Arc::new(operation);
         let mut join_set = JoinSet::new();
-        
+
         // Start all operations simultaneously
         for i in 0..concurrent_count {
             let op = operation.clone();
-            join_set.spawn(async move {
-                op(i).await
-            });
+            join_set.spawn(async move { op(i).await });
         }
-        
+
         // Collect results
         let mut results = Vec::new();
         while let Some(result) = join_set.join_next().await {
             match result {
                 Ok(op_result) => results.push(op_result),
-                Err(join_err) => results.push(Err(CoreError::Service(format!("Concurrent operation failed: {}", join_err)))),
+                Err(join_err) => results.push(Err(CoreError::Service(format!(
+                    "Concurrent operation failed: {}",
+                    join_err
+                )))),
             }
         }
-        
+
         Ok(results)
     }
-    
+
     /// Test deadlock detection
     pub async fn test_deadlock_scenario<F1, F2, Fut1, Fut2>(
         &self,
@@ -260,15 +263,16 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
         Fut2: std::future::Future<Output = TestResult<()>> + Send + 'static,
     {
         use tokio::time::{timeout, Duration};
-        
+
         let handle1 = tokio::spawn(operation1());
         let handle2 = tokio::spawn(operation2());
-        
+
         let result = timeout(
             Duration::from_secs(timeout_secs),
-            futures::future::try_join(handle1, handle2)
-        ).await;
-        
+            futures::future::try_join(handle1, handle2),
+        )
+        .await;
+
         match result {
             Ok(Ok((Ok(()), Ok(())))) => {
                 // Both operations completed successfully
@@ -290,10 +294,15 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
                     Err(e1)
                 }
             }
-            Ok(Err(join_err)) => Err(CoreError::Service(format!("Concurrent operation failed: {}", join_err))),
+            Ok(Err(join_err)) => Err(CoreError::Service(format!(
+                "Concurrent operation failed: {}",
+                join_err
+            ))),
             Err(_timeout_err) => {
                 // Timeout suggests potential deadlock
-                Err(CoreError::Unknown("Potential deadlock detected - operations timed out".to_string()))
+                Err(CoreError::Unknown(
+                    "Potential deadlock detected - operations timed out".to_string(),
+                ))
             }
         }
     }
@@ -303,10 +312,10 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
 pub trait TestContextErrorExt {
     /// Get validation error tester
     fn validation_tester(&self) -> ValidationTester<'_>;
-    
+
     /// Get database error tester
     fn database_error_tester(&self) -> DatabaseErrorTester<'_>;
-    
+
     /// Get concurrency error tester
     fn concurrency_error_tester(&self) -> ConcurrencyErrorTester<'_>;
 }
@@ -315,11 +324,11 @@ impl TestContextErrorExt for TestContext {
     fn validation_tester(&self) -> ValidationTester<'_> {
         ValidationTester::new(self)
     }
-    
+
     fn database_error_tester(&self) -> DatabaseErrorTester<'_> {
         DatabaseErrorTester::new(self)
     }
-    
+
     fn concurrency_error_tester(&self) -> ConcurrencyErrorTester<'_> {
         ConcurrencyErrorTester::new(self)
     }
@@ -330,81 +339,93 @@ impl TestContextErrorExt for TestContext {
 mod tests {
     use super::*;
     use serde_json::json;
-    
+
     #[sinex_test]
     async fn test_error_assertions_basic(ctx: TestContext) -> TestResult<()> {
         // Test assert_fails
         let failed: Result<(), CoreError> = Err(CoreError::Validation("test error".to_string()));
         let error = failed.assert_fails()?;
         assert_eq!(error.to_string(), "test error");
-        
+
         // Test assert_succeeds
         let success: Result<i32, CoreError> = Ok(42);
         let value = success.assert_succeeds()?;
         assert_eq!(value, 42);
-        
+
         // Test assert_contains_error
-        let error_result: Result<(), CoreError> = Err(CoreError::Validation("database connection failed".to_string()));
+        let error_result: Result<(), CoreError> = Err(CoreError::Validation(
+            "database connection failed".to_string(),
+        ));
         error_result.assert_contains_error("database")?;
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_error_assertions_negative_cases(_ctx: TestContext) -> TestResult<()> {
         // assert_fails should fail on success
         let success: Result<i32, CoreError> = Ok(42);
         let result = success.assert_fails();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Expected operation to fail"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected operation to fail"));
+
         // assert_succeeds should fail on error
         let failed: Result<(), CoreError> = Err(CoreError::Validation("error".to_string()));
         let result = failed.assert_succeeds();
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Expected operation to succeed"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Expected operation to succeed"));
+
         // assert_contains_error should fail on wrong text
-        let error_result: Result<(), CoreError> = Err(CoreError::Validation("something else".to_string()));
+        let error_result: Result<(), CoreError> =
+            Err(CoreError::Validation("something else".to_string()));
         let result = error_result.assert_contains_error("database");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("does not contain expected text"));
-        
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("does not contain expected text"));
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_validation_tester(ctx: TestContext) -> TestResult<()> {
         let validator = ctx.validation_tester();
-        
+
         // Test invalid payload
-        let result = validator.test_invalid_payload(
-            "test",
-            "validation",
-            json!({"missing": "required_field"}),
-            "required"
-        ).await;
-        
+        let result = validator
+            .test_invalid_payload(
+                "test",
+                "validation",
+                json!({"missing": "required_field"}),
+                "required",
+            )
+            .await;
+
         // Should succeed if validation properly fails
         assert!(result.is_ok());
-        
+
         // Test valid payload
-        let event = validator.test_valid_payload(
-            "test",
-            "validation",
-            json!({"valid": "payload"})
-        ).await?;
-        
+        let event = validator
+            .test_valid_payload("test", "validation", json!({"valid": "payload"}))
+            .await?;
+
         assert_eq!(event.source, "test");
         assert_eq!(event.event_type, "validation");
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_validation_batch_cases(ctx: TestContext) -> TestResult<()> {
         let validator = ctx.validation_tester();
-        
+
         // Test batch validation
         let cases = vec![
             ("valid_case", json!({"test": "data"}), None),
@@ -412,136 +433,150 @@ mod tests {
             ("valid_number", json!({"number": 123}), None),
             ("invalid_type", json!(null), Some("type")), // Should fail validation
         ];
-        
+
         // This will validate that errors occur where expected
         let result = validator.test_validation_cases(cases).await;
-        
+
         // The test should handle both valid and invalid cases appropriately
         assert!(result.is_ok());
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_database_error_tester(ctx: TestContext) -> TestResult<()> {
         let db_tester = ctx.database_error_tester();
-        
+
         // Test constraint violation
-        let result = db_tester.test_constraint_violation(
-            async {
-                // Simulate a constraint violation
-                Err(CoreError::Database("constraint violation: unique_key".to_string()))
-            },
-            "unique_key"
-        ).await;
-        
+        let result = db_tester
+            .test_constraint_violation(
+                async {
+                    // Simulate a constraint violation
+                    Err(CoreError::Database(
+                        "constraint violation: unique_key".to_string(),
+                    ))
+                },
+                "unique_key",
+            )
+            .await;
+
         assert!(result.is_ok());
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_concurrency_error_race_condition(ctx: TestContext) -> TestResult<()> {
         let concurrency_tester = ctx.concurrency_error_tester();
-        
+
         // Test race condition with counter
         let counter = std::sync::Arc::new(tokio::sync::Mutex::new(0));
-        
-        let results = concurrency_tester.test_race_condition(
-            move |_i| {
-                let counter_clone = counter.clone();
-                async move {
-                    let mut count = counter_clone.lock().await;
-                    *count += 1;
-                    Ok(*count)
-                }
-            },
-            10
-        ).await?;
-        
+        let counter_for_test = counter.clone();
+
+        let results = concurrency_tester
+            .test_race_condition(
+                move |_i| {
+                    let counter_clone = counter_for_test.clone();
+                    async move {
+                        let mut count = counter_clone.lock().await;
+                        *count += 1;
+                        Ok(*count)
+                    }
+                },
+                10,
+            )
+            .await?;
+
         // All operations should succeed
         assert_eq!(results.len(), 10);
         for result in &results {
             assert!(result.is_ok());
         }
-        
+
         // Final count should be 10
         let final_count = *counter.lock().await;
         assert_eq!(final_count, 10);
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_concurrency_error_with_failures(ctx: TestContext) -> TestResult<()> {
         let concurrency_tester = ctx.concurrency_error_tester();
-        
+
         // Test with some operations failing
-        let results = concurrency_tester.test_race_condition(
-            |i| async move {
-                if i % 3 == 0 {
-                    Err(CoreError::Validation(format!("Simulated failure for {}", i)))
-                } else {
-                    Ok(i)
-                }
-            },
-            9
-        ).await?;
-        
+        let results = concurrency_tester
+            .test_race_condition(
+                |i| async move {
+                    if i % 3 == 0 {
+                        Err(CoreError::Validation(format!(
+                            "Simulated failure for {}",
+                            i
+                        )))
+                    } else {
+                        Ok(i)
+                    }
+                },
+                9,
+            )
+            .await?;
+
         assert_eq!(results.len(), 9);
-        
+
         // Count successes and failures
         let successes = results.iter().filter(|r| r.is_ok()).count();
         let failures = results.iter().filter(|r| r.is_err()).count();
-        
+
         assert_eq!(successes, 6); // 1,2,4,5,7,8
-        assert_eq!(failures, 3);  // 0,3,6
-        
+        assert_eq!(failures, 3); // 0,3,6
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_deadlock_detection(ctx: TestContext) -> TestResult<()> {
         let concurrency_tester = ctx.concurrency_error_tester();
-        
+
         // Test deadlock scenario with timeout
         let lock1 = std::sync::Arc::new(tokio::sync::Mutex::new(0));
         let lock2 = std::sync::Arc::new(tokio::sync::Mutex::new(0));
-        
+
         let lock1_clone = lock1.clone();
         let lock2_clone = lock2.clone();
-        
-        let result = concurrency_tester.test_deadlock_scenario(
-            move || {
-                let l1 = lock1_clone.clone();
-                let l2 = lock2_clone.clone();
-                async move {
-                    let _guard1 = l1.lock().await;
-                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                    let _guard2 = l2.lock().await;
-                    Ok(())
-                }
-            },
-            move || {
-                let l1 = lock1.clone();
-                let l2 = lock2.clone();
-                async move {
-                    let _guard2 = l2.lock().await;
-                    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-                    let _guard1 = l1.lock().await;
-                    Ok(())
-                }
-            },
-            1
-        ).await;
-        
+
+        let result = concurrency_tester
+            .test_deadlock_scenario(
+                move || {
+                    let l1 = lock1_clone.clone();
+                    let l2 = lock2_clone.clone();
+                    async move {
+                        let _guard1 = l1.lock().await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        let _guard2 = l2.lock().await;
+                        Ok(())
+                    }
+                },
+                move || {
+                    let l1 = lock1.clone();
+                    let l2 = lock2.clone();
+                    async move {
+                        let _guard2 = l2.lock().await;
+                        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+                        let _guard1 = l1.lock().await;
+                        Ok(())
+                    }
+                },
+                1,
+            )
+            .await;
+
         // Should either complete (no deadlock with tokio mutexes) or timeout
         // Tokio mutexes don't actually deadlock, they queue
         assert!(result.is_ok() || result.unwrap_err().to_string().contains("deadlock"));
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_error_context_builder(ctx: TestContext) -> TestResult<()> {
         // Test using production error context patterns
@@ -550,76 +585,75 @@ mod tests {
             .with_context("value", "invalid@user")
             .with_operation("user_registration")
             .build();
-        
+
         let error_str = error.to_string();
         assert!(error_str.contains("Test validation error"));
-        
+
         // Create an operation that uses error context
         let result: Result<(), CoreError> = Err(error);
         result.assert_contains_error("validation")?;
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_error_chaining(ctx: TestContext) -> TestResult<()> {
         // Test error chaining with source errors
         let base_error = CoreError::Database("connection refused".to_string());
-        
+
         let wrapped_error = CoreError::Service("Failed to process event".to_string());
-        
+
         let error_str = wrapped_error.to_string();
         assert!(error_str.contains("Failed to process event"));
-        
+
         Ok(())
     }
-    
+
     #[sinex_test]
     async fn test_validation_with_real_events(ctx: TestContext) -> TestResult<()> {
         let validator = ctx.validation_tester();
-        
+
         // Test filesystem event validation
         let valid_fs_event = json!({
             "path": "/test/file.txt",
             "action": "created",
             "size": 1024
         });
-        
-        let event = validator.test_valid_payload("filesystem", "file.created", valid_fs_event).await?;
+
+        let event = validator
+            .test_valid_payload("filesystem", "file.created", valid_fs_event)
+            .await?;
         assert_eq!(event.source, "filesystem");
-        
+
         // Test invalid filesystem event
         let invalid_fs_event = json!({
             "no_path": "missing required field"
         });
-        
-        validator.test_invalid_payload(
-            "filesystem",
-            "file.created",
-            invalid_fs_event,
-            "path"
-        ).await?;
-        
+
+        validator
+            .test_invalid_payload("filesystem", "file.created", invalid_fs_event, "path")
+            .await?;
+
         Ok(())
     }
-    
+
     #[test]
     fn test_error_type_matching() {
         // Test CoreError variant matching
         let validation_err = CoreError::Validation("test".to_string());
         let database_err = CoreError::Database("test".to_string());
         let service_err = CoreError::Service("test".to_string());
-        
+
         match validation_err {
             CoreError::Validation(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
-        
+
         match database_err {
             CoreError::Database(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
-        
+
         match service_err {
             CoreError::Service(_) => assert!(true),
             _ => panic!("Wrong error type"),

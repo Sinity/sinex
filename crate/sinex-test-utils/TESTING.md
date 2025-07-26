@@ -312,9 +312,9 @@ async fn test_with_user_session(ctx: TestContext) -> TestResult<()> {
     
     assert!(fs_events.len() >= 5, "Session should have filesystem activity");
     
-    // Access specific fixture data
-    let resource = session.resource().await;
-    assert!(resource.is_some());
+    // Access specific fixture data directly
+    assert!(!session.event_ids.is_empty());
+    assert!(session.checkpoint_id.is_some());
     
     Ok(())
 }

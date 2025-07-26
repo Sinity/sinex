@@ -3,20 +3,21 @@
 // This file consolidates all system-level integration tests including:
 // - Full system startup testing
 // - Deployment validation and pre-flight verification
-// - Abstraction integration testing  
+// - Abstraction integration testing
 // - Event source resilience testing
 // - Failure recovery scenarios
 // - Health monitoring integration
 // - Payload boundary testing
 // - Query interface testing
 
-use sinex_test_utils::prelude::*;
-use sinex_events::{event_types, EventFactory};
-use sinex_test_utils::{assertions, events};
 use async_trait::async_trait;
+use serde_json::json;
 use sinex_core_types::{CoreError, EventSender};
-use sinex_db::queries::{EventQueries, CheckpointQueries, OperationQueries};
+use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_events::{event_types, EventFactory};
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{assertions, events};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Command;
@@ -25,7 +26,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use serde_json::json;
 
 // =============================================================================
 // FULL SYSTEM STARTUP TESTS
@@ -132,7 +132,11 @@ async fn test_database_startup_health(pool: &DbPool) -> AnyhowResult<bool> {
         let result = sqlx::query!("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'core' AND table_name = $1) as exists", table)
             .fetch_one(pool)
             .await?;
-        assert!(result.exists.unwrap(), "Table {} should be accessible", table);
+        assert!(
+            result.exists.unwrap(),
+            "Table {} should be accessible",
+            table
+        );
     }
 
     // NOTE: TimescaleDB hypertable check removed - this is now handled by migrations
@@ -182,10 +186,11 @@ async fn test_event_sources_startup(config: &serde_json::Value) -> AnyhowResult<
     let _source_handles: Vec<tokio::task::JoinHandle<()>> = Vec::new();
     let healthy_sources = Arc::new(AtomicBool::new(true));
 
-    let enabled_events = config.get("enabled_events")
+    let enabled_events = config
+        .get("enabled_events")
         .and_then(|v| v.as_array())
         .unwrap_or(&Vec::new());
-    
+
     for event_type_value in enabled_events {
         let event_type = event_type_value.as_str().unwrap_or("unknown");
         let source_name = event_type.split('.').next().unwrap_or("unknown");
@@ -283,25 +288,25 @@ async fn test_clipboard_source_health() -> AnyhowResult<bool> {
 async fn test_worker_system_startup(pool: &DbPool) -> AnyhowResult<bool> {
     // NOTE: Work queue system has been replaced by Redis Streams in the satellite architecture
     // Workers now consume events from Redis Streams instead of database work queues
-    
+
     // Test that we can insert and query events (basic worker functionality)
     let factory = EventFactory::new("worker_startup_test");
     let test_event = factory.create_event("system.health_check", json!({"test": true}));
-    
+
     // Insert event using the queries API
     let event_id = EventQueries::insert_event(&test_event)
         .execute_returning::<(sinex_ulid::Ulid,)>(pool)
         .await?
         .0;
-    
+
     // Verify event was inserted
     let count = EventQueries::count_events()
         .filter("id", QueryParam::Ulid(event_id))
         .execute_scalar::<i64>(pool)
         .await?;
-    
+
     assert_eq!(count, 1, "Event should be inserted");
-    
+
     Ok(true)
 }
 
@@ -365,10 +370,11 @@ async fn test_partial_system_startup(config: &serde_json::Value) -> AnyhowResult
     let successful_sources = Arc::new(AtomicBool::new(false));
     let _failed_sources = Arc::new(AtomicBool::new(false));
 
-    let enabled_events = config.get("enabled_events")
+    let enabled_events = config
+        .get("enabled_events")
         .and_then(|v| v.as_array())
         .unwrap_or(&Vec::new());
-    
+
     for event_type_value in enabled_events {
         let event_type = event_type_value.as_str().unwrap_or("unknown");
         let source_name = event_type.split('.').next().unwrap_or("unknown");
@@ -567,10 +573,10 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
     let test_event = factory.create_event(
         "comprehensive.test",
         json!({
-            "test_phase": "abstraction_integration", 
+            "test_phase": "abstraction_integration",
             "abstractions": ["ValidationChain", "ErrorContext", "ChannelSenderExt"],
             "db_url": db_url,
-        })
+        }),
     );
 
     let event_id = assert_event_inserted_with_context(
@@ -630,7 +636,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 }
 
 // =============================================================================
-// EVENT SOURCE RESILIENCE TESTS  
+// EVENT SOURCE RESILIENCE TESTS
 // =============================================================================
 
 // NOTE: EventSource trait has been replaced by StatefulStreamProcessor in the satellite architecture.
@@ -680,8 +686,11 @@ async fn test_database_connection_recovery(pool: &DbPool) -> AnyhowResult<bool> 
         "Normal database operation should work"
     );
 
-    let timeout_result =
-        tokio::time::timeout(Duration::from_millis(100), sinex_db::insert_event(pool, &test_event)).await;
+    let timeout_result = tokio::time::timeout(
+        Duration::from_millis(100),
+        sinex_db::insert_event(pool, &test_event),
+    )
+    .await;
 
     let connection_resilient = match timeout_result {
         Ok(Ok(_)) => true,
@@ -744,7 +753,10 @@ async fn test_event_buffering_during_outage(pool: &DbPool) -> AnyhowResult<bool>
         "All buffered events should be processed on recovery"
     );
 
-    let count = EventQueries::count_by_source("buffering_test".to_string()).fetch_one::<(i64,)>(&pool).await.map(|r| r.0)?;
+    let count = EventQueries::count_by_source("buffering_test".to_string())
+        .fetch_one::<(i64,)>(&pool)
+        .await
+        .map(|r| r.0)?;
     pretty_assertions::assert_eq!(count, 50, "All events should be persisted in database");
 
     Ok(true)
@@ -970,12 +982,10 @@ async fn test_component_health_checks(
 
 async fn check_database_health(pool: &DbPool) -> AnyhowResult<HealthStatus> {
     match OperationQueries::health_check_basic(pool).await {
-        Ok(true) => {
-            match sinex_db::count_events(pool).await {
-                Ok(_) => Ok(HealthStatus::Healthy),
-                Err(_) => Ok(HealthStatus::Degraded),
-            }
-        }
+        Ok(true) => match sinex_db::count_events(pool).await {
+            Ok(_) => Ok(HealthStatus::Healthy),
+            Err(_) => Ok(HealthStatus::Degraded),
+        },
         _ => Ok(HealthStatus::Unhealthy),
     }
 }
@@ -1267,9 +1277,9 @@ async fn test_exo_cli_error_handling(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 mod mock_types {
+    use anyhow::Result as AnyhowResult;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
-    use anyhow::Result as AnyhowResult;
 
     #[derive(Clone, Debug)]
     pub enum SystemdEvent {
@@ -1726,9 +1736,13 @@ async fn test_event_processing_with_annex_blobs(
     let mut processed_events = Vec::new();
 
     for (i, event_id) in event_ids.iter().enumerate() {
-        let claimed_items =
-            OperationQueries::claim_work_queue_items(pool, "annex-test-agent", &format!("annex-worker-{}", i), 1)
-                .await?;
+        let claimed_items = OperationQueries::claim_work_queue_items(
+            pool,
+            "annex-test-agent",
+            &format!("annex-worker-{}", i),
+            1,
+        )
+        .await?;
 
         assert!(
             !claimed_items.is_empty(),
@@ -1772,7 +1786,8 @@ async fn test_event_processing_with_annex_blobs(
     pretty_assertions::assert_eq!(processed_events.len(), 3, "All events should be processed");
 
     let remaining_work =
-        OperationQueries::claim_work_queue_items(pool, "annex-test-agent", "cleanup-worker", 10).await?;
+        OperationQueries::claim_work_queue_items(pool, "annex-test-agent", "cleanup-worker", 10)
+            .await?;
     assert!(remaining_work.is_empty(), "No work should remain in queue");
 
     println!("✅ Event processing with git-annex blob integration successful");
@@ -1865,7 +1880,8 @@ async fn test_annex_operation_failure_handling(pool: &DbPool) -> AnyhowResult<()
         );
     }
 
-    let error_count = EventQueries::count_events_by_payload_field(pool, "storage_type", "failed_annex").await?;
+    let error_count =
+        EventQueries::count_events_by_payload_field(pool, "storage_type", "failed_annex").await?;
 
     pretty_assertions::assert_eq!(error_count, 4, "All failure scenarios should be recorded");
 

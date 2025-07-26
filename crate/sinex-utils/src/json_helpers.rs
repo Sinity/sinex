@@ -3,9 +3,9 @@
 //! This module provides utilities for parsing JSON with consistent
 //! error context and validation.
 
-use sinex_error::{CoreError, Result};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
+use sinex_error::{CoreError, Result};
 
 /// Parse JSON from a string with error context
 pub fn parse_json<T: DeserializeOwned>(
@@ -43,7 +43,10 @@ pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> 
     serde_json::from_str(json_str).map_err(|e| {
         CoreError::serialization(format!("Failed to parse {} as JSON", context_type))
             .with_operation(operation)
-            .with_context("json_preview", json_str.chars().take(100).collect::<String>())
+            .with_context(
+                "json_preview",
+                json_str.chars().take(100).collect::<String>(),
+            )
             .with_context("error", e.to_string())
             .build()
     })
@@ -60,7 +63,13 @@ pub fn extract_field<T: DeserializeOwned>(
             .with_operation(operation)
             .with_context(
                 "available_fields",
-                format!("{:?}", value.as_object().map(|o| o.keys().collect::<Vec<_>>()).unwrap_or_default()),
+                format!(
+                    "{:?}",
+                    value
+                        .as_object()
+                        .map(|o| o.keys().collect::<Vec<_>>())
+                        .unwrap_or_default()
+                ),
             )
             .build()
     })?;

@@ -14,8 +14,6 @@
 // - **Performance Under Load**: Concurrent processing and resource management
 // - **Data Consistency Workflows**: Cross-component data integrity verification
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::{events, generators, satellite_test_utils};
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use redis::{cmd, AsyncCommands};
@@ -30,6 +28,8 @@ use sinex_satellite_sdk::{
     stream_processor::Checkpoint,
     StatefulStreamProcessor,
 };
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::{events, generators, satellite_test_utils};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;

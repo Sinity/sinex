@@ -43,17 +43,17 @@ impl SatelliteVersion {
             is_dirty: satellite_is_dirty(),
         }
     }
-    
+
     /// Compare versions for leadership election (newer version wins)
     pub fn is_newer_than(&self, other: &SatelliteVersion) -> bool {
         self.version > other.version
     }
-    
+
     /// Check if this is a production build (not dirty, not on dev branch)
     pub fn is_production_build(&self) -> bool {
         !self.is_dirty && !self.branch.starts_with("dev") && self.branch != "HEAD"
     }
-    
+
     /// Get age of this build in seconds
     pub fn build_age_seconds(&self) -> Option<u64> {
         let build_time = chrono::DateTime::parse_from_rfc3339(&self.build_timestamp).ok()?;
@@ -61,14 +61,13 @@ impl SatelliteVersion {
         let duration = now.signed_duration_since(build_time.with_timezone(&chrono::Utc));
         Some(duration.num_seconds().max(0) as u64)
     }
-    
+
     /// Create version summary for logging
     pub fn summary(&self) -> String {
-        format!("{} ({}@{}, built {})", 
-                self.version, 
-                self.commit_hash, 
-                self.branch,
-                self.build_timestamp)
+        format!(
+            "{} ({}@{}, built {})",
+            self.version, self.commit_hash, self.branch, self.build_timestamp
+        )
     }
 }
 
@@ -121,10 +120,8 @@ pub struct SatelliteInstance {
 
 impl SatelliteInstance {
     pub fn new(instance_id: String, service_name: String) -> Self {
-        let host_name = gethostname::gethostname()
-            .to_string_lossy()
-            .to_string();
-        
+        let host_name = gethostname::gethostname().to_string_lossy().to_string();
+
         Self {
             instance_id,
             version: SatelliteVersion::current(),
@@ -133,15 +130,12 @@ impl SatelliteInstance {
             host_name,
         }
     }
-    
+
     /// Get instance uptime in seconds
     pub fn uptime_seconds(&self) -> u64 {
-        self.start_time
-            .elapsed()
-            .unwrap_or_default()
-            .as_secs()
+        self.start_time.elapsed().unwrap_or_default().as_secs()
     }
-    
+
     /// Check if this instance should be leader over another
     pub fn should_be_leader_over(&self, other: &SatelliteInstance) -> bool {
         match self.version.cmp(&other.version) {
@@ -153,14 +147,16 @@ impl SatelliteInstance {
             }
         }
     }
-    
+
     /// Create instance summary for logging
     pub fn summary(&self) -> String {
-        format!("{} v{} on {} (up {}s)", 
-                self.service_name,
-                self.version.version,
-                self.host_name,
-                self.uptime_seconds())
+        format!(
+            "{} v{} on {} (up {}s)",
+            self.service_name,
+            self.version.version,
+            self.host_name,
+            self.uptime_seconds()
+        )
     }
 }
 
@@ -168,8 +164,7 @@ impl SatelliteInstance {
 
 /// Get semantic version of the satellite
 pub fn satellite_version() -> Version {
-    Version::from_str(env!("SATELLITE_VERSION"))
-        .expect("Invalid satellite version")
+    Version::from_str(env!("SATELLITE_VERSION")).expect("Invalid satellite version")
 }
 
 /// Get full version string with build metadata
@@ -184,7 +179,8 @@ pub fn satellite_commit_hash() -> String {
 
 /// Get git commit count (used as patch version)
 pub fn satellite_commit_count() -> u32 {
-    env!("SATELLITE_COMMIT_COUNT").parse()
+    env!("SATELLITE_COMMIT_COUNT")
+        .parse()
         .expect("Invalid commit count")
 }
 
@@ -200,7 +196,8 @@ pub fn satellite_build_timestamp() -> String {
 
 /// Check if working directory was dirty during build
 pub fn satellite_is_dirty() -> bool {
-    env!("SATELLITE_IS_DIRTY").parse()
+    env!("SATELLITE_IS_DIRTY")
+        .parse()
         .expect("Invalid dirty flag")
 }
 
@@ -238,7 +235,7 @@ mod tests {
             build_timestamp: "2023-01-01T00:00:00Z".to_string(),
             is_dirty: false,
         };
-        
+
         let v2 = SatelliteVersion {
             version: Version::new(1, 0, 101),
             full_version: "1.0.101".to_string(),
@@ -248,7 +245,7 @@ mod tests {
             build_timestamp: "2023-01-01T01:00:00Z".to_string(),
             is_dirty: false,
         };
-        
+
         assert!(v2.is_newer_than(&v1));
         assert!(!v1.is_newer_than(&v2));
         assert!(v2 > v1);
@@ -265,7 +262,7 @@ mod tests {
             build_timestamp: "2023-01-01T00:00:00Z".to_string(),
             is_dirty: false,
         };
-        
+
         let dirty = SatelliteVersion {
             version: Version::new(1, 0, 100),
             full_version: "1.0.100+abc12345.dirty".to_string(),
@@ -275,7 +272,7 @@ mod tests {
             build_timestamp: "2023-01-01T00:00:00Z".to_string(),
             is_dirty: true,
         };
-        
+
         // Same version, but clean build should be preferred
         assert!(clean > dirty);
     }

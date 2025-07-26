@@ -130,7 +130,7 @@ pub fn auto_resource_metrics(_attr: TokenStream, item: TokenStream) -> TokenStre
 /// Automatic satellite metrics for trait implementations
 pub fn auto_satellite_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input_impl = parse_macro_input!(item as ItemImpl);
-    
+
     // Parse attributes to extract processor_type and labels
     let attr_str = attr.to_string();
     let _processor_type = if let Some(start) = attr_str.find("processor_type = \"") {

@@ -12,13 +12,13 @@ use serde_json::Value;
 use std::time::{Duration, Instant};
 use tracing::{debug, info};
 
+use crate::constants::tables;
+use crate::queries::IntegrityQueries;
 use crate::validation::{
     CheckpointInconsistency, DataIntegrityValidator, IntegrityCheckReport, IntegritySeverity,
     SchemaViolation, UlidOrderingViolation,
 };
 use crate::RawEvent;
-use crate::queries::IntegrityQueries;
-use crate::constants::tables;
 use sinex_ulid::Ulid;
 
 /// High-level integrity testing orchestrator
@@ -747,7 +747,7 @@ pub mod checkpoint_verification {
             processed_count: Option<i64>,
             last_activity: Option<DateTime<Utc>>,
         }
-        
+
         let checkpoint = IntegrityQueries::get_checkpoint(automaton_name.to_string())
             .fetch_optional::<CheckpointDetail>(pool)
             .await?;

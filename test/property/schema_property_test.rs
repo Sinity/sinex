@@ -1,9 +1,9 @@
-use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::json;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{event_types, services, EventFactory};
+use sinex_test_utils::prelude::*;
 
 /// Property tests for schema validation functionality
 ///

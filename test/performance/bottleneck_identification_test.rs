@@ -4,10 +4,10 @@
 // connection limits, memory constraints, CPU saturation, and I/O limitations.
 // Provides automated bottleneck detection and performance optimization guidance.
 
-use sinex_test_utils::prelude::*;
 use serde_json::json;
-use sinex_events::{EventFactory, sources, event_types};
+use sinex_events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
+use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -50,12 +50,12 @@ pub enum BottleneckSeverity {
 
 #[derive(Debug, Clone)]
 pub struct BottleneckMetrics {
-    pub resource_utilization: f64,      // 0.0 to 1.0
+    pub resource_utilization: f64, // 0.0 to 1.0
     pub queue_length: usize,
     pub wait_time: StdDuration,
     pub error_rate: f64,
-    pub throughput_degradation: f64,    // 0.0 to 1.0 (1.0 = no degradation)
-    pub latency_increase: f64,          // multiplier (1.0 = no increase)
+    pub throughput_degradation: f64, // 0.0 to 1.0 (1.0 = no degradation)
+    pub latency_increase: f64,       // multiplier (1.0 = no increase)
 }
 
 /// Bottleneck detector
@@ -89,7 +89,10 @@ impl BottleneckDetector {
             .push(duration);
 
         if success {
-            *self.success_counts.entry(operation.to_string()).or_insert(0) += 1;
+            *self
+                .success_counts
+                .entry(operation.to_string())
+                .or_insert(0) += 1;
         } else {
             *self.error_counts.entry(operation.to_string()).or_insert(0) += 1;
         }
@@ -144,7 +147,9 @@ impl BottleneckDetector {
     }
 
     fn analyze_database_bottlenecks(&self) -> Option<BottleneckAnalysis> {
-        let db_operations = self.operation_timings.keys()
+        let db_operations = self
+            .operation_timings
+            .keys()
             .filter(|k| k.contains("database") || k.contains("insert") || k.contains("query"))
             .collect::<Vec<_>>();
 
@@ -203,7 +208,8 @@ impl BottleneckDetector {
             severity = BottleneckSeverity::Critical;
         }
 
-        let recommendations = self.generate_database_recommendations(&symptoms, avg_db_latency, db_error_rate);
+        let recommendations =
+            self.generate_database_recommendations(&symptoms, avg_db_latency, db_error_rate);
 
         Some(BottleneckAnalysis {
             bottleneck_type: BottleneckType::DatabaseConnections,
@@ -224,7 +230,9 @@ impl BottleneckDetector {
     }
 
     fn analyze_memory_bottlenecks(&self) -> Option<BottleneckAnalysis> {
-        let memory_utilization = self.resource_utilization.get("memory")
+        let memory_utilization = self
+            .resource_utilization
+            .get("memory")
             .map(|utils| utils.iter().sum::<f64>() / utils.len() as f64)
             .unwrap_or(0.0);
 
@@ -246,7 +254,9 @@ impl BottleneckDetector {
         }
 
         // Check for memory-related operation slowdowns
-        let memory_operations = self.operation_timings.keys()
+        let memory_operations = self
+            .operation_timings
+            .keys()
             .filter(|k| k.contains("memory") || k.contains("large"))
             .collect::<Vec<_>>();
 
@@ -284,7 +294,11 @@ impl BottleneckDetector {
                 wait_time: StdDuration::from_millis(0),
                 error_rate: 0.0,
                 throughput_degradation: (1.0 - memory_utilization.max(0.8)).max(0.0),
-                latency_increase: if memory_utilization > 0.8 { memory_utilization * 2.0 } else { 1.0 },
+                latency_increase: if memory_utilization > 0.8 {
+                    memory_utilization * 2.0
+                } else {
+                    1.0
+                },
             },
             recommendations,
             confidence: 0.7,
@@ -292,7 +306,9 @@ impl BottleneckDetector {
     }
 
     fn analyze_redis_bottlenecks(&self) -> Option<BottleneckAnalysis> {
-        let redis_operations = self.operation_timings.keys()
+        let redis_operations = self
+            .operation_timings
+            .keys()
             .filter(|k| k.contains("redis") || k.contains("stream"))
             .collect::<Vec<_>>();
 
@@ -369,7 +385,9 @@ impl BottleneckDetector {
 
     fn analyze_application_bottlenecks(&self) -> Option<BottleneckAnalysis> {
         // Look for operations that are consistently slow but not due to external resources
-        let app_operations = self.operation_timings.keys()
+        let app_operations = self
+            .operation_timings
+            .keys()
             .filter(|k| !k.contains("database") && !k.contains("redis") && !k.contains("memory"))
             .collect::<Vec<_>>();
 
@@ -427,7 +445,12 @@ impl BottleneckDetector {
         })
     }
 
-    fn generate_database_recommendations(&self, symptoms: &[String], avg_latency: StdDuration, error_rate: f64) -> Vec<String> {
+    fn generate_database_recommendations(
+        &self,
+        symptoms: &[String],
+        avg_latency: StdDuration,
+        error_rate: f64,
+    ) -> Vec<String> {
         let mut recommendations = Vec::new();
 
         if avg_latency > StdDuration::from_millis(100) {
@@ -466,17 +489,29 @@ impl BottleneckDetector {
             println!("\n🚧 Bottleneck: {:?}", analysis.bottleneck_type);
             println!("   Severity: {:?}", analysis.severity);
             println!("   Confidence: {:.1}%", analysis.confidence * 100.0);
-            
+
             if !analysis.affected_operations.is_empty() {
                 println!("   Affected operations: {:?}", analysis.affected_operations);
             }
-            
+
             println!("   📊 Metrics:");
-            println!("     - Resource utilization: {:.1}%", analysis.metrics.resource_utilization * 100.0);
-            println!("     - Error rate: {:.2}%", analysis.metrics.error_rate * 100.0);
+            println!(
+                "     - Resource utilization: {:.1}%",
+                analysis.metrics.resource_utilization * 100.0
+            );
+            println!(
+                "     - Error rate: {:.2}%",
+                analysis.metrics.error_rate * 100.0
+            );
             println!("     - Wait time: {:?}", analysis.metrics.wait_time);
-            println!("     - Throughput degradation: {:.1}%", (1.0 - analysis.metrics.throughput_degradation) * 100.0);
-            println!("     - Latency increase: {:.1}x", analysis.metrics.latency_increase);
+            println!(
+                "     - Throughput degradation: {:.1}%",
+                (1.0 - analysis.metrics.throughput_degradation) * 100.0
+            );
+            println!(
+                "     - Latency increase: {:.1}x",
+                analysis.metrics.latency_increase
+            );
 
             if !analysis.symptoms.is_empty() {
                 println!("   ⚠️  Symptoms:");
@@ -504,39 +539,39 @@ impl BottleneckDetector {
 async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
-    
+
     println!("🔍 Testing database bottleneck identification");
-    
+
     // Phase 1: Normal database operations
     println!("\n✅ Phase 1: Normal database operations");
-    
+
     for i in 0..50 {
         let start = Instant::now();
-        
+
         let factory = EventFactory::new("bottleneck-test");
         let event = factory.create_event(
             event_types::test::BOTTLENECK_DATABASE_NORMAL,
             json!({
                 "iteration": i,
                 "phase": "normal"
-            })
+            }),
         );
-        
+
         let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
-        
+
         detector.record_operation("database_insert", duration, result.is_ok());
-        
+
         if i % 10 == 0 {
             println!("    Completed {} normal operations", i + 1);
         }
     }
-    
+
     // Phase 2: Simulate connection pool exhaustion
     println!("\n⚠️  Phase 2: Simulating database bottleneck");
-    
+
     let mut held_connections = Vec::new();
-    
+
     // Hold most connections to create bottleneck
     let connections_to_hold = (pool.size() * 80 / 100) as usize; // Hold 80% of connections
     for _ in 0..connections_to_hold {
@@ -544,78 +579,91 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult
             held_connections.push(conn);
         }
     }
-    
-    println!("    Held {} connections, testing bottleneck...", held_connections.len());
-    
+
+    println!(
+        "    Held {} connections, testing bottleneck...",
+        held_connections.len()
+    );
+
     // Try operations with limited connections
     for i in 0..30 {
         let start = Instant::now();
-        
+
         let factory = EventFactory::new("bottleneck-test");
-        let event = factory.create_event(
-            event_types::test::BOTTLENECK_DATABASE_LIMITED,
-            json!({
-                "iteration": i,
-                "phase": "bottleneck"
-            }))
+        let event = factory
+            .create_event(
+                event_types::test::BOTTLENECK_DATABASE_LIMITED,
+                json!({
+                    "iteration": i,
+                    "phase": "bottleneck"
+                }),
+            )
             .build();
-        
+
         // Set timeout to avoid hanging
         let result = tokio::time::timeout(
             StdDuration::from_millis(200),
-            sinex_db::insert_event_with_validator(pool, &event, None)
-        ).await;
-        
+            sinex_db::insert_event_with_validator(pool, &event, None),
+        )
+        .await;
+
         let duration = start.elapsed();
         let success = result.is_ok() && result.unwrap().is_ok();
-        
+
         detector.record_operation("database_insert", duration, success);
-        
+
         if !success && i < 5 {
             println!("      Operation {} failed (expected during bottleneck)", i);
         }
     }
-    
+
     // Release connections
     drop(held_connections);
-    
+
     // Phase 3: Recovery
     println!("\n🔄 Phase 3: Recovery after bottleneck");
-    
+
     for i in 0..20 {
         let start = Instant::now();
-        
+
         let factory = EventFactory::new("bottleneck-test");
         let event = factory.create_event(
             event_types::test::BOTTLENECK_DATABASE_RECOVERY,
             json!({
                 "iteration": i,
                 "phase": "recovery"
-            })
+            }),
         );
-        
+
         let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
-        
+
         detector.record_operation("database_insert", duration, result.is_ok());
     }
-    
+
     // Analyze bottlenecks
     let analyses = detector.analyze_bottlenecks();
     detector.print_bottleneck_analysis(&analyses);
-    
+
     // Should detect database bottleneck
-    let db_bottleneck = analyses.iter()
+    let db_bottleneck = analyses
+        .iter()
         .find(|a| a.bottleneck_type == BottleneckType::DatabaseConnections);
-    
+
     assert!(db_bottleneck.is_some(), "Should detect database bottleneck");
-    
+
     if let Some(bottleneck) = db_bottleneck {
-        assert!(bottleneck.severity != BottleneckSeverity::None, "Database bottleneck should have non-zero severity");
-        assert!(bottleneck.metrics.error_rate > 0.1, "Should show elevated error rate during bottleneck");
+        assert!(
+            bottleneck.severity != BottleneckSeverity::None,
+            "Database bottleneck should have non-zero severity"
+        );
+        assert!(
+            bottleneck.metrics.error_rate > 0.1,
+            "Should show elevated error rate during bottleneck"
+        );
         println!("    ✅ Database bottleneck correctly identified");
     }
-    
+
     println!("✅ Database bottleneck identification test passed");
     Ok(())
 }
@@ -625,37 +673,41 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult
 async fn test_memory_bottleneck_identification(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
-    
+
     println!("🔍 Testing memory bottleneck identification");
-    
+
     // Simulate memory pressure scenarios
     println!("\n🧠 Simulating memory pressure");
-    
+
     let memory_allocations = vec![
         (0.3, "Low memory usage"),
         (0.6, "Medium memory usage"),
         (0.85, "High memory usage"),
         (0.95, "Critical memory usage"),
     ];
-    
+
     for (utilization, description) in memory_allocations {
-        println!("    Testing: {} ({:.1}% utilization)", description, utilization * 100.0);
-        
+        println!(
+            "    Testing: {} ({:.1}% utilization)",
+            description,
+            utilization * 100.0
+        );
+
         detector.record_resource_utilization("memory", utilization);
-        
+
         // Simulate operations under memory pressure
         for i in 0..20 {
             let start = Instant::now();
-            
+
             // Simulate longer operations under memory pressure
             let delay = if utilization > 0.8 {
                 StdDuration::from_millis((utilization * 100.0) as u64)
             } else {
                 StdDuration::from_millis(10)
             };
-            
+
             tokio::time::sleep(delay).await;
-            
+
             let factory = EventFactory::new("memory-bottleneck-test");
             let event = factory.create_event(
                 event_types::test::MEMORY_BOTTLENECK_TEST,
@@ -663,32 +715,42 @@ async fn test_memory_bottleneck_identification(ctx: TestContext) -> TestResult {
                     "iteration": i,
                     "memory_utilization": utilization,
                     "large_data": "x".repeat((utilization * 1000.0) as usize)
-                })
+                }),
             );
-            
+
             let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
             let duration = start.elapsed();
-            
+
             detector.record_operation("memory_operation", duration, result.is_ok());
         }
     }
-    
+
     // Analyze memory bottlenecks
     let analyses = detector.analyze_bottlenecks();
     detector.print_bottleneck_analysis(&analyses);
-    
+
     // Should detect memory bottleneck at high utilization
-    let memory_bottleneck = analyses.iter()
+    let memory_bottleneck = analyses
+        .iter()
         .find(|a| a.bottleneck_type == BottleneckType::Memory);
-    
-    assert!(memory_bottleneck.is_some(), "Should detect memory bottleneck");
-    
+
+    assert!(
+        memory_bottleneck.is_some(),
+        "Should detect memory bottleneck"
+    );
+
     if let Some(bottleneck) = memory_bottleneck {
-        assert!(bottleneck.metrics.resource_utilization > 0.8, "Should show high memory utilization");
-        assert!(bottleneck.severity != BottleneckSeverity::None, "Memory bottleneck should have non-zero severity");
+        assert!(
+            bottleneck.metrics.resource_utilization > 0.8,
+            "Should show high memory utilization"
+        );
+        assert!(
+            bottleneck.severity != BottleneckSeverity::None,
+            "Memory bottleneck should have non-zero severity"
+        );
         println!("    ✅ Memory bottleneck correctly identified");
     }
-    
+
     println!("✅ Memory bottleneck identification test passed");
     Ok(())
 }
@@ -697,62 +759,64 @@ async fn test_memory_bottleneck_identification(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_redis_bottleneck_identification(ctx: TestContext) -> TestResult {
     let mut detector = BottleneckDetector::new();
-    
+
     println!("🔍 Testing Redis bottleneck identification");
-    
+
     // Test normal Redis operations
     println!("\n📡 Testing normal Redis operations");
-    
+
     if let Ok(redis_client) = RedisStreamClient::new("redis://localhost:6379")?.await {
         let stream_key = "sinex:bottleneck:test-stream";
-        
+
         // Normal operations
         for i in 0..50 {
             let start = Instant::now();
-            
+
             let message_data = json!({
                 "message_id": i,
                 "phase": "normal",
                 "timestamp": chrono::Utc::now().to_rfc3339()
             });
-            
+
             let result = redis_client.xadd(stream_key, "*", &message_data).await;
             let duration = start.elapsed();
-            
+
             detector.record_operation("redis_stream_write", duration, result.is_ok());
         }
-        
+
         // Simulate Redis stress
         println!("\n⚠️  Simulating Redis stress");
-        
+
         // Rapid operations to stress Redis
         for i in 0..200 {
             let start = Instant::now();
-            
+
             let large_message_data = json!({
                 "message_id": i,
                 "phase": "stress",
                 "large_data": "x".repeat(10000), // 10KB per message
                 "timestamp": chrono::Utc::now().to_rfc3339()
             });
-            
-            let result = redis_client.xadd(stream_key, "*", &large_message_data).await;
+
+            let result = redis_client
+                .xadd(stream_key, "*", &large_message_data)
+                .await;
             let duration = start.elapsed();
-            
+
             detector.record_operation("redis_stream_write", duration, result.is_ok());
-            
+
             if i % 50 == 0 {
                 println!("    Completed {} stress operations", i + 1);
             }
-            
+
             // No delay to stress Redis
         }
-        
+
         // Cleanup
         let _ = redis_client.del(stream_key).await;
     } else {
         println!("    ⚠️  Redis not available, simulating results");
-        
+
         // Simulate Redis bottleneck with artificial timings
         for i in 0..100 {
             let duration = if i < 50 {
@@ -760,27 +824,31 @@ async fn test_redis_bottleneck_identification(ctx: TestContext) -> TestResult {
             } else {
                 StdDuration::from_millis(100) // Bottlenecked
             };
-            
+
             let success = if i < 50 { true } else { i % 5 != 0 }; // Simulate failures
-            
+
             detector.record_operation("redis_stream_write", duration, success);
         }
     }
-    
+
     // Analyze Redis bottlenecks
     let analyses = detector.analyze_bottlenecks();
     detector.print_bottleneck_analysis(&analyses);
-    
+
     // Should detect Redis bottleneck
-    let redis_bottleneck = analyses.iter()
+    let redis_bottleneck = analyses
+        .iter()
         .find(|a| a.bottleneck_type == BottleneckType::RedisMemory);
-    
+
     if let Some(bottleneck) = redis_bottleneck {
-        println!("    ✅ Redis bottleneck identified with severity: {:?}", bottleneck.severity);
+        println!(
+            "    ✅ Redis bottleneck identified with severity: {:?}",
+            bottleneck.severity
+        );
     } else {
         println!("    ℹ️  No Redis bottleneck detected (may be expected with light load)");
     }
-    
+
     println!("✅ Redis bottleneck identification test passed");
     Ok(())
 }
@@ -790,55 +858,62 @@ async fn test_redis_bottleneck_identification(ctx: TestContext) -> TestResult {
 async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
     let shared_detector = Arc::new(Mutex::new(BottleneckDetector::new()));
-    
+
     println!("🔍 Testing concurrent bottleneck identification");
-    
+
     let worker_count = 20;
     let operations_per_worker = 50;
-    
-    println!("    Configuration: {} workers, {} ops each", worker_count, operations_per_worker);
-    
+
+    println!(
+        "    Configuration: {} workers, {} ops each",
+        worker_count, operations_per_worker
+    );
+
     let worker_handles = (0..worker_count)
         .map(|worker_id| {
             let pool_clone = pool.clone();
             let detector = shared_detector.clone();
-            
+
             tokio::spawn(async move {
                 for op_id in 0..operations_per_worker {
                     let concurrent_ops = {
                         let detector_lock = detector.lock().await;
                         detector_lock.increment_concurrent_operations()
                     };
-                    
+
                     let start = Instant::now();
-                    
+
                     // Simulate variable operation complexity
                     let operation_type = op_id % 4;
                     let operation_name = match operation_type {
                         0 => "concurrent_light",
-                        1 => "concurrent_medium", 
+                        1 => "concurrent_medium",
                         2 => "concurrent_heavy",
                         _ => "concurrent_variable",
                     };
-                    
+
                     // Add artificial delay based on concurrent load
                     let base_delay = match operation_type {
-                        0 => 5,   // Light
-                        1 => 20,  // Medium
-                        2 => 50,  // Heavy
-                        _ => 30,  // Variable
+                        0 => 5,  // Light
+                        1 => 20, // Medium
+                        2 => 50, // Heavy
+                        _ => 30, // Variable
                     };
-                    
+
                     // Delay increases with concurrent operations
                     let congestion_delay = if concurrent_ops > 10 {
                         (concurrent_ops - 10) * 2
                     } else {
                         0
                     };
-                    
-                    tokio::time::sleep(StdDuration::from_millis((base_delay + congestion_delay) as u64)).await;
-                    
-                    let factory = EventFactory::new(&format!("concurrent-bottleneck-worker-{}", worker_id));
+
+                    tokio::time::sleep(StdDuration::from_millis(
+                        (base_delay + congestion_delay) as u64,
+                    ))
+                    .await;
+
+                    let factory =
+                        EventFactory::new(&format!("concurrent-bottleneck-worker-{}", worker_id));
                     let event = factory.create_event(
                         event_types::test::CONCURRENT_BOTTLENECK_TEST,
                         json!({
@@ -846,49 +921,54 @@ async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResu
                             "operation_id": op_id,
                             "operation_type": operation_name,
                             "concurrent_ops": concurrent_ops
-                        })
+                        }),
                     );
-                    
-                    let result = sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+
+                    let result =
+                        sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
                     let duration = start.elapsed();
-                    
+
                     {
                         let mut detector_lock = detector.lock().await;
                         detector_lock.record_operation(operation_name, duration, result.is_ok());
                         detector_lock.decrement_concurrent_operations();
                     }
-                    
+
                     // Small stagger between operations
                     tokio::time::sleep(StdDuration::from_millis(10)).await;
                 }
             })
         })
         .collect::<Vec<_>>();
-    
+
     // Wait for all workers to complete
     futures::future::join_all(worker_handles).await;
-    
+
     let final_detector = shared_detector.lock().await;
     let analyses = final_detector.analyze_bottlenecks();
     final_detector.print_bottleneck_analysis(&analyses);
-    
+
     // Verify some bottleneck detection occurred
-    let has_app_bottleneck = analyses.iter()
+    let has_app_bottleneck = analyses
+        .iter()
         .any(|a| a.bottleneck_type == BottleneckType::ApplicationLogic);
-    
+
     if has_app_bottleneck {
         println!("    ✅ Application bottleneck detected under concurrent load");
     } else {
         println!("    ℹ️  No application bottleneck detected (may be expected with light load)");
     }
-    
+
     // Verify database consistency
     let concurrent_events = sqlx::query!(
         "SELECT COUNT(*) as count FROM core.events WHERE source LIKE 'concurrent-bottleneck-worker-%'"
     ).fetch_one(pool).await?;
-    
-    println!("    📊 Concurrent events stored: {}", concurrent_events.count.unwrap_or(0));
-    
+
+    println!(
+        "    📊 Concurrent events stored: {}",
+        concurrent_events.count.unwrap_or(0)
+    );
+
     println!("✅ Concurrent bottleneck identification test passed");
     Ok(())
 }

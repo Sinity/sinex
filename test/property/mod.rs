@@ -26,8 +26,8 @@ pub use proptest::prelude::*;
 #[allow(dead_code)]
 pub mod strategies {
     use super::*;
-    use sinex_test_utils::prelude::*;
     use chrono::{DateTime, Utc};
+    use sinex_test_utils::prelude::*;
 
     /// Strategy for generating valid ULID timestamps
     pub fn valid_timestamps() -> impl Strategy<Value = DateTime<Utc>> {
@@ -231,18 +231,20 @@ pub mod strategies {
         if depth == 0 {
             any::<String>().prop_map(|s| serde_json::json!(s)).boxed()
         } else {
-            any::<String>().prop_map(move |s| {
-                let mut obj = serde_json::Map::new();
-                obj.insert("level".to_string(), serde_json::json!(depth));
-                obj.insert("data".to_string(), serde_json::json!(s));
-                if depth > 1 {
-                    obj.insert(
-                        "nested".to_string(),
-                        serde_json::json!({"level": depth - 1}),
-                    );
-                }
-                serde_json::Value::Object(obj)
-            }).boxed()
+            any::<String>()
+                .prop_map(move |s| {
+                    let mut obj = serde_json::Map::new();
+                    obj.insert("level".to_string(), serde_json::json!(depth));
+                    obj.insert("data".to_string(), serde_json::json!(s));
+                    if depth > 1 {
+                        obj.insert(
+                            "nested".to_string(),
+                            serde_json::json!({"level": depth - 1}),
+                        );
+                    }
+                    serde_json::Value::Object(obj)
+                })
+                .boxed()
         }
     }
 
@@ -272,16 +274,18 @@ pub mod strategies {
         if depth == 0 {
             any::<String>().prop_map(|s| serde_json::json!(s)).boxed()
         } else {
-            any::<String>().prop_map(move |s| {
-                let mut current = serde_json::json!(s);
-                for level in 0..depth {
-                    current = serde_json::json!({
-                        "level": level,
-                        "nested": current
-                    });
-                }
-                current
-            }).boxed()
+            any::<String>()
+                .prop_map(move |s| {
+                    let mut current = serde_json::json!(s);
+                    for level in 0..depth {
+                        current = serde_json::json!({
+                            "level": level,
+                            "nested": current
+                        });
+                    }
+                    current
+                })
+                .boxed()
         }
     }
 

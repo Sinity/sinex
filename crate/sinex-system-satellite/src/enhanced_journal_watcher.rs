@@ -5,6 +5,7 @@
 //! Ported from the legacy sinex-events-system implementation with satellite support.
 
 use crate::payloads::*;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
@@ -13,7 +14,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Enhanced journal watcher with historical import and cursor tracking
 pub struct EnhancedJournalWatcher {

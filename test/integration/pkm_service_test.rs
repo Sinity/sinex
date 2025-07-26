@@ -15,14 +15,14 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::generators;
-use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_db::{
     annotations, artifacts, knowledge_graph,
     models::{CreateArtifactInput, CreateEntityInput, CreateRelationInput},
 };
 use sinex_services::pkm::PkmService;
+use sinex_test_utils::generators;
+use sinex_test_utils::prelude::*;
 use sinex_ulid::Ulid;
 use std::collections::{HashMap, HashSet};
 

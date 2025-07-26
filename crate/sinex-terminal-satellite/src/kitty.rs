@@ -23,6 +23,7 @@
 
 use regex::Regex;
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
@@ -33,7 +34,6 @@ use tokio::net::UnixStream;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Kitty window information
 #[derive(Debug, Clone)]
@@ -347,10 +347,7 @@ impl KittyWatcher {
                 });
 
                 let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-                let process_event = factory.create_event(
-                    "process.changed",
-                    process_payload,
-                );
+                let process_event = factory.create_event("process.changed", process_payload);
 
                 if tx.send(process_event).is_err() {
                     warn!("Event channel closed");
@@ -396,10 +393,8 @@ impl KittyWatcher {
                     });
 
                     let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-                    let completion_event = factory.create_event(
-                        "command.completed",
-                        completion_payload,
-                    );
+                    let completion_event =
+                        factory.create_event("command.completed", completion_payload);
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
@@ -461,10 +456,7 @@ impl KittyWatcher {
                 });
 
                 let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-                let tab_focused_event = factory.create_event(
-                    "tab.focused",
-                    tab_focused_payload,
-                );
+                let tab_focused_event = factory.create_event("tab.focused", tab_focused_payload);
 
                 if tx.send(tab_focused_event).is_err() {
                     warn!("Event channel closed");
@@ -514,10 +506,7 @@ impl KittyWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-            let scrollback_event = factory.create_event(
-                "content.streamed",
-                incremental_payload,
-            );
+            let scrollback_event = factory.create_event("content.streamed", incremental_payload);
 
             if tx.send(scrollback_event).is_err() {
                 warn!("Event channel closed");

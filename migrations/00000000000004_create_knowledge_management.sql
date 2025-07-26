@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS km.concepts (
     concept_type TEXT NOT NULL,
     description TEXT,
     metadata JSONB NOT NULL DEFAULT '{}',
-    embedding vector(1536),
+    -- NOTE: embedding field removed - embeddings belong in core.embedding_cache
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_by TEXT,
@@ -16,31 +16,7 @@ CREATE TABLE IF NOT EXISTS km.concepts (
 
 CREATE INDEX idx_concepts_type ON km.concepts (concept_type);
 CREATE INDEX idx_concepts_name ON km.concepts (concept_name);
--- ## Architectural Decision: IVFFlat for Vector Indexes (ADR-005)
--- 
--- We use IVFFlat over HNSW for pgvector indexes because:
--- - **Faster build times**: Important for development iteration
--- - **Lower memory usage**: More efficient for our scale
--- - **Good enough recall**: With proper tuning of lists/probes
--- 
--- Trade-offs:
--- - Requires periodic reindexing if data distribution changes significantly
--- - Need to tune probes parameter for query speed vs recall
--- - May switch to HNSW later if query patterns demand it
---
--- ## Architectural Decision: CPU-based pgvector for Scale (ADR-007)
---
--- We chose to stay with pgvector on CPU rather than external GPU vector DBs because:
--- - **Simplicity**: No additional services to deploy or manage
--- - **Unified data**: Embeddings live with their metadata
--- - **Good enough performance**: ~1800 QPS at 91% recall on 50M vectors
--- - **Cost-effective**: Leverages existing PostgreSQL hardware
---
--- Future options if scale demands:
--- - External GPU vector DB (Milvus, Qdrant) for massive scale
--- - pgvectorscale extension for better CPU performance
--- - Hybrid approach with hot/cold tier separation
-CREATE INDEX idx_concepts_embedding ON km.concepts USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- Note: Vector embeddings documentation moved to docs/roadmap/features/embeddings-and-semantic-search.md
 
 -- Relations between concepts
 CREATE TABLE IF NOT EXISTS km.relations (
@@ -180,19 +156,8 @@ CREATE TABLE IF NOT EXISTS km.llm_interactions (
 CREATE INDEX idx_llm_type_time ON km.llm_interactions (interaction_type, created_at DESC);
 CREATE INDEX idx_llm_model ON km.llm_interactions (model_name, created_at DESC);
 
--- Embeddings cache
-CREATE TABLE IF NOT EXISTS km.embeddings (
-    id ULID PRIMARY KEY DEFAULT gen_ulid(),
-    content_hash TEXT NOT NULL UNIQUE,
-    content_type TEXT NOT NULL,
-    embedding vector(1536) NOT NULL,
-    model_name TEXT NOT NULL,
-    metadata JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_embeddings_hash ON km.embeddings (content_hash);
-CREATE INDEX idx_embeddings_vector ON km.embeddings USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
+-- NOTE: km.embeddings table removed - use core.embedding_cache design from original migrations
+-- See docs/roadmap/features/embeddings-and-semantic-search.md for proper embedding cache schema
 
 -- Add comments
 COMMENT ON TABLE km.concepts IS 'Knowledge graph nodes representing concepts, entities, and ideas';
@@ -201,4 +166,4 @@ COMMENT ON TABLE km.event_annotations IS 'Links between events and concepts for 
 COMMENT ON TABLE km.artifacts IS 'Knowledge artifacts like documents, notes, and references';
 COMMENT ON TABLE km.artifact_revisions IS 'Version history for knowledge artifacts';
 COMMENT ON TABLE km.llm_interactions IS 'History of LLM interactions for knowledge extraction and synthesis';
-COMMENT ON TABLE km.embeddings IS 'Cache of vector embeddings for semantic search';
+-- embeddings table removed - see roadmap docs

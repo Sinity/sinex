@@ -7,11 +7,11 @@
 // - Encoding corruption detection
 // - Large-scale corruption scanning
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::builders::BatchEventBuilder;
 use sinex_db::integrity::{IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::DataCorruptionType;
 use sinex_db::queries::operations::OperationQueries;
+use sinex_db::validation::DataCorruptionType;
+use sinex_test_utils::builders::BatchEventBuilder;
+use sinex_test_utils::prelude::*;
 use uuid::Uuid;
 
 #[sinex_test]
@@ -24,7 +24,10 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
         ("empty_object", json!({})),
         ("malformed_structure", json!({"__proto__": "malicious"})),
         ("oversized_payload", json!({"large": "x".repeat(100_000)})),
-        ("nested_nulls", json!({"data": {"value": null, "items": [null, null]}})),
+        (
+            "nested_nulls",
+            json!({"data": {"value": null, "items": [null, null]}}),
+        ),
     ];
 
     let mut corrupted_event_ids = Vec::new();
@@ -32,12 +35,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     for (scenario, payload) in corruption_scenarios {
         let factory = EventFactory::new("test.corruption");
         let raw_event = factory.create_event(scenario, payload);
-        let event = insert_event_with_validator(
-            &pool,
-            &raw_event,
-            None,
-        )
-        .await;
+        let event = insert_event_with_validator(&pool, &raw_event, None).await;
 
         match event {
             Ok(e) => {
@@ -108,11 +106,9 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> TestResult {
     }
 
     // Cleanup
-    sqlx::query!(
-        "DELETE FROM core.events WHERE source = 'test.corruption'"
-    )
-    .execute(pool)
-    .await?;
+    sqlx::query!("DELETE FROM core.events WHERE source = 'test.corruption'")
+        .execute(pool)
+        .await?;
 
     Ok(())
 }
@@ -221,13 +217,13 @@ async fn test_foreign_key_integrity(ctx: TestContext) -> TestResult {
     let pool = ctx.pool();
 
     // Create a valid event first
-    let event = EventFactory::new("test.integrity")
-        .create_event("parent", json!({"status": "parent"}));
+    let event =
+        EventFactory::new("test.integrity").create_event("parent", json!({"status": "parent"}));
     let parent_event = insert_event(&pool, &event).await?;
 
     // Try to create an event with invalid foreign key references
     let invalid_refs = vec![
-        Ulid::new(), // Non-existent event ID
+        Ulid::new(),                 // Non-existent event ID
         Ulid::from_bytes([255; 16]), // Max ULID
     ];
 
@@ -285,8 +281,7 @@ async fn test_foreign_key_integrity(ctx: TestContext) -> TestResult {
         .data_corruption_indicators
         .iter()
         .filter(|indicator| {
-            indicator.details.contains("reference") || 
-            indicator.details.contains("orphaned")
+            indicator.details.contains("reference") || indicator.details.contains("orphaned")
         })
         .collect();
 
@@ -307,15 +302,17 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
     // Create events with various encoding issues
     let encoding_tests = vec![
         ("invalid_utf8", json!({"text": "Invalid UTF-8: \u{FFFD}"})),
-        ("control_chars", json!({"text": "Control: \u{0000}\u{0001}\u{001F}"})),
+        (
+            "control_chars",
+            json!({"text": "Control: \u{0000}\u{0001}\u{001F}"}),
+        ),
         ("mixed_encoding", json!({"text": "Mixed: café ☕ 咖啡"})),
         ("emoji_stress", json!({"text": "👨‍👩‍👧‍👦🏳️‍🌈🧑‍💻"})),
     ];
 
     for (test_name, payload) in encoding_tests {
-        let event = EventFactory::new("test.encoding")
-            .create_event(test_name, payload);
-        
+        let event = EventFactory::new("test.encoding").create_event(test_name, payload);
+
         match insert_event(&pool, &event).await {
             Ok(e) => println!("Inserted {} event: {}", test_name, e.id),
             Err(e) => println!("Failed to insert {} (expected): {}", test_name, e),
@@ -341,9 +338,9 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> TestResult {
         .data_corruption_indicators
         .iter()
         .filter(|indicator| {
-            matches!(indicator.corruption_type, DataCorruptionType::EncodingError) ||
-            indicator.details.contains("encoding") ||
-            indicator.details.contains("UTF-8")
+            matches!(indicator.corruption_type, DataCorruptionType::EncodingError)
+                || indicator.details.contains("encoding")
+                || indicator.details.contains("UTF-8")
         })
         .collect();
 
@@ -366,10 +363,11 @@ async fn test_large_scale_corruption_scan(ctx: TestContext) -> TestResult {
 
     // Create a mix of valid and corrupt events
     let batch_builder = BatchEventBuilder::new();
-    
+
     // Add valid events
     for i in 0..50 {
-        batch_builder.add_event()
+        batch_builder
+            .add_event()
             .source("test.scan")
             .event_type("valid_event")
             .payload(json!({
@@ -382,19 +380,22 @@ async fn test_large_scale_corruption_scan(ctx: TestContext) -> TestResult {
     // Add events with various issues
     for i in 0..10 {
         // Null payloads
-        batch_builder.add_event()
+        batch_builder
+            .add_event()
             .source("test.scan")
             .event_type("null_payload")
             .payload(json!(null));
 
         // Empty objects
-        batch_builder.add_event()
+        batch_builder
+            .add_event()
             .source("test.scan")
             .event_type("empty_payload")
             .payload(json!({}));
 
         // Large payloads
-        batch_builder.add_event()
+        batch_builder
+            .add_event()
             .source("test.scan")
             .event_type("large_payload")
             .payload(json!({
@@ -423,8 +424,14 @@ async fn test_large_scale_corruption_scan(ctx: TestContext) -> TestResult {
     println!("Large-scale scan completed in {:?}", duration);
     println!("Summary:");
     println!("  Total events checked: {}", results.events_checked);
-    println!("  Corruption indicators: {}", results.check_report.data_corruption_indicators.len());
-    println!("  Schema violations: {}", results.check_report.schema_violations.len());
+    println!(
+        "  Corruption indicators: {}",
+        results.check_report.data_corruption_indicators.len()
+    );
+    println!(
+        "  Schema violations: {}",
+        results.check_report.schema_violations.len()
+    );
     println!("  Warning count: {}", results.check_report.warnings.len());
 
     // Performance assertion
@@ -460,11 +467,7 @@ async fn test_corruption_recovery_suggestions(ctx: TestContext) -> TestResult {
 
     // Create events that will trigger specific recovery suggestions
     let test_scenarios = vec![
-        (
-            "null_payload",
-            json!(null),
-            DataCorruptionType::NullPayload,
-        ),
+        ("null_payload", json!(null), DataCorruptionType::NullPayload),
         (
             "invalid_json",
             json!({"broken": "structure", "nested": {"incomplete": null}}),
@@ -478,9 +481,8 @@ async fn test_corruption_recovery_suggestions(ctx: TestContext) -> TestResult {
     ];
 
     for (scenario, payload, expected_type) in &test_scenarios {
-        let event = EventFactory::new("test.recovery")
-            .create_event(scenario, payload.clone());
-        
+        let event = EventFactory::new("test.recovery").create_event(scenario, payload.clone());
+
         let _ = insert_event(&pool, &event).await;
     }
 
@@ -507,16 +509,15 @@ async fn test_corruption_recovery_suggestions(ctx: TestContext) -> TestResult {
 
         println!(
             "Corruption: {} - Recovery: {}",
-            indicator.corruption_type,
-            indicator.recovery_suggestion
+            indicator.corruption_type, indicator.recovery_suggestion
         );
 
         // Verify suggestions are actionable
         assert!(
-            indicator.recovery_suggestion.contains("export") ||
-            indicator.recovery_suggestion.contains("repair") ||
-            indicator.recovery_suggestion.contains("restore") ||
-            indicator.recovery_suggestion.contains("validate"),
+            indicator.recovery_suggestion.contains("export")
+                || indicator.recovery_suggestion.contains("repair")
+                || indicator.recovery_suggestion.contains("restore")
+                || indicator.recovery_suggestion.contains("validate"),
             "Recovery suggestion should be actionable"
         );
     }
@@ -583,8 +584,7 @@ async fn test_checkpoint_data_corruption(ctx: TestContext) -> TestResult {
         .data_corruption_indicators
         .iter()
         .filter(|indicator| {
-            indicator.details.contains("checkpoint") ||
-            indicator.details.contains("automaton")
+            indicator.details.contains("checkpoint") || indicator.details.contains("automaton")
         })
         .collect();
 

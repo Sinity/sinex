@@ -4,11 +4,11 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::prelude::*;
 use crate::property::strategies::*;
 use proptest::prelude::*;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use sinex_satellite_sdk::stream_processor::Checkpoint;
+use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -42,7 +42,7 @@ proptest! {
             } else {
                 Checkpoint::None
             };
-            
+
             let initial_state = CheckpointState {
                 checkpoint,
                 processed_count,

@@ -141,10 +141,8 @@ mod tests {
     #[sinex_test]
     async fn test_path_traversal_sanitization() {
         let factory = EventFactory::new("../../../etc/passwd");
-        let mut event = factory.create_event(
-            "security.test",
-            json!({"path": "../../sensitive/file.txt"}),
-        );
+        let mut event =
+            factory.create_event("security.test", json!({"path": "../../sensitive/file.txt"}));
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -161,10 +159,7 @@ mod tests {
     #[sinex_test]
     async fn test_null_byte_sanitization() {
         let factory = EventFactory::new("test\0source");
-        let mut event = factory.create_event(
-            "security.test",
-            json!({"data": "test\0value"}),
-        );
+        let mut event = factory.create_event("security.test", json!({"data": "test\0value"}));
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);

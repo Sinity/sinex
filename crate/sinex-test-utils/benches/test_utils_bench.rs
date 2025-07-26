@@ -8,7 +8,7 @@ use tokio::runtime::Runtime;
 
 fn bench_test_context_creation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     c.bench_function("test_context_creation", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -22,26 +22,23 @@ fn bench_test_context_creation(c: &mut Criterion) {
 fn bench_event_creation(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let ctx = rt.block_on(TestContext::with_name("bench")).unwrap();
-    
+
     let mut group = c.benchmark_group("event_creation");
-    
+
     group.bench_function("simple_event", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let event = ctx.event()
-                    .source("bench")
-                    .type_("test")
-                    .build()
-                    .unwrap();
+                let event = ctx.event().source("bench").type_("test").build().unwrap();
                 black_box(event);
             })
         })
     });
-    
+
     group.bench_function("filesystem_event", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let event = ctx.event()
+                let event = ctx
+                    .event()
                     .filesystem()
                     .path("/test/file.txt")
                     .size(1024)
@@ -52,11 +49,12 @@ fn bench_event_creation(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.bench_function("complex_event", |b| {
         b.iter(|| {
             rt.block_on(async {
-                let event = ctx.event()
+                let event = ctx
+                    .event()
                     .source("complex")
                     .type_("test")
                     .field("field1", "value1")
@@ -69,23 +67,23 @@ fn bench_event_creation(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.finish();
 }
 
 fn bench_event_insertion(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("event_insertion");
     group.sample_size(50); // Reduce sample size for database operations
-    
+
     for size in [1, 10, 100].iter() {
         group.throughput(Throughput::Elements(*size as u64));
         group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
             b.iter(|| {
                 rt.block_on(async {
                     let ctx = TestContext::with_name("bench_insert").await.unwrap();
-                    
+
                     for i in 0..size {
                         ctx.event()
                             .source("bench")
@@ -99,13 +97,13 @@ fn bench_event_insertion(c: &mut Criterion) {
             })
         });
     }
-    
+
     group.finish();
 }
 
 fn bench_event_querying(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     // Setup: Insert test data
     let ctx = rt.block_on(TestContext::with_name("bench_query")).unwrap();
     rt.block_on(async {
@@ -119,10 +117,10 @@ fn bench_event_querying(c: &mut Criterion) {
                 .unwrap();
         }
     });
-    
+
     let mut group = c.benchmark_group("event_querying");
     group.sample_size(100);
-    
+
     group.bench_function("query_all", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -131,7 +129,7 @@ fn bench_event_querying(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.bench_function("query_by_source", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -140,7 +138,7 @@ fn bench_event_querying(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.bench_function("query_with_limit", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -149,7 +147,7 @@ fn bench_event_querying(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.bench_function("count_query", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -158,43 +156,44 @@ fn bench_event_querying(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.finish();
 }
 
 fn bench_assertions(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let ctx = rt.block_on(TestContext::with_name("bench_assert")).unwrap();
-    
+
     let mut group = c.benchmark_group("assertions");
-    
+
     group.bench_function("simple_assertion", |b| {
         b.iter(|| {
             let result = ctx.assert("test").eq(&5, &5);
             black_box(result);
         })
     });
-    
+
     group.bench_function("chained_assertions", |b| {
         b.iter(|| {
             let vec = vec![1, 2, 3];
-            let result = ctx.assert("test")
+            let result = ctx
+                .assert("test")
                 .eq(&vec.len(), &3)
                 .and_then(|a| a.not_empty(&vec))
                 .and_then(|a| a.has_size(&vec, 3));
             black_box(result);
         })
     });
-    
+
     group.finish();
 }
 
 fn bench_database_pool(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
-    
+
     let mut group = c.benchmark_group("database_pool");
     group.sample_size(50);
-    
+
     group.bench_function("acquire_database", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -206,7 +205,7 @@ fn bench_database_pool(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.bench_function("concurrent_acquisition", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -219,7 +218,7 @@ fn bench_database_pool(c: &mut Criterion) {
                         })
                     })
                     .collect();
-                
+
                 for handle in handles {
                     let db = handle.await.unwrap();
                     black_box(db);
@@ -227,16 +226,16 @@ fn bench_database_pool(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.finish();
 }
 
 fn bench_mock_operations(c: &mut Criterion) {
     let rt = Runtime::new().unwrap();
     let ctx = rt.block_on(TestContext::with_name("bench_mock")).unwrap();
-    
+
     let mut group = c.benchmark_group("mock_operations");
-    
+
     group.bench_function("filesystem_mock", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -247,7 +246,7 @@ fn bench_mock_operations(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.bench_function("database_mock", |b| {
         b.iter(|| {
             rt.block_on(async {
@@ -258,7 +257,7 @@ fn bench_mock_operations(c: &mut Criterion) {
             })
         })
     });
-    
+
     group.finish();
 }
 

@@ -63,3 +63,40 @@ All workflows use Nix for reproducible builds:
 3. **Test in CI what runs in production** - Use same Nix derivations
 4. **Keep workflows simple** - Complex logic belongs in Nix
 5. **Validate early** - Run quick checks before expensive builds
+
+## Future Enhancements (Not Yet Implemented)
+
+### Security Scanning Pipeline
+- **SAST Tools**: Integrate Semgrep, SonarQube for static analysis
+- **Dependency Scanning**: 
+  - `cargo audit` for Rust vulnerabilities
+  - `vulnix` for Nix package CVEs
+  - Trivy/Grype for container scanning
+- **License Compliance**: Automated license checking
+- **Secret Detection**: Prevent accidental credential commits
+
+### Release Engineering
+- **Semantic Versioning**: Automated version bumping based on commit messages
+- **Changelog Generation**: Automatic CHANGELOG.md from conventional commits
+- **GitHub Releases**: Automated release creation with artifacts
+- **Binary Distribution**: Pre-built binaries for common platforms
+- **Docker Images**: Build and push container images to GHCR
+
+### Advanced Testing
+- **Performance Benchmarks**: Track performance regressions
+- **Fuzzing**: Automated fuzz testing for parsers
+- **Property-Based Tests**: Run in CI with more iterations
+- **Load Testing**: Stress test event processing pipeline
+- **NixOS VM Tests**: Full integration tests with service orchestration
+
+### Deployment Automation
+- **Staging Environment**: Deploy PRs to preview environments
+- **Blue-Green Deployments**: Zero-downtime production updates
+- **Rollback Automation**: Automatic rollback on health check failures
+- **Monitoring Integration**: Alert on deployment issues
+
+### Developer Experience
+- **PR Previews**: Live preview of changes
+- **Test Coverage Reports**: Automated coverage tracking
+- **Performance Reports**: Benchmark comparisons in PRs
+- **Documentation Preview**: Build and preview docs changes

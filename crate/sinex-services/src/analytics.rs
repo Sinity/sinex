@@ -1,7 +1,7 @@
 //! Analytics service for event analysis and insights
 
 use crate::error::ServiceResult;
-use sinex_db::queries::{OperationQueries, EventQueries};
+use sinex_db::queries::{EventQueries, OperationQueries};
 use sinex_db::DbPool;
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
@@ -80,7 +80,7 @@ impl AnalyticsService {
                     event_type: String,
                     count: i64,
                 }
-                
+
                 let rows: Vec<CountRow> = EventQueries::count_by_type_in_range(start, end)
                     .fetch_all(&self.pool)
                     .await?;
@@ -95,7 +95,7 @@ impl AnalyticsService {
                     event_type: String,
                     count: i64,
                 }
-                
+
                 let rows: Vec<CountRow> = EventQueries::count_by_type_all_time()
                     .fetch_all(&self.pool)
                     .await?;
@@ -122,13 +122,10 @@ impl AnalyticsService {
             microseconds: interval_minutes as i64 * 60 * 1_000_000,
         };
 
-        let rows = EventQueries::get_events_over_time(&self.pool, start_time, end_time, interval)
-            .await?;
+        let rows =
+            EventQueries::get_events_over_time(&self.pool, start_time, end_time, interval).await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| (r.bucket, r.count))
-            .collect())
+        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
 
     /// Get most frequent commands from terminal events
@@ -178,12 +175,8 @@ impl AnalyticsService {
             microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
         };
 
-        let rows = EventQueries::get_activity_heatmap(&self.pool, interval, limit as i64)
-            .await?;
+        let rows = EventQueries::get_activity_heatmap(&self.pool, interval, limit as i64).await?;
 
-        Ok(rows
-            .into_iter()
-            .map(|r| (r.bucket, r.count))
-            .collect())
+        Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
 }

@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::{EventFactory, services};
+use sinex_events::{services, EventFactory};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
