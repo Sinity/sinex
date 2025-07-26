@@ -272,13 +272,18 @@ Based on the current state in `docs/_todo/`:
    - `VISION.md` - Extract philosophy to main README, implementation to code
 
 2. **Medium Priority - Technical Specs**:
-   - Archive ADRs - Extract to relevant code locations
-   - Archive TIMs - Process based on implementation status
+   - **SKIP archive/ directory** - Contains previously reviewed files deemed not useful for integration
+   - Ready TIMs - Process based on implementation status
+   - Planned TIMs - Move unimplemented features to `/docs/roadmap/`
    - Operations docs - Move to NixOS module documentation
 
 3. **Low Priority - Analysis/Planning**:
    - `misc-including-high-level-overviews-and-plans/` - Review for insights
    - Diagrams - Keep useful ones in `/docs/architecture/diagrams/`
+
+## Important Note About Archive Directory
+
+The `archive/` directory contains documentation that has already been reviewed and determined not to be suitable for integration into the codebase. These files should be **skipped during migration** unless explicitly instructed otherwise. They are kept for potential future review but are not part of the active documentation migration process.
 
 ## Summary
 
