@@ -18,20 +18,16 @@ default:
     @echo ""
     @echo "🔧 Development:"
     @echo "  just monitor     - Attach to development dashboard"
-    @echo "  just qc          - Quick compilation check (from bacon)"
+    @echo "  just qc          - Quick compilation check"
     @echo "  just errors      - Show compilation errors"
     @echo "  just warnings    - Show compilation warnings"
     @echo "  just fmt         - Format code"
     @echo "  just lint        - Lint with clippy"
     @echo "  just build       - Build debug binaries"
-    @echo "  just fast-build  - Build with all optimizations"
     @echo "  just clean       - Clean artifacts and logs"
     @echo ""
     @echo "⚡ Performance:"
-    @echo "  just setup-fast  - Setup optimized environment"
-    @echo "  just precompile  - Precompile dependencies"
     @echo "  just cache-stats - Show sccache statistics"
-    @echo "  just benchmark   - Run build benchmarks"
     @echo ""
     @echo "🗄️  Database:"
     @echo "  just migrate     - Run migrations"
@@ -63,8 +59,8 @@ test-all:
     just test-unit
     just test-integration  
     just test-system
-    just test-stress
     just test-property
+    just test-performance
     just test-adversarial
     just test-vm
 
@@ -103,7 +99,7 @@ test-adversarial *ARGS:
 # ⚡ Fast tests only - Unit + property tests for quick feedback (~30s)
 test-fast *ARGS:
     @echo "⚡ Running fast tests only (unit + property)..."
-    cargo nextest run -E "test(unit::) or test(property::)" -- {{ARGS}}
+    @./scripts/test-analytics.sh -E "test(unit::) or test(property::)" -- {{ARGS}}
 
 
 
@@ -511,16 +507,39 @@ test-dev:
 
 # === Development Helpers ===
 
-# 🏃 Quick compilation check
+# 🏃 Quick compilation check - show daemon status
 qc:
-    @echo "🏃 Checking compilation status..."
-    @just ai-status
+    @./scripts/compile-daemon.sh status
+
+# 🤖 AI Agent: Get compilation status as JSON (blocks until current sources compiled)
+ai-status:
+    @./scripts/compile-daemon.sh await-current
+
+# 🤖 AI Agent: Get errors and warnings as JSON
+ai-errors-json:
+    @if [ -f ~/.sinex-compile-state/live-output.jsonl ]; then \
+        echo '{"errors": ['; \
+        jq -c 'select(.message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}' \
+            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 | sed '$ ! s/$/,/' || echo ''; \
+        echo '], "warnings": ['; \
+        jq -c 'select(.message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}' \
+            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 | sed '$ ! s/$/,/' || echo ''; \
+        echo ']}'; \
+    else \
+        echo '{"error": "No compilation data available"}'; \
+    fi
+
+# 🔍 Show compilation errors from last build (human readable)
+ai-errors:
+    @if [ -f ~/.sinex-compile-state/live-output.jsonl ]; then \
+        jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' \
+            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 || echo "✅ No errors"; \
+    else \
+        echo "No compilation data. Background compilation daemon should be running."; \
+    fi
 
 # 🔍 Check and show errors immediately
-ce:
-    @echo "🔍 Checking for errors..."
-    @just ai-status
-    @just ai-errors
+ce: qc ai-errors
 
 
 
@@ -581,47 +600,47 @@ alias tp := test-pkg
 alias e := errors
 alias w := warnings
 
-# === AI-Friendly Commands (Machine-Readable Output) ===
+# === Analytics Commands ===
 
-# 🤖 Get compilation status from daemon (JSON output)
-ai-status:
-    @./scripts/compile-daemon.sh last
-
-# 🔍 Show compilation errors in simple format
-ai-errors:
-    @if [ -f "$HOME/.sinex-compile-logs/last-result.json" ]; then \
-        log=$(jq -r '.log' "$HOME/.sinex-compile-logs/last-result.json" 2>/dev/null); \
-        if [ -n "$log" ] && [ -f "$log" ]; then \
-            jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' "$log" 2>/dev/null | head -10 || echo "No errors"; \
-        else \
-            echo "No compilation log found"; \
-        fi; \
+# 📊 What changed since last build?
+changes-since-build:
+    @echo "📊 Changes since last successful build:"
+    @if [ -f ~/.sinex-compile-state/last-build-snapshot.txt ]; then \
+        echo "Files from last build vs now:"; \
+        echo ""; \
+        diff -u ~/.sinex-compile-state/last-build-snapshot.txt <(git status --porcelain) | grep -E "^[+-]" | head -20 || echo "No changes"; \
     else \
-        echo "No compilation results. Run 'just compile-start' first"; \
+        echo "No build snapshot yet"; \
     fi
 
-# 📊 Project state with git and compilation info (JSON)
-ai-project:
-    @echo -n '{"branch":"'$(git branch --show-current 2>/dev/null || echo "unknown")'",'
-    @echo -n '"uncommitted":'$(git status --porcelain 2>/dev/null | wc -l)','
-    @echo -n '"compilation":'
-    @./scripts/compile-daemon.sh last 2>/dev/null || echo '{"status":"unknown"}'
-    @echo -n '}'
-    @echo
+# 📊 Show recent compilations
+analytics-recent:
+    @echo "📊 Recent compilations:"
+    @tail -20 ~/.sinex-analytics/compilations/index.csv 2>/dev/null | column -t -s'|' || echo "No compilation data yet"
 
-# === Background Compilation Daemon ===
+# 📈 Show compilation statistics
+analytics-stats:
+    @echo "📈 Compilation statistics:"
+    @if [ -f ~/.sinex-analytics/compilations/index.csv ]; then \
+        total=$(wc -l < ~/.sinex-analytics/compilations/index.csv); \
+        success=$(awk -F'|' '$4==0' ~/.sinex-analytics/compilations/index.csv | wc -l); \
+        avg_time=$(awk -F'|' '{sum+=$3; count++} END {if(count>0) print int(sum/count) "ms"}' ~/.sinex-analytics/compilations/index.csv); \
+        echo "  Total builds: $total"; \
+        echo "  Successful: $success ($(( success * 100 / total ))%)"; \
+        echo "  Average time: $avg_time"; \
+    else \
+        echo "No compilation data yet"; \
+    fi
 
-# 🚀 Start background compilation daemon
-compile-start:
-    @./scripts/compile-daemon.sh start
+# 📸 Show git state snapshots
+git-snapshots:
+    @echo "📸 Recent git snapshots:"
+    @git stash list | grep "auto-snapshot" | head -10 || echo "No snapshots yet"
 
-# 🛑 Stop compilation daemon
-compile-stop:
-    @./scripts/compile-daemon.sh stop
+# 🛑 Stop git state tracker
+git-tracker-stop:
+    @./scripts/git-state-tracker.sh stop
 
-# 📊 Check daemon status
-compile-status:
-    @./scripts/compile-daemon.sh status
-
-# 🔄 Restart compilation daemon
-compile-restart: compile-stop compile-start
+# 📊 Git tracker status
+git-tracker-status:
+    @./scripts/git-state-tracker.sh status
