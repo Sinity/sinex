@@ -196,47 +196,68 @@ just test-verbose           # Full output for debugging
 
 ## 🔧 Development Workflows
 
-### AI-Friendly Commands
+### 🤖 IMPORTANT: AI Agent Guidelines
 
-**Background compilation daemon** provides structured output for AI agents:
+**NEVER run cargo check/build manually!** A background compilation daemon is already running and continuously compiling your changes. Instead:
 
-**Setup**:
 ```bash
-# The compilation daemon starts automatically when entering nix shell
-# It's idempotent - won't create multiple instances
-
-# Manual controls:
-just compile-start   # Start daemon (idempotent)
-just compile-stop    # Stop daemon
-just compile-status  # Check if running
-
-# The daemon:
-# - Watches for file changes automatically
-# - Logs all compilation results in JSON format
-# - Runs in background without blocking
-# - Persists across shell sessions until stopped
-```
-
-**AI Commands** (all in justfile, no separate script needed):
-```bash
-# Get last compilation status (JSON)
+# Get compilation status (blocks until current code is compiled)
 just ai-status
-# Output: {"status":"failed","errors":3,"warnings":1,"log":"..."}
 
-# Show compilation errors in simple format
-just ai-errors
-# Output: src/main.rs:45: cannot find value `x` in this scope
+# Get errors/warnings as JSON
+just ai-errors-json
 
-# Get project state (branch, changes, compilation)
-just ai-project
-# Output: {"branch":"master","uncommitted":5,"compilation":{"status":"ok"}}
+# Human-readable errors
+just errors
 ```
 
-**Why this approach is better**:
-1. **Background compilation**: Daemon runs continuously, AI just queries results
-2. **Structured logs**: All compilation output saved as JSON in `~/.sinex-compile-logs/`
-3. **Fast queries**: AI gets instant results without triggering recompilation
-4. **Native tools**: Uses `cargo check --message-format json` directly
+The compilation daemon:
+- Watches all Rust files and recompiles automatically
+- Maintains up-to-date error/warning information
+- Provides JSON output for easy parsing
+- `ai-status` command blocks until your latest changes are compiled
+
+### Automatic Development Analytics
+
+Three systems work together automatically:
+
+**1. Background Compilation Daemon**
+- Continuously watches and compiles code changes
+- Started automatically in dev shell
+- Provides instant compilation status
+- Stores results in `~/.sinex-compile-state/`
+
+**2. Compilation Analytics** (via cargo wrapper)
+- Every `cargo` command automatically logs to `~/.sinex-analytics/compilations/`
+- Shows progress bars in terminal, JSON in CI/logs
+- Captures timing reports and sccache stats
+
+**3. Git State Tracking** (using git stash)
+- Auto-snapshots code on every change
+- Uses native git stash for efficiency
+- View snapshots: `just git-snapshots`
+
+**Quick Status Commands**:
+```bash
+just qc                    # Current build status (instant)
+just ai-status             # Wait for & get compilation status (JSON)
+just ai-errors-json        # Errors/warnings as JSON
+just errors                # Human-readable errors
+just warnings              # Human-readable warnings
+just analytics-recent      # Recent compilation history
+```
+
+**Test Analytics**:
+Tests always run with coverage via `test-analytics.sh`:
+```bash
+just test-fast   # Runs with coverage, stores results
+just test-all    # Full suite with coverage
+```
+
+Each test run captures:
+- Full coverage data (JSON, LCOV formats)
+- Test counts and duration
+- Git state at test time
 
 **Additional Features**:
 
@@ -261,38 +282,9 @@ cargo build --timings
 sccache --show-stats
 ```
 
-### Background Compilation
-
-**What happens automatically**:
-- Compilation daemon starts when you enter nix shell
-- Watches all Rust files for changes
-- Compiles in background, saves results as JSON
-- Persists across shell sessions until stopped
-
-**AI Commands**:
-```bash
-just ai-status    # Get last compilation result (instant)
-just ai-errors    # Show errors in simple format
-just ai-project   # Full project state (git + compilation)
-
-# Shortcuts:
-just qc          # Quick check (alias for ai-status)
-just ce          # Check + errors
-just e           # Just errors
-```
-
-**Manual control** (rarely needed):
-```bash
-just compile-stop     # Stop daemon
-just compile-start    # Restart daemon (idempotent)
-just compile-status   # Check if daemon is running
-```
-
-All compilation logs saved to `~/.sinex-compile-logs/` as JSON for analysis.
-
 ### Standard Development Cycle
 ```bash
-just dev                   # fmt + check + test-fast
+just dev                   # fmt + qc + test-fast
 ```
 
 ### Working with Database Changes
