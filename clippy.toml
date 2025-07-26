@@ -6,6 +6,13 @@ disallowed-methods = [
     { path = "sqlx::query", reason = "Use QueryBuilder from sinex-db instead" },
     { path = "sqlx::query_as", reason = "Use QueryBuilder from sinex-db instead" },
     { path = "sqlx::query_scalar", reason = "Use QueryBuilder from sinex-db instead" },
+    { path = "sqlx::query!", reason = "Use QueryBuilder from sinex-db instead of macros" },
+    { path = "sqlx::query_as!", reason = "Use QueryBuilder from sinex-db instead of macros" },
+    
+    # Error handling - Use CoreError instead
+    { path = "anyhow::anyhow", reason = "Use CoreError from sinex-core for typed errors" },
+    { path = "anyhow::bail", reason = "Use CoreError from sinex-core for typed errors" },
+    { path = "anyhow::ensure", reason = "Use CoreError from sinex-core for typed errors" },
     
     # Avoid blocking operations in async code
     { path = "std::thread::sleep", reason = "Use tokio::time::sleep for async code" },
@@ -57,3 +64,19 @@ wildcard_imports = "warn"
 # Specific to Sinex patterns
 string_lit_as_bytes = "warn"  # Use constants
 manual_string_new = "warn"    # Consistent string creation
+
+# String literal enforcement
+# These help enforce use of constants instead of hardcoded strings
+str_to_string = "warn"         # Prefer .to_owned() or constants
+single_char_pattern = "warn"   # Use char instead of "x"
+
+# Additional pattern enforcement
+default_trait_access = "warn"  # Use Type::default() consistently
+map_unwrap_or = "warn"         # Prefer map_or for clarity
+
+# NOTE: Direct string literal detection (e.g., "process.heartbeat") is difficult
+# with clippy alone. Consider:
+# 1. Code review to catch hardcoded event types/sources
+# 2. grep-based pre-commit hooks for known patterns
+# 3. Custom lint plugin (complex but powerful)
+# 4. Encouraging use of constants modules via examples

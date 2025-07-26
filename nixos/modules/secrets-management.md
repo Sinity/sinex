@@ -1,6 +1,8 @@
 # Secrets Management with agenix
 
-This document describes how secrets are managed in the Sinex NixOS configuration using `agenix`.
+**IMPORTANT**: This document describes the PLANNED approach for secrets management using `agenix`. However, agenix is NOT currently implemented in the system. This documentation was extracted from TIM-SecretsManagementAgenix but the actual implementation never followed.
+
+This document describes how secrets WOULD BE managed in the Sinex NixOS configuration using `agenix`.
 
 ## Overview
 
@@ -114,19 +116,18 @@ For secrets requiring periodic rotation:
 
 ## Current Implementation Status
 
-✅ Implemented:
-- Agenix flake integration
-- Secret file encryption and storage
-- Public key management
-- Auto-discovery of encrypted secrets
-- Environment variable export
-- NixOS service integration
+❌ Not Implemented:
+- No agenix in flake.nix
+- No .age encrypted files in repository  
+- No age.secrets declarations in NixOS modules
+- No actual secrets management beyond environment variables
 
-⏳ Pending:
-- [ ] Sinex-specific secret integration
-- [ ] Database password encryption
-- [ ] pgsodium master key management
-- [ ] Automated secret rotation procedures
+⏳ Would Need Implementation:
+- [ ] Add agenix to flake inputs
+- [ ] Generate age keys for host/user
+- [ ] Create encrypted secrets files
+- [ ] Add age.secrets declarations to NixOS config
+- [ ] Integrate with services that need secrets
 
 ## Related Documentation
 - ADR-006: NixOS Secrets Management Tool Decision
