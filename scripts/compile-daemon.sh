@@ -113,7 +113,9 @@ case "${1:-help}" in
             fi
         fi
         
-        nohup "$0" daemon > /dev/null 2>&1 &
+        # Use setsid to detach from terminal properly
+        setsid "$0" daemon > /dev/null 2>&1 < /dev/null &
+        sleep 0.5  # Give it a moment to start
         echo "Started compilation daemon"
         ;;
         

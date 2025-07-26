@@ -1,52 +1,25 @@
 # Show available commands with descriptions
 default:
-    @echo "🚀 Sinex Development Commands"
-    @echo "============================"
+    @echo -e "\033[1m⚡ Sinex Quick Reference\033[0m"
     @echo ""
-    @echo "📋 Common Workflows:"
-    @echo "  just dev         - Quick development cycle (fmt + qc + fast tests)"
-    @echo "  just pre-commit  - Pre-commit validation (fmt + lint + qc + fast tests)"
-    @echo "  just ci          - CI-style validation (all tests except VM)"
+    @echo -e "\033[90mEssential Commands:\033[0m"
+    @echo -e "  \033[1mdev\033[0m         Format → Check → Test (~1min)"
+    @echo -e "  \033[1mqc\033[0m          Compilation status (instant)"
+    @echo -e "  \033[1merrors\033[0m      Show errors/warnings"
+    @echo -e "  \033[1mtest-fast\033[0m   Unit tests only (~30s)"
     @echo ""
-    @echo "🧪 Testing:"
-    @echo "  just test-fast   - Fast tests only (~30s: unit + property)"
-    @echo "  just test-unit   - Unit tests only (~5s)"
-    @echo "  just test-integration - Integration tests (~30s)"
-    @echo "  just test-system - System/E2E tests (~2min)"
-    @echo "  just test-property - Property-based tests (~1min)"
-    @echo "  just test-all    - All tests including VM (~10-15min)"
+    @echo -e "\033[90mServices:\033[0m"
+    @echo -e "  \033[1mingestd\033[0m     Central coordinator (gRPC)"
+    @echo -e "  \033[1mmonitor\033[0m     Dev dashboard (mprocs UI)"
+    @echo -e "  \033[1mquery\033[0m       Query recent events"
     @echo ""
-    @echo "🔧 Development:"
-    @echo "  just monitor     - Attach to development dashboard"
-    @echo "  just qc          - Quick compilation check"
-    @echo "  just errors      - Show compilation errors"
-    @echo "  just warnings    - Show compilation warnings"
-    @echo "  just fmt         - Format code"
-    @echo "  just lint        - Lint with clippy"
-    @echo "  just build       - Build debug binaries"
-    @echo "  just clean       - Clean artifacts and logs"
+    @echo -e "\033[90mEvent Satellites:\033[0m"
+    @echo -e "  \033[1mfs-watcher\033[0m  File system changes"
+    @echo -e "  \033[1mterminal\033[0m    Terminal commands"
+    @echo -e "  \033[1mdesktop\033[0m     Clipboard/window events"
+    @echo -e "  \033[1msystem\033[0m      D-Bus/systemd events"
     @echo ""
-    @echo "⚡ Performance:"
-    @echo "  just cache-stats - Show sccache statistics"
-    @echo ""
-    @echo "🗄️  Database:"
-    @echo "  just migrate     - Run migrations"
-    @echo "  just psql        - Connect to database"
-    @echo "  just sqlx-prepare - Update SQLX cache (commit .sqlx/)"
-    @echo "  just db-setup    - Setup test database"
-    @echo "  just db-reset    - Reset test database"
-    @echo ""
-    @echo "📋 Schema Management:"
-    @echo "  just schema-generate - Generate JSON schemas"
-    @echo "  just schema-validate - Validate schemas"
-    @echo "  just schema-deploy   - Deploy to database"
-    @echo ""
-    @echo "▶️  Services:"
-    @echo "  just ingestd     - Start ingestion daemon"
-    @echo "  just gateway     - Start API gateway"
-    @echo "  just query       - Query recent events"
-    @echo ""
-    @echo "Use 'just --list' for complete command list"
+    @echo -e "\033[90mRun\033[0m \033[1mjust --list\033[0m \033[90mfor all $(( $(just --list 2>/dev/null | wc -l) - 1 )) commands\033[0m"
 
 # === Testing ===
 
@@ -296,6 +269,9 @@ schema-workflow: schema-generate schema-validate schema-check
 host *ARGS:
     @echo "🖥️ Starting sinex-gateway RPC server..."
     cargo run --bin sinex-gateway rpc-server {{ARGS}}
+
+# Alias for host command
+gateway *ARGS: (host ARGS)
 
 # 📥 Run sinex-ingestd gRPC server (satellite coordinator)
 ingestd *ARGS:

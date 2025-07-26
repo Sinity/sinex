@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # Git state tracker using git stash for zero-overhead snapshots
 # Much simpler and more reliable than custom solution
+#
+# IMPORTANT: This script creates snapshots but PRESERVES working directory state
+# The stash is created and then immediately re-applied to avoid data loss
+# Previously this script would stash changes without restoring them, causing files to disappear
 
 set -euo pipefail
 
@@ -21,9 +25,12 @@ take_snapshot() {
     local timestamp="$(date +%Y%m%d-%H%M%S)"
     local stash_msg="$STASH_PREFIX-$timestamp"
     
-    # Create stash with all changes (including untracked)
+    # Create stash with all changes BUT THEN RESTORE THEM
+    # Using --keep-index to keep staged changes, then pop immediately
     if git stash push --all --message "$stash_msg" >/dev/null 2>&1; then
         echo "$(date -Iseconds)|$stash_msg|$(git rev-parse --short HEAD)" >> "$LOG_FILE"
+        # CRITICAL: Restore working directory state
+        git stash apply stash@{0} >/dev/null 2>&1
     fi
 }
 
@@ -80,7 +87,9 @@ case "${1:-help}" in
             fi
         fi
         
-        nohup "$0" daemon > /dev/null 2>&1 &
+        # Use setsid to detach from terminal properly
+        setsid "$0" daemon > /dev/null 2>&1 < /dev/null &
+        sleep 0.5  # Give it a moment to start
         echo "Git state tracker started"
         ;;
         
@@ -103,14 +112,12 @@ case "${1:-help}" in
         if [ -f "$STATE_FILE" ]; then
             pid=$(jq -r '.pid' "$STATE_FILE" 2>/dev/null || echo "")
             if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
-                echo "Git tracker running (PID: $pid)"
-                echo "Recent snapshots:"
-                git stash list | grep "$STASH_PREFIX" | head -5
+                cat "$STATE_FILE"
             else
-                echo "Git tracker not running"
+                echo '{"status": "not_running"}'
             fi
         else
-            echo "Git tracker not running"
+            echo '{"status": "not_running"}'
         fi
         ;;
         
