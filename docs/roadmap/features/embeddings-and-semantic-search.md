@@ -39,9 +39,62 @@ Balanced for performance, speed, resource requirements, and licensing:
 
 ## Database Schema Design
 
-**Note**: The `km.concepts` table already has an `embedding vector(1536)` column implemented
-(see `/migrations/00000000000004_create_knowledge_management.sql`). The tables below are
-additional infrastructure for comprehensive embedding support.
+### Original core.embedding_cache Design
+
+The original migration (20250103120012_create_llm_and_embeddings_tables.sql) included a proper embedding cache design:
+
+```sql
+-- Embedding cache for deduplication
+CREATE TABLE IF NOT EXISTS core.embedding_cache (
+    id ulid PRIMARY KEY DEFAULT gen_ulid(),
+    text_hash TEXT NOT NULL, -- SHA256 of the text
+    embedding_model_id ulid NOT NULL REFERENCES core.embedding_models(id),
+    embedding vector(1536) NOT NULL,
+    text_sample TEXT, -- First 1000 chars for debugging
+    use_count INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_text_model_embedding UNIQUE(text_hash, embedding_model_id)
+);
+
+-- Indexes
+CREATE INDEX idx_embedding_cache_hash ON core.embedding_cache(text_hash);
+CREATE INDEX idx_embedding_cache_lru ON core.embedding_cache(last_used_at);
+CREATE INDEX idx_embedding_cache_vector ON core.embedding_cache 
+    USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+```
+
+This design includes:
+- Proper LRU cache features (use_count, last_used_at)
+- Text hash for deduplication
+- Reference to embedding model registry
+- Text sample for debugging
+
+### Architectural Decisions from Migrations
+
+#### IVFFlat for Vector Indexes (ADR-005)
+We use IVFFlat over HNSW for pgvector indexes because:
+- **Faster build times**: Important for development iteration
+- **Lower memory usage**: More efficient for our scale
+- **Good enough recall**: With proper tuning of lists/probes
+
+Trade-offs:
+- Requires periodic reindexing if data distribution changes significantly
+- Need to tune probes parameter for query speed vs recall
+- May switch to HNSW later if query patterns demand it
+
+#### CPU-based pgvector for Scale (ADR-007)
+We chose to stay with pgvector on CPU rather than external GPU vector DBs because:
+- **Simplicity**: No additional services to deploy or manage
+- **Unified data**: Embeddings live with their metadata
+- **Good enough performance**: ~1800 QPS at 91% recall on 50M vectors
+- **Cost-effective**: Leverages existing PostgreSQL hardware
+
+Future options if scale demands:
+- External GPU vector DB (Milvus, Qdrant) for massive scale
+- pgvectorscale extension for better CPU performance
+- Hybrid approach with hot/cold tier separation
 
 ### artifact_embeddings Table
 
@@ -179,3 +232,23 @@ A dedicated agent for generating embeddings with:
 - **Hybrid Search**: Combining keyword and semantic search
 - **Cross-lingual Search**: Multilingual embedding models
 - **Compression**: Dimensionality reduction techniques for storage optimization
+
+### Additional Future Enhancements
+
+#### Automated Entity Extraction Pipeline
+- NER (Named Entity Recognition) for person/org/location extraction
+- Dependency parsing for relationship extraction
+- Coreference resolution for entity linking
+- Extraction automata: entity_extractor, relationship_miner, entity_resolver
+
+#### Graph Analytics Features
+- Shortest path queries between concepts (WITH RECURSIVE)
+- PageRank for concept importance scoring
+- Community detection algorithms
+- Temporal graph analysis for relationship evolution
+
+#### Entity Resolution ML
+- Fuzzy name matching with edit distance
+- Embedding similarity for semantic matching
+- Context-aware resolution using relationships
+- Confidence scoring for merge candidates

@@ -196,8 +196,7 @@
               sqlx-cli
               mold # Fast linker for compilation speed
               sccache # Compilation cache for dependencies
-              gum # Beautiful CLI formatting
-              python3Packages.rich-cli # Alternative rich formatting
+              python3Packages.rich-cli # Rich CLI formatting
 
               # Python and testing
               python3
