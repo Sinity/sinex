@@ -32,6 +32,32 @@
 //! - Multiple symlinks can point to same annexed content
 //! - Reduces storage for duplicate files
 //! - BLAKE3 hash used for fast content comparison
+//!
+//! ## Future Enhancements (Not Yet Implemented)
+//!
+//! ### Health Monitoring and Verification
+//! - Automated fsck scheduling via systemd timer
+//! - Log results as `sinex.data_integrity.annex_fsck_result` events
+//! - Track verification status per blob
+//! - Monitor available space and annex.numcopies compliance
+//! - Alert on missing/corrupted content
+//!
+//! ### Advanced Metadata Extraction
+//! - File-type specific extractors:
+//!   - Images: EXIF data, dimensions, color profile
+//!   - Documents: Page count, author, creation date
+//!   - Media: Duration, codec, bitrate
+//!   - Archives: Contents listing, compression ratio
+//! - Automatic MIME type detection
+//! - Text extraction for searchability
+//! - Thumbnail generation for preview
+//!
+//! ### Performance Optimizations
+//! - Parallel file processing with worker pools
+//! - Multi-threaded BLAKE3 checksum computation
+//! - Bulk database insertions
+//! - In-memory cache for frequently accessed blob metadata
+//! - Filesystem cache for small annexed files
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};

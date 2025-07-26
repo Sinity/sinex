@@ -40,6 +40,31 @@ CREATE INDEX idx_concepts_name ON km.concepts (concept_name);
 -- - External GPU vector DB (Milvus, Qdrant) for massive scale
 -- - pgvectorscale extension for better CPU performance
 -- - Hybrid approach with hot/cold tier separation
+--
+-- ## Future Enhancements (Not Yet Implemented)
+--
+-- ### Semantic Search Capabilities
+-- - Similarity search: Find concepts semantically similar to a query
+-- - Concept clustering: Group related concepts by embedding distance
+-- - Concept drift detection: Track how concept meanings evolve over time
+--
+-- ### Automated Entity Extraction Pipeline
+-- - NER (Named Entity Recognition) for person/org/location extraction
+-- - Dependency parsing for relationship extraction
+-- - Coreference resolution for entity linking
+-- - Extraction automata: entity_extractor, relationship_miner, entity_resolver
+--
+-- ### Graph Analytics Features
+-- - Shortest path queries between concepts (WITH RECURSIVE)
+-- - PageRank for concept importance scoring
+-- - Community detection algorithms
+-- - Temporal graph analysis for relationship evolution
+--
+-- ### Entity Resolution ML
+-- - Fuzzy name matching with edit distance
+-- - Embedding similarity for semantic matching
+-- - Context-aware resolution using relationships
+-- - Confidence scoring for merge candidates
 CREATE INDEX idx_concepts_embedding ON km.concepts USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
 
 -- Relations between concepts

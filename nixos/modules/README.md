@@ -95,6 +95,101 @@ Comprehensive integration tests validate the full system deployment:
 - Rollback capabilities
 - Declarative system state
 
+## Development Guidelines
+
+### Module Structure Pattern
+When creating new NixOS modules for Sinex services:
+
+```nix
+# modules/services/my-satellite.nix
+{ config, lib, pkgs, ... }:
+
+with lib;
+
+let
+  cfg = config.services.sinex.mySatellite;
+  settingsFormat = pkgs.formats.toml {};
+in
+{
+  options.services.sinex.mySatellite = {
+    enable = mkEnableOption "Sinex My Satellite service";
+
+    package = mkOption {
+      type = types.package;
+      default = pkgs.sinex.mySatellite;
+      description = "Package providing the satellite binary";
+    };
+
+    settings = mkOption {
+      type = types.submodule {
+        freeformType = settingsFormat.type;
+        options = {
+          listen_port = mkOption {
+            type = types.port;
+            default = 8080;
+            description = "Port to listen on";
+          };
+          log_level = mkOption {
+            type = types.enum [ "trace" "debug" "info" "warn" "error" ];
+            default = "info";
+            description = "Logging level";
+          };
+        };
+      };
+      default = {};
+      description = "Satellite configuration";
+    };
+  };
+
+  config = mkIf cfg.enable {
+    systemd.services."sinex-my-satellite" = {
+      description = "Sinex My Satellite Service";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" "postgresql.service" "sinex-ingestd.service" ];
+      
+      serviceConfig = {
+        User = "sinex";
+        Group = "sinex";
+        ExecStart = "${cfg.package}/bin/my-satellite --config ${
+          settingsFormat.generate "my-satellite-config.toml" cfg.settings
+        }";
+        
+        # Security hardening
+        NoNewPrivileges = true;
+        ProtectSystem = "strict";
+        ProtectHome = true;
+        PrivateTmp = true;
+        
+        # Resource limits
+        MemoryMax = "512M";
+        CPUQuota = "50%";
+        
+        # Restart policy
+        Restart = "on-failure";
+        RestartSec = "10s";
+      };
+      
+      environment = {
+        RUST_LOG = "info,my_satellite=debug";
+        DATABASE_URL = "postgresql:///sinex_db?host=/run/postgresql";
+      };
+    };
+  };
+}
+```
+
+### Configuration Best Practices
+1. Use `pkgs.formats` for config file generation
+2. Provide sensible defaults for all options
+3. Use structured `settings` options with freeformType
+4. Document all options clearly
+5. Follow systemd security best practices
+
+### Service Dependencies
+- Always depend on `postgresql.service` if using database
+- Depend on `sinex-ingestd.service` for event submission
+- Use `after` for ordering, `requires` for hard dependencies
+
 ## Usage Example
 
 ```nix
