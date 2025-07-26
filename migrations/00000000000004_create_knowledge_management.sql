@@ -43,10 +43,9 @@ CREATE INDEX idx_concepts_name ON km.concepts (concept_name);
 --
 -- ## Future Enhancements (Not Yet Implemented)
 --
--- ### Semantic Search Capabilities
--- - Similarity search: Find concepts semantically similar to a query
--- - Concept clustering: Group related concepts by embedding distance
--- - Concept drift detection: Track how concept meanings evolve over time
+-- ### Semantic Search and Embeddings
+-- See docs/roadmap/features/embeddings-and-semantic-search.md for comprehensive design
+-- of vector embeddings, semantic search, and related infrastructure.
 --
 -- ### Automated Entity Extraction Pipeline
 -- - NER (Named Entity Recognition) for person/org/location extraction

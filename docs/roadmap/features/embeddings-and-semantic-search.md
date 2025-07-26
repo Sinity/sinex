@@ -39,6 +39,10 @@ Balanced for performance, speed, resource requirements, and licensing:
 
 ## Database Schema Design
 
+**Note**: The `km.concepts` table already has an `embedding vector(1536)` column implemented
+(see `/migrations/00000000000004_create_knowledge_management.sql`). The tables below are
+additional infrastructure for comprehensive embedding support.
+
 ### artifact_embeddings Table
 
 Stores embeddings for chunks/summaries of `core.artifact_contents`:

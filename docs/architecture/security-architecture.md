@@ -146,6 +146,34 @@ Current approach may be sufficient as:
 - [ ] Update threat model
 - [ ] Security training
 
+## Threat Model Summary
+
+### Information Disclosure Threats
+1. **Unauthorized filesystem access** → Mitigated by LUKS FDE + permissions
+2. **Secrets exposure in `/run`** → Mitigated by tmpfs + strict permissions
+3. **Network service exposure** → Mitigate with localhost binding + auth
+4. **Keylogging via evdev** → Requires opt-in + privilege separation
+5. **Over-privileged SQL access** → Need field encryption + granular roles
+6. **LLM data oversharing** → Requires policies + local LLM preference
+
+### Tampering Threats
+1. **Database corruption** → Append-only events + backups + checksums
+2. **Git-annex tampering** → Content-addressed storage detects changes
+3. **Binary tampering** → NixOS immutability + version control
+
+### Denial of Service Threats
+1. **Resource exhaustion** → Systemd quotas + monitoring + retention
+2. **Database overload** → Connection pooling + optimization
+3. **Ingestor flooding** → Rate limiting + backpressure
+4. **LLM cost runaway** → Budgeting + throttling + fallbacks
+
+### Privilege Escalation Threats
+1. **Agent vulnerabilities** → Sandboxing + least privilege + updates
+2. **SQL injection** → Parameterized queries only
+3. **Path traversal** → Input validation + canonicalization
+
+See [TIM-SecurityThreatModel](../docs/_todo/archive/TIM-SecurityThreatModel.md) for comprehensive threat analysis.
+
 ## References
 
 - [ADR-006: NixOS Secrets Management Tool](../docs/_todo/archive/ADR-006-NixOSSecretsManagementTool.md)
