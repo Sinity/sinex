@@ -1,8 +1,35 @@
-# Sinex - Event-Driven Data Capture System
+# Sinex - The Sentient Archive
 
-Sinex is a comprehensive event-driven data capture system that records everything happening on a computer for later analysis. It provides a distributed satellite-based architecture for event capture with immutable storage and real-time processing capabilities.
+> *An ambitious endeavor to construct an empowering digital environment for thought: a persistent, universally capturing, and intelligently structured space that mirrors, supports, and augments the user's own mind.*
+
+Sinex is a comprehensive event-driven data capture system that transforms the digital realm from a source of distraction and fragmentation into a coherent, queryable, and deeply personal extension of self. It records everything happening on a computer for later analysis through a distributed satellite-based architecture with immutable storage and real-time processing capabilities.
+
+## Philosophy: Cognitive Sovereignty
+
+We stand at a peculiar juncture in human history. Our digital tools grant us unprecedented access to information, yet this abundance often engenders a profound sense of fragmentation. We generate more data about ourselves than ever before, yet we *remember* less, *understand* less of our own cognitive trails, and feel increasingly alienated from the very digital environments designed to augment us.
+
+Sinex confronts this crisis of digital amnesia by creating an "anti-forgetting machine" built on four inviolable pledges:
+
+### The Exocortex Pledge
+
+1. **To Capture Comprehensively and Losslessly** - Every potentially significant digital trace at the highest fidelity, preserving original detail with multi-modal, redundant strategies
+2. **To Structure Meaningfully and Emergently** - Schemas evolve with user needs; order emerges gradually from raw data which remains inviolate for future reinterpretation
+3. **To Empower User Agency Unconditionally** - You are the absolute sovereign of your data; all components are transparent, inspectable, and modifiable
+4. **To Evolve Continuously and Transparently** - The system co-evolves with its user through iterative improvement, addressing personally-felt friction
+
+### Core Design Ethos
+
+- **Universal Capture as Default**: If a signal can be instrumented, it should be captured
+- **Emergent Structure from Raw Data**: Meaning is discovered and refined, not preordained
+- **Sovereign User Agency**: Radical transparency, universal hackability, user control over automation
+- **Continuous and Rich Context**: Rigorous timestamping, global identifiers, explicit linking, meticulous provenance
+- **Meta-Cognition as Valued Data**: Subjective experiences (intentions, friction, insights) are first-class eventified data
+
+The promise is threefold: to restore **agency** by placing you in control of your data, to cultivate **insight** by making patterns visible, and to enable **intentional evolution** by providing a substrate for self-understanding and self-authorship.
 
 ## 🏗️ Architecture
+
+Sinex is a "sentient archive" implemented as a satellite constellation architecture – independent services orchestrated by NixOS/systemd that comprehensively capture, intelligently process, and powerfully query personal digital experiences.
 
 **Core Flow**: Satellites → ingestd → Event Substrate → Redis Streams → Automata → Query Interface
 
@@ -12,6 +39,18 @@ Sinex is a comprehensive event-driven data capture system that records everythin
 - **Redis Streams**: Real-time event distribution to automata for processing
 - **Automata**: Stream processors that transform raw events into canonical representations
 - **Query Interface**: Python CLI (`exo.py`) for exploring captured events
+
+### Technical Stack
+
+**Foundation:**
+- **OS**: NixOS for reproducible, declarative deployment
+- **Database**: PostgreSQL 16 with extensions:
+  - TimescaleDB for time-series event storage
+  - pgx_ulid for time-ordered primary keys
+  - pg_jsonschema for event validation
+  - pgvector for semantic search (future)
+- **Language**: Rust for core system, Python for CLI tools
+- **Message Bus**: Redis Streams for real-time event distribution
 
 ### Key Features
 - **Satellite Architecture**: Each event source runs as an independent systemd service
@@ -68,6 +107,22 @@ All satellites support two operational modes:
 - **Advanced Sources**: Browser history, audio capture, email
 - **Knowledge Graph**: Entity extraction and relationship mapping
 - **Multi-device Sync**: Distributed event synchronization
+
+## 📚 Documentation
+
+### Quick Links
+- **Development Guide**: See [CLAUDE.md](CLAUDE.md) for development workflows and patterns
+- **Architecture Deep-Dive**: See [docs/architecture/](docs/architecture/) for domain-specific details
+- **NixOS Module**: See [nixos/modules/](nixos/modules/) for deployment configuration
+- **Roadmap**: See [docs/roadmap/](docs/roadmap/) for future features and architectural directions
+
+### Key Architectural Decisions
+- **ULID Primary Keys**: Time-ordered, globally unique identifiers for efficient indexing
+- **Satellite Constellation**: Independent services with unified StatefulStreamProcessor interface
+- **Redis Streams Message Bus**: Real-time event distribution with consumer groups
+- **Unified Events Table**: Single core.events table with comprehensive provenance tracking
+- **Checkpoint-based Recovery**: Unified state management for all processors
+- **Source Material Registry**: Immutable ground truth preservation with blob_id references
 
 ## 🧪 Test Coverage
 
