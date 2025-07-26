@@ -87,6 +87,17 @@ All satellites support two operational modes:
 
 ## 📊 Implementation Status
 
+### System Components Progress
+
+- ✅ **Satellite Architecture** (80%) - Independent satellite services operational, StatefulStreamProcessor interface implemented
+- ✅ **Message Bus** (75%) - Redis Streams fully operational with consumer groups, checkpoint management, command/response patterns
+- ✅ **Data Substrate** (70%) - PostgreSQL + TimescaleDB with ULID keys, core.events table operational, comprehensive provenance tracking
+- 🚧 **Event Sources** (50%) - Four satellite domains active (filesystem, terminal, desktop, system), expanding coverage
+- 🚧 **Automaton Ecosystem** (40%) - Processing framework operational, deterministic automata working, agentic layer planned
+- 🚧 **Gateway & APIs** (65%) - sinex-gateway operational, command/response patterns working, CLI integrated
+- 🚧 **NixOS Module** (60%) - Satellite orchestration working, observability patterns operational
+- 🔨 **AI/LLM Integration** (15%) - Framework ready, schema designed, integration in progress
+
 ### ✅ Implemented (Working Code)
 - **Core Infrastructure**: Event storage, ULID keys, TimescaleDB integration
 - **Satellite Architecture**: Independent satellites with gRPC communication
@@ -244,6 +255,23 @@ just test-dev       # Quick dev cycle (<2 min)
 - **Ready Specs**: `spec/ready/` - Designed and ready to implement
 - **Future Plans**: `spec/planned/` - Long-term feature planning
 - **Architecture Decisions**: `spec/docs/adr/` - Design rationale
+
+### Key Components
+#### Database Schema
+- [Event Substrate DDL](spec/implemented/infrastructure/TIM-EventSubstrateDDL.md) - Core.events table
+- [Event Schema Registry](spec/implemented/infrastructure/TIM-EventSchemaRegistry.md) - GitOps schemas
+- [Knowledge Graph Schema](spec/implemented/infrastructure/TIM-KnowledgeGraphSchema.md) - Entities
+
+#### Event Sources
+- [Filesystem Monitoring](spec/implemented/event-sources/TIM-FilesystemMonitoringWatchers.md)
+- [Terminal Logging](spec/implemented/event-sources/TIM-GenericTerminalLogging.md)
+- [Clipboard Monitoring](spec/implemented/event-sources/TIM-ClipboardMonitoring.md)
+- [Hyprland IPC](spec/implemented/event-sources/TIM-HyprlandIPCInterface.md)
+
+#### Infrastructure
+- [Event Ingestion](spec/implemented/infrastructure/TIM-EventIngestionProcessing.md) - Satellites
+- [Agent Manifests](spec/implemented/infrastructure/TIM-AgentManifestManagement.md) - Processors
+- [Test Framework](spec/implemented/infrastructure/TIM-TestFrameworkInfrastructure.md) - Testing
 
 ### For Contributors
 - **Development Guide**: [`CLAUDE.md`](CLAUDE.md) - Project patterns and workflows
