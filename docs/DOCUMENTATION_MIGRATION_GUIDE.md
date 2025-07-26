@@ -343,6 +343,39 @@ Let's say we're processing `TIM-EmbeddingGenerationModels.md`:
    mv docs/_todo/ready/ai/TIM-EmbeddingGenerationModels.md docs/_todo/archive/
    ```
 
+## Understanding TIM Structure
+
+When processing TIMs, it's important to understand their structure to properly extract content:
+
+### Status Dashboard
+Every feature TIM includes:
+```markdown
+## Status Dashboard
+**Maturity Level**: L2/L3/L4 - Ready/Implemented
+**Implementation**: X% (Verified against codebase)
+**Dependencies**: Required components
+**Blocks**: Features that depend on this TIM
+```
+
+### Maturity Levels
+- **L1 - Concept**: Initial idea, not ready
+- **L2 - Ready**: Complete specification, ready to build
+- **L3 - Partial**: Core functionality implemented (25-75%)
+- **L4 - Complete**: Fully working with tests (75-100%)
+
+### Implementation Percentages
+- **0-25%**: Design complete, minimal implementation
+- **25-50%**: Core infrastructure exists
+- **50-75%**: Major components implemented
+- **75-90%**: Substantially complete
+- **90-100%**: Production-ready
+
+### TIM Categories
+- **Feature TIMs**: In `implemented/`, `ready/`, or `planned/`
+- **Process TIMs**: Documentation only in `docs/`
+
 ## Summary
 
 The key to successful documentation migration is to **process, not just move**. Each document should be understood, its implementation status verified, valuable content extracted to appropriate locations based on that status, and only then should the original be moved to archive with clear markers showing what went where.
+
+Remember: We're moving away from the TIM structure. The goal is to extract valuable content from TIMs and place it where it's most useful - in code documentation for implemented features, in roadmap docs for unimplemented designs, or in process documentation for operational knowledge.
