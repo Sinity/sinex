@@ -9,11 +9,11 @@
 // - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
-use sinex_test_utils::events;
-use sinex_test_utils::prelude::*;
 use chrono::Datelike;
 use futures::future::join_all;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_events::{event_types, services, EventFactory};
+use sinex_test_utils::events;
+use sinex_test_utils::prelude::*;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
@@ -191,10 +191,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> TestResu
     let start = Instant::now();
     for i in 0..operation_count {
         let factory = EventFactory::new("boundary_test");
-        let event = factory.create_event(
-            "transaction.test",
-            json!({"operation_id": i}),
-        );
+        let event = factory.create_event("transaction.test", json!({"operation_id": i}));
 
         match sinex_db::insert_event_with_validator(&pool, &event, None).await {
             Ok(_) => {}
@@ -223,10 +220,7 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
     // Insert test data
     for i in 0..100 {
         let factory = EventFactory::new("complexity_test");
-        let event = factory.create_event(
-            "query.test",
-            json!({"value": i, "category": i % 10}),
-        );
+        let event = factory.create_event("query.test", json!({"value": i, "category": i % 10}));
 
         insert_event(&pool, &event).await?;
     }
@@ -235,10 +229,10 @@ async fn test_database_query_complexity_limits(ctx: TestContext) -> TestResult {
     let complex_queries = vec![
         // Simple query
         ("SELECT COUNT(*) FROM core.events WHERE source = 'complexity_test'", "simple_count"),
-        
+
         // Complex aggregation
         ("SELECT source, event_type, COUNT(*), AVG((payload->>'value')::int) FROM core.events WHERE source = 'complexity_test' GROUP BY source, event_type", "complex_aggregation"),
-        
+
         // Very complex query with multiple joins and subqueries
         ("WITH event_stats AS (SELECT source, COUNT(*) as cnt FROM core.events GROUP BY source) SELECT e.source, e.event_type, es.cnt FROM core.events e JOIN event_stats es ON e.source = es.source WHERE e.source = 'complexity_test' ORDER BY es.cnt DESC", "complex_cte"),
     ];

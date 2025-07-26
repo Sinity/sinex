@@ -1,9 +1,9 @@
-use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use sinex_db::queries::{EventQueries};
+use sinex_db::queries::EventQueries;
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
+use sinex_events::{event_types, services, EventFactory};
+use sinex_test_utils::prelude::*;
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -461,7 +461,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
 
                 let raw_event = EventFactory::new("property.ulid_ordering")
                     .create_event("ordering_test", json!({"sequence": i}));
-                
+
                 let event = sinex_db::insert_event_with_validator(
                     &pool,
                     &raw_event,
@@ -528,7 +528,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             for i in 0..batch1_size {
                 let raw_event = EventFactory::new(&source_name)
                     .create_event("batch1_event", json!({"batch": 1, "sequence": i}));
-                
+
                 let event = sinex_db::insert_event_with_validator(
                     &pool,
                     &raw_event,
@@ -555,7 +555,7 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
             for i in 0..batch2_size {
                 let raw_event = EventFactory::new(&source_name)
                     .create_event("batch2_event", json!({"batch": 2, "sequence": i}));
-                
+
                 let event = sinex_db::insert_event_with_validator(
                     &pool,
                     &raw_event,
@@ -722,109 +722,109 @@ fn test_ulid_monotonic_property_with_rapid_generation() {
 #[sinex_test]
 async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestResult {
     proptest::proptest!(|(
-        num_relationships in 1..10usize,
-    )| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        rt.block_on(async {
-            let pool = ctx.pool().clone();
-            let agent_name = format!("property_fk_test_{}", Ulid::new());
+         num_relationships in 1..10usize,
+     )| {
+         let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
+         rt.block_on(async {
+             let pool = ctx.pool().clone();
+             let agent_name = format!("property_fk_test_{}", Ulid::new());
 
-            // Create test agent
-            sqlx::query(
-                "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
-                 VALUES ($1, 'automaton', $2, $3)"
-            )
-            .bind(&agent_name)
-            .bind("1.0.0")
-            .bind("Property test agent")
-       .execute(&pool)
-            .await
-            .expect("Agent creation failed");
+             // Create test agent
+             sqlx::query(
+                 "INSERT INTO sinex_schemas.processor_manifests (processor_name, processor_type, version, description)
+                  VALUES ($1, 'automaton', $2, $3)"
+             )
+             .bind(&agent_name)
+             .bind("1.0.0")
+             .bind("Property test agent")
+        .execute(&pool)
+             .await
+             .expect("Agent creation failed");
 
-            let mut event_ulids = Vec::new();
-            let mut queue_ulids = Vec::new();
+             let mut event_ulids = Vec::new();
+             let mut queue_ulids = Vec::new();
 
-            // Create relationships
-            for i in 0..num_relationships {
-                // Insert event with ULID
-                let raw_event = EventFactory::new("property.fk_test")
-                    .create_event("foreign_key_test", json!({"relationship": i}));
-                
-                let event = sinex_db::insert_event_with_validator(
-                    &pool,
-                    &raw_event,
-                    None,
-                ).await.expect("Event insert failed");
+             // Create relationships
+             for i in 0..num_relationships {
+                 // Insert event with ULID
+                 let raw_event = EventFactory::new("property.fk_test")
+                     .create_event("foreign_key_test", json!({"relationship": i}));
 
-                event_ulids.push(event.id);
+                 let event = sinex_db::insert_event_with_validator(
+                     &pool,
+                     &raw_event,
+                     None,
+                 ).await.expect("Event insert failed");
 
-                // Insert work queue item referencing the event
-                let queue_ulid = Ulid::new();
-                sqlx::query(
-                    "INSERT INTO sinex_schemas.work_queue
+                 event_ulids.push(event.id);
+
+                 // Insert work queue item referencing the event
+                 let queue_ulid = Ulid::new();
+                 sqlx::query(
+                     "INSERT INTO sinex_schemas.work_queue
                      (queue_id, event_id, target_automaton_name, max_attempts)
                      VALUES ($1::uuid, $2::uuid, $3, 3)"
-                )
-                .bind(queue_ulid.to_uuid())
-                .bind(event.id.to_uuid())
-                .bind(&agent_name)
-                .execute(&pool)
-                .await
-                .expect("Queue insert failed");
+                 )
+                 .bind(queue_ulid.to_uuid())
+                 .bind(event.id.to_uuid())
+                 .bind(&agent_name)
+                 .execute(&pool)
+                 .await
+                 .expect("Queue insert failed");
 
-                queue_ulids.push(queue_ulid);
-            }
+                 queue_ulids.push(queue_ulid);
+             }
 
-            // Property: All foreign key relationships should be queryable
-            for i in 0..num_relationships {
-                let found_event_id: String = sqlx::query_scalar(
-                    "SELECT event_id::text
+             // Property: All foreign key relationships should be queryable
+             for i in 0..num_relationships {
+                 let found_event_id: String = sqlx::query_scalar(
+                     "SELECT event_id::text
                      FROM core.events e
                      JOIN sinex_schemas.work_queue q ON e.id = q.event_id
                      WHERE q.queue_id = $1::ulid"
-                )
-                .bind(queue_ulids[i].to_string())
-         .fetch_one(&pool)
-                .await
-                .expect("FK query failed");
+                 )
+                 .bind(queue_ulids[i].to_string())
+          .fetch_one(&pool)
+                 .await
+                 .expect("FK query failed");
 
-                prop_assert_eq!(found_event_id, event_ulids[i].to_string(),
-                    "Foreign key relationship {} should be consistent", i);
-            }
+                 prop_assert_eq!(found_event_id, event_ulids[i].to_string(),
+                     "Foreign key relationship {} should be consistent", i);
+             }
 
-            // Property: Reverse lookup should also work
-            for i in 0..num_relationships {
-                let found_queue_id: String = sqlx::query_scalar(
-                    "SELECT event_id::text
+             // Property: Reverse lookup should also work
+             for i in 0..num_relationships {
+                 let found_queue_id: String = sqlx::query_scalar(
+                     "SELECT event_id::text
                      FROM sinex_schemas.work_queue q
                      WHERE q.event_id = $1::ulid"
-                )
-                .bind(event_ulids[i].to_string())
-        .fetch_one(&pool)
-                .await
-                .expect("Reverse FK query failed");
+                 )
+                 .bind(event_ulids[i].to_string())
+         .fetch_one(&pool)
+                 .await
+                 .expect("Reverse FK query failed");
 
-                prop_assert_eq!(found_queue_id, queue_ulids[i].to_string(),
-                    "Reverse foreign key lookup {} should be consistent", i);
-            }
+                 prop_assert_eq!(found_queue_id, queue_ulids[i].to_string(),
+                     "Reverse foreign key lookup {} should be consistent", i);
+             }
 
-            // Property: Join count should match relationship count
-            let join_count: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*)
+             // Property: Join count should match relationship count
+             let join_count: i64 = sqlx::query_scalar(
+                 "SELECT COUNT(*)
                  FROM core.events e
                  JOIN sinex_schemas.work_queue q ON e.id = q.event_id
                  WHERE e.source = 'property.fk_test'"
-            )
-   .fetch_one(&pool)
-            .await
-            .expect("Join count query failed");
+             )
+    .fetch_one(&pool)
+             .await
+             .expect("Join count query failed");
 
-            prop_assert_eq!(join_count as usize, num_relationships,
-                "Join count should match number of created relationships");
+             prop_assert_eq!(join_count as usize, num_relationships,
+                 "Join count should match number of created relationships");
 
-            Ok::<(), proptest::test_runner::TestCaseError>(())
-        })?
-    });
+             Ok::<(), proptest::test_runner::TestCaseError>(())
+         })?
+     });
     Ok(())
 }
 

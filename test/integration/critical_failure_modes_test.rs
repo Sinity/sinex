@@ -3,9 +3,9 @@
 // This module tests critical failure scenarios that could break the system
 // in production, focusing on basic functionality without complex dependencies.
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::mocks::EventSourceContext;
 use sinex_satellite_sdk::VersionInfo;
+use sinex_test_utils::mocks::EventSourceContext;
+use sinex_test_utils::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 

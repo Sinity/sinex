@@ -408,7 +408,14 @@ impl OperationQueries {
     /// Store a single metrics entry
     pub fn store_metric(entry: &sinex_core_types::MetricsEntry) -> QueryBuilder {
         QueryBuilder::insert("sinex.metrics")
-            .columns(&["id", "metric_name", "metric_type", "value", "labels", "timestamp"])
+            .columns(&[
+                "id",
+                "metric_name",
+                "metric_type",
+                "value",
+                "labels",
+                "timestamp",
+            ])
             .values(&[
                 QueryParam::Uuid(entry.id.to_uuid()),
                 QueryParam::String(entry.metric_name.clone()),
@@ -421,9 +428,15 @@ impl OperationQueries {
 
     /// Store multiple metrics entries in a batch
     pub fn store_metrics_batch(entries: &[sinex_core_types::MetricsEntry]) -> QueryBuilder {
-        let mut builder = QueryBuilder::insert("sinex.metrics")
-            .columns(&["id", "metric_name", "metric_type", "value", "labels", "timestamp"]);
-        
+        let mut builder = QueryBuilder::insert("sinex.metrics").columns(&[
+            "id",
+            "metric_name",
+            "metric_type",
+            "value",
+            "labels",
+            "timestamp",
+        ]);
+
         for entry in entries {
             builder = builder.values(&[
                 QueryParam::Uuid(entry.id.to_uuid()),
@@ -434,7 +447,7 @@ impl OperationQueries {
                 QueryParam::Timestamp(entry.timestamp),
             ]);
         }
-        
+
         builder
     }
 
@@ -448,7 +461,14 @@ impl OperationQueries {
         limit: Option<i64>,
     ) -> QueryBuilder {
         let mut builder = QueryBuilder::select("sinex.metrics")
-            .columns(&["id", "metric_name", "metric_type", "value", "labels", "timestamp"])
+            .columns(&[
+                "id",
+                "metric_name",
+                "metric_type",
+                "value",
+                "labels",
+                "timestamp",
+            ])
             .order_by("timestamp", "DESC");
 
         if let Some(name) = metric_name {
@@ -503,7 +523,10 @@ impl OperationQueries {
 
     /// Clean up old metrics data
     pub fn cleanup_old_metrics(older_than: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::delete("sinex.metrics")
-            .where_op("timestamp", "<", QueryParam::Timestamp(older_than))
+        QueryBuilder::delete("sinex.metrics").where_op(
+            "timestamp",
+            "<",
+            QueryParam::Timestamp(older_than),
+        )
     }
 }

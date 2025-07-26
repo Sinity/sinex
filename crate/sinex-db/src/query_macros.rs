@@ -198,7 +198,6 @@ macro_rules! insert_schema {
     };
 }
 
-
 /// Macro for getting health metrics
 ///
 /// Usage:

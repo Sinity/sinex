@@ -5,12 +5,12 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_core_types::{RawEvent, Result};
+use sinex_events::constants::event_types;
 use sinex_events::EventFactory;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::time::{interval, Instant};
 use tracing::{debug, warn};
-use sinex_events::constants::{event_types};
 
 /// Health status levels
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

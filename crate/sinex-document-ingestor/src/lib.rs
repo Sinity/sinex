@@ -9,7 +9,9 @@ use chrono::Utc;
 use serde_json::json;
 use sinex_events::EventFactory;
 use sinex_satellite_sdk::{
-    cli::{CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState},
+    cli::{
+        CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
+    },
     stage_as_you_go::StageAsYouGoContext,
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanReport,
@@ -30,7 +32,7 @@ pub struct DocumentProcessor {
 
 impl DocumentProcessor {
     pub fn new() -> Self {
-        Self { 
+        Self {
             context: None,
             stage_context: None,
         }
@@ -39,10 +41,10 @@ impl DocumentProcessor {
     /// Process a file using stage-as-you-go pattern for real-time provenance
     async fn process_file(&self, file_path: &Path) -> SatelliteResult<()> {
         let ctx = self.context.as_ref().unwrap();
-        
+
         if let Some(ref stage_context) = self.stage_context {
             // Use stage-as-you-go pattern for immediate provenance
-            
+
             // Read file content
             let content = match tokio::fs::read(file_path).await {
                 Ok(content) => content,
@@ -70,11 +72,9 @@ impl DocumentProcessor {
                 "processed_by": "document-ingestor",
             });
 
-            let source_material_id = stage_context.register_in_flight(
-                &material_type,
-                Some(&source_uri),
-                initial_metadata,
-            ).await?;
+            let source_material_id = stage_context
+                .register_in_flight(&material_type, Some(&source_uri), initial_metadata)
+                .await?;
 
             // Step 2: Create and emit document.ingested event with provenance
             let event = EventFactory::new(&ctx.service_name).create_event(
@@ -90,12 +90,14 @@ impl DocumentProcessor {
                 }),
             );
 
-            stage_context.emit_event_with_provenance(
-                event,
-                source_material_id,
-                Some(0), // Files start at byte 0
-                Some(content.len() as i64), // End at file length
-            ).await?;
+            stage_context
+                .emit_event_with_provenance(
+                    event,
+                    source_material_id,
+                    Some(0),                    // Files start at byte 0
+                    Some(content.len() as i64), // End at file length
+                )
+                .await?;
 
             // Step 3: Finalize with complete content details
             let encoding = if mime_type.starts_with("text/") {
@@ -104,12 +106,9 @@ impl DocumentProcessor {
                 None
             };
 
-            stage_context.finalize_source_material(
-                source_material_id,
-                &content,
-                Some(&mime_type),
-                encoding,
-            ).await?;
+            stage_context
+                .finalize_source_material(source_material_id, &content, Some(&mime_type), encoding)
+                .await?;
 
             info!(
                 file_path = %file_path.display(),
@@ -145,14 +144,14 @@ fn determine_material_type(mime_type: &str) -> String {
 impl StatefulStreamProcessor for DocumentProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
         info!("Initializing document processor");
-        
+
         // Initialize stage-as-you-go context for real-time provenance
         self.stage_context = Some(StageAsYouGoContext::new(
             ctx.db_pool.clone(),
             ctx.ingest_client.clone(),
         ));
         info!("Stage-as-you-go context initialized for document processor");
-        
+
         self.context = Some(ctx);
         Ok(())
     }
@@ -170,7 +169,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
             TimeHorizon::Snapshot => {
                 // Scan specified directories for documents
                 info!("Starting document snapshot scan");
-                
+
                 for target in &args.targets {
                     let path = Path::new(target);
                     if path.is_dir() {
@@ -192,7 +191,9 @@ impl StatefulStreamProcessor for DocumentProcessor {
 
                 Ok(ScanReport {
                     events_processed: events_processed as u64,
-                    duration: Duration::from_millis((Utc::now() - start_time).num_milliseconds() as u64),
+                    duration: Duration::from_millis(
+                        (Utc::now() - start_time).num_milliseconds() as u64
+                    ),
                     final_checkpoint: Checkpoint::timestamp(Utc::now(), None),
                     time_range: Some((start_time, Utc::now())),
                     processor_stats: HashMap::new(),
@@ -212,7 +213,9 @@ impl StatefulStreamProcessor for DocumentProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: Vec::new(),
                     failed_targets: Vec::new(),
-                    warnings: vec!["Document processor does not support historical mode".to_string()],
+                    warnings: vec![
+                        "Document processor does not support historical mode".to_string()
+                    ],
                 })
             }
             TimeHorizon::Continuous => {
@@ -226,7 +229,9 @@ impl StatefulStreamProcessor for DocumentProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: Vec::new(),
                     failed_targets: Vec::new(),
-                    warnings: vec!["Document processor does not support continuous mode".to_string()],
+                    warnings: vec![
+                        "Document processor does not support continuous mode".to_string()
+                    ],
                 })
             }
         }
@@ -254,13 +259,13 @@ impl StatefulStreamProcessor for DocumentProcessor {
             supports_concurrent: false,
         }
     }
-
 }
 
 impl ExplorationProvider for DocumentProcessor {
     fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
         Ok(SourceState {
-            description: "Document ingestor for processing files into source material registry".to_string(),
+            description: "Document ingestor for processing files into source material registry"
+                .to_string(),
             last_updated: Utc::now(),
             total_items: Some(0), // Could be enhanced to track processed files
             metadata: HashMap::new(),

@@ -1,6 +1,6 @@
 use crate::models::{CreateEntityInput, CreateRelationInput, Entity, EntityRelation};
-use crate::queries::KnowledgeGraphQueries;
 use crate::queries::knowledge_graph::{EntityRecord, EntityRelationRecord};
+use crate::queries::KnowledgeGraphQueries;
 use crate::query_helpers::uuid_to_ulid;
 use crate::DbPoolRef;
 use anyhow::Result;

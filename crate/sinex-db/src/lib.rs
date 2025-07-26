@@ -1,3 +1,77 @@
+//! # Sinex Database Layer
+//!
+//! The database layer for the Sinex event-driven data capture system. This crate provides
+//! all database interactions including schema management, query builders, and data models.
+//!
+//! ## Data Model: The System's Constitution
+//!
+//! The Sinex data model implements key architectural principles through its table design:
+//!
+//! ### Core Tables
+//!
+//! #### `raw.source_material_registry`
+//! The manifest of all external data - the "birth certificates" for all data entering the system:
+//! - Immutable storage via git-annex integration
+//! - Rich metadata including timing, source, and user context
+//! - Supports the Stage-as-You-Go pattern for real-time provenance
+//!
+//! #### `core.events`
+//! The unified interpretation log implementing Deep Oneness:
+//! ```sql
+//! CREATE TABLE core.events (
+//!     event_id ULID PRIMARY KEY,              -- Time-ordered, globally unique
+//!     ts_ingest TIMESTAMPTZ,                  -- System time (from ULID)
+//!     ts_orig TIMESTAMPTZ,                    -- Semantic time
+//!     source TEXT NOT NULL,                   -- Who created this
+//!     event_type TEXT NOT NULL,               -- What happened
+//!     payload JSONB NOT NULL,                 -- The details
+//!     
+//!     -- Provenance tracking
+//!     source_event_ids ULID[],                -- NULL=raw, populated=synthesis
+//!     source_material_id ULID,                -- External data reference
+//!     anchor_byte BIGINT,                     -- Immutable location
+//!     
+//!     -- Schema evolution support
+//!     payload_schema_id ULID,
+//!     payload_schema_name TEXT,
+//!     payload_schema_version TEXT
+//! );
+//! ```
+//!
+//! Key insights:
+//! - **ULID Primary Keys**: Time-ordered identifiers for efficient indexing
+//! - **Dual Timestamps**: System time (ts_ingest) vs semantic time (ts_orig)
+//! - **Provenance Chain**: source_event_ids tracks synthesis lineage
+//! - **Anchor Byte Principle**: Immutable reference for deterministic replay
+//!
+//! #### `audit.archived_events`
+//! Complete audit trail of superseded interpretations:
+//! - Populated by BEFORE DELETE trigger
+//! - Includes reason and replacement reference
+//! - Enables full historical analysis
+//! - Implements the Archive and Replace pattern
+//!
+//! #### `core.operations_log`
+//! Intent-level audit of all system actions:
+//! - Records stage, replay, archive operations
+//! - Captures exact parameters and outcomes
+//! - Provides "why" for all data modifications
+//! - Enables Auditable Metacognition
+//!
+//! ### Knowledge Graph (Materialized State)
+//! - `core.entities`: Concepts, people, projects extracted from events
+//! - `core.entity_relations`: Connections between entities
+//! - Completely rebuildable from event stream
+//! - Users can directly manipulate (generating events)
+//!
+//! ## Key Design Decisions
+//!
+//! 1. **Immutability**: Events are never updated, only archived and replaced
+//! 2. **Time-Ordering**: ULID keys ensure natural time-based sorting
+//! 3. **Schema Evolution**: Payload schemas tracked but not enforced
+//! 4. **Provenance First**: Every piece of data traceable to its origin
+//! 5. **Audit Everything**: System remembers not just what but why
+
 pub mod models;
 // Re-export RawEvent from sinex-events for type unification
 pub use sinex_events::RawEvent;
@@ -11,11 +85,11 @@ pub mod security;
 pub mod validation;
 
 // New centralized query system
+pub mod constants;
+pub mod distributed_locking;
 pub mod queries;
 pub mod query_builder;
 pub mod query_macros;
-pub mod constants;
-pub mod distributed_locking;
 
 #[cfg(test)]
 pub mod query_system_test;
@@ -53,9 +127,7 @@ pub use query_helpers::{
 };
 
 // Re-export centralized query system
-pub use queries::{
-    CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
-};
+pub use queries::{CheckpointQueries, EventQueries, OperationQueries, SchemaQueries};
 pub use query_builder::{QueryBuilder, QueryParam};
 
 /// Prelude module for commonly used database types and functions
@@ -81,9 +153,7 @@ pub mod prelude {
     pub use crate::knowledge_graph::*;
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, PoolConfig, Timestamp};
     // Re-export centralized query system in prelude
-    pub use crate::queries::{
-        CheckpointQueries, EventQueries, OperationQueries, SchemaQueries,
-    };
+    pub use crate::queries::{CheckpointQueries, EventQueries, OperationQueries, SchemaQueries};
     pub use crate::query_builder::{QueryBuilder, QueryParam};
     pub use anyhow::Result;
     pub use sinex_events::RawEvent;
@@ -284,8 +354,8 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use sinex_events::RawEvent;
-    use sinex_ulid::Ulid;
     use sinex_test_utils::prelude::*;
+    use sinex_ulid::Ulid;
 
     #[sinex_test]
     async fn test_raw_event_creation() {

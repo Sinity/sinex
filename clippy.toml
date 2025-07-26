@@ -1,46 +1,29 @@
 # Sinex Clippy Configuration
-# Enforces use of proper abstractions over raw implementations
 
 # Disallow methods that bypass our abstractions
 disallowed-methods = [
     # SQL Query Methods - Use QueryBuilder instead
-    { path = "sqlx::query", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
-    { path = "sqlx::query_as", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
-    { path = "sqlx::query_scalar", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
-    { path = "sqlx::query_file", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
-    { path = "sqlx::query_file_as", reason = "Use QueryBuilder from sinex-db instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    { path = "sqlx::query", reason = "Use QueryBuilder from sinex-db instead" },
+    { path = "sqlx::query_as", reason = "Use QueryBuilder from sinex-db instead" },
+    { path = "sqlx::query_scalar", reason = "Use QueryBuilder from sinex-db instead" },
+    { path = "sqlx::query!", reason = "Use QueryBuilder from sinex-db instead of macros" },
+    { path = "sqlx::query_as!", reason = "Use QueryBuilder from sinex-db instead of macros" },
     
-    # Error Handling - Use CoreError instead
-    { path = "anyhow::anyhow", reason = "Use CoreError from sinex-error instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
-    { path = "anyhow::bail", reason = "Use CoreError from sinex-error instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
-    { path = "anyhow::ensure", reason = "Use CoreError from sinex-error instead. See docs/ABSTRACTION_ENFORCEMENT.md" },
+    # Error handling - Use CoreError instead
+    { path = "anyhow::anyhow", reason = "Use CoreError from sinex-core for typed errors" },
+    { path = "anyhow::bail", reason = "Use CoreError from sinex-core for typed errors" },
+    { path = "anyhow::ensure", reason = "Use CoreError from sinex-core for typed errors" },
     
-    # Avoid in production code
+    # Avoid blocking operations in async code
     { path = "std::thread::sleep", reason = "Use tokio::time::sleep for async code" },
     { path = "std::fs::read", reason = "Use tokio::fs for async I/O" },
     { path = "std::fs::write", reason = "Use tokio::fs for async I/O" },
 ]
 
-# Warn on common anti-patterns
-warn-on-all-wildcard-imports = true
-enum-variant-name-threshold = 3
-single-char-lifetime-names = ["'a", "'b", "'c"]
-
-# Enforce documentation
-missing-docs-in-private-items = false
-missing-errors-doc = true
-missing-panics-doc = true
-missing-safety-doc = true
-
 # Complexity thresholds
 cognitive-complexity-threshold = 30
 too-many-arguments-threshold = 7
-type-complexity-threshold = 250
 too-many-lines-threshold = 100
-
-# Style preferences
-module-name-repetitions = true
-mod-module-files = false
 
 [lints.rust]
 unsafe_code = "deny"
@@ -81,3 +64,19 @@ wildcard_imports = "warn"
 # Specific to Sinex patterns
 string_lit_as_bytes = "warn"  # Use constants
 manual_string_new = "warn"    # Consistent string creation
+
+# String literal enforcement
+# These help enforce use of constants instead of hardcoded strings
+str_to_string = "warn"         # Prefer .to_owned() or constants
+single_char_pattern = "warn"   # Use char instead of "x"
+
+# Additional pattern enforcement
+default_trait_access = "warn"  # Use Type::default() consistently
+map_unwrap_or = "warn"         # Prefer map_or for clarity
+
+# NOTE: Direct string literal detection (e.g., "process.heartbeat") is difficult
+# with clippy alone. Consider:
+# 1. Code review to catch hardcoded event types/sources
+# 2. grep-based pre-commit hooks for known patterns
+# 3. Custom lint plugin (complex but powerful)
+# 4. Encouraging use of constants modules via examples

@@ -7,15 +7,15 @@
 //! - Preflight integration
 //! - Failure detection and takeover
 
-use crate::version::{SatelliteVersion, SatelliteInstance};
-use sinex_core_types::{CoreError, Result, DbPool};
+use crate::version::{SatelliteInstance, SatelliteVersion};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use sinex_core_types::{CoreError, DbPool, Result};
 use sinex_core_utils::CoordinationPrimitive;
 use sinex_db::distributed_locking::{DistributedCoordination, LeadershipGuard};
-use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
-use tracing::{info, warn, error, debug, instrument};
-use serde_json::json;
+use tracing::{debug, error, info, instrument, warn};
 
 /// Instance mode determines satellite behavior
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,17 +49,14 @@ pub struct SatelliteCoordination {
 }
 
 impl SatelliteCoordination {
-    pub fn new(
-        service_name: String,
-        instance_id: String,
-        pool: DbPool,
-    ) -> Self {
+    pub fn new(service_name: String, instance_id: String, pool: DbPool) -> Self {
         let instance = SatelliteInstance::new(instance_id, service_name);
         let coordination = DistributedCoordination::new(pool.clone());
-        let failure_coordinator = CoordinationPrimitive::synchronizer(
-            format!("failure_detection_{}", instance.service_name)
-        );
-        
+        let failure_coordinator = CoordinationPrimitive::synchronizer(format!(
+            "failure_detection_{}",
+            instance.service_name
+        ));
+
         Self {
             instance,
             pool,
@@ -69,7 +66,7 @@ impl SatelliteCoordination {
             failure_coordinator,
         }
     }
-    
+
     /// Run the coordination loop - main entry point
     pub async fn run_coordination_loop<F, Fut>(&mut self, process_events: F) -> Result<()>
     where
@@ -77,14 +74,14 @@ impl SatelliteCoordination {
         Fut: std::future::Future<Output = Result<()>> + Send + 'static,
     {
         info!("Starting coordination loop for {}", self.instance.summary());
-        
+
         loop {
             match self.determine_desired_mode().await? {
                 InstanceMode::Leader => {
                     if self.current_mode != InstanceMode::Leader {
                         info!("Transitioning to LEADER mode");
                         self.current_mode = InstanceMode::Transitioning;
-                        
+
                         if let Some(leadership) = self.try_acquire_leadership().await? {
                             // 📊 COORDINATION EVENT: Leadership Acquired
                             info!(
@@ -95,7 +92,7 @@ impl SatelliteCoordination {
                                 transition = "standby_to_leader",
                                 "🏆 Leadership acquired successfully"
                             );
-                            
+
                             self.current_mode = InstanceMode::Leader;
                             self.run_as_leader(leadership, &process_events).await?;
                         } else {
@@ -134,31 +131,32 @@ impl SatelliteCoordination {
             }
         }
     }
-    
+
     /// Determine what mode this instance should be in
     async fn determine_desired_mode(&self) -> Result<InstanceMode> {
         let all_instances = self.get_all_active_instances().await?;
-        
+
         if all_instances.is_empty() {
             return Ok(InstanceMode::Leader); // Only instance
         }
-        
+
         // Find the instance that should be leader
-        let leader_candidate = all_instances.iter()
-            .max_by(|a, b| {
-                // Version first, then start time for tie-breaking
-                match a.version.cmp(&b.version) {
-                    std::cmp::Ordering::Equal => b.start_time.cmp(&a.start_time), // Earlier start wins
-                    other => other,
-                }
-            });
-        
+        let leader_candidate = all_instances.iter().max_by(|a, b| {
+            // Version first, then start time for tie-breaking
+            match a.version.cmp(&b.version) {
+                std::cmp::Ordering::Equal => b.start_time.cmp(&a.start_time), // Earlier start wins
+                other => other,
+            }
+        });
+
         match leader_candidate {
-            Some(leader) if leader.instance_id == self.instance.instance_id => Ok(InstanceMode::Leader),
+            Some(leader) if leader.instance_id == self.instance.instance_id => {
+                Ok(InstanceMode::Leader)
+            }
             _ => Ok(InstanceMode::Standby),
         }
     }
-    
+
     /// Try to acquire leadership with preflight checks
     async fn try_acquire_leadership(&self) -> Result<Option<LeadershipGuard>> {
         // First, verify we're ready to be leader
@@ -166,18 +164,22 @@ impl SatelliteCoordination {
             info!("Skipping leadership attempt - preflight checks failed");
             return Ok(None);
         }
-        
+
         // Try to acquire the advisory lock
-        if let Some(lock_guard) = self.coordination.try_become_leader(&self.instance.service_name).await? {
+        if let Some(lock_guard) = self
+            .coordination
+            .try_become_leader(&self.instance.service_name)
+            .await?
+        {
             let leadership = LeadershipGuard::new(
                 lock_guard,
                 self.instance.service_name.clone(),
                 self.instance.instance_id.clone(),
             );
-            
+
             // Record leadership in database
             leadership.record_leadership(&self.pool).await?;
-            
+
             info!("Acquired leadership for {}", self.instance.service_name);
             Ok(Some(leadership))
         } else {
@@ -185,25 +187,29 @@ impl SatelliteCoordination {
             Ok(None)
         }
     }
-    
+
     /// Run as leader with event processing and handoff monitoring
-    async fn run_as_leader<F, Fut>(&mut self, leadership: LeadershipGuard, process_events: &F) -> Result<()>
+    async fn run_as_leader<F, Fut>(
+        &mut self,
+        leadership: LeadershipGuard,
+        process_events: &F,
+    ) -> Result<()>
     where
         F: Fn() -> Fut + Send,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let (handoff_sender, handoff_receiver) = mpsc::channel(10);
         self.handoff_receiver = Some(handoff_receiver);
-        
+
         // Start handoff monitoring
         let handoff_monitor = self.monitor_handoff_requests(handoff_sender);
-        
+
         // Start failure monitoring
         let failure_monitor = self.monitor_for_critical_failures();
-        
+
         // Start heartbeat
         let heartbeat_task = self.run_leadership_heartbeat(&leadership);
-        
+
         tokio::select! {
             // Run main event processing
             result = process_events() => {
@@ -216,7 +222,7 @@ impl SatelliteCoordination {
                     }
                 }
             }
-            
+
             // Handle handoff requests
             handoff_result = handoff_monitor => {
                 if let Ok(request) = handoff_result {
@@ -233,7 +239,7 @@ impl SatelliteCoordination {
                     self.handle_graceful_handoff(request).await?;
                 }
             }
-            
+
             // Handle critical failures
             _ = failure_monitor => {
                 // 📊 COORDINATION EVENT: Critical Failure
@@ -248,40 +254,40 @@ impl SatelliteCoordination {
                 self.signal_critical_failure("Critical system failure").await?;
                 return Err(CoreError::InvalidState("Critical failure detected".to_string()));
             }
-            
+
             // Heartbeat failure
             _ = heartbeat_task => {
                 warn!("Leadership heartbeat failed - releasing leadership");
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Run as standby, monitoring for leadership opportunities
     async fn run_as_standby(&self) -> Result<()> {
         debug!("Running in STANDBY mode");
-        
+
         tokio::select! {
             // Check for leadership opportunity every 30 seconds
             _ = tokio::time::sleep(Duration::from_secs(30)) => {
                 // Re-evaluate leadership in main loop
             }
-            
+
             // Watch for leader failure signals
             _ = self.watch_for_leader_failure() => {
                 warn!("Leader failure detected - will attempt takeover");
             }
-            
+
             // Monitor for handoff opportunities (newer version challenging us)
             _ = self.monitor_version_challenges() => {
                 debug!("Version challenge detected - re-evaluating leadership");
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Verify preflight checks before becoming leader
     async fn verify_preflight_checks(&self) -> Result<bool> {
         match sinex_preflight::services::verify_service_dependencies().await {
@@ -292,11 +298,17 @@ impl SatelliteCoordination {
                         Ok(true)
                     }
                     sinex_preflight::VerificationStatus::Warning => {
-                        warn!("Preflight warnings for {}: {:?}", self.instance.service_name, messages);
+                        warn!(
+                            "Preflight warnings for {}: {:?}",
+                            self.instance.service_name, messages
+                        );
                         Ok(true) // Warnings still allow leadership
                     }
                     sinex_preflight::VerificationStatus::Fail => {
-                        error!("Preflight failed for {}: {:?}", self.instance.service_name, messages);
+                        error!(
+                            "Preflight failed for {}: {:?}",
+                            self.instance.service_name, messages
+                        );
                         Ok(false)
                     }
                 }
@@ -307,16 +319,19 @@ impl SatelliteCoordination {
             }
         }
     }
-    
+
     /// Get all active instances from database
     async fn get_all_active_instances(&self) -> Result<Vec<SatelliteInstance>> {
         // Query active instances from database (would need to implement this table)
         // For now, return just this instance
         Ok(vec![self.instance.clone()])
     }
-    
+
     /// Monitor for handoff requests from newer versions
-    async fn monitor_handoff_requests(&self, sender: mpsc::Sender<HandoffRequest>) -> Result<HandoffRequest> {
+    async fn monitor_handoff_requests(
+        &self,
+        sender: mpsc::Sender<HandoffRequest>,
+    ) -> Result<HandoffRequest> {
         loop {
             // Check database for handoff signals
             let signals = sqlx::query!(
@@ -329,7 +344,7 @@ impl SatelliteCoordination {
             )
             .fetch_all(&self.pool)
             .await?;
-            
+
             for signal in signals {
                 if let Some(message) = signal.message {
                     if let Ok(request) = serde_json::from_str::<HandoffRequest>(&message) {
@@ -338,11 +353,11 @@ impl SatelliteCoordination {
                     }
                 }
             }
-            
+
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
     }
-    
+
     /// Handle graceful handoff to newer version
     #[instrument(skip(self, request), fields(
         service = %self.instance.service_name,
@@ -360,10 +375,10 @@ impl SatelliteCoordination {
             to_version = %request.to_version.version,
             "🔄 Starting graceful handoff process"
         );
-        
+
         // Finish current critical work
         self.finish_critical_work().await?;
-        
+
         // Signal ready for handoff
         sqlx::query!(
             "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
@@ -373,7 +388,7 @@ impl SatelliteCoordination {
         )
         .execute(&self.pool)
         .await?;
-        
+
         // 📊 COORDINATION EVENT: Handoff Ready
         info!(
             event = "coordination.handoff_ready",
@@ -382,10 +397,10 @@ impl SatelliteCoordination {
             target_instance = %request.from_instance,
             "✅ Signaled ready for handoff - releasing leadership"
         );
-        
+
         Ok(())
     }
-    
+
     /// Monitor for critical failures
     async fn monitor_for_critical_failures(&self) -> Result<()> {
         // This would monitor system health, memory usage, etc.
@@ -393,7 +408,7 @@ impl SatelliteCoordination {
         tokio::time::sleep(Duration::from_secs(u64::MAX)).await;
         Ok(())
     }
-    
+
     /// Signal critical failure to other instances
     async fn signal_critical_failure(&self, error: &str) -> Result<()> {
         sqlx::query!(
@@ -403,12 +418,12 @@ impl SatelliteCoordination {
         )
         .execute(&self.pool)
         .await?;
-        
+
         error!("Signaled critical failure to standbys: {}", error);
         self.failure_coordinator.signal();
         Ok(())
     }
-    
+
     /// Watch for leader failure signals
     async fn watch_for_leader_failure(&self) -> Result<()> {
         loop {
@@ -420,12 +435,12 @@ impl SatelliteCoordination {
             )
             .fetch_all(&self.pool)
             .await?;
-            
+
             if !failures.is_empty() {
                 warn!("Leader failure signals detected");
                 return Ok(());
             }
-            
+
             // Check if current leader is still healthy via heartbeat
             let leader_health = sqlx::query!(
                 "SELECT last_heartbeat FROM core.service_leadership 
@@ -435,23 +450,23 @@ impl SatelliteCoordination {
             )
             .fetch_optional(&self.pool)
             .await?;
-            
+
             if leader_health.is_none() {
                 warn!("Leader heartbeat timeout detected");
                 return Ok(());
             }
-            
+
             tokio::time::sleep(Duration::from_secs(10)).await;
         }
     }
-    
+
     /// Monitor for version challenges
     async fn monitor_version_challenges(&self) -> Result<()> {
         // Check if there are newer versions challenging leadership
         tokio::time::sleep(Duration::from_secs(60)).await;
         Ok(())
     }
-    
+
     /// Run leadership heartbeat
     async fn run_leadership_heartbeat(&self, leadership: &LeadershipGuard) -> Result<()> {
         loop {
@@ -459,11 +474,11 @@ impl SatelliteCoordination {
                 error!("Failed to update leadership heartbeat: {}", e);
                 return Err(e);
             }
-            
+
             tokio::time::sleep(Duration::from_secs(15)).await;
         }
     }
-    
+
     /// Finish current critical work before handoff
     async fn finish_critical_work(&self) -> Result<()> {
         // TODO: Implement graceful work completion
@@ -471,12 +486,12 @@ impl SatelliteCoordination {
         tokio::time::sleep(Duration::from_millis(100)).await; // Placeholder
         Ok(())
     }
-    
+
     // Getters
     pub fn instance(&self) -> &SatelliteInstance {
         &self.instance
     }
-    
+
     pub fn current_mode(&self) -> InstanceMode {
         self.current_mode.clone()
     }

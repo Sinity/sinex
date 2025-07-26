@@ -3,6 +3,7 @@
 //! Monitors systemd services, timers, and unit state changes
 
 use serde_json::json;
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
@@ -12,7 +13,6 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// systemd watcher configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -95,10 +95,7 @@ impl SystemdWatcher {
 
                 return Some({
                     let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
-                    factory.create_event(
-                        "unit.status",
-                        payload,
-                    )
+                    factory.create_event("unit.status", payload)
                 });
             }
         }
@@ -123,12 +120,10 @@ impl SystemdWatcher {
                 "timestamp": chrono::Utc::now().to_rfc3339(),
             });
 
-            return Some(
-                {
-                    let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
-                    factory.create_event(event_type, payload)
-                }
-            );
+            return Some({
+                let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
+                factory.create_event(event_type, payload)
+            });
         }
 
         None
@@ -307,12 +302,10 @@ impl SystemdWatcher {
                     "journal_timestamp": entry["__REALTIME_TIMESTAMP"].as_str(),
                 });
 
-                Some(
-                    {
-                        let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
-                        factory.create_event(event_type, payload)
-                    }
-                )
+                Some({
+                    let factory = EventFactory::new(sinex_events::sources::SYSTEMD);
+                    factory.create_event(event_type, payload)
+                })
             }
             Err(e) => {
                 debug!("Failed to parse systemd journal entry: {}", e);

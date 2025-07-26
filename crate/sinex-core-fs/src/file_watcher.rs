@@ -146,9 +146,9 @@ impl FileWatcher {
                 RecursiveMode::NonRecursive
             };
 
-            watcher
-                .watch(path, mode)
-                .map_err(|e| CoreError::Unknown(format!("Failed to watch path {:?}: {}", path, e)))?;
+            watcher.watch(path, mode).map_err(|e| {
+                CoreError::Unknown(format!("Failed to watch path {:?}: {}", path, e))
+            })?;
 
             debug!("Started watching path: {:?}", path);
         }

@@ -1,103 +1,103 @@
 //! # Sinex ULID Implementation
-//! 
+//!
 //! Time-ordered, globally unique identifiers for the Sinex system.
-//! 
+//!
 //! This crate provides ULID (Universally Unique Lexicographically Sortable Identifier)
 //! support with PostgreSQL integration via the pgx_ulid extension.
-//! 
+//!
 //! ## Architectural Decision: ULID Primary Keys (ADR-001)
-//! 
+//!
 //! **Status**: Implemented  
 //! **Decision Date**: 2024-03-11  
 //! **Implementation Date**: 2025-07-17  
-//! 
+//!
 //! ### Context
-//! 
+//!
 //! Sinex requires a robust primary key strategy for high-volume, time-ordered data.
 //! The strategy must address:
-//! 
+//!
 //! 1. **Index Efficiency**: Minimize B-tree bloat and fragmentation
 //! 2. **Time-Ordering**: Keys should be naturally sortable by time
 //! 3. **Global Uniqueness**: Support distributed generation
 //! 4. **Performance**: Efficient generation and comparison
 //! 5. **Developer Experience**: Good ecosystem support
-//! 
+//!
 //! ### Decision
-//! 
+//!
 //! We use ULIDs via the pgx_ulid PostgreSQL extension for all primary keys.
-//! 
+//!
 //! ### Rationale
-//! 
+//!
 //! 1. **Best of Both Worlds**: Time-ordering benefits with native PostgreSQL support
 //! 2. **Performance**: 30% faster generation than UUIDs in benchmarks
 //! 3. **Rich Features**: Timestamp casting, monotonic generation
 //! 4. **Binary Storage**: Efficient 16-byte storage (same as UUID)
 //! 5. **Ecosystem Alignment**: pgx_ulid written in Rust aligns with our stack
-//! 
+//!
 //! ### Alternatives Considered
-//! 
+//!
 //! | Option | Pros | Cons | Decision |
 //! |--------|------|------|----------|
 //! | UUIDv4 | Standard, widely supported | Random = poor index locality | ❌ Rejected |
 //! | UUIDv7 | Time-ordered, standard | Less mature ecosystem | ❌ Rejected |
 //! | Custom ULID | No dependencies | Complex implementation | ❌ Rejected |
 //! | pgx_ulid | All ULID benefits + native PG | External dependency | ✅ **Chosen** |
-//! 
+//!
 //! ### Consequences
-//! 
+//!
 //! **Positive**:
 //! - Sequential inserts improve index performance
 //! - Natural time-based partitioning
 //! - Can extract timestamp from ID
 //! - Sortable across distributed systems
-//! 
+//!
 //! **Negative**:
 //! - Requires pgx_ulid extension installation
 //! - 26-character string representation (vs 36 for UUID)
-//! 
+//!
 //! ## ULID Structure
-//! 
+//!
 //! ```text
 //!  01AN4Z07BY      79KA1307SR9X4MV3
 //! |----------|    |----------------|
 //!  Timestamp          Randomness
 //!    48bits             80bits
 //! ```
-//! 
+//!
 //! ## Usage Examples
-//! 
+//!
 //! ### Basic Usage
-//! 
+//!
 //! ```rust
 //! use sinex_ulid::Ulid;
-//! 
+//!
 //! // Generate new ULID
 //! let id = Ulid::new();
 //! println!("Generated: {}", id);
-//! 
+//!
 //! // Extract timestamp
 //! let timestamp = id.timestamp();
 //! println!("Created at: {}", timestamp);
 //! ```
-//! 
+//!
 //! ### PostgreSQL Integration
-//! 
+//!
 //! ```sql
 //! -- Database side
 //! CREATE EXTENSION pgx_ulid;
-//! 
+//!
 //! CREATE TABLE events (
 //!     id ULID PRIMARY KEY DEFAULT gen_ulid(),
 //!     data JSONB
 //! );
 //! ```
-//! 
+//!
 //! ```rust
 //! # use sinex_ulid::Ulid;
 //! # use sqlx::PgPool;
 //! // Rust side with SQLx
 //! let id = Ulid::new();
-//! 
+//!
 //! sqlx::query!(
 //!     "INSERT INTO events (id, data) VALUES ($1, $2)",
 //!     id.as_uuid(),  // Convert to UUID for parameter binding
@@ -107,18 +107,18 @@
 //! .await?;
 //! # Ok::<_, Box<dyn std::error::Error>>(())
 //! ```
-//! 
+//!
 //! ## Monotonic Generation
-//! 
+//!
 //! This implementation includes monotonic generation to handle high-frequency
 //! ID generation within the same millisecond:
-//! 
+//!
 //! ```rust
 //! # use sinex_ulid::Ulid;
 //! let id1 = Ulid::new();
 //! let id2 = Ulid::new();
 //! let id3 = Ulid::new();
-//! 
+//!
 //! // Even if generated in the same millisecond, ordering is preserved
 //! assert!(id1 < id2);
 //! assert!(id2 < id3);
@@ -160,56 +160,56 @@ lazy_static! {
 }
 
 /// A wrapper around ULID that provides PostgreSQL compatibility via UUID
-/// 
+///
 /// This is the primary key type used throughout Sinex, chosen via ADR-001
 /// for its time-ordering properties and index efficiency.
-/// 
+///
 /// ## Why ULID over UUID?
-/// 
+///
 /// - **Time-ordering**: Natural chronological sort without additional columns
 /// - **Index efficiency**: Sequential inserts minimize B-tree fragmentation  
 /// - **Timestamp extraction**: Can derive creation time from ID
 /// - **Global uniqueness**: Safe for distributed systems
-/// 
+///
 /// ## PostgreSQL Integration
-/// 
+///
 /// Requires the pgx_ulid extension:
 /// ```sql
 /// CREATE EXTENSION pgx_ulid;
 /// ```
-/// 
+///
 /// Then use the native ULID type in tables:
 /// ```sql
 /// CREATE TABLE my_table (
 ///     id ULID PRIMARY KEY DEFAULT gen_ulid()
 /// );
 /// ```
-/// 
+///
 /// ## Technical Implementation Module: Primary Key Implementation
-/// 
+///
 /// **Maturity Level**: L4 - Implemented  
 /// **Implementation**: 98% (ULID generation, PostgreSQL integration, and UUID casting for FKs fully working)
-/// 
+///
 /// ### PostgreSQL Extension Setup
-/// 
+///
 /// The pgx_ulid extension must be installed and enabled. For NixOS users, see
-/// [`nixos/modules/sinex-config.nix`](../../../nixos/modules/sinex-config.nix#L285-L305) 
-/// for the complete PostgreSQL configuration including extension setup and optional 
+/// [`nixos/modules/sinex-config.nix`](../../../nixos/modules/sinex-config.nix#L285-L305)
+/// for the complete PostgreSQL configuration including extension setup and optional
 /// monotonic generator configuration.
-/// 
+///
 /// ### ULID-UUID Casting for Foreign Keys
-/// 
+///
 /// ULIDs seamlessly cast to UUIDs for foreign key relationships:
-/// 
+///
 /// ```rust
 /// // Cast ULID to UUID when querying
 /// let events = sqlx::query!(
 ///     r#"
-///     SELECT 
+///     SELECT
 ///         event_id::uuid as "event_id!",
 ///         source,
 ///         event_type
-///     FROM core.events 
+///     FROM core.events
 ///     WHERE event_id = $1::uuid
 ///     "#,
 ///     event_id.to_uuid()  // ULID provides to_uuid() method
@@ -217,13 +217,13 @@ lazy_static! {
 /// .fetch_all(pool)
 /// .await?;
 /// ```
-/// 
+///
 /// Database schema supports ULID-UUID relationships:
 /// ```sql
 /// -- Foreign key constraints handle ULID-UUID casting
-/// ALTER TABLE core.event_relations 
-///     ADD CONSTRAINT fk_event_relations_from_event 
-///     FOREIGN KEY (from_event_id) 
+/// ALTER TABLE core.event_relations
+///     ADD CONSTRAINT fk_event_relations_from_event
+///     FOREIGN KEY (from_event_id)
 ///     REFERENCES core.events(event_id::uuid);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -359,49 +359,49 @@ impl Default for Ulid {
     /// Create a new ULID.
     ///
     /// This is equivalent to [`Ulid::new()`].
-    /// 
+    ///
     /// ## Architectural Decision: Clock Regression Handling (ADR-011)
-    /// 
+    ///
     /// **Status**: Implemented  
     /// **Decision Date**: 2025-01-10
-    /// 
+    ///
     /// ### Context
-    /// 
-    /// ULID generation relies on system time to create time-ordered identifiers. When system 
-    /// clocks go backwards (due to NTP corrections, DST changes, or manual adjustments), this 
+    ///
+    /// ULID generation relies on system time to create time-ordered identifiers. When system
+    /// clocks go backwards (due to NTP corrections, DST changes, or manual adjustments), this
     /// can break ULID ordering assumptions and cause events to appear out of sequence.
-    /// 
+    ///
     /// ### Decision
-    /// 
+    ///
     /// **We handle clock regression by not caring about it.**
-    /// 
+    ///
     /// Instead, we:
     /// 1. Use standard `Ulid::new()` without modification
     /// 2. Rely on the operating system to maintain reasonable time
     /// 3. Recommend (but not require) chrony for time synchronization
     /// 4. Accept that minor clock regressions may occasionally cause out-of-order ULIDs
-    /// 
+    ///
     /// ### Rationale
-    /// 
+    ///
     /// 1. **Complexity vs Benefit**: Elaborate solutions add significant complexity for a rare edge case
     /// 2. **Performance Impact**: Monotonic generators require synchronization that slows ULID generation
     /// 3. **OS Responsibility**: Timekeeping is the operating system's job, not the application's
     /// 4. **Real-world Impact**: With modern NTP clients (chrony), significant clock regression is extremely rare
     /// 5. **Failure Mode**: If time goes backwards, having slightly out-of-order events is preferable to refusing to operate
-    /// 
+    ///
     /// ### Consequences
-    /// 
+    ///
     /// **Positive:**
     /// - Simple, fast ULID generation with no synchronization overhead
     /// - No complex time validation logic to maintain
     /// - System continues operating even during time anomalies
     /// - Clear separation of concerns (OS handles time, app handles events)
-    /// 
+    ///
     /// **Negative:**
     /// - Events may occasionally have out-of-order ULIDs during clock regression
     /// - No application-level detection of time anomalies
     /// - Relies on proper OS configuration for time accuracy
-    /// 
+    ///
     /// **Mitigations:**
     /// - Document that Sinex requires a properly synchronized system clock
     /// - Recommend chrony with `makestep 1 3` configuration

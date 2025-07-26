@@ -53,8 +53,8 @@ impl EventFilter {
         }
 
         // Check source patterns
-        let source_match = self.sources.is_empty() || 
-            self.sources.iter().any(|pattern| {
+        let source_match = self.sources.is_empty()
+            || self.sources.iter().any(|pattern| {
                 if pattern.ends_with('*') {
                     event.source.starts_with(&pattern[..pattern.len() - 1])
                 } else {
@@ -63,8 +63,8 @@ impl EventFilter {
             });
 
         // Check event type patterns
-        let event_type_match = self.event_types.is_empty() ||
-            self.event_types.iter().any(|pattern| {
+        let event_type_match = self.event_types.is_empty()
+            || self.event_types.iter().any(|pattern| {
                 if pattern.ends_with('*') {
                     event.event_type.starts_with(&pattern[..pattern.len() - 1])
                 } else {
@@ -143,7 +143,10 @@ impl Default for BatchProcessingResult {
 #[async_trait]
 pub trait EventBatchProcessor: Send + Sync {
     /// Process a batch of events
-    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<BatchProcessingResult>;
+    async fn process_batch(
+        &mut self,
+        events: Vec<RawEvent>,
+    ) -> SatelliteResult<BatchProcessingResult>;
 
     /// Get the event filters for this processor
     fn event_filters(&self) -> Vec<EventFilter> {
@@ -178,13 +181,14 @@ impl RedisStreamConsumer {
 
     /// Initialize the consumer with Redis connection
     pub async fn initialize(&mut self, redis_url: &str) -> SatelliteResult<()> {
-        let client = redis::Client::open(redis_url)
-            .map_err(|e| SatelliteError::Redis(e))?;
-        
+        let client = redis::Client::open(redis_url).map_err(|e| SatelliteError::Redis(e))?;
+
         // Test connection
-        let mut conn = client.get_async_connection().await
+        let mut conn = client
+            .get_async_connection()
+            .await
             .map_err(|e| SatelliteError::Redis(e))?;
-        
+
         // Create consumer group if it doesn't exist
         let _: Result<(), redis::RedisError> = redis::cmd("XGROUP")
             .arg("CREATE")
@@ -194,16 +198,16 @@ impl RedisStreamConsumer {
             .arg("MKSTREAM")
             .query_async(&mut conn)
             .await;
-        
+
         self.redis_client = Some(client);
-        
+
         info!(
             group = %self.config.group_name,
             consumer = %self.config.consumer_name,
             stream = %self.config.stream_name,
             "Redis Stream consumer initialized"
         );
-        
+
         Ok(())
     }
 
@@ -212,10 +216,14 @@ impl RedisStreamConsumer {
     where
         P: EventBatchProcessor,
     {
-        let client = self.redis_client.as_ref()
+        let client = self
+            .redis_client
+            .as_ref()
             .ok_or_else(|| SatelliteError::General(anyhow::anyhow!("Consumer not initialized")))?;
 
-        let mut conn = client.get_async_connection().await
+        let mut conn = client
+            .get_async_connection()
+            .await
             .map_err(|e| SatelliteError::Redis(e))?;
 
         processor.initialize().await?;
@@ -231,7 +239,7 @@ impl RedisStreamConsumer {
                 Ok(events) => {
                     if !events.is_empty() {
                         debug!(count = events.len(), "Received event batch");
-                        
+
                         match processor.process_batch(events).await {
                             Ok(result) => {
                                 debug!(
@@ -256,7 +264,10 @@ impl RedisStreamConsumer {
     }
 
     /// Read a batch of events from the Redis Stream
-    async fn read_batch(&self, conn: &mut redis::aio::Connection) -> SatelliteResult<Vec<RawEvent>> {
+    async fn read_batch(
+        &self,
+        conn: &mut redis::aio::Connection,
+    ) -> SatelliteResult<Vec<RawEvent>> {
         let result: Vec<redis::Value> = redis::cmd("XREADGROUP")
             .arg("GROUP")
             .arg(&self.config.group_name)
@@ -273,7 +284,7 @@ impl RedisStreamConsumer {
             .map_err(|e| SatelliteError::Redis(e))?;
 
         let mut events = Vec::new();
-        
+
         // Parse Redis Stream response format
         // XREADGROUP returns: [[stream_name, [[message_id, [field, value, ...]], ...]]]
         if let Some(redis::Value::Bulk(streams)) = result.first() {
@@ -283,8 +294,9 @@ impl RedisStreamConsumer {
                         if let redis::Value::Bulk(msg_parts) = message {
                             if let Some(event) = self.parse_message(msg_parts)? {
                                 // Apply filters
-                                if self.config.filters.is_empty() || 
-                                   self.config.filters.iter().any(|f| f.matches(&event)) {
+                                if self.config.filters.is_empty()
+                                    || self.config.filters.iter().any(|f| f.matches(&event))
+                                {
                                     events.push(event);
                                 }
                             }
@@ -306,14 +318,15 @@ impl RedisStreamConsumer {
         // Extract fields from the message
         if let redis::Value::Bulk(fields) = &msg_parts[1] {
             let mut field_map = HashMap::new();
-            
+
             for chunk in fields.chunks(2) {
                 if chunk.len() == 2 {
-                    if let (redis::Value::Data(key), redis::Value::Data(value)) = (&chunk[0], &chunk[1]) {
-                        if let (Ok(key_str), Ok(value_str)) = (
-                            std::str::from_utf8(key),
-                            std::str::from_utf8(value)
-                        ) {
+                    if let (redis::Value::Data(key), redis::Value::Data(value)) =
+                        (&chunk[0], &chunk[1])
+                    {
+                        if let (Ok(key_str), Ok(value_str)) =
+                            (std::str::from_utf8(key), std::str::from_utf8(value))
+                        {
                             field_map.insert(key_str.to_string(), value_str.to_string());
                         }
                     }

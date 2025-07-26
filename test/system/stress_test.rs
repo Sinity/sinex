@@ -25,16 +25,16 @@
 // - Deadlock detection and recovery mechanisms
 // - Race condition monitoring and reporting
 
+use futures::future::join_all;
 use sinex_test_utils::prelude::*;
 use sinex_ulid::Ulid;
 use std::collections::HashSet;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::{Barrier, RwLock};
 use tokio::time::{interval, sleep};
-use futures::future::join_all;
-use std::str::FromStr;
 
 // ==================== STRESS TEST INFRASTRUCTURE ====================
 
@@ -270,12 +270,22 @@ pub struct WorkItem {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub enum CycleResult {
-    EventProcessed { processing_time: Duration },
+    EventProcessed {
+        processing_time: Duration,
+    },
     NoEventsAvailable,
-    CheckpointSaved { checkpoint_time: Duration },
-    Timeout { timeout_duration: Duration },
-    ConnectionError { error_details: String },
-    RedisStreamError { conflicting_consumer: Option<String> },
+    CheckpointSaved {
+        checkpoint_time: Duration,
+    },
+    Timeout {
+        timeout_duration: Duration,
+    },
+    ConnectionError {
+        error_details: String,
+    },
+    RedisStreamError {
+        conflicting_consumer: Option<String>,
+    },
 }
 
 // ==================== DEADLOCK DETECTION TESTS ====================
@@ -415,7 +425,10 @@ impl DeadlockStressWorker {
         }
     }
 
-    async fn simulate_event_processing_with_checkpoints(&self, event_id: &str) -> AnyhowResult<bool> {
+    async fn simulate_event_processing_with_checkpoints(
+        &self,
+        event_id: &str,
+    ) -> AnyhowResult<bool> {
         let processing_time = Duration::from_millis(50 + rand::random::<u64>() % 100);
         sleep(processing_time).await;
 
@@ -488,7 +501,7 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
         )
         .execute(&pool)
         .await?;
-        
+
         // Create checkpoint entry for satellite architecture
         let checkpoint_id = Ulid::new();
         let deadlock_event_id = Ulid::new();
@@ -553,7 +566,9 @@ async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
             .unwrap_or_default()
             .into_iter()
             .filter_map(|r| match (r.id, r.automaton_name) {
-                (Some(checkpoint_id), Some(automaton_name)) => Some((checkpoint_id, automaton_name)),
+                (Some(checkpoint_id), Some(automaton_name)) => {
+                    Some((checkpoint_id, automaton_name))
+                }
                 _ => None,
             })
             .collect();
@@ -965,7 +980,7 @@ async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
         )
         .execute(&pool)
         .await?;
-        
+
         // Create checkpoint entry for satellite architecture
         let checkpoint_id = Ulid::new();
         let race_event_id = Ulid::new();
@@ -1504,7 +1519,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             .execute(&create_pool)
             .await
             .expect("Event creation failed");
-            
+
             // Create checkpoint entry for satellite architecture
             let checkpoint_id = Ulid::new();
             let stress_event_id = Ulid::new();
@@ -1607,7 +1622,7 @@ async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
             .unwrap_or(0);
 
             let recent_updates = sqlx::query_scalar!(
-                "SELECT COUNT(*) FROM core.automaton_checkpoints 
+                "SELECT COUNT(*) FROM core.automaton_checkpoints
                  WHERE automaton_name = $1 AND updated_at > NOW() - INTERVAL '30 seconds'",
                 monitor_agent
             )

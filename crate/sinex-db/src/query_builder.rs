@@ -135,11 +135,11 @@ impl QueryParam {
                 let uuids: Vec<Uuid> = ulids.iter().map(|u| ulid_to_uuid(*u)).collect();
                 RawQueryParam::UuidArray(uuids)
             }
-            QueryParam::OptionalUlidArray(opt_ulids) => {
-                RawQueryParam::OptionalUuidArray(opt_ulids.as_ref().map(|ulids| {
-                    ulids.iter().map(|u| ulid_to_uuid(*u)).collect()
-                }))
-            }
+            QueryParam::OptionalUlidArray(opt_ulids) => RawQueryParam::OptionalUuidArray(
+                opt_ulids
+                    .as_ref()
+                    .map(|ulids| ulids.iter().map(|u| ulid_to_uuid(*u)).collect()),
+            ),
             QueryParam::OptionalUlid(opt_ulid) => {
                 RawQueryParam::OptionalUuid(opt_ulid.map(ulid_to_uuid))
             }
@@ -205,14 +205,9 @@ pub enum WhereCondition {
         param_index: usize,
     },
     /// NULL check condition (e.g., column IS NULL)
-    NullCheck {
-        column: String,
-        is_null: bool,
-    },
+    NullCheck { column: String, is_null: bool },
     /// Raw WHERE condition (e.g., "ts_server > NOW() - INTERVAL '1 hour'")
-    Raw {
-        condition: String,
-    },
+    Raw { condition: String },
 }
 
 /// ORDER BY clause
@@ -267,7 +262,6 @@ impl QueryBuilder {
             joins: Vec::new(),
         }
     }
-
 
     /// Create a new INSERT query builder
     pub fn insert(table: &str) -> Self {
@@ -492,16 +486,24 @@ impl QueryBuilder {
                     sql.push_str(&self.columns.join(", "));
                     sql.push_str(") VALUES (");
 
-                    let placeholders: Vec<String> = self.values
+                    let placeholders: Vec<String> = self
+                        .values
                         .iter()
                         .enumerate()
                         .map(|(i, param)| {
                             let param_index = i + 1;
                             // Special handling for source_event_ids ULID array
-                            if self.columns.get(i).map(|c| c == "source_event_ids").unwrap_or(false) {
+                            if self
+                                .columns
+                                .get(i)
+                                .map(|c| c == "source_event_ids")
+                                .unwrap_or(false)
+                            {
                                 match param {
                                     QueryParam::UlidArray(_) => format!("${}::ulid[]", param_index),
-                                    QueryParam::OptionalUlidArray(_) => format!("${}::ulid[]", param_index),
+                                    QueryParam::OptionalUlidArray(_) => {
+                                        format!("${}::ulid[]", param_index)
+                                    }
                                     _ => format!("${}", param_index),
                                 }
                             } else {
@@ -530,10 +532,12 @@ impl QueryBuilder {
                         if column == "source_event_ids" {
                             match param {
                                 QueryParam::UlidArray(_) => {
-                                    set_parts.push(format!("{} = ${}::ulid[]", column, param_index));
+                                    set_parts
+                                        .push(format!("{} = ${}::ulid[]", column, param_index));
                                 }
                                 QueryParam::OptionalUlidArray(_) => {
-                                    set_parts.push(format!("{} = ${}::ulid[]", column, param_index));
+                                    set_parts
+                                        .push(format!("{} = ${}::ulid[]", column, param_index));
                                 }
                                 _ => {
                                     set_parts.push(format!("{} = ${}", column, param_index));
@@ -555,7 +559,10 @@ impl QueryBuilder {
 
         // Add JOINs
         for join in &self.joins {
-            sql.push_str(&format!(" {} JOIN {} ON {}", join.join_type, join.table, join.condition));
+            sql.push_str(&format!(
+                " {} JOIN {} ON {}",
+                join.join_type, join.table, join.condition
+            ));
         }
 
         // Add WHERE conditions
@@ -564,7 +571,12 @@ impl QueryBuilder {
             let mut where_parts = Vec::new();
             for condition in &self.conditions {
                 match condition {
-                    WhereCondition::Parameterized { column, operator, param, .. } => {
+                    WhereCondition::Parameterized {
+                        column,
+                        operator,
+                        param,
+                        ..
+                    } => {
                         match param {
                             QueryParam::Raw(raw_sql) => {
                                 // Raw SQL fragments are embedded directly
@@ -702,7 +714,10 @@ impl QueryBuilder {
     }
 
     /// Execute query on a transaction and return execution result
-    pub async fn execute_tx(self, tx: &mut sqlx::Transaction<'_, sqlx::Postgres>) -> DbResult<sqlx::postgres::PgQueryResult> {
+    pub async fn execute_tx(
+        self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    ) -> DbResult<sqlx::postgres::PgQueryResult> {
         let (sql, params) = self.build()?;
 
         let mut query = sqlx::query(&sql);
@@ -777,11 +792,11 @@ fn bind_param_raw(
 mod tests {
     use super::*;
     use crate::constants::tables;
+    use chrono::Utc;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use sinex_test_utils::{TestContext, TestConfig, database_pool};
+    use sinex_test_utils::{database_pool, TestConfig, TestContext};
     use sinex_ulid::Ulid;
-    use chrono::Utc;
 
     #[sinex_test]
     async fn test_select_query_builder(ctx: TestContext) -> TestResult {
@@ -837,8 +852,8 @@ mod tests {
 
     #[sinex_test]
     async fn test_delete_query_builder(ctx: TestContext) -> TestResult {
-        let builder =
-            QueryBuilder::delete(tables::EVENTS).where_eq("event_id", QueryParam::Ulid(Ulid::new()));
+        let builder = QueryBuilder::delete(tables::EVENTS)
+            .where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
         let (sql, params) = builder.build().unwrap();
         assert!(sql.contains("DELETE FROM core.events"));
@@ -906,12 +921,12 @@ mod tests {
     async fn test_ulid_to_uuid_conversion(ctx: TestContext) -> TestResult {
         let test_ulid = Ulid::new();
         let expected_uuid = crate::query_helpers::ulid_to_uuid(test_ulid);
-        
-        let builder = QueryBuilder::select(tables::EVENTS)
-            .where_eq("event_id", QueryParam::Ulid(test_ulid));
+
+        let builder =
+            QueryBuilder::select(tables::EVENTS).where_eq("event_id", QueryParam::Ulid(test_ulid));
 
         let (_sql, params) = builder.build().unwrap();
-        
+
         match &params[0] {
             RawQueryParam::Uuid(uuid) => {
                 assert_eq!(*uuid, expected_uuid);
@@ -935,13 +950,13 @@ mod tests {
             .columns(&["source", "payload"])
             .values(&[
                 QueryParam::String("test".to_string()),
-                QueryParam::Json(test_json.clone())
+                QueryParam::Json(test_json.clone()),
             ]);
 
         let (sql, params) = builder.build().unwrap();
         assert!(sql.contains("INSERT INTO core.events"));
         assert_eq!(params.len(), 2);
-        
+
         match &params[1] {
             RawQueryParam::Json(json_val) => {
                 assert_eq!(*json_val, test_json);
@@ -959,13 +974,13 @@ mod tests {
                 QueryParam::String("bulk_test".to_string()),
                 QueryParam::String("test.bulk".to_string()),
                 QueryParam::String("localhost".to_string()),
-                QueryParam::Json(serde_json::json!({"index": 1}))
+                QueryParam::Json(serde_json::json!({"index": 1})),
             ])
             .values(&[
                 QueryParam::String("bulk_test".to_string()),
                 QueryParam::String("test.bulk".to_string()),
                 QueryParam::String("localhost".to_string()),
-                QueryParam::Json(serde_json::json!({"index": 2}))
+                QueryParam::Json(serde_json::json!({"index": 2})),
             ]);
 
         let (sql, params) = builder.build().unwrap();
@@ -1004,7 +1019,10 @@ mod tests {
     async fn test_update_with_multiple_sets(ctx: TestContext) -> TestResult {
         let builder = QueryBuilder::update(tables::EVENTS)
             .set("source", QueryParam::String("updated_source".to_string()))
-            .set("payload", QueryParam::Json(serde_json::json!({"updated": true})))
+            .set(
+                "payload",
+                QueryParam::Json(serde_json::json!({"updated": true})),
+            )
             .set("ts_server", QueryParam::Timestamp(Utc::now()))
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
@@ -1018,8 +1036,11 @@ mod tests {
 
     #[sinex_test]
     async fn test_raw_condition(ctx: TestContext) -> TestResult {
-        let builder = QueryBuilder::select(tables::EVENTS)
-            .where_op("ts_server", ">", QueryParam::String("NOW() - INTERVAL '1 hour'".to_string()));
+        let builder = QueryBuilder::select(tables::EVENTS).where_op(
+            "ts_server",
+            ">",
+            QueryParam::String("NOW() - INTERVAL '1 hour'".to_string()),
+        );
 
         let (sql, params) = builder.build().unwrap();
         assert!(sql.contains("WHERE ts_server >"));
@@ -1032,7 +1053,10 @@ mod tests {
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_eq("payload_schema_id", QueryParam::OptionalUlid(None))
             .where_eq("source_event_ids", QueryParam::OptionalUlidArray(None))
-            .where_eq("ingestor_version", QueryParam::OptionalString(Some("v1.0.0".to_string())));
+            .where_eq(
+                "ingestor_version",
+                QueryParam::OptionalString(Some("v1.0.0".to_string())),
+            );
 
         let (sql, params) = builder.build().unwrap();
         assert!(sql.contains("WHERE payload_schema_id = $1::uuid"));
@@ -1049,9 +1073,13 @@ mod tests {
                 "source",
                 "COUNT(*) as event_count",
                 "MAX(ts_server) as latest_event",
-                "MIN(ts_server) as earliest_event"
+                "MIN(ts_server) as earliest_event",
             ])
-            .where_op("ts_server", ">=", QueryParam::Timestamp(Utc::now() - chrono::Duration::days(7)))
+            .where_op(
+                "ts_server",
+                ">=",
+                QueryParam::Timestamp(Utc::now() - chrono::Duration::days(7)),
+            )
             .group_by("source")
             .order_by("event_count", "DESC")
             .limit(100);

@@ -34,7 +34,11 @@ impl ValidationQueries {
                 "ingestor_version",
                 "payload_schema_id::uuid as \"payload_schema_id?\"",
             ])
-            .where_op("ts_ingest", ">", QueryParam::Raw("NOW() - INTERVAL '1 hour'".to_string()))
+            .where_op(
+                "ts_ingest",
+                ">",
+                QueryParam::Raw("NOW() - INTERVAL '1 hour'".to_string()),
+            )
             .order_by("ts_ingest", "DESC")
             .limit(limit)
     }
@@ -44,14 +48,13 @@ impl ValidationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointRecord>(pool)`
     pub fn get_all_checkpoints() -> QueryBuilder {
-        QueryBuilder::select(tables::AUTOMATON_CHECKPOINTS)
-            .columns(&[
-                "automaton_name",
-                "last_processed_id::uuid as last_processed_id",
-                "processed_count",
-                "last_activity",
-                "checkpoint_data as state_data",
-            ])
+        QueryBuilder::select(tables::AUTOMATON_CHECKPOINTS).columns(&[
+            "automaton_name",
+            "last_processed_id::uuid as last_processed_id",
+            "processed_count",
+            "last_activity",
+            "checkpoint_data as state_data",
+        ])
     }
 
     /// Check if an event exists by UUID
@@ -73,7 +76,11 @@ impl ValidationQueries {
         QueryBuilder::select(tables::EVENTS)
             .columns(&["COUNT(*)::bigint as count"])
             .where_op("event_id::uuid", ">", QueryParam::Uuid(event_id_uuid))
-            .where_op("ts_ingest", "<", QueryParam::Raw("NOW() - INTERVAL '5 minutes'".to_string()))
+            .where_op(
+                "ts_ingest",
+                "<",
+                QueryParam::Raw("NOW() - INTERVAL '5 minutes'".to_string()),
+            )
     }
 
     /// Find events with null or empty payloads
@@ -82,11 +89,7 @@ impl ValidationQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<ValidationRecord>(pool)`
     pub fn find_null_payloads(limit: i64) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as id",
-                "source",
-                "event_type",
-            ])
+            .columns(&["event_id::uuid as id", "source", "event_type"])
             .where_op("payload", "IS", QueryParam::Raw("NULL".to_string()))
             // TODO: Implement or_where for multiple conditions
             // .or_where("payload", "=", QueryParam::Raw("'null'::jsonb".to_string()))
@@ -99,12 +102,12 @@ impl ValidationQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<ValidationRecord>(pool)`
     pub fn find_invalid_ulids(limit: i64) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::text as id_str",
-                "source",
-                "event_type",
-            ])
-            .where_op("LENGTH(event_id::text)", "!=", QueryParam::Raw("36".to_string()))
+            .columns(&["event_id::text as id_str", "source", "event_type"])
+            .where_op(
+                "LENGTH(event_id::text)",
+                "!=",
+                QueryParam::Raw("36".to_string()),
+            )
             .limit(limit)
     }
 
@@ -114,12 +117,12 @@ impl ValidationQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<ValidationRecord>(pool)`
     pub fn find_encoding_issues(limit: i64) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as id",
+            .columns(&["event_id::uuid as id", "source", "event_type"])
+            .where_op(
                 "source",
-                "event_type",
-            ])
-            .where_op("source", "~", QueryParam::Raw(r"'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'".to_string()))
+                "~",
+                QueryParam::Raw(r"'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'".to_string()),
+            )
             // TODO: Implement or_where for multiple conditions
             // .or_where("event_type", "~", QueryParam::Raw(r"'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'".to_string()))
             // .or_where("host", "~", QueryParam::Raw(r"'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]'".to_string()))
@@ -131,15 +134,14 @@ impl ValidationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn count_total_events() -> QueryBuilder {
-        QueryBuilder::select(tables::EVENTS)
-            .columns(&["COUNT(*)::bigint as count"])
+        QueryBuilder::select(tables::EVENTS).columns(&["COUNT(*)::bigint as count"])
     }
 }
 
 // Special queries that need raw SQL due to complex window functions
 
-use sqlx::PgPool;
 use crate::query_helpers::{db_error, DbResult};
+use sqlx::PgPool;
 
 /// Find timestamp regressions using window functions
 ///
@@ -203,8 +205,10 @@ pub struct InvalidTimestampRecord {
 /// Find invalid timestamps (too far in future/past)
 ///
 /// This uses raw SQL for timestamp arithmetic
-pub async fn find_invalid_timestamps(pool: &PgPool, limit: i64) -> DbResult<Vec<InvalidTimestampRecord>> {
-
+pub async fn find_invalid_timestamps(
+    pool: &PgPool,
+    limit: i64,
+) -> DbResult<Vec<InvalidTimestampRecord>> {
     let rows = sqlx::query_as!(
         InvalidTimestampRecord,
         r#"

@@ -352,7 +352,13 @@ async fn test_extension_functionality(
         .fetch_one(&mut **tx)
         .await
         .context("Failed to test UUID generation functionality")?;
-    messages.push(format!("✓ UUID generation: {}", uuid_result.uuid.map(|u| u.to_string()).unwrap_or_else(|| "OK".to_string())));
+    messages.push(format!(
+        "✓ UUID generation: {}",
+        uuid_result
+            .uuid
+            .map(|u| u.to_string())
+            .unwrap_or_else(|| "OK".to_string())
+    ));
 
     // Test ULID generation - using transaction directly
     // NOTE: This raw SQL is intentional - testing database function existence
@@ -367,11 +373,12 @@ async fn test_extension_functionality(
     messages.push("✓ ULID generation: (skipped in offline mode)".to_string());
 
     // Test TimescaleDB extension by checking version
-    let timescale_version = sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
-        .fetch_optional(&mut **tx)
-        .await
-        .context("Failed to query TimescaleDB version")?;
-    
+    let timescale_version =
+        sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
+            .fetch_optional(&mut **tx)
+            .await
+            .context("Failed to query TimescaleDB version")?;
+
     if let Some(version) = timescale_version {
         messages.push(format!("✓ TimescaleDB version: {}", version.extversion));
     }
@@ -381,13 +388,13 @@ async fn test_extension_functionality(
     /*
     let schema_test_result = sqlx::query!(
         r#"SELECT jsonb_matches_schema(
-            '{"type": "object"}'::jsonb, 
+            '{"type": "object"}'::jsonb,
             '{"test": true}'::jsonb
         ) as matches"#
     )
     .fetch_one(&mut **tx)
     .await;
-    
+
     if schema_test_result.is_ok() {
         messages.push("✓ JSON schema validation tested".to_string());
     }
@@ -399,9 +406,10 @@ async fn test_extension_functionality(
 
 async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
     // Check if migration table exists
-    let migration_table_exists = VerificationQueries::table_exists(pool, "public", "_sqlx_migrations")
-        .await
-        .context("Failed to check migration table existence")?;
+    let migration_table_exists =
+        VerificationQueries::table_exists(pool, "public", "_sqlx_migrations")
+            .await
+            .context("Failed to check migration table existence")?;
 
     if !migration_table_exists {
         messages.push(

@@ -122,8 +122,32 @@ Generate type-safe structs/classes from JSON schemas:
 
 ### Advanced Schema Tooling
 - **Schema Diffing**: Visual/programmatic comparison between versions
+  ```bash
+  # Conceptual tool
+  sinex-schema diff v1.0 v2.0 --event-type desktop.window_focused
+  # Output: Breaking changes detected, migration script generated
+  ```
 - **Migration Scripts**: Auto-generate data migration code for breaking changes
+  - SQL migrations for data transformation (v1.0-to-v1.1.sql)
+  - Validation of migrated data against new schema
 - **Schema Analytics**: Usage metrics, validation failure patterns
+  - Track which schemas are most used
+  - Identify common validation errors
+  - Visualize schema evolution over time
 - **Schema Composition**: Reference common definitions, inheritance patterns
+  - Cross-schema reference validation
+  - Custom validation functions
+  - Conditional schema selection based on event source
+
+### Multi-Tenant Schema Registry (Future Distributed Architecture)
+For potential future distributed deployments:
+- Per-tenant schema overrides
+- Schema federation across instances
+- Global vs local schema namespaces
+
+### Integration Points (Planned)
+- **OpenAPI spec generation**: Export schemas as OpenAPI definitions
+- **GraphQL schema derivation**: Generate GraphQL types from JSON schemas
+- **Protocol buffer compatibility**: Bridge to protobuf for binary protocols
 
 These enhancements would add value but the current GitOps workflow provides a solid foundation for schema management.

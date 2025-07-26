@@ -38,7 +38,6 @@
             "rustc-codegen-cranelift"
           ];
 
-
           # Extract git information for version tracking
           gitRev = self.rev or self.dirtyRev or "unknown";
           gitShortRev = builtins.substring 0 8 gitRev;
@@ -194,13 +193,13 @@
 
               # Development tools
               just
-              bacon
               sqlx-cli
-              mold  # Fast linker for compilation speed
+              mold # Fast linker for compilation speed
+              sccache # Compilation cache for dependencies
+              python3Packages.rich-cli # Rich CLI formatting
 
               # Python and testing
               python3
-              python3Packages.pytest
               python3Packages.click
               python3Packages.psycopg2
               python3Packages.rich
@@ -224,34 +223,123 @@
             ];
 
             shellHook = ''
-              echo "🚀 Setting up Sinex development environment..."
-
               # Database configuration
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
-
-              # Test optimizations (applied per-session in code, not globally)
               export SINEX_TEST_OPTIMIZATIONS="true"
+              export SINEX_ANALYTICS_DIR="$HOME/.sinex-analytics"
+              mkdir -p "$SINEX_ANALYTICS_DIR"
 
-              # Setup database if needed
+              # Setup sccache for faster builds
+              export RUSTC_WRAPPER="sccache"
+              export SCCACHE_DIR="$HOME/.cache/sccache"
+              export SCCACHE_CACHE_SIZE="10G"
+
+              # Create cargo wrapper for analytics
+              mkdir -p .nix-shell-bin
+              cat > .nix-shell-bin/cargo << 'CARGO_WRAPPER'
+              #!/usr/bin/env bash
+              # Wrapper to add analytics to cargo commands
+
+              # Commands that should have analytics
+              case "$1" in
+                  build|check|test|bench|run|clippy)
+                      if [ -x "scripts/compile-analytics.sh" ]; then
+                          exec scripts/compile-analytics.sh $(which cargo) "$@"
+                      else
+                          exec $(which cargo) "$@"
+                      fi
+                      ;;
+                  *)
+                      # Other commands run normally
+                      exec $(which cargo) "$@"
+                      ;;
+              esac
+              CARGO_WRAPPER
+              chmod +x .nix-shell-bin/cargo
+              export PATH="$PWD/.nix-shell-bin:$PATH"
+
+
+              # Clear screen for clean start
+              clear
+
+              # Header
+              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+              echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
+              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+              echo
+
+              # Database setup
               if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then
+                DB_STATUS="🟢"
                 if ! psql -h /run/postgresql -lqt | cut -d \| -f 1 | grep -qw "$DATABASE_NAME"; then
-                  echo "🗄️  Creating database $DATABASE_NAME..."
-                  createdb -h /run/postgresql "$DATABASE_NAME" || echo "❌ Failed to create database"
+                  createdb -h /run/postgresql "$DATABASE_NAME" 2>/dev/null || DB_STATUS="🟡"
                 fi
                 
-                # Run migrations
-                if [ -d "migrations" ]; then
-                  echo "🗄️  Running migrations..."
-                  sqlx migrate run --source migrations >/dev/null 2>&1 || echo "⚠️  Migration failed - run 'sqlx migrate run' manually"
+                # Run migrations silently
+                if [ -d "migrations" ] && [ "$DB_STATUS" = "🟢" ]; then
+                  if sqlx migrate run --source migrations >/dev/null 2>&1; then
+                    MIGRATION_COUNT=$(sqlx migrate info --source migrations 2>/dev/null | grep -c "applied" || echo "0")
+                    MIGRATION_INFO="$MIGRATION_COUNT migrations"
+                  else
+                    DB_STATUS="🟡"
+                    MIGRATION_INFO="run 'just migrate'"
+                  fi
                 fi
-                
-                echo "✅ Database $DATABASE_NAME ready at $DATABASE_URL"
               else
-                echo "⚠️  PostgreSQL not available - database setup skipped"
+                DB_STATUS="🔴"
+                MIGRATION_INFO="PostgreSQL not running"
               fi
 
-              echo "📦 Sinex devShell ready. Run 'just' to see available commands."
+              # Build cache status
+              if [ -d "$SCCACHE_DIR" ]; then
+                CACHE_SIZE=$(du -sh "$SCCACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
+                CACHE_INFO="🟢 $CACHE_SIZE"
+              else
+                CACHE_INFO="🟢 initializing"
+              fi
+
+              # Auto-start daemons silently (capture output for MOTD)
+              GIT_DAEMON_MSG=""
+              COMPILE_DAEMON_MSG=""
+              
+              if [ -f "scripts/git-state-tracker.sh" ]; then
+                TRACKER_STATUS=$(timeout 2s ./scripts/git-state-tracker.sh status 2>/dev/null || echo '{"status":"not_running"}')
+                if ! echo "$TRACKER_STATUS" | jq -e '.status == "running"' >/dev/null 2>&1; then
+                  if timeout 5s ./scripts/git-state-tracker.sh start >/dev/null 2>&1; then
+                    GIT_DAEMON_MSG="started"
+                  else
+                    GIT_DAEMON_MSG="failed to start"
+                  fi
+                fi
+              fi
+
+              if [ -f "scripts/compile-daemon.sh" ]; then
+                DAEMON_STATUS=$(timeout 2s ./scripts/compile-daemon.sh status 2>/dev/null || echo '{"status":"not_running"}')
+                if ! echo "$DAEMON_STATUS" | jq -e '.status != "no_data"' >/dev/null 2>&1; then
+                  if timeout 5s ./scripts/compile-daemon.sh start >/dev/null 2>&1; then
+                    COMPILE_DAEMON_MSG="started"
+                  else
+                    COMPILE_DAEMON_MSG="failed to start"
+                  fi
+                fi
+              fi
+
+              # Export daemon messages for MOTD
+              export GIT_DAEMON_MSG
+              export COMPILE_DAEMON_MSG
+
+              # Show MOTD using rich
+              MOTD_SCRIPT="$PWD/scripts/motd-rich.sh"
+              if [ -x "$MOTD_SCRIPT" ]; then
+                "$MOTD_SCRIPT"
+              else
+                echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+                echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
+                echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+                echo
+                echo "Run 'just' to see available commands"
+              fi
             '';
           };
 

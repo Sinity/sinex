@@ -10,7 +10,6 @@ use tracing::{error, info};
     about = "Sinex ingestion daemon - central hub for event ingestion"
 )]
 struct Args {
-
     /// Database URL
     #[arg(long, env = "DATABASE_URL")]
     database_url: Option<String>,

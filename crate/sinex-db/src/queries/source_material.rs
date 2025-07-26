@@ -3,6 +3,37 @@
 //! This module provides all database queries related to source material tracking,
 //! replacing the legacy artifact system with a more unified provenance approach.
 //! All queries automatically handle ULID/UUID conversion and provide consistent error handling.
+//!
+//! # Anchor Byte Principle
+//!
+//! The source material system implements the Anchor Byte Principle for deterministic
+//! re-interpretation of data. This principle ensures that even as our understanding
+//! and processing of data evolves, we can always return to the exact same point in
+//! the original source material.
+//!
+//! ## Key Concepts
+//!
+//! - **anchor_byte**: An immutable reference point in the source material that never changes
+//! - **source_material_offset_start/end**: The range of bytes this event was derived from
+//! - **Deterministic Re-processing**: Ability to regenerate events from the same source data
+//!
+//! ## Example
+//!
+//! ```sql
+//! -- The anchor_byte never changes, even if interpretation evolves
+//! CREATE TABLE core.events (
+//!     source_material_id ULID,              -- Reference to source data
+//!     source_material_offset_start BIGINT,  -- Start of relevant data
+//!     source_material_offset_end BIGINT,    -- End of relevant data  
+//!     anchor_byte BIGINT                    -- Immutable anchor point
+//! );
+//! ```
+//!
+//! This allows the system to:
+//! 1. Always trace an event back to its exact origin
+//! 2. Re-process source material with updated logic
+//! 3. Maintain perfect audit trails even through schema evolution
+//! 4. Support "time travel" debugging by replaying from anchors
 
 use crate::query_builder::{QueryBuilder, QueryParam};
 use chrono::{DateTime, Utc};
@@ -118,7 +149,11 @@ impl SourceMaterialQueries {
     ///
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<SourceMaterialRecord>(pool)`
-    pub fn get_recent(material_type: Option<String>, limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
+    pub fn get_recent(
+        material_type: Option<String>,
+        limit: Option<i64>,
+        offset: Option<i64>,
+    ) -> QueryBuilder {
         let mut builder = QueryBuilder::select("raw.source_material_registry")
             .columns(&[
                 "blob_id::uuid as \"blob_id!\"",
@@ -189,9 +224,11 @@ impl SourceMaterialQueries {
                 "metadata as \"metadata!\"",
             ])
             .where_op("metadata", "->", QueryParam::String(key.clone()))
-            .where_op("metadata", "@>", QueryParam::Json(
-                serde_json::json!({ key: value })
-            ))
+            .where_op(
+                "metadata",
+                "@>",
+                QueryParam::Json(serde_json::json!({ key: value })),
+            )
             .where_eq("is_archived", QueryParam::Boolean(false))
             .order_by("ingestion_time", "DESC")
     }
@@ -354,12 +391,7 @@ impl SourceMaterialQueries {
         metadata: JsonValue,
     ) -> QueryBuilder {
         QueryBuilder::insert("raw.source_material_registry")
-            .columns(&[
-                "material_type",
-                "source_uri",
-                "metadata",
-                "content_preview",
-            ])
+            .columns(&["material_type", "source_uri", "metadata", "content_preview"])
             .values(&[
                 QueryParam::String(material_type),
                 QueryParam::OptionalString(source_uri),
@@ -398,7 +430,10 @@ impl SourceMaterialQueries {
         if let Some(preview) = content_preview {
             builder = builder.set("content_preview", QueryParam::String(preview));
         } else {
-            builder = builder.set("content_preview", QueryParam::String("[Content stored]".to_string()));
+            builder = builder.set(
+                "content_preview",
+                QueryParam::String("[Content stored]".to_string()),
+            );
         }
 
         builder

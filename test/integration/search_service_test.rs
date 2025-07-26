@@ -3,11 +3,11 @@
 // CRITICAL: These tests expose SQL injection vulnerabilities in the current implementation.
 // The SearchService MUST be fixed to use proper parameterized queries before production use!
 
-use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
 use chrono::{Duration, Utc};
 use serde_json::json;
+use sinex_events::{event_types, services, EventFactory};
 use sinex_services::{SearchQuery, SearchService};
+use sinex_test_utils::prelude::*;
 use sinex_ulid::Ulid;
 
 /// Helper to create test events with specific content
@@ -18,8 +18,7 @@ async fn create_test_event(
     payload_content: serde_json::Value,
     time_offset: Option<Duration>,
 ) -> AnyhowResult<Ulid> {
-    let mut event = EventFactory::new(source)
-        .create_event(event_type, payload_content);
+    let mut event = EventFactory::new(source).create_event(event_type, payload_content);
 
     if let Some(offset) = time_offset {
         let timestamp = Utc::now() - offset;
@@ -358,7 +357,14 @@ async fn test_search_pagination(ctx: TestContext) -> TestResult {
 
     // Create more events for pagination testing
     for i in 0..15 {
-        create_test_event(&pool, "test", "pagination.test", json!({ "index": i }), None).await?;
+        create_test_event(
+            &pool,
+            "test",
+            "pagination.test",
+            json!({ "index": i }),
+            None,
+        )
+        .await?;
     }
 
     // First page

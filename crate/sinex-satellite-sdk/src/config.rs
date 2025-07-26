@@ -189,7 +189,6 @@ pub struct ReplayConfig {
 }
 
 impl SatelliteConfig {
-
     /// Load configuration from environment and defaults.
     ///
     /// Creates a configuration using environment variables with fallback to
@@ -275,7 +274,6 @@ impl SatelliteConfig {
 }
 
 impl EventSourceConfig {
-
     /// Validate event source configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.base.validate()?;
@@ -297,7 +295,6 @@ impl EventSourceConfig {
 }
 
 impl AutomatonConfig {
-
     /// Validate automaton configuration
     pub fn validate(&self) -> Result<(), ConfigError> {
         self.base.validate()?;

@@ -49,9 +49,48 @@
 //! - No access to internal metrics or window textures
 //! - Potential for missed events under high load
 //! - Query overhead for detailed state
+//!
+//! ## Future Enhancements (Not Yet Implemented)
+//!
+//! ### Additional Event Types
+//! The current implementation handles core events but doesn't capture:
+//!
+//! **Window State Events:**
+//! - `fullscreen>>STATE` - Fullscreen mode changes
+//! - `changefloatingmode>>` - Float state changes
+//! - `minimize>>` - Window minimize/restore (v0.33.0+)
+//! - `urgent>>` - Window urgency hints
+//! - `windowtitle>>` - Title changes (requires hyprctl query)
+//!
+//! **Monitor Events:**
+//! - `focusedmon>>` - Monitor focus changes
+//! - `monitorremoved>>` - Monitor disconnect
+//!
+//! **Layer Shell Events:**
+//! - `openlayer>>` - Panel/notification layers
+//! - `closelayer>>` - Layer removal
+//!
+//! **Input Events:**
+//! - `submap>>` - Keybinding mode changes (e.g., "resize" mode)
+//!
+//! **System Events:**
+//! - `screencast>>` - Screen recording status
+//!
+//! ### Event Augmentation Strategy
+//! Many events only provide `WINDOWADDRESS`. Full implementation would:
+//! 1. Maintain local window state cache
+//! 2. Query `hyprctl -j clients` for missing details
+//! 3. Merge event data with cached/queried state
+//! 4. Update cache on state changes
+//!
+//! ### Performance Optimizations
+//! - Cache hyprctl results to avoid redundant queries
+//! - Batch queries when multiple events arrive
+//! - Use async queries to avoid blocking event stream
 
 use chrono::Utc;
 use serde_json::{json, Value};
+use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
@@ -63,7 +102,6 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
-use sinex_events::constants::{sources};
 
 /// Enhanced window information with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -493,10 +531,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "window.focused",
-                payload,
-            );
+            let event = factory.create_event("window.focused", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -531,10 +566,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "window.opened",
-                payload,
-            );
+            let event = factory.create_event("window.opened", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -573,10 +605,7 @@ impl WindowManagerWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-        let event = factory.create_event(
-            "window.closed",
-            payload,
-        );
+        let event = factory.create_event("window.closed", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -603,10 +632,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "window.moved",
-                payload,
-            );
+            let event = factory.create_event("window.moved", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -636,10 +662,7 @@ impl WindowManagerWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-        let event = factory.create_event(
-            "workspace.switched",
-            payload,
-        );
+        let event = factory.create_event("workspace.switched", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -666,10 +689,7 @@ impl WindowManagerWatcher {
             });
 
             let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-            let event = factory.create_event(
-                "monitor.focused",
-                payload,
-            );
+            let event = factory.create_event("monitor.focused", payload);
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -709,10 +729,7 @@ impl WindowManagerWatcher {
         });
 
         let factory = EventFactory::new(sinex_events::sources::WM_HYPRLAND);
-        let event = factory.create_event(
-            "state.captured",
-            payload,
-        );
+        let event = factory.create_event("state.captured", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");

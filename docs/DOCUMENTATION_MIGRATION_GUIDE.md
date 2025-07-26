@@ -33,34 +33,52 @@ The key lesson: **Process documentation properly rather than just moving files a
 ```bash
 # Check what needs migration
 ls docs/_todo/
-ls docs/_todo/archive/
-ls docs/_todo/planned/
-ls docs/_todo/ready/
+ls docs/_todo/archive/  # Skip - already processed files
+ls docs/_todo/planned/  # Process - future features
+ls docs/_todo/ready/    # Process - designs ready for implementation
 ```
 
-### Step 2: Categorize Documentation
+### Step 2: Carefully Check Implementation Status
 
-#### Implemented Features
-Look for features that are actually implemented in the codebase:
-- Check if code exists for the feature
-- Verify implementation matches documentation
-- Extract technical details to rustdoc
+**CRITICAL**: "Ready" means the design is ready, NOT that it's implemented!
 
-Example indicators:
-- GitOps schema management → Actually implemented in `/schemas/`
-- Clipboard monitoring → Implemented in `sinex-desktop-satellite`
-- StatefulStreamProcessor → Core architecture pattern
+Before extracting anything:
+1. **Search for actual implementation**:
+   ```bash
+   # Look for code that implements the feature
+   rg "feature_name" crate/ --type rust
+   # Check if database tables exist
+   grep "CREATE TABLE.*table_name" migrations/
+   # Look for existing modules
+   fd "feature_name" crate/
+   ```
 
-#### Unimplemented Features
-Features that are designed but not built:
-- Clear technical specifications
-- Important for future development
-- Should be preserved in `/docs/roadmap/`
+2. **Verify implementation matches documentation**:
+   - Does the code actually implement what's described?
+   - Are the database tables already created?
+   - Is this aspirational design or working code?
 
-Examples:
-- Tagging system (important but not implemented)
-- Event relations (designed but not built)
-- Advanced event sources (browser, audio)
+### Step 3: Categorize Based on Reality
+
+#### Actually Implemented Features
+**Only if you find working code**:
+- Extract technical details to rustdoc at implementation site
+- Extract SQL schemas to migration file comments
+- Remove extracted content and add markers
+
+Example verification:
+```bash
+# Example: Checking if embedding tables exist
+grep -r "artifact_embeddings" migrations/
+# If not found, it's NOT implemented!
+```
+
+#### Unimplemented but Valuable Designs
+**For "ready" or "planned" features without implementation**:
+- Extract complete design to `/docs/roadmap/features/`
+- Include SQL schemas, algorithms, architecture
+- Preserve implementation examples
+- This includes most TIMs in ready/ and planned/
 
 #### Outdated/Superseded
 Documentation that no longer reflects current architecture:
@@ -68,42 +86,61 @@ Documentation that no longer reflects current architecture:
 - Superseded designs
 - Outdated technical decisions
 
-### Step 3: Extract and Place Content
+### Step 4: Extract and Mark Content
 
-#### For Implemented Features
+**CRITICAL PRINCIPLE**: Only remove content that was actually extracted. Everything else MUST remain in the archived document, including:
+- Theoretical discussions and rationale
+- Alternative approaches considered
+- Historical context and decision reasoning
+- References and citations
+- Any content not directly moved elsewhere
 
-1. **Find the relevant code location**
+#### For Actually Implemented Features
+
+1. **Find the implementation**:
    ```bash
-   # Use grep/ripgrep to find implementations
    rg "feature_name" --type rust
-   fd "feature_name" crate/
+   fd "module_name" crate/
    ```
 
-2. **Add rustdoc comments**
+2. **Extract to rustdoc**:
    ```rust
-   //! # Module-level documentation
+   //! # Feature Documentation
    //! 
-   //! This module implements X feature as described in ADR-NNN.
-   //! 
-   //! ## Technical Details
-   //! [Extract relevant details from documentation]
-   //! 
-   //! ## Implementation Notes
-   //! [Current implementation specifics]
+   //! [Extracted technical details]
    ```
 
-3. **Add inline documentation**
-   ```rust
-   /// Detailed function documentation
-   /// 
-   /// ## Algorithm (from TIM-XXX)
-   /// [Extract algorithm description]
-   pub fn important_function() { }
+3. **Mark extraction in original**:
+   ```markdown
+   [EXTRACTED to crate/sinex-xyz/src/lib.rs - Technical implementation details]
+   ~~Original content that was extracted~~
+   
+   [PRESERVED - Rationale and theoretical discussion below]
+   ## Why This Approach
+   [Keep all theoretical content, alternatives, etc.]
    ```
 
-4. **Create supplementary .md files if needed**
-   - For complex implementations, create `feature_name.md` next to the code
-   - Link from rustdoc: `//! See [detailed docs](./feature_name.md)`
+#### For Unimplemented Designs
+
+1. **Create roadmap document**:
+   ```bash
+   # For ready designs
+   docs/roadmap/features/feature-name.md
+   # For planned features  
+   docs/roadmap/planned/feature-name.md
+   ```
+
+2. **Extract full design**:
+   - Move all technical specifications
+   - Include SQL schemas, algorithms
+   - Preserve example implementations
+   - Add implementation status header
+
+3. **Mark extraction**:
+   ```markdown
+   [EXTRACTED to docs/roadmap/features/embeddings.md - Complete embedding system design]
+   ~~Original design content~~
+   ```
 
 #### For Database Schema
 
@@ -152,26 +189,55 @@ Documentation that no longer reflects current architecture:
    [Extract or create implementation steps]
    ```
 
-### Step 4: Clean Up Source Files
+### Step 5: Complete the Migration
 
-After extracting content:
+1. **Process the file with markers**:
+   - Leave all extraction markers in place
+   - **KEEP ALL UNEXTRACTED CONTENT** - This is critical!
+   - The file should retain all theoretical discussions, rationale, alternatives
+   - Only remove content that was literally copied elsewhere
 
-1. **For fully extracted files**: Delete them
-2. **For partially extracted files**: 
-   - Remove extracted sections
-   - Add note about what was extracted
-   - Move to `_todo/leftover/` if still has value
+2. **Move to archive**:
+   ```bash
+   mv docs/_todo/ready/ai/TIM-Feature.md docs/_todo/archive/
+   # or
+   mv docs/_todo/planned/feature/TIM-Feature.md docs/_todo/archive/
+   ```
 
-Example cleanup:
-```markdown
-# Original TIM File
+3. **Document the migration**:
+   ```bash
+   # In your commit message
+   git commit -m "docs: extract TIM-Feature to roadmap/archive
+   
+   - Extracted design to docs/roadmap/features/feature.md
+   - Feature not yet implemented (verified no code exists)
+   - Moved processed file to archive with markers"
+   ```
 
-[EXTRACTED to crate/sinex-automaton/src/lib.rs]
-~~Detailed implementation of automaton architecture~~
+### What Archive Files Should Contain
 
-## Remaining Design Considerations
-[Content not yet extracted]
-```
+Archived files are NOT trash! They should contain:
+- All theoretical background and rationale
+- Alternative approaches that were considered
+- Historical context about why decisions were made
+- References to original sources (UG sections, etc.)
+- Any content that wasn't directly extracted elsewhere
+- Extraction markers showing what was moved
+
+The archive serves as historical documentation that explains the "why" behind designs, even if the "how" has been extracted elsewhere.
+
+#### Archive Contents
+
+- **Architecture Decision Records (ADRs)**: Original design decisions that have been implemented
+- **Technical Implementation Modules (TIMs)**: Detailed specifications with extraction markers showing where content was moved
+- **Migration Guides**: Like `stream_processor_migration.md` with key concepts extracted to code
+- **Unimplemented Designs**: Features that may be revisited in the future
+
+These files are kept for:
+1. **Historical Context**: Understanding design evolution
+2. **Future Reference**: Unimplemented features may be revisited
+3. **Detailed Specifications**: Contains implementation details beyond what's in code
+4. **Alternative Approaches**: Documents paths not taken
 
 ### Step 5: Update References
 
@@ -240,6 +306,9 @@ After migration, verify:
 4. **Don't create redundant docs** - If it's in rustdoc, don't duplicate in .md
 5. **Don't forget SQL documentation** - Migrations need context too
 6. **Don't mix concerns in commits** - Separate documentation from code changes
+7. **Don't confuse "ready" with "implemented"** - Ready means the design is complete, NOT that code exists!
+8. **Don't create migrations for non-existent tables** - Check if tables actually exist first
+9. **Don't add docs to unrelated modules** - Embedding docs don't belong in knowledge_graph.rs if there's no embedding code there
 
 ## Tools and Commands
 
@@ -272,14 +341,78 @@ Based on the current state in `docs/_todo/`:
    - `VISION.md` - Extract philosophy to main README, implementation to code
 
 2. **Medium Priority - Technical Specs**:
-   - Archive ADRs - Extract to relevant code locations
-   - Archive TIMs - Process based on implementation status
+   - **SKIP archive/ directory** - Contains previously reviewed files deemed not useful for integration
+   - Ready TIMs - Process based on implementation status
+   - Planned TIMs - Move unimplemented features to `/docs/roadmap/`
    - Operations docs - Move to NixOS module documentation
 
 3. **Low Priority - Analysis/Planning**:
    - `misc-including-high-level-overviews-and-plans/` - Review for insights
    - Diagrams - Keep useful ones in `/docs/architecture/diagrams/`
 
+## Important Note About Archive Directory
+
+The `archive/` directory contains documentation that has already been reviewed and determined not to be suitable for integration into the codebase. These files should be **skipped during migration** unless explicitly instructed otherwise. They are kept for potential future review but are not part of the active documentation migration process.
+
+## Complete Example: Processing a "Ready" TIM
+
+Let's say we're processing `TIM-EmbeddingGenerationModels.md`:
+
+1. **Check implementation**:
+   ```bash
+   grep -r "artifact_embeddings" migrations/  # Not found!
+   rg "embedding" crate/ --type rust          # Only mentions, no implementation
+   ```
+   
+2. **Conclusion**: Feature is designed but NOT implemented
+
+3. **Create roadmap file**:
+   `docs/roadmap/features/embeddings.md` with full design
+
+4. **Update original TIM**:
+   ```markdown
+   [EXTRACTED to docs/roadmap/features/embeddings.md - Complete embedding system design]
+   ~~All the technical content~~
+   ```
+
+5. **Move to archive**:
+   ```bash
+   mv docs/_todo/ready/ai/TIM-EmbeddingGenerationModels.md docs/_todo/archive/
+   ```
+
+## Understanding TIM Structure
+
+When processing TIMs, it's important to understand their structure to properly extract content:
+
+### Status Dashboard
+Every feature TIM includes:
+```markdown
+## Status Dashboard
+**Maturity Level**: L2/L3/L4 - Ready/Implemented
+**Implementation**: X% (Verified against codebase)
+**Dependencies**: Required components
+**Blocks**: Features that depend on this TIM
+```
+
+### Maturity Levels
+- **L1 - Concept**: Initial idea, not ready
+- **L2 - Ready**: Complete specification, ready to build
+- **L3 - Partial**: Core functionality implemented (25-75%)
+- **L4 - Complete**: Fully working with tests (75-100%)
+
+### Implementation Percentages
+- **0-25%**: Design complete, minimal implementation
+- **25-50%**: Core infrastructure exists
+- **50-75%**: Major components implemented
+- **75-90%**: Substantially complete
+- **90-100%**: Production-ready
+
+### TIM Categories
+- **Feature TIMs**: In `implemented/`, `ready/`, or `planned/`
+- **Process TIMs**: Documentation only in `docs/`
+
 ## Summary
 
-The key to successful documentation migration is to **process, not just move**. Each document should be understood, its valuable content extracted to appropriate locations, and only then should the original be removed. This ensures documentation stays close to code while preserving important design decisions and future plans.
+The key to successful documentation migration is to **process, not just move**. Each document should be understood, its implementation status verified, valuable content extracted to appropriate locations based on that status, and only then should the original be moved to archive with clear markers showing what went where.
+
+Remember: We're moving away from the TIM structure. The goal is to extract valuable content from TIMs and place it where it's most useful - in code documentation for implemented features, in roadmap docs for unimplemented designs, or in process documentation for operational knowledge.

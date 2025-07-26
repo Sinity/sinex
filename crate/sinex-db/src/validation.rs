@@ -7,15 +7,15 @@ use thiserror::Error;
 use tracing::warn;
 use uuid::Uuid;
 
-use crate::query_helpers::uuid_to_ulid;
+use crate::queries::validation::{find_invalid_timestamps, find_timestamp_regressions};
 use crate::queries::{SchemaQueries, ValidationQueries};
-use crate::queries::validation::{find_timestamp_regressions, find_invalid_timestamps};
+use crate::query_helpers::uuid_to_ulid;
 use crate::security::{SecurityError, SecurityValidator};
 use crate::{DbPool, RawEvent}; // Re-exported from sinex-events
-use sinex_ulid::Ulid;
-use sqlx::FromRow;
 use sinex_events::constants::{event_types, sources};
+use sinex_ulid::Ulid;
 use sinex_validation::ValidationChain;
+use sqlx::FromRow;
 
 /// Record structure for active schema queries
 #[derive(Debug, FromRow)]
@@ -479,89 +479,106 @@ impl EventValidator {
 
     fn register_filesystem_rules(&mut self) {
         // file.created validation
-        self.register_rule("filesystem", event_types::filesystem::FILE_CREATED, |payload| {
-            // Required: path (string), size (number >= 0)
-            let path = validate_required_string_field(payload, "path")?;
+        self.register_rule(
+            "filesystem",
+            event_types::filesystem::FILE_CREATED,
+            |payload| {
+                // Required: path (string), size (number >= 0)
+                let path = validate_required_string_field(payload, "path")?;
 
-            // Sanitize the path
-            let _sanitized_path = SecurityValidator::sanitize_path(&path)
-                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+                // Sanitize the path
+                let _sanitized_path = SecurityValidator::sanitize_path(&path)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
-            let _size = validate_required_numeric_field(payload, "size", |v| v.as_u64())?;
+                let _size = validate_required_numeric_field(payload, "size", |v| v.as_u64())?;
 
-            // Optional: permissions (string matching pattern)
-            if let Some(perms_str) = validate_optional_field(
-                payload,
-                "permissions",
-                |v| v.as_str().map(|s| s.to_string()),
-                "string",
-            )? {
-                if !perms_str.chars().all(|c| ('0'..='7').contains(&c))
-                    || (perms_str.len() != 3 && perms_str.len() != 4)
-                {
-                    return Err(ValidationError::InvalidValue {
-                        field: "permissions".to_string(),
-                        reason: "must be 3 or 4 octal digits".to_string(),
-                    });
+                // Optional: permissions (string matching pattern)
+                if let Some(perms_str) = validate_optional_field(
+                    payload,
+                    "permissions",
+                    |v| v.as_str().map(|s| s.to_string()),
+                    "string",
+                )? {
+                    if !perms_str.chars().all(|c| ('0'..='7').contains(&c))
+                        || (perms_str.len() != 3 && perms_str.len() != 4)
+                    {
+                        return Err(ValidationError::InvalidValue {
+                            field: "permissions".to_string(),
+                            reason: "must be 3 or 4 octal digits".to_string(),
+                        });
+                    }
                 }
-            }
 
-            Ok(())
-        });
+                Ok(())
+            },
+        );
 
         // file.modified validation
-        self.register_rule("filesystem", event_types::filesystem::FILE_MODIFIED, |payload| {
-            // Required: path
-            let path = validate_required_string_field(payload, "path")?;
+        self.register_rule(
+            "filesystem",
+            event_types::filesystem::FILE_MODIFIED,
+            |payload| {
+                // Required: path
+                let path = validate_required_string_field(payload, "path")?;
 
-            // Sanitize the path
-            let _sanitized_path = SecurityValidator::sanitize_path(&path)
-                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+                // Sanitize the path
+                let _sanitized_path = SecurityValidator::sanitize_path(&path)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
-            // At least one of: old_size/new_size, modification_type
-            let has_size_info =
-                payload.get("old_size").is_some() || payload.get("new_size").is_some();
-            let has_mod_type = payload.get("modification_type").is_some();
+                // At least one of: old_size/new_size, modification_type
+                let has_size_info =
+                    payload.get("old_size").is_some() || payload.get("new_size").is_some();
+                let has_mod_type = payload.get("modification_type").is_some();
 
-            if !has_size_info && !has_mod_type {
-                return Err(ValidationError::MissingField {
-                    field: "modification info (old_size/new_size or modification_type)".to_string(),
-                });
-            }
+                if !has_size_info && !has_mod_type {
+                    return Err(ValidationError::MissingField {
+                        field: "modification info (old_size/new_size or modification_type)"
+                            .to_string(),
+                    });
+                }
 
-            Ok(())
-        });
+                Ok(())
+            },
+        );
 
         // file.deleted validation
-        self.register_rule("filesystem", event_types::filesystem::FILE_DELETED, |payload| {
-            // Required: path
-            let path = validate_required_string_field(payload, "path")?;
+        self.register_rule(
+            "filesystem",
+            event_types::filesystem::FILE_DELETED,
+            |payload| {
+                // Required: path
+                let path = validate_required_string_field(payload, "path")?;
 
-            // Sanitize the path
-            let _sanitized_path = SecurityValidator::sanitize_path(&path)
-                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+                // Sanitize the path
+                let _sanitized_path = SecurityValidator::sanitize_path(&path)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
-            // Optional: was_directory (boolean)
-            let _was_directory =
-                validate_optional_field(payload, "was_directory", |v| v.as_bool(), "boolean")?;
+                // Optional: was_directory (boolean)
+                let _was_directory =
+                    validate_optional_field(payload, "was_directory", |v| v.as_bool(), "boolean")?;
 
-            Ok(())
-        });
+                Ok(())
+            },
+        );
 
         // file.renamed validation
-        self.register_rule("filesystem", event_types::filesystem::FILE_RENAMED, |payload| {
-            // Required: old_path, new_path
-            let old_path = validate_required_string_field(payload, "old_path")?;
-            let new_path = validate_required_string_field(payload, "new_path")?;
+        self.register_rule(
+            "filesystem",
+            event_types::filesystem::FILE_RENAMED,
+            |payload| {
+                // Required: old_path, new_path
+                let old_path = validate_required_string_field(payload, "old_path")?;
+                let new_path = validate_required_string_field(payload, "new_path")?;
 
-            // Sanitize both paths
-            let _sanitized_old = SecurityValidator::sanitize_path(&old_path)
-                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
-            let _sanitized_new = SecurityValidator::sanitize_path(&new_path)
-                .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+                // Sanitize both paths
+                let _sanitized_old = SecurityValidator::sanitize_path(&old_path)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
+                let _sanitized_new = SecurityValidator::sanitize_path(&new_path)
+                    .map_err(|e| ValidationError::SecurityValidation(e.to_string()))?;
 
-            Ok(())
-        });
+                Ok(())
+            },
+        );
     }
 
     fn register_window_manager_rules(&mut self) {
@@ -881,14 +898,14 @@ impl<'a> DataIntegrityValidator<'a> {
             violations.push(UlidOrderingViolation {
                 event_id_1: event_id,
                 event_id_2: event_id,
-                    timestamp_1: ts_orig,
-                    timestamp_2: invalid.ts_ingest,
-                    violation_type: OrderingViolationType::InvalidTimestamp,
-                    details: format!(
-                        "Invalid timestamp detected: orig={}, ingest={}",
-                        ts_orig, invalid.ts_ingest
-                    ),
-                });
+                timestamp_1: ts_orig,
+                timestamp_2: invalid.ts_ingest,
+                violation_type: OrderingViolationType::InvalidTimestamp,
+                details: format!(
+                    "Invalid timestamp detected: orig={}, ingest={}",
+                    ts_orig, invalid.ts_ingest
+                ),
+            });
         }
 
         Ok(violations)
@@ -909,7 +926,7 @@ impl<'a> DataIntegrityValidator<'a> {
             #[allow(dead_code)]
             state_data: Option<serde_json::Value>,
         }
-        
+
         let checkpoints = ValidationQueries::get_all_checkpoints()
             .fetch_all::<CheckpointRecord>(self.pool)
             .await?;
@@ -920,45 +937,42 @@ impl<'a> DataIntegrityValidator<'a> {
             // Check if checkpoint refers to valid event
             if let Some(last_processed_uuid) = &checkpoint.last_processed_id {
                 let last_processed_ulid = crate::query_helpers::uuid_to_ulid(*last_processed_uuid);
-                    // Check if this event exists
-                    let event_exists = ValidationQueries::event_exists(*last_processed_uuid)
-                        .fetch_optional::<(i32,)>(self.pool)
-                        .await?
-                        .is_some();
+                // Check if this event exists
+                let event_exists = ValidationQueries::event_exists(*last_processed_uuid)
+                    .fetch_optional::<(i32,)>(self.pool)
+                    .await?
+                    .is_some();
 
-                    if !event_exists {
-                        inconsistencies.push(CheckpointInconsistency {
-                            automaton_name: automaton_name.clone(),
-                            checkpoint_ulid: Some(last_processed_ulid),
-                            last_processed_ulid: Some(last_processed_ulid),
-                            inconsistency_type:
-                                CheckpointInconsistencyType::CheckpointAheadOfEvents,
-                            details: format!(
-                                "Checkpoint references non-existent event {}",
-                                last_processed_ulid
-                            ),
-                            events_potentially_missed: 0,
-                        });
-                    }
+                if !event_exists {
+                    inconsistencies.push(CheckpointInconsistency {
+                        automaton_name: automaton_name.clone(),
+                        checkpoint_ulid: Some(last_processed_ulid),
+                        last_processed_ulid: Some(last_processed_ulid),
+                        inconsistency_type: CheckpointInconsistencyType::CheckpointAheadOfEvents,
+                        details: format!(
+                            "Checkpoint references non-existent event {}",
+                            last_processed_ulid
+                        ),
+                        events_potentially_missed: 0,
+                    });
+                }
 
-                    // Check if there are newer events that should have been processed
-                    let (newer_events_count,) = ValidationQueries::count_newer_events(*last_processed_uuid)
+                // Check if there are newer events that should have been processed
+                let (newer_events_count,) =
+                    ValidationQueries::count_newer_events(*last_processed_uuid)
                         .fetch_one::<(i64,)>(self.pool)
                         .await?;
 
-                    if newer_events_count > 0 {
-                        inconsistencies.push(CheckpointInconsistency {
-                            automaton_name: automaton_name.clone(),
-                            checkpoint_ulid: Some(last_processed_ulid),
-                            last_processed_ulid: Some(last_processed_ulid),
-                            inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
-                            details: format!(
-                                "Checkpoint is behind by {} events",
-                                newer_events_count
-                            ),
-                            events_potentially_missed: newer_events_count as u64,
-                        });
-                    }
+                if newer_events_count > 0 {
+                    inconsistencies.push(CheckpointInconsistency {
+                        automaton_name: automaton_name.clone(),
+                        checkpoint_ulid: Some(last_processed_ulid),
+                        last_processed_ulid: Some(last_processed_ulid),
+                        inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
+                        details: format!("Checkpoint is behind by {} events", newer_events_count),
+                        events_potentially_missed: newer_events_count as u64,
+                    });
+                }
             }
 
             // Check for stale checkpoints (not updated recently)
@@ -966,20 +980,20 @@ impl<'a> DataIntegrityValidator<'a> {
                 let time_since_update = Utc::now().signed_duration_since(last_activity);
                 if time_since_update > ChronoDuration::hours(1) {
                     inconsistencies.push(CheckpointInconsistency {
-                    automaton_name: automaton_name.clone(),
-                    checkpoint_ulid: checkpoint
-                        .last_processed_id
-                        .map(crate::query_helpers::uuid_to_ulid),
-                    last_processed_ulid: checkpoint
-                        .last_processed_id
-                        .map(crate::query_helpers::uuid_to_ulid),
-                    inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
-                    details: format!(
-                        "Checkpoint not updated for {} hours",
-                        time_since_update.num_hours()
-                    ),
-                    events_potentially_missed: 0,
-                });
+                        automaton_name: automaton_name.clone(),
+                        checkpoint_ulid: checkpoint
+                            .last_processed_id
+                            .map(crate::query_helpers::uuid_to_ulid),
+                        last_processed_ulid: checkpoint
+                            .last_processed_id
+                            .map(crate::query_helpers::uuid_to_ulid),
+                        inconsistency_type: CheckpointInconsistencyType::StaleCheckpoint,
+                        details: format!(
+                            "Checkpoint not updated for {} hours",
+                            time_since_update.num_hours()
+                        ),
+                        events_potentially_missed: 0,
+                    });
                 }
             }
         }
@@ -998,7 +1012,7 @@ impl<'a> DataIntegrityValidator<'a> {
             source: String,
             event_type: String,
         }
-        
+
         let null_payloads = ValidationQueries::find_null_payloads(100)
             .fetch_all::<ValidationRecord>(self.pool)
             .await?;
@@ -1023,7 +1037,7 @@ impl<'a> DataIntegrityValidator<'a> {
             source: String,
             event_type: String,
         }
-        
+
         let invalid_ulids = ValidationQueries::find_invalid_ulids(100)
             .fetch_all::<InvalidUlidRecord>(self.pool)
             .await?;
@@ -1034,9 +1048,7 @@ impl<'a> DataIntegrityValidator<'a> {
                 corruption_type: DataCorruptionType::InvalidUlid,
                 details: format!(
                     "Invalid ULID format: {} for {}/{}",
-                    invalid_ulid.id_str,
-                    invalid_ulid.source,
-                    invalid_ulid.event_type
+                    invalid_ulid.id_str, invalid_ulid.source, invalid_ulid.event_type
                 ),
                 recovery_suggestion: "Check database constraints and ULID generation logic"
                     .to_string(),

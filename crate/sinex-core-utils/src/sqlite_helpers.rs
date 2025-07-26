@@ -95,7 +95,7 @@ impl<'a> SqliteQueryBuilder<'a> {
     ) -> Result<T> {
         result.map_err(|e| {
             let mut error_msg = format!("Database error (operation: {}): {}", self.operation, e);
-            
+
             if let Some(qt) = self.query_type {
                 error_msg.push_str(&format!(", query_type: {}", qt));
             }

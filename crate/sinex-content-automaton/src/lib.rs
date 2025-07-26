@@ -7,8 +7,8 @@ use sinex_satellite_sdk::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
     },
-    SatelliteResult, ExplorationProvider, CoverageAnalysis, SourceState,
-    IngestionHistoryEntry, ExportFormat,
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteResult,
+    SourceState,
 };
 use std::collections::HashMap;
 use tracing::info;
@@ -39,7 +39,7 @@ impl StatefulStreamProcessor for ContentProcessor {
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         let start_time = Utc::now();
-        
+
         // Simplified implementation for now
         let events_processed = match until {
             TimeHorizon::Snapshot => 0,
@@ -90,7 +90,10 @@ impl ExplorationProvider for ContentProcessor {
         })
     }
 
-    fn get_ingestion_history(&self, _limit: u64) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
         Ok(Vec::new())
     }
 

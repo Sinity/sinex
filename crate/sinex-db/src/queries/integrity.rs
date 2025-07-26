@@ -43,14 +43,17 @@ impl IntegrityQueries {
     pub fn get_expected_automatons() -> QueryBuilder {
         QueryBuilder::select("core.processor_manifests")
             .columns(&["DISTINCT processor_name"])
-            .where_eq("processor_type", QueryParam::String("automaton".to_string()))
+            .where_eq(
+                "processor_type",
+                QueryParam::String("automaton".to_string()),
+            )
     }
 }
 
 // Special queries that need raw SQL due to complex window functions
 
-use sqlx::PgPool;
 use crate::query_helpers::{db_error, DbResult};
+use sqlx::PgPool;
 
 #[derive(sqlx::FromRow)]
 pub struct BatchViolationRecord {
@@ -70,7 +73,6 @@ pub async fn find_batch_violations(
     days_back: i32,
     max_violations: i64,
 ) -> DbResult<Vec<BatchViolationRecord>> {
-
     let rows = sqlx::query_as!(
         BatchViolationRecord,
         r#"
@@ -127,7 +129,6 @@ pub async fn find_suspicious_events(
     days_back: i32,
     size_threshold: i32,
 ) -> DbResult<Vec<SuspiciousEventRecord>> {
-
     let rows = sqlx::query_as!(
         SuspiciousEventRecord,
         r#"
@@ -175,7 +176,6 @@ pub struct CheckpointGapRecord {
 ///
 /// This uses raw SQL for complex aggregations
 pub async fn analyze_checkpoint_gaps(pool: &PgPool) -> DbResult<Vec<CheckpointGapRecord>> {
-
     let rows = sqlx::query_as!(
         CheckpointGapRecord,
         r#"

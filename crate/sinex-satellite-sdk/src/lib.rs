@@ -16,9 +16,69 @@
 //! between ingestors and automata. This unified interface enables consistent behavior
 //! across all data capture and processing mechanisms.
 //!
+//! ## Satellite Constellation Architecture
+//!
+//! Sinex uses a satellite constellation pattern where independent services communicate via
+//! gRPC and Redis Streams. Each satellite implements `StatefulStreamProcessor` with a
+//! unified interface for consistent behavior across all data capture and processing mechanisms.
+//!
+//! ```text
+//! ┌─────────────────────┐     ┌─────────────────────┐     ┌─────────────────────┐
+//! │   External World    │────▶│    Satellites       │────▶│   Data Substrate    │
+//! │                     │     │                     │     │                     │
+//! │ • Files             │     │ • fs-watcher        │     │ • core.events       │
+//! │ • Terminal          │     │ • terminal          │     │ • source_material   │
+//! │ • Desktop           │     │ • desktop           │     │ • knowledge_graph   │
+//! │ • System            │     │ • system            │     │ • checkpoints       │
+//! └─────────────────────┘     └──────────┬──────────┘     └──────────┬──────────┘
+//!                                        │                            │
+//!                             ┌──────────▼──────────┐                 │
+//!                             │   Redis Streams     │                 │
+//!                             │                     │                 │
+//!                             │ • Unified hotlog    │◀────────────────┘
+//!                             │ • Consumer groups   │
+//!                             │ • Event filtering   │
+//!                             └──────────┬──────────┘
+//!                                        │
+//!                             ┌──────────▼──────────┐
+//!                             │     Automata        │
+//!                             │                     │
+//!                             │ • canonicalizer     │
+//!                             │ • health-aggregator │
+//!                             │ • synthesis engines │
+//!                             └─────────────────────┘
+//! ```
+//!
+//! ### Satellite Roles
+//!
+//! Each satellite can serve one or more roles:
+//! - **Ingestor Role**: Capture external data, create raw events
+//! - **Automaton Role**: Process events, create synthesis events
+//! - **Actuator Role**: Act on instructional events (planned)
+//!
+//! ### Key Implementation Patterns
+//!
+//! #### Event Symmetry (Active Inference)
+//! Same event types serve as both observations and instructions:
+//! ```json
+//! // Observation (what happened)
+//! {
+//!     "source": "ingestor.hyprland",
+//!     "event_type": "desktop.workspace.switched",
+//!     "payload": { "workspace_id": 3 }
+//! }
+//!
+//! // Instruction (what should happen)
+//! {
+//!     "source": "user.cli",
+//!     "event_type": "desktop.workspace.switched",
+//!     "payload": { "workspace_id": 3 }
+//! }
+//! ```
+//!
 //! ## Three-Phase Startup Pattern
 //!
-//! All satellites follow a consistent startup sequence:
+//! All satellites follow a consistent startup sequence that ensures complete data capture:
 //!
 //! ### Phase 1: Snapshot
 //! - Captures current state of the external system
@@ -29,11 +89,19 @@
 //! - Processes events that occurred while offline
 //! - Uses `TimeHorizon::Historical { end_time }` for bounded scanning
 //! - Only runs if processor supports historical scanning
+//! - Ensures no events are lost during service restarts
 //!
 //! ### Phase 3: Continuous Processing
 //! - Real-time event monitoring and streaming
 //! - Uses `TimeHorizon::Continuous` for unbounded operation
 //! - Continues indefinitely until shutdown
+//!
+//! ## Archive and Replace Pattern
+//!
+//! The system never loses data but allows evolution of interpretations:
+//! - Original interpretations archived with full audit trail
+//! - New interpretations created with updated logic
+//! - Complete provenance chain maintained via `source_event_ids`
 
 // pub mod automaton; // REMOVED - use StatefulStreamProcessor instead
 pub mod checkpoint;
@@ -44,18 +112,22 @@ pub mod examples;
 pub mod grpc_client;
 pub mod heartbeat;
 pub mod lifecycle;
-pub mod version;
 pub mod processor_runner;
 pub mod redis_client;
 pub mod redis_stream_consumer;
 pub mod replay;
 pub mod stage_as_you_go;
 pub mod stream_processor;
+pub mod version;
 
 // Legacy automaton exports removed - use StatefulStreamProcessor instead
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 // Legacy EventSource types removed - use StatefulStreamProcessor instead
+pub use crate::redis_stream_consumer::{
+    BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,
+    RedisConsumerConfig, RedisStreamConsumer,
+};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
     IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner, ProcessorCommand,
@@ -64,13 +136,9 @@ pub use cli::{
 pub use grpc_client::IngestClient;
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
-pub use redis_client::{RedisStreamClient, StreamMessage};
-pub use crate::redis_stream_consumer::{
-    BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,
-    RedisConsumerConfig, RedisStreamConsumer,
-};
-pub use replay::ReplayMode;
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
+pub use redis_client::{RedisStreamClient, StreamMessage};
+pub use replay::ReplayMode;
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
@@ -161,9 +229,9 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_error::ErrorContext;
 pub use sinex_core_types::ValidationChain;
 pub use sinex_db::DbError; // Import DbError for conversion
+pub use sinex_error::ErrorContext;
 pub use sinex_events::RawEvent;
 pub use sinex_ulid::Ulid;
 

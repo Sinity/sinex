@@ -31,7 +31,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> TestResult {
 
         // Test should handle large payloads gracefully
         let result = ctx.insert_event(&event).await;
-        
+
         // Very large payloads might fail, but shouldn't crash
         if size <= 1024 * 1024 {
             assert!(result.is_ok(), "Failed to insert payload of size {}", size);
@@ -99,12 +99,12 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> TestResult {
         ("chinese", "你好世界"),
         ("arabic", "مرحبا بالعالم"),
         ("hebrew", "שלום עולם"),
-        
+
         // Special Unicode characters
         ("zero_width", "test\u{200B}test"), // Zero-width space
         ("rtl_mark", "test\u{200F}test"),    // Right-to-left mark
         ("combining", "e\u{0301}"),          // e with combining acute accent
-        
+
         // Edge cases
         ("surrogate_pair", "𝐀𝐁𝐂𝐃𝐄"),      // Mathematical bold capitals
         ("replacement", "\u{FFFD}"),         // Replacement character
@@ -120,7 +120,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> TestResult {
                 "chars": text.chars().count()
             }),
         );
-        
+
         ctx.insert_event(&event).await?;
     }
 
@@ -136,13 +136,13 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult {
     let timestamp_cases = vec![
         // Unix epoch
         Utc.timestamp_opt(0, 0).unwrap(),
-        
+
         // Far future (year 9999)
         Utc.with_ymd_and_hms(9999, 12, 31, 23, 59, 59).unwrap(),
-        
+
         // Near boundaries
         Utc.timestamp_opt(i32::MAX as i64, 0).unwrap(),
-        
+
         // Current time
         Utc::now(),
     ];
@@ -157,7 +157,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> TestResult {
             }),
             *ts,
         );
-        
+
         ctx.insert_event(&event).await?;
     }
 
@@ -188,7 +188,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> TestResult {
             "count": 10000
         }),
     );
-    
+
     match ctx.insert_event(&large_array_event).await {
         Ok(_) => println!("Large array accepted"),
         Err(e) => println!("Large array rejected: {}", e),
@@ -199,7 +199,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> TestResult {
     for _ in 0..50 {
         nested = serde_json::json!([nested]);
     }
-    
+
     let nested_event = ctx.create_test_event(
         "collection_test",
         "deeply_nested",
@@ -208,7 +208,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> TestResult {
             "depth": 50
         }),
     );
-    
+
     match ctx.insert_event(&nested_event).await {
         Ok(_) => println!("Deeply nested array accepted"),
         Err(e) => println!("Deeply nested array rejected: {}", e),
@@ -242,7 +242,7 @@ async fn test_numeric_boundaries(ctx: TestContext) -> TestResult {
                 "type": name
             }),
         );
-        
+
         match ctx.insert_event(&event).await {
             Ok(_) => println!("Numeric boundary {} accepted", name),
             Err(e) => println!("Numeric boundary {} rejected: {}", name, e),
@@ -263,7 +263,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> TestResult {
 
     for task_id in 0..concurrent_tasks {
         let ctx_clone = ctx.clone();
-        
+
         let handle = tokio::spawn(async move {
             for i in 0..events_per_task {
                 let event = ctx_clone.create_test_event(
@@ -274,7 +274,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> TestResult {
                         "event_index": i
                     }),
                 );
-                
+
                 if let Err(e) = ctx_clone.insert_event(&event).await {
                     eprintln!("Failed to insert event: {}", e);
                     return Err(e);
@@ -282,7 +282,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> TestResult {
             }
             Ok(())
         });
-        
+
         handles.push(handle);
     }
 
@@ -326,7 +326,7 @@ async fn test_string_length_boundaries(ctx: TestContext) -> TestResult {
                 "length": length
             }),
         );
-        
+
         match ctx.insert_event(&event).await {
             Ok(_) => println!("String length {} accepted", length),
             Err(e) => println!("String length {} rejected: {}", length, e),
@@ -348,12 +348,12 @@ async fn test_property_based_boundaries(ctx: TestContext) -> TestResult {
         rt.block_on(async {
             let array: Vec<i32> = (0..array_size as i32).collect();
             let text = "x".repeat(string_len);
-            
+
             let mut nested = serde_json::json!("leaf");
             for _ in 0..nest_depth {
                 nested = serde_json::json!({"child": nested});
             }
-            
+
             let event = ctx.create_test_event(
                 "property_test",
                 "boundary",
@@ -366,7 +366,7 @@ async fn test_property_based_boundaries(ctx: TestContext) -> TestResult {
                     "nest_depth": nest_depth
                 }),
             );
-            
+
             // We don't assert success, just that it doesn't panic
             let _ = ctx.insert_event(&event).await;
         });

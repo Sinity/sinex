@@ -49,9 +49,7 @@
 // Integration tests use shared database pools with transaction isolation,
 // providing faster test execution while maintaining perfect isolation between tests.
 
-
 // === Core Component Integration ===
-
 
 // Test macro demonstrations
 // pub mod macro_validation_test; // Temporarily disabled due to async closure lifetime issues
@@ -63,13 +61,13 @@
 
 // Service-level integration tests
 pub mod analytics_service_test;
-pub mod pkm_service_test;
 pub mod content_service_test;
+pub mod pkm_service_test;
 pub mod search_service_test;
 
 // Data integrity and recovery tests
-pub mod data_corruption_detection_test;
 pub mod checkpoint_consistency_test;
+pub mod data_corruption_detection_test;
 pub mod pel_recovery_test;
 
 // === Core Integration Tests ===
@@ -80,9 +78,9 @@ pub mod event_sources_test;
 pub mod process_event_test;
 
 // System architecture and integration
+pub mod end_to_end_workflows_test;
 pub mod satellite_architecture_test;
 pub mod system_integration_test;
-pub mod end_to_end_workflows_test;
 
 // Failure handling and recovery
 pub mod critical_failure_modes_test;

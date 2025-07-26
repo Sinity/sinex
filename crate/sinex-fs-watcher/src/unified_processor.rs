@@ -3,17 +3,17 @@
 //! This module contains the new implementation that replaces the old EventSource-based
 //! FilesystemWatcher with a unified processor supporting snapshot, historical, and
 //! continuous scanning modes.
-//! 
+//!
 //! # Technical Implementation Module: Platform-Specific Filesystem Watchers
-//! 
+//!
 //! **Maturity Level**: L4 - Implemented  
 //! **Implementation**: 90% (Linux inotify fully working, cross-platform abstraction in place)  
 //! **Dependencies**: notify-rs crate, inotify on Linux, FSEvents on macOS  
 //! **Blocks**: Real-time content analysis, PKM document change detection  
-//! 
+//!
 //! ## Overview
-//! 
-//! This module implements efficient, low-overhead filesystem monitoring crucial for 
+//!
+//! This module implements efficient, low-overhead filesystem monitoring crucial for
 //! ingesting new or updated user files, PKM notes, downloads, etc. The implementation
 //! uses platform-specific backends for optimal performance.
 //!
@@ -46,47 +46,47 @@
 //! 2. **Hash correlation**: Delete+create with same BLAKE3 hash within time window
 //!
 //! Note: Cross-filesystem moves appear as delete+create and rely on hash correlation.
-//! 
+//!
 //! ## Platform-Specific Implementations
-//! 
+//!
 //! ### inotify (Linux)
-//! 
+//!
 //! Linux kernel subsystem for monitoring filesystem events. Key characteristics:
-//! 
+//!
 //! - **Non-recursive**: Must manually watch subdirectories
 //! - **Event types**: IN_MODIFY, IN_CLOSE_WRITE, IN_CREATE, IN_DELETE, IN_MOVED_FROM/TO
 //! - **System limits**: Configured via `/proc/sys/fs/inotify/max_user_watches`
 //! - **Overflow handling**: IN_Q_OVERFLOW signals dropped events, requires rescan
-//! 
+//!
 //! The notify-rs crate handles recursive watching by:
 //! 1. Watching root directory
 //! 2. On IN_CREATE | IN_ISDIR, adding new watch for subdirectory
 //! 3. On IN_DELETE | IN_ISDIR, removing watch for subdirectory
 //! 4. Handling IN_MOVED_TO/FROM for directory moves
-//! 
+//!
 //! ### FSEvents (macOS)
-//! 
+//!
 //! macOS native API with built-in advantages:
-//! 
+//!
 //! - **Automatic recursive monitoring**: No manual subdirectory management
 //! - **No per-directory limits**: More scalable for large trees
 //! - **Event coalescing**: Batches rapid changes, configurable latency
 //! - **Historical events**: Can catch up on changes while offline
-//! 
+//!
 //! ## Implementation Details
-//! 
+//!
 //! - **Completed write detection**: Uses IN_CLOSE_WRITE on Linux when available
 //! - **Debouncing**: Configurable delay to handle rapid file changes
 //! - **Rename tracking**: Cookie-based correlation for move operations
 //! - **Performance optimization**: Configurable max depth and ignore patterns
-//! 
+//!
 //! ## System Configuration
-//! 
+//!
 //! For extensive monitoring on Linux, increase inotify limits:
 //! ```bash
 //! # Temporary
 //! sudo sysctl fs.inotify.max_user_watches=524288
-//! 
+//!
 //! # Persistent (add to /etc/sysctl.d/99-inotify.conf)
 //! fs.inotify.max_user_watches=524288
 //! ```
@@ -96,7 +96,7 @@ use chrono::{DateTime, Utc};
 use notify::{Event, Watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_events::{EventFactory, RawEvent, sources};
+use sinex_events::{sources, EventFactory, RawEvent};
 use sinex_macros::with_context;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
@@ -125,49 +125,49 @@ use walkdir::WalkDir;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemConfig {
     /// Glob patterns for files/directories to watch
-    /// 
+    ///
     /// Examples:
     /// - `"**/*.rs"` - All Rust files recursively
     /// - `"/home/user/documents/**"` - Everything under documents
     /// - `"*.log"` - Log files in watch root only
-    /// 
+    ///
     /// Performance impact:
     /// - More specific patterns = fewer watches = better performance
     /// - `"**/*"` on large trees can hit inotify limits on Linux
     pub watch_patterns: Vec<String>,
-    
+
     /// Patterns to explicitly ignore (takes precedence over watch_patterns)
-    /// 
+    ///
     /// Common ignores:
     /// - `"**/.git/**"` - Git internals  
     /// - `"**/target/**"` - Rust build artifacts
     /// - `"**/node_modules/**"` - Node dependencies
     /// - `"**/*.tmp"` - Temporary files
-    /// 
+    ///
     /// System limits (Linux):
     /// - Check limit: `cat /proc/sys/fs/inotify/max_user_watches`
     /// - Increase: `sudo sysctl fs.inotify.max_user_watches=524288`
     pub ignore_patterns: Vec<String>,
-    
+
     /// Debounce delay in milliseconds for rapid file changes
-    /// 
+    ///
     /// Use cases:
     /// - 50-100ms: Text editors with auto-save
     /// - 200-500ms: Build systems with multiple outputs
     /// - 1000ms+: Batch operations, large file copies
-    /// 
+    ///
     /// Trade-offs:
     /// - Lower: More responsive, more events
     /// - Higher: Fewer events, may miss rapid changes
     pub debounce_ms: u64,
-    
+
     /// Maximum directory traversal depth (None = unlimited)
-    /// 
+    ///
     /// Guidelines:
     /// - None: Full recursive monitoring (default)
     /// - Some(3): Limit to 3 levels deep
     /// - Some(1): Direct children only
-    /// 
+    ///
     /// Use depth limits when:
     /// - Watching user home directories with deep structures
     /// - Known flat directory structures
@@ -801,11 +801,9 @@ impl FilesystemProcessor {
                 "status": "in_flight"
             });
 
-            let source_material_id = stage_context.register_in_flight(
-                &material_type,
-                source_uri,
-                initial_metadata,
-            ).await?;
+            let source_material_id = stage_context
+                .register_in_flight(&material_type, source_uri, initial_metadata)
+                .await?;
 
             // Step 2: Create and emit filesystem event with provenance
             let factory = EventFactory::new(sources::FS);
@@ -819,12 +817,14 @@ impl FilesystemProcessor {
                 }),
             );
 
-            stage_context.emit_event_with_provenance(
-                event,
-                source_material_id,
-                None, // No byte offsets for filesystem events
-                None,
-            ).await?;
+            stage_context
+                .emit_event_with_provenance(
+                    event,
+                    source_material_id,
+                    None, // No byte offsets for filesystem events
+                    None,
+                )
+                .await?;
 
             // Step 3: If file exists and is readable, finalize with content details
             if file_path.exists() && file_path.is_file() {
@@ -834,21 +834,23 @@ impl FilesystemProcessor {
                             .first_or_octet_stream()
                             .essence_str()
                             .to_string();
-                        
-                        stage_context.finalize_source_material(
-                            source_material_id,
-                            &content,
-                            Some(&mime_type),
-                            Some("utf-8"), // Default encoding
-                        ).await?;
-                        
+
+                        stage_context
+                            .finalize_source_material(
+                                source_material_id,
+                                &content,
+                                Some(&mime_type),
+                                Some("utf-8"), // Default encoding
+                            )
+                            .await?;
+
                         debug!(
                             file_path = %file_path.display(),
                             source_material_id = %source_material_id,
                             size_bytes = content.len(),
                             "Finalized file source material with content"
                         );
-                    },
+                    }
                     Err(e) => {
                         warn!(
                             file_path = %file_path.display(),
@@ -859,12 +861,14 @@ impl FilesystemProcessor {
                 }
             } else {
                 // File doesn't exist or isn't readable, finalize with minimal info
-                stage_context.finalize_source_material(
-                    source_material_id,
-                    &[],
-                    Some("application/octet-stream"),
-                    None,
-                ).await?;
+                stage_context
+                    .finalize_source_material(
+                        source_material_id,
+                        &[],
+                        Some("application/octet-stream"),
+                        None,
+                    )
+                    .await?;
             }
 
             info!(

@@ -58,5 +58,11 @@ result-*
 
 compilation.log
 
+# Rust compiler ICE dumps
+rustc-ice-*.txt
+
+# Dependency compilation marker
+.sinex-deps-compiled
+
 # Git worktrees
 worktree-*

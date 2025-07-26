@@ -336,7 +336,10 @@ impl ProcessorManifestQueries {
     pub fn get_expected_automatons() -> QueryBuilder {
         QueryBuilder::select("core.processor_manifests")
             .columns(&["DISTINCT processor_name"])
-            .where_eq("processor_type", QueryParam::String("automaton".to_string()))
+            .where_eq(
+                "processor_type",
+                QueryParam::String("automaton".to_string()),
+            )
     }
 
     /// Get processor manifests by status
@@ -389,7 +392,11 @@ impl ProcessorManifestQueries {
                 "created_at",
                 "updated_at",
             ])
-            .where_op("consumes_event_types", "@>", QueryParam::Json(serde_json::json!([event_type])))
+            .where_op(
+                "consumes_event_types",
+                "@>",
+                QueryParam::Json(serde_json::json!([event_type])),
+            )
     }
 
     /// Check if a processor manifest exists

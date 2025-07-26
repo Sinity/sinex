@@ -1,13 +1,13 @@
 //! Query Builder Usage Examples
-//! 
+//!
 //! This file demonstrates proper usage of the QueryBuilder abstraction
 //! instead of raw SQL queries.
 
 use sinex_db::{queries::*, query_builder::QueryBuilder, QueryParam};
-use sinex_events::RawEvent;
 use sinex_error::{CoreError, ResultExt};
-use sqlx::PgPool;
+use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
+use sqlx::PgPool;
 
 /// Example 1: Simple SELECT query
 async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<RawEvent, CoreError> {
@@ -116,7 +116,10 @@ async fn get_latest_checkpoint(
     // Note: This is a simplified example - actual checkpoint queries would use the proper API
     QueryBuilder::select("core.automaton_checkpoints")
         .columns(&["last_processed_id"])
-        .where_eq("automaton_name", QueryParam::String(automaton_name.to_string()))
+        .where_eq(
+            "automaton_name",
+            QueryParam::String(automaton_name.to_string()),
+        )
         .fetch_optional::<(Option<Ulid>,)>(pool)
         .await
         .map(|row| row.map(|r| r.0).flatten())
@@ -140,7 +143,7 @@ async fn insert_events_batch(pool: &PgPool, events: &[RawEvent]) -> Result<(), C
     // }
 
     // ✅ CORRECT: Using individual inserts (transaction support requires raw SQL currently)
-    // Note: For true batch inserts with transactions, use raw SQL or wait for 
+    // Note: For true batch inserts with transactions, use raw SQL or wait for
     // QueryBuilder transaction support
     for event in events {
         QueryBuilder::insert("core.events")
@@ -168,7 +171,7 @@ async fn process_event_with_checkpoint(
 ) -> Result<(), CoreError> {
     // ✅ CORRECT: For transaction-based operations, use raw SQL or separate operations
     // Note: QueryBuilder currently doesn't support transactions directly
-    
+
     // Insert event
     QueryBuilder::insert("core.events")
         .columns(&["id", "ts_orig", "source", "event_type", "payload"])
@@ -187,7 +190,10 @@ async fn process_event_with_checkpoint(
     QueryBuilder::update("core.automaton_checkpoints")
         .set("last_processed_id", QueryParam::Ulid(event.id))
         .set("last_activity", QueryParam::Timestamp(chrono::Utc::now()))
-        .where_eq("automaton_name", QueryParam::String(automaton_name.to_string()))
+        .where_eq(
+            "automaton_name",
+            QueryParam::String(automaton_name.to_string()),
+        )
         .execute(pool)
         .await
         .map_err(|e| CoreError::Database(format!("update_checkpoint: {}", e)))?;
@@ -238,7 +244,8 @@ async fn get_event_counts_by_source(
     since: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<(String, i64)>, CoreError> {
     // ✅ CORRECT: Using query builder for aggregations
-    QueryBuilder::select("core.events").columns(&["source", "COUNT(*) as count"])
+    QueryBuilder::select("core.events")
+        .columns(&["source", "COUNT(*) as count"])
         .where_op("ts_orig", ">", QueryParam::Timestamp(since))
         .group_by("source")
         .order_by("count", "DESC")

@@ -6,10 +6,10 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::prelude::*;
 use sinex_events::{
-    sources, strongly_typed_events::*, EventEnvelope, EventFactory, RawEvent, event_types,
+    event_types, sources, strongly_typed_events::*, EventEnvelope, EventFactory, RawEvent,
 };
+use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
 // =============================================================================
@@ -68,10 +68,7 @@ async fn test_event_envelope_coverage(_ctx: TestContext) -> TestResult {
     assert_eq!(terminal_event.event_type, "command.executed");
 
     // Test clipboard events
-    let clipboard_event = event_factory
-        .clipboard()
-        .text("test content")
-        .build();
+    let clipboard_event = event_factory.clipboard().text("test content").build();
     assert!(clipboard_event.is_raw_event());
     assert_eq!(clipboard_event.source, sources::CLIPBOARD);
     assert_eq!(clipboard_event.event_type, "content.copied");
@@ -153,7 +150,11 @@ async fn test_event_type_naming_patterns(_ctx: TestContext) -> TestResult {
             .exit_code(0)
             .build_completed(),
         event_factory.terminal().command("bash").build_executed(),
-        event_factory.terminal().command("bash").exit_code(0).build_completed(),
+        event_factory
+            .terminal()
+            .command("bash")
+            .exit_code(0)
+            .build_completed(),
     ];
 
     for event in terminal_events {
@@ -222,7 +223,11 @@ async fn test_source_event_type_mapping(_ctx: TestContext) -> TestResult {
             .exit_code(0)
             .build_completed(),
         event_factory.terminal().command("bash").build_executed(),
-        event_factory.terminal().command("bash").exit_code(0).build_completed(),
+        event_factory
+            .terminal()
+            .command("bash")
+            .exit_code(0)
+            .build_completed(),
     ];
 
     for event in terminal_events {
@@ -339,7 +344,11 @@ async fn test_event_type_enumeration(_ctx: TestContext) -> TestResult {
             .exit_code(0)
             .build_completed(),
         event_factory.terminal().command("bash").build_executed(),
-        event_factory.terminal().command("bash").exit_code(0).build_completed(),
+        event_factory
+            .terminal()
+            .command("bash")
+            .exit_code(0)
+            .build_completed(),
         event_factory.clipboard().text("test").build(),
         event_factory.clipboard().text("test").build(),
         event_factory
@@ -453,7 +462,10 @@ async fn test_typed_raw_event_conversion(_ctx: TestContext) -> TestResult {
     assert_eq!(deserialized_payload.path, payload.path);
     assert_eq!(deserialized_payload.size, payload.size);
     assert_eq!(deserialized_payload.permissions, payload.permissions);
-    assert_eq!(deserialized_payload.created_at.timestamp(), payload.created_at.timestamp());
+    assert_eq!(
+        deserialized_payload.created_at.timestamp(),
+        payload.created_at.timestamp()
+    );
 
     Ok(())
 }
@@ -563,12 +575,7 @@ async fn test_concurrent_event_creation(_ctx: TestContext) -> TestResult {
                     .working_dir("/")
                     .build_executed(),
             );
-            events.push(
-                factory
-                    .clipboard()
-                    .text(&format!("content{}", i))
-                    .build(),
-            );
+            events.push(factory.clipboard().text(&format!("content{}", i)).build());
             events.push(
                 factory
                     .window_manager()

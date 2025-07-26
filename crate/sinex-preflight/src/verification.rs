@@ -10,9 +10,11 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
+use sinex_db::queries::verification::{
+    CheckpointIdRecord, CountRecord, EventIdRecord, TestEventRecord,
+};
 use sinex_db::queries::{EventQueries, VerificationQueries};
-use sinex_db::queries::verification::{EventIdRecord, TestEventRecord, CountRecord, CheckpointIdRecord};
-use sinex_db::{uuid_to_ulid};
+use sinex_db::uuid_to_ulid;
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -653,11 +655,12 @@ async fn test_event_ingestion(pool: &PgPool) -> Result<usize> {
     struct CountResult {
         count: Option<i64>,
     }
-    
-    let count_result: CountResult = EventQueries::count_by_source("sinex-preflight-pipeline-test".to_string())
-        .fetch_one(pool)
-        .await
-        .context("Failed to count inserted events")?;
+
+    let count_result: CountResult =
+        EventQueries::count_by_source("sinex-preflight-pipeline-test".to_string())
+            .fetch_one(pool)
+            .await
+            .context("Failed to count inserted events")?;
 
     let inserted_count = count_result.count.unwrap_or(0) as usize;
 
@@ -716,10 +719,7 @@ async fn test_checkpoint_operations(pool: &PgPool) -> Result<Value> {
                 "checkpoint_id": checkpoint.id.to_string()
             }))
         }
-        Err(e) => bail!(
-            "Automaton checkpoint insert test failed: {}",
-            e
-        ),
+        Err(e) => bail!("Automaton checkpoint insert test failed: {}", e),
     }
 }
 

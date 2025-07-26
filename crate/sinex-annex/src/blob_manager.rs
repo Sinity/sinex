@@ -328,11 +328,12 @@ impl BlobManager {
     /// Find blob by BLAKE3 hash for deduplication
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> Result<Option<BlobMetadata>> {
         use sinex_db::models::SourceMaterialRecord;
-        
-        let row: Option<SourceMaterialRecord> = SourceMaterialQueries::find_by_checksum(blake3_hash.to_string())
-            .fetch_optional(&self.db_pool)
-            .await
-            .context("Failed to query source material by BLAKE3 hash")?;
+
+        let row: Option<SourceMaterialRecord> =
+            SourceMaterialQueries::find_by_checksum(blake3_hash.to_string())
+                .fetch_optional(&self.db_pool)
+                .await
+                .context("Failed to query source material by BLAKE3 hash")?;
 
         if let Some(row) = row {
             Ok(Some(BlobMetadata {
@@ -344,7 +345,11 @@ impl BlobManager {
                 checksum_sha256: "legacy".to_string(), // Legacy field, not used in new system
                 checksum_blake3: row.checksum_blake3,
                 storage_backend: "git-annex".to_string(), // Default storage backend
-                verification_status: Some(if row.is_archived { "verified".to_string() } else { "pending".to_string() }),
+                verification_status: Some(if row.is_archived {
+                    "verified".to_string()
+                } else {
+                    "pending".to_string()
+                }),
             }))
         } else {
             Ok(None)
@@ -377,7 +382,7 @@ impl BlobManager {
     /// Get blob metadata by ID
     pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
         use sinex_db::models::SourceMaterialRecord;
-        
+
         let row: SourceMaterialRecord = SourceMaterialQueries::get_by_id(*blob_id)
             .fetch_one(&self.db_pool)
             .await
@@ -385,23 +390,37 @@ impl BlobManager {
 
         Ok(BlobMetadata {
             blob_id: row.blob_id,
-            annex_key: row.metadata.get("annex_key")
+            annex_key: row
+                .metadata
+                .get("annex_key")
                 .and_then(|v| v.as_str())
-                .unwrap_or(&format!("BLAKE3-{}", row.checksum_blake3.as_deref().unwrap_or("unknown")))
+                .unwrap_or(&format!(
+                    "BLAKE3-{}",
+                    row.checksum_blake3.as_deref().unwrap_or("unknown")
+                ))
                 .to_string(),
             original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
             size_bytes: row.file_size_bytes.unwrap_or(0),
             mime_type: row.mime_type,
             checksum_sha256: "legacy".to_string(), // Legacy field
             checksum_blake3: row.checksum_blake3,
-            storage_backend: row.metadata.get("storage_backend")
+            storage_backend: row
+                .metadata
+                .get("storage_backend")
                 .and_then(|v| v.as_str())
                 .unwrap_or("git-annex")
                 .to_string(),
-            verification_status: Some(row.metadata.get("verification_status")
-                .and_then(|v| v.as_str())
-                .unwrap_or(if row.is_archived { "verified" } else { "pending" })
-                .to_string()),
+            verification_status: Some(
+                row.metadata
+                    .get("verification_status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(if row.is_archived {
+                        "verified"
+                    } else {
+                        "pending"
+                    })
+                    .to_string(),
+            ),
         })
     }
 
@@ -414,7 +433,7 @@ impl BlobManager {
 
     /// Add original filename to existing blob
     async fn add_original_filename(&self, _blob_id: &Ulid, _filename: &str) -> Result<()> {
-        // TODO: Implement metadata update for source material registry  
+        // TODO: Implement metadata update for source material registry
         // This would require updating the source_uri field or metadata
         Ok(())
     }
@@ -522,7 +541,7 @@ impl BlobManager {
             #[allow(dead_code)]
             newest_blob: chrono::DateTime<chrono::Utc>,
         }
-        
+
         // TODO: Implement proper storage stats query using SourceMaterialQueries
         let stats = StorageStats {
             total_blobs: 0,

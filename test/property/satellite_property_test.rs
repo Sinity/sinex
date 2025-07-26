@@ -4,10 +4,10 @@
 
 use sinex_test_utils::prelude::*;
 
-use sinex_test_utils::prelude::*;
 use crate::property::strategies::*;
 use proptest::prelude::*;
 use sinex_satellite_sdk::config::SatelliteConfig;
+use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;

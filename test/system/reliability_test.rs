@@ -20,10 +20,10 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use sinex_test_utils::prelude::*;
-use sinex_test_utils::database_pool::acquire_test_database;
-use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_events::EventFactory;
+use sinex_test_utils::database_pool::acquire_test_database;
+use sinex_test_utils::prelude::*;
+use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
 use sinex_ulid::Ulid;
 use std::fs;
 
@@ -128,7 +128,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
             );
             event.host = "localhost".to_string();
             event.ingestor_version = Some("1.0.0".to_string());
-            
+
             sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
@@ -394,11 +394,11 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             for i in 0..1000 {
                 let mut event = EventFactory::new("interrupted.shutdown").create_event(
                     "long_operation",
-                    json!({"batch_item": i, "operation": "long_running"})
+                    json!({"batch_item": i, "operation": "long_running"}),
                 );
                 event.host = "localhost".to_string();
                 event.ingestor_version = Some("1.0.0".to_string());
-                
+
                 sinex_db::insert_event_with_validator(&pool, &event, None).await?;
 
                 // Simulate work with small delays
@@ -424,10 +424,15 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
             let health_check = sqlx::query_scalar!("SELECT 1").fetch_one(&pool).await?;
 
             // Check partial data from interrupted operation - use timing utility
-            let partial_events =
-                wait_for_filtered_event_count(&pool, "source = $1", &["interrupted.shutdown"], 0, 3)
-                    .await
-                    .unwrap_or(0);
+            let partial_events = wait_for_filtered_event_count(
+                &pool,
+                "source = $1",
+                &["interrupted.shutdown"],
+                0,
+                3,
+            )
+            .await
+            .unwrap_or(0);
 
             Ok::<(i32, i64), anyhow::Error>((health_check.unwrap_or(0), partial_events))
         })
@@ -950,7 +955,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
             );
             event.host = "localhost".to_string();
             event.ingestor_version = Some("1.0.0".to_string());
-            
+
             sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
@@ -1202,13 +1207,11 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Define async functions for each operation
     async fn event_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
-        let mut event = EventFactory::new("degradation.test").create_event(
-            "connection_exhaustion",
-            json!({"test": "degraded_mode"})
-        );
+        let mut event = EventFactory::new("degradation.test")
+            .create_event("connection_exhaustion", json!({"test": "degraded_mode"}));
         event.host = "localhost".to_string();
         event.ingestor_version = Some("1.0.0".to_string());
-        
+
         let _event = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
         Ok(())
     }
@@ -1287,13 +1290,11 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     // Verify system recovery
     let recovery_start = Instant::now();
-    let mut event = EventFactory::new("degradation.test").create_event(
-        "recovery_test",
-        json!({"recovered": true})
-    );
+    let mut event = EventFactory::new("degradation.test")
+        .create_event("recovery_test", json!({"recovered": true}));
     event.host = "localhost".to_string();
     event.ingestor_version = Some("1.0.0".to_string());
-    
+
     let recovery_test = timeout(
         Duration::from_secs(5),
         sinex_db::insert_event_with_validator(&pool, &event, None),
@@ -1415,13 +1416,11 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
         tokio::spawn(async move {
             let mut processed = 0;
             while let Some(event_data) = rx.recv().await {
-                let mut event = EventFactory::new("resource.monitoring").create_event(
-                    "memory_load_test",
-                    event_data
-                );
+                let mut event = EventFactory::new("resource.monitoring")
+                    .create_event("memory_load_test", event_data);
                 event.host = "localhost".to_string();
                 event.ingestor_version = Some("1.0.0".to_string());
-                
+
                 let result = sinex_db::insert_event_with_validator(&pool, &event, None).await;
 
                 if result.is_ok() {
