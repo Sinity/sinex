@@ -194,14 +194,12 @@
 
               # Development tools
               just
-              bacon
               sqlx-cli
               mold  # Fast linker for compilation speed
               sccache  # Compilation cache for dependencies
 
               # Python and testing
               python3
-              python3Packages.pytest
               python3Packages.click
               python3Packages.psycopg2
               python3Packages.rich
@@ -234,12 +232,39 @@
               # Test optimizations (applied per-session in code, not globally)
               export SINEX_TEST_OPTIMIZATIONS="true"
 
+              # Setup analytics directory
+              export SINEX_ANALYTICS_DIR="$HOME/.sinex-analytics"
+              mkdir -p "$SINEX_ANALYTICS_DIR"
 
               # Setup sccache for faster builds
               export RUSTC_WRAPPER="sccache"
               export SCCACHE_DIR="$HOME/.cache/sccache"
               export SCCACHE_CACHE_SIZE="10G"
               echo "🚀 sccache enabled for dependency caching"
+              
+              # Create cargo wrapper for analytics
+              mkdir -p .nix-shell-bin
+              cat > .nix-shell-bin/cargo << 'CARGO_WRAPPER'
+              #!/usr/bin/env bash
+              # Wrapper to add analytics to cargo commands
+              
+              # Commands that should have analytics
+              case "$1" in
+                  build|check|test|bench|run|clippy)
+                      if [ -x "scripts/compile-analytics.sh" ]; then
+                          exec scripts/compile-analytics.sh $(which cargo) "$@"
+                      else
+                          exec $(which cargo) "$@"
+                      fi
+                      ;;
+                  *)
+                      # Other commands run normally
+                      exec $(which cargo) "$@"
+                      ;;
+              esac
+              CARGO_WRAPPER
+              chmod +x .nix-shell-bin/cargo
+              export PATH="$PWD/.nix-shell-bin:$PATH"
 
 
               # Setup database if needed
@@ -260,16 +285,30 @@
                 echo "⚠️  PostgreSQL not available - database setup skipped"
               fi
 
+              # Auto-start git state tracker (idempotent)
+              if [ -f "scripts/git-state-tracker.sh" ]; then
+                TRACKER_STATUS=$(./scripts/git-state-tracker.sh status 2>/dev/null || echo '{"status":"not_running"}')
+                
+                if echo "$TRACKER_STATUS" | jq -e '.status == "running"' >/dev/null 2>&1; then
+                  TRACKER_PID=$(echo "$TRACKER_STATUS" | jq -r '.pid // "unknown"')
+                  echo "✅ Git state tracker already running (PID: $TRACKER_PID)"
+                else
+                  echo "📸 Starting git state tracker..."
+                  if ./scripts/git-state-tracker.sh start >/dev/null 2>&1; then
+                    echo "✅ Git state tracker started (captures snapshots on file changes)"
+                  else
+                    echo "⚠️  Failed to start git tracker"
+                  fi
+                fi
+              fi
+              
               # Auto-start compilation daemon (idempotent)
               if [ -f "scripts/compile-daemon.sh" ]; then
-                # Check if already running
                 DAEMON_STATUS=$(./scripts/compile-daemon.sh status 2>/dev/null || echo '{"status":"not_running"}')
                 
-                if echo "$DAEMON_STATUS" | jq -e '.status == "running"' >/dev/null 2>&1; then
-                  DAEMON_PID=$(echo "$DAEMON_STATUS" | jq -r '.pid // "unknown"')
-                  echo "✅ Compilation daemon already running (PID: $DAEMON_PID)"
+                if echo "$DAEMON_STATUS" | jq -e '.status != "no_data"' >/dev/null 2>&1; then
+                  echo "✅ Compilation daemon already has data"
                 else
-                  # Start the daemon
                   echo "🔨 Starting compilation daemon..."
                   if ./scripts/compile-daemon.sh start >/dev/null 2>&1; then
                     echo "✅ Compilation daemon started"
@@ -277,8 +316,6 @@
                     echo "⚠️  Failed to start compilation daemon"
                   fi
                 fi
-                
-                echo "   Run 'just ai-status' for compilation state, 'just compile-stop' to stop daemon"
               fi
 
               echo "📦 Sinex devShell ready. Run 'just' to see available commands."
