@@ -30,7 +30,7 @@ use uuid::Uuid;
 // Local type definition for checkpoint queries
 #[derive(sqlx::FromRow)]
 struct CheckpointRecord {
-    pub automaton_name: String,
+    pub processor_name: String,
     pub consumer_group: String,
     pub last_processed_id: Option<String>,
     pub state_data: Option<serde_json::Value>,
@@ -726,14 +726,14 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Create a test automaton checkpoint
-    let automaton_name = "test_checkpoint_automaton";
+    let processor_name = "test_checkpoint_automaton";
     let consumer_group = "test_group";
     let checkpoint_id = Ulid::new();
 
     // Insert checkpoint
     CheckpointQueries::upsert_checkpoint(
         checkpoint_id,
-        automaton_name.to_string(),
+        processor_name.to_string(),
         consumer_group.to_string(),
         "consumer_test".to_string(),
         Some("test_event_id".to_string()),
@@ -751,7 +751,7 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     // Verify checkpoint exists
     #[derive(sqlx::FromRow)]
     struct CheckpointRecord {
-        automaton_name: String,
+        processor_name: String,
         consumer_group: String,
         last_processed_id: Option<String>,
         state_data: Option<serde_json::Value>,
@@ -760,9 +760,9 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     let checkpoint: CheckpointRecord = sqlx::query_as!(
         CheckpointRecord,
         r#"
-        SELECT automaton_name, consumer_group, last_processed_id, 
+        SELECT processor_name, consumer_group, last_processed_id, 
                state_data as "state_data: serde_json::Value", processed_count
-        FROM core.automaton_checkpoints
+        FROM core.processor_checkpoints
         WHERE id = $1::uuid
         "#,
         checkpoint_id.to_uuid()
@@ -770,7 +770,7 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(checkpoint.automaton_name, automaton_name);
+    assert_eq!(checkpoint.processor_name, processor_name);
     assert_eq!(checkpoint.consumer_group, consumer_group);
     assert_eq!(
         checkpoint.last_processed_id.as_ref(),
@@ -794,14 +794,14 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
 async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
-    let automaton_name = "test_update_automaton";
+    let processor_name = "test_update_automaton";
     let checkpoint_id = Ulid::new();
 
     // Create CheckpointManager
     use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
     let checkpoint_manager = CheckpointManager::new(
         ctx.pool().clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "default_group".to_string(),
         "test_consumer".to_string(),
     );
@@ -823,9 +823,9 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
     let checkpoint: CheckpointRecord = sqlx::query_as!(
         CheckpointRecord,
         r#"
-        SELECT automaton_name, consumer_group, last_processed_id, 
+        SELECT processor_name, consumer_group, last_processed_id, 
                state_data as "state_data: serde_json::Value", processed_count
-        FROM core.automaton_checkpoints
+        FROM core.processor_checkpoints
         WHERE id = $1::uuid
         "#,
         checkpoint_id.to_uuid()
@@ -860,7 +860,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Test checkpoint creation and cleanup patterns
-    let automaton_name = "test_lifecycle_automaton";
+    let processor_name = "test_lifecycle_automaton";
 
     // Create multiple checkpoints for the same automaton
     let checkpoint_ids = [Ulid::new(), Ulid::new(), Ulid::new()];
@@ -868,7 +868,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
     for (i, checkpoint_id) in checkpoint_ids.iter().enumerate() {
         CheckpointQueries::upsert_checkpoint(
             *checkpoint_id,
-            automaton_name.to_string(),
+            processor_name.to_string(),
             "default_group".to_string(),
             format!("consumer_{}", i),
             Some(format!("event_{}", i)),
@@ -886,7 +886,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
 
     // Verify all checkpoints exist
     let (checkpoint_count,): (i64,) =
-        CheckpointQueries::count_checkpoints_by_processor(automaton_name.to_string())
+        CheckpointQueries::count_checkpoints_by_processor(processor_name.to_string())
             .fetch_one(&pool)
             .await?;
 
@@ -894,11 +894,11 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
 
     // Get the most recent checkpoint
     let latest_checkpoint: (Uuid, Option<String>) = sqlx::query_as(
-        r#"SELECT id, last_processed_id FROM core.automaton_checkpoints 
-           WHERE automaton_name = $1 
+        r#"SELECT id, last_processed_id FROM core.processor_checkpoints 
+           WHERE processor_name = $1 
            ORDER BY updated_at DESC LIMIT 1"#,
     )
-    .bind(automaton_name)
+    .bind(processor_name)
     .fetch_one(&pool)
     .await?;
 
@@ -906,11 +906,11 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
 
     // Cleanup old checkpoints (keeping only the latest)
     let deleted_count = sqlx::query!(
-        "DELETE FROM core.automaton_checkpoints 
-         WHERE automaton_name = $1 
+        "DELETE FROM core.processor_checkpoints 
+         WHERE processor_name = $1 
          AND id != $2::uuid 
          RETURNING id::text",
-        automaton_name,
+        processor_name,
         latest_checkpoint.0
     )
     .fetch_all(&pool)
@@ -920,8 +920,8 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
 
     // Verify only latest remains
     let remaining_count: i64 = sqlx::query_scalar!(
-        "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = $1",
-        automaton_name
+        "SELECT COUNT(*) FROM core.processor_checkpoints WHERE processor_name = $1",
+        processor_name
     )
     .fetch_one(&pool)
     .await?
@@ -950,7 +950,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
 
     // Insert checkpoints with different progress levels
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4)",
         checkpoint1_id.to_uuid(),
         automaton1,
@@ -961,7 +961,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     .await?;
 
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4)",
         checkpoint2_id.to_uuid(),
         automaton1,
@@ -972,7 +972,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
     .await?;
 
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4)",
         checkpoint3_id.to_uuid(),
         automaton2,
@@ -984,12 +984,12 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
 
     // Calculate checkpoint metrics by automaton
     let metrics = sqlx::query!(
-        "SELECT automaton_name, COUNT(*) as checkpoint_count,
+        "SELECT processor_name, COUNT(*) as checkpoint_count,
                 MAX((state_data->>'processed_count')::int) as max_processed
-         FROM core.automaton_checkpoints
-         WHERE automaton_name IN ($1, $2)
-         GROUP BY automaton_name
-         ORDER BY automaton_name",
+         FROM core.processor_checkpoints
+         WHERE processor_name IN ($1, $2)
+         GROUP BY processor_name
+         ORDER BY processor_name",
         automaton1,
         automaton2
     )
@@ -1000,11 +1000,11 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
 
     let automaton1_metrics = metrics
         .iter()
-        .find(|m| m.automaton_name == automaton1)
+        .find(|m| m.processor_name == automaton1)
         .unwrap();
     let automaton2_metrics = metrics
         .iter()
-        .find(|m| m.automaton_name == automaton2)
+        .find(|m| m.processor_name == automaton2)
         .unwrap();
 
     assert_eq!(automaton1_metrics.checkpoint_count.unwrap(), 2);
@@ -1027,16 +1027,16 @@ async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestRes
     // Test that checkpoint data coordinates with Redis Streams
     // This simulates the satellite architecture pattern
 
-    let automaton_name = "redis-test-automaton";
+    let processor_name = "redis-test-automaton";
     let consumer_group = "test_consumer_group";
 
     // Create checkpoint that would correspond to Redis consumer group state
     let checkpoint_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, consumer_group, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, consumer_group, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4, $5)",
         checkpoint_id.to_uuid(),
-        automaton_name,
+        processor_name,
         consumer_group,
         "1640995200000-0", // Redis stream ID format
         json!({
@@ -1051,14 +1051,14 @@ async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestRes
 
     // Verify checkpoint exists and has expected Redis-compatible structure
     let checkpoint = sqlx::query!(
-        "SELECT automaton_name, consumer_group, last_processed_id, state_data
-         FROM core.automaton_checkpoints WHERE id = $1::uuid",
+        "SELECT processor_name, consumer_group, last_processed_id, state_data
+         FROM core.processor_checkpoints WHERE id = $1::uuid",
         checkpoint_id.to_uuid()
     )
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(checkpoint.automaton_name, automaton_name);
+    assert_eq!(checkpoint.processor_name, processor_name);
     assert_eq!(checkpoint.consumer_group, consumer_group);
     assert_eq!(
         checkpoint.last_processed_id.as_ref(),
@@ -1077,7 +1077,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
     let pool = ctx.pool().clone();
 
     // Test checkpoint progress tracking for satellite architecture
-    let automaton_name = "progress-tracking-automaton";
+    let processor_name = "progress-tracking-automaton";
 
     // Simulate processing progress over time
     let progress_points = [
@@ -1091,10 +1091,10 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
 
     // Insert initial checkpoint
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3, $4)",
         checkpoint_id.to_uuid(),
-        automaton_name,
+        processor_name,
         progress_points[0].0,
         json!({"processed_count": progress_points[0].1})
     )
@@ -1104,7 +1104,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
     // Simulate progress updates
     for (stream_id, count) in &progress_points[1..] {
         sqlx::query!(
-            "UPDATE core.automaton_checkpoints 
+            "UPDATE core.processor_checkpoints 
              SET last_processed_id = $2, state_data = $3, updated_at = NOW()
              WHERE id = $1::uuid",
             checkpoint_id.to_uuid(),
@@ -1117,7 +1117,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
 
     // Verify final state
     let final_checkpoint = sqlx::query!(
-        "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE id = $1::uuid",
+        "SELECT last_processed_id, state_data FROM core.processor_checkpoints WHERE id = $1::uuid",
         checkpoint_id.to_uuid()
     )
     .fetch_one(&pool)

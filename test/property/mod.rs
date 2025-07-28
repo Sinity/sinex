@@ -185,7 +185,7 @@ pub mod strategies {
     }
 
     /// Strategy for generating automaton names
-    pub fn automaton_names() -> impl Strategy<Value = String> {
+    pub fn processor_names() -> impl Strategy<Value = String> {
         prop_oneof![
             Just("command-canonicalizer".to_string()),
             Just("health-aggregator".to_string()),

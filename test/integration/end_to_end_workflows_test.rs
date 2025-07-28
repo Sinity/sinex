@@ -234,13 +234,13 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
 
     // Create test automaton for stream processing
-    let automaton_name = "test-stream-processor";
-    let consumer_group = format!("{}-group", automaton_name);
+    let processor_name = "test-stream-processor";
+    let consumer_group = format!("{}-group", processor_name);
 
     // Initialize checkpoint manager
     let checkpoint_manager = CheckpointManager::new(
         pool.clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "test-consumer-group".to_string(),
         "test-consumer-name".to_string(),
     );
@@ -415,12 +415,12 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 #[sinex_test]
 async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> TestResult {
     let pool = ctx.pool().clone();
-    let automaton_name = "checkpoint-test-automaton";
+    let processor_name = "checkpoint-test-automaton";
 
     // Phase 1: Initialize checkpoint manager
     let checkpoint_manager = CheckpointManager::new(
         pool.clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "test-consumer-group".to_string(),
         "test-consumer-name".to_string(),
     );
@@ -495,7 +495,7 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
     // Phase 4: Simulate automaton restart and recovery
     let recovery_manager = CheckpointManager::new(
         pool.clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "test-consumer-group".to_string(),
         "test-consumer-name".to_string(),
     );

@@ -158,8 +158,8 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> TestResult 
             id::text as "id!",
             processed_count as "processed_count!",
             checkpoint_version as "checkpoint_version!"
-        FROM core.automaton_checkpoints
-        WHERE automaton_name = $1
+        FROM core.processor_checkpoints
+        WHERE processor_name = $1
           AND consumer_group = $2
           AND consumer_name = $3
         FOR UPDATE
@@ -187,8 +187,8 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> TestResult 
                     id::text as "id!",
                     processed_count as "processed_count!",
                     checkpoint_version as "checkpoint_version!"
-                FROM core.automaton_checkpoints
-                WHERE automaton_name = $1
+                FROM core.processor_checkpoints
+                WHERE processor_name = $1
                   AND consumer_group = $2
                   AND consumer_name = $3
                 FOR UPDATE
@@ -214,13 +214,13 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> TestResult 
     // Transaction 1 updates checkpoint
     sqlx::query!(
         r#"
-        UPDATE core.automaton_checkpoints
+        UPDATE core.processor_checkpoints
         SET 
             processed_count = processed_count + 10,
             checkpoint_version = checkpoint_version + 1,
             last_processed_id = $4,
             updated_at = NOW()
-        WHERE automaton_name = $1
+        WHERE processor_name = $1
           AND consumer_group = $2
           AND consumer_name = $3
         "#,
@@ -298,13 +298,13 @@ async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> TestResult {
             // Try to update with version check
             let result = sqlx::query!(
                 r#"
-                UPDATE core.automaton_checkpoints
+                UPDATE core.processor_checkpoints
                 SET 
                     processed_count = processed_count + $5,
                     checkpoint_version = checkpoint_version + 1,
                     last_processed_id = $4,
                     updated_at = NOW()
-                WHERE automaton_name = $1
+                WHERE processor_name = $1
                   AND consumer_group = $2
                   AND consumer_name = $3
                   AND checkpoint_version = $6
@@ -566,8 +566,8 @@ async fn test_checkpoint_history_consistency(ctx: TestContext) -> TestResult {
             processed_count,
             checkpoint_version,
             updated_at
-        FROM core.automaton_checkpoints
-        WHERE automaton_name = $1
+        FROM core.processor_checkpoints
+        WHERE processor_name = $1
           AND consumer_group = $2
           AND consumer_name = $3
         ORDER BY updated_at DESC
@@ -605,7 +605,7 @@ async fn test_checkpoint_history_consistency(ctx: TestContext) -> TestResult {
 #[derive(Debug)]
 struct TestCheckpoint {
     id: Ulid,
-    automaton_name: String,
+    processor_name: String,
     consumer_group: String,
     consumer_name: String,
     last_processed_id: Option<String>,
@@ -614,7 +614,7 @@ struct TestCheckpoint {
 }
 
 fn create_test_checkpoint(
-    automaton_name: &str,
+    processor_name: &str,
     consumer_group: &str,
     consumer_name: &str,
     last_processed_id: Option<String>,
@@ -622,7 +622,7 @@ fn create_test_checkpoint(
 ) -> TestCheckpoint {
     TestCheckpoint {
         id: Ulid::new(),
-        automaton_name: automaton_name.to_string(),
+        processor_name: processor_name.to_string(),
         consumer_group: consumer_group.to_string(),
         consumer_name: consumer_name.to_string(),
         last_processed_id,
@@ -634,8 +634,8 @@ fn create_test_checkpoint(
 async fn insert_checkpoint(pool: &PgPool, checkpoint: &TestCheckpoint) -> Result<(), Error> {
     sqlx::query!(
         r#"
-        INSERT INTO core.automaton_checkpoints (
-            id, automaton_name, consumer_group, consumer_name,
+        INSERT INTO core.processor_checkpoints (
+            id, processor_name, consumer_group, consumer_name,
             last_processed_id, processed_count, last_activity,
             checkpoint_version, created_at, updated_at
         ) VALUES (
@@ -643,7 +643,7 @@ async fn insert_checkpoint(pool: &PgPool, checkpoint: &TestCheckpoint) -> Result
         )
         "#,
         checkpoint.id.to_uuid(),
-        checkpoint.automaton_name,
+        checkpoint.processor_name,
         checkpoint.consumer_group,
         checkpoint.consumer_name,
         checkpoint.last_processed_id,
@@ -658,7 +658,7 @@ async fn insert_checkpoint(pool: &PgPool, checkpoint: &TestCheckpoint) -> Result
 
 async fn get_checkpoint(
     pool: &PgPool,
-    automaton_name: &str,
+    processor_name: &str,
     consumer_group: &str,
     consumer_name: &str,
 ) -> Result<TestCheckpoint, Error> {
@@ -666,18 +666,18 @@ async fn get_checkpoint(
         r#"
         SELECT 
             id::text as "id!",
-            automaton_name as "automaton_name!",
+            processor_name as "processor_name!",
             consumer_group as "consumer_group!",
             consumer_name as "consumer_name!",
             last_processed_id,
             processed_count as "processed_count!",
             checkpoint_version as "checkpoint_version!"
-        FROM core.automaton_checkpoints
-        WHERE automaton_name = $1
+        FROM core.processor_checkpoints
+        WHERE processor_name = $1
           AND consumer_group = $2
           AND consumer_name = $3
         "#,
-        automaton_name,
+        processor_name,
         consumer_group,
         consumer_name
     )
@@ -687,7 +687,7 @@ async fn get_checkpoint(
 
     Ok(TestCheckpoint {
         id: Ulid::from_string(&row.id)?,
-        automaton_name: row.automaton_name,
+        processor_name: row.processor_name,
         consumer_group: row.consumer_group,
         consumer_name: row.consumer_name,
         last_processed_id: row.last_processed_id,
@@ -698,7 +698,7 @@ async fn get_checkpoint(
 
 async fn update_checkpoint_atomic(
     pool: &PgPool,
-    automaton_name: &str,
+    processor_name: &str,
     consumer_group: &str,
     consumer_name: &str,
     last_processed_id: Option<String>,
@@ -706,18 +706,18 @@ async fn update_checkpoint_atomic(
 ) -> Result<bool, Error> {
     let result = sqlx::query!(
         r#"
-        UPDATE core.automaton_checkpoints
+        UPDATE core.processor_checkpoints
         SET 
             processed_count = processed_count + $5,
             last_processed_id = COALESCE($4, last_processed_id),
             checkpoint_version = checkpoint_version + 1,
             last_activity = NOW(),
             updated_at = NOW()
-        WHERE automaton_name = $1
+        WHERE processor_name = $1
           AND consumer_group = $2
           AND consumer_name = $3
         "#,
-        automaton_name,
+        processor_name,
         consumer_group,
         consumer_name,
         last_processed_id,

@@ -259,7 +259,7 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_path_sanitization() {
+    async fn test_path_sanitization(ctx: TestContext) -> TestResult<()> {
         // Valid paths should work
         assert_eq!(
             SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
@@ -277,10 +277,11 @@ mod tests {
 
         // Double encoded traversal should be rejected
         assert!(SecurityValidator::sanitize_path("..%252f..%252fetc%252fpasswd").is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_unicode_sanitization() {
+    async fn test_unicode_sanitization(ctx: TestContext) -> TestResult<()> {
         // Null byte
         assert_eq!(
             SecurityValidator::sanitize_unicode("test\0value"),
@@ -292,19 +293,22 @@ mod tests {
             SecurityValidator::sanitize_unicode("test\u{200B}value"),
             "test\u{200B}value"
         );
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_json_depth() {
+    async fn test_json_depth(ctx: TestContext) -> TestResult<()> {
         let shallow = serde_json::json!({"a": {"b": {"c": 1}}});
         assert!(SecurityValidator::check_json_depth(&shallow, 5).is_ok());
         assert!(SecurityValidator::check_json_depth(&shallow, 2).is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_json_size() {
+    async fn test_json_size(ctx: TestContext) -> TestResult<()> {
         let small = serde_json::json!({"a": 1, "b": 2});
         assert!(SecurityValidator::check_json_size(&small, 10).is_ok());
         assert!(SecurityValidator::check_json_size(&small, 2).is_err());
+        Ok(())
     }
 }

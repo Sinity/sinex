@@ -486,7 +486,7 @@ async fn test_event_processing_flow_old(ctx: TestContext) -> TestResult {
     // Simulate processor checkpoint
     let checkpoint_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, processed_count)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, processed_count)
          VALUES ($1, $2, $3, $4)",
         checkpoint_id.to_uuid(),
         "task_processor",
@@ -495,7 +495,7 @@ async fn test_event_processing_flow_old(ctx: TestContext) -> TestResult {
     ).execute(ctx.pool()).await?;
     
     // Verify flow completion
-    let checkpoint = sqlx::query!("SELECT * FROM core.automaton_checkpoints WHERE id = $1", checkpoint_id.to_uuid())
+    let checkpoint = sqlx::query!("SELECT * FROM core.processor_checkpoints WHERE id = $1", checkpoint_id.to_uuid())
         .fetch_one(ctx.pool()).await?;
     
     assert_eq!(checkpoint.last_processed_id.as_deref(), Some(&event_id.to_string()));

@@ -1,6 +1,6 @@
 //! Checkpoint query registry for centralized checkpoint operations
 //!
-//! This module provides all database queries related to automaton checkpoint
+//! This module provides all database queries related to processor checkpoint
 //! storage, retrieval, and management. All queries automatically handle
 //! ULID/UUID conversion and provide consistent error handling.
 
@@ -24,10 +24,10 @@ impl CheckpointQueries {
         consumer_group: String,
         consumer_name: String,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::uuid as \"id!\"",
-                "automaton_name as \"automaton_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "last_processed_id",
@@ -39,7 +39,7 @@ impl CheckpointQueries {
                 "created_at as \"created_at!\"",
                 "updated_at as \"updated_at!\"",
             ])
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .where_eq("consumer_group", QueryParam::String(consumer_group))
             .where_eq("consumer_name", QueryParam::String(consumer_name))
     }
@@ -97,10 +97,10 @@ impl CheckpointQueries {
     ) -> QueryBuilder {
         // For complex UPSERT with ON CONFLICT, we need a custom query
         // This will be implemented as a raw SQL query since QueryBuilder doesn't support ON CONFLICT yet
-        let mut builder = QueryBuilder::insert("core.automaton_checkpoints");
+        let mut builder = QueryBuilder::insert("core.processor_checkpoints");
         builder = builder.columns(&[
             "id",
-            "automaton_name",
+            "processor_name",
             "consumer_group",
             "consumer_name",
             "last_processed_id",
@@ -143,7 +143,7 @@ impl CheckpointQueries {
         consumer_name: String,
         limit: i64,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::text as \"id!\"",
                 "last_processed_id",
@@ -153,7 +153,7 @@ impl CheckpointQueries {
                 "created_at as \"created_at!\"",
                 "updated_at as \"updated_at!\"",
             ])
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .where_eq("consumer_group", QueryParam::String(consumer_group))
             .where_eq("consumer_name", QueryParam::String(consumer_name))
             .order_by("updated_at", "DESC")
@@ -169,14 +169,14 @@ impl CheckpointQueries {
         consumer_group: String,
         consumer_name: String,
     ) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "COUNT(*) as \"total_checkpoints!\"",
                 "MAX(processed_count) as \"max_processed\"",
                 "MAX(updated_at) as \"last_update\"",
                 "MIN(created_at) as \"first_checkpoint\"",
             ])
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .where_eq("consumer_group", QueryParam::String(consumer_group))
             .where_eq("consumer_name", QueryParam::String(consumer_name))
     }
@@ -190,8 +190,8 @@ impl CheckpointQueries {
         consumer_group: String,
         consumer_name: String,
     ) -> QueryBuilder {
-        QueryBuilder::delete("core.automaton_checkpoints")
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+        QueryBuilder::delete("core.processor_checkpoints")
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .where_eq("consumer_group", QueryParam::String(consumer_group))
             .where_eq("consumer_name", QueryParam::String(consumer_name))
     }
@@ -201,10 +201,10 @@ impl CheckpointQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointRecord>(pool)`
     pub fn get_all_checkpoints_for_processor(processor_name: String) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::uuid as \"id!\"",
-                "automaton_name as \"automaton_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "last_processed_id",
@@ -216,7 +216,7 @@ impl CheckpointQueries {
                 "created_at as \"created_at!\"",
                 "updated_at as \"updated_at!\"",
             ])
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .order_by("updated_at", "DESC")
     }
 
@@ -225,10 +225,10 @@ impl CheckpointQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointRecord>(pool)`
     pub fn get_checkpoints_by_consumer_group(consumer_group: String) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::uuid as \"id!\"",
-                "automaton_name as \"automaton_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "last_processed_id",
@@ -249,10 +249,10 @@ impl CheckpointQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointRecord>(pool)`
     pub fn get_checkpoints_updated_after(timestamp: DateTime<Utc>) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::uuid as \"id!\"",
-                "automaton_name as \"automaton_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "last_processed_id",
@@ -273,10 +273,10 @@ impl CheckpointQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointRecord>(pool)`
     pub fn get_checkpoints_with_version_less_than(version: i32) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::uuid as \"id!\"",
-                "automaton_name as \"automaton_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "last_processed_id",
@@ -301,9 +301,9 @@ impl CheckpointQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<(i64,)>(pool)`
     pub fn count_checkpoints_by_processor(processor_name: String) -> QueryBuilder {
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&["COUNT(*) as count"])
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
     }
 
     /// Get active checkpoints (updated within last hour)
@@ -313,10 +313,10 @@ impl CheckpointQueries {
     pub fn get_active_checkpoints() -> QueryBuilder {
         let one_hour_ago = Utc::now() - chrono::Duration::hours(1);
 
-        QueryBuilder::select("core.automaton_checkpoints")
+        QueryBuilder::select("core.processor_checkpoints")
             .columns(&[
                 "id::uuid as \"id!\"",
-                "automaton_name as \"automaton_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "last_processed_id",
@@ -342,10 +342,10 @@ impl CheckpointQueries {
         consumer_name: String,
         processed_count: i64,
     ) -> QueryBuilder {
-        QueryBuilder::update("core.automaton_checkpoints")
+        QueryBuilder::update("core.processor_checkpoints")
             .set("processed_count", QueryParam::Integer(processed_count))
             .set("updated_at", QueryParam::Timestamp(Utc::now()))
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .where_eq("consumer_group", QueryParam::String(consumer_group))
             .where_eq("consumer_name", QueryParam::String(consumer_name))
     }
@@ -360,10 +360,10 @@ impl CheckpointQueries {
         consumer_name: String,
         last_activity: DateTime<Utc>,
     ) -> QueryBuilder {
-        QueryBuilder::update("core.automaton_checkpoints")
+        QueryBuilder::update("core.processor_checkpoints")
             .set("last_activity", QueryParam::Timestamp(last_activity))
             .set("updated_at", QueryParam::Timestamp(Utc::now()))
-            .where_eq("automaton_name", QueryParam::String(processor_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
             .where_eq("consumer_group", QueryParam::String(consumer_group))
             .where_eq("consumer_name", QueryParam::String(consumer_name))
     }
@@ -389,9 +389,9 @@ impl CheckpointQueries {
     ) -> DbResult<sqlx::postgres::PgQueryResult> {
         let result = sqlx::query!(
             r#"
-            INSERT INTO core.automaton_checkpoints (
+            INSERT INTO core.processor_checkpoints (
                 id,
-                automaton_name,
+                processor_name,
                 consumer_group,
                 consumer_name,
                 last_processed_id,
@@ -405,7 +405,7 @@ impl CheckpointQueries {
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5::uuid, $6, $7, $8, $9, $10, $11, $12
             )
-            ON CONFLICT (automaton_name, consumer_group, consumer_name) 
+            ON CONFLICT (processor_name, consumer_group, consumer_name) 
             DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
                 processed_count = EXCLUDED.processed_count,

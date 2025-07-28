@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 proptest! {
     #[test]
     fn automaton_processing_is_deterministic(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
             1..=50
@@ -33,7 +33,7 @@ proptest! {
             let mut second_run_results = Vec::new();
 
             for run in 0..2 {
-                let test_automaton = format!("{}-run-{}", automaton_name, run);
+                let test_automaton = format!("{}-run-{}", processor_name, run);
 
                 // Create fresh automaton instance for each run
                 let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &test_automaton).await.unwrap();
@@ -79,7 +79,7 @@ proptest! {
 proptest! {
     #[test]
     fn automaton_state_consistency_under_concurrency(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         concurrent_operations in concurrent_operations(),
         events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
@@ -95,7 +95,7 @@ proptest! {
                 return;
             }
 
-            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &processor_name).await.unwrap();
 
             // Prepare events for concurrent processing
             let test_events: Vec<_> = events.iter().map(|(source, event_type, payload)| {
@@ -111,7 +111,7 @@ proptest! {
             let mut handles = Vec::new();
             for (i, operation) in concurrent_operations.iter().enumerate() {
                 let ctx_clone = ctx.clone();
-                let automaton_name_clone = automaton_name.clone();
+                let processor_name_clone = processor_name.clone();
                 let operation_clone = operation.clone();
                 let events_clone = test_events.clone();
 
@@ -126,7 +126,7 @@ proptest! {
                             let _ = ctx_clone.query_events().await;
                         }
                         "update_checkpoint" => {
-                            let _ = ctx_clone.verify_checkpoint(&automaton_name_clone).await;
+                            let _ = ctx_clone.verify_checkpoint(&processor_name_clone).await;
                         }
                         _ => {}
                     }
@@ -140,7 +140,7 @@ proptest! {
             }
 
             // Verify final state consistency
-            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let final_checkpoint = ctx.verify_checkpoint(&processor_name).await.unwrap();
             let final_count = ctx.event_count().await.unwrap();
 
             // State should be consistent (no corruption)
@@ -154,7 +154,7 @@ proptest! {
 proptest! {
     #[test]
     fn automaton_recovery_from_checkpoint_is_correct(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         initial_events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
             1..=20
@@ -174,7 +174,7 @@ proptest! {
             }
 
             // Phase 1: Initial processing
-            let automaton1 = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+            let automaton1 = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &processor_name).await.unwrap();
 
             for (source, event_type, payload) in initial_events.iter() {
                 let event = crate::sinex_test_utils::events::create_raw_event(
@@ -188,18 +188,18 @@ proptest! {
 
             // Wait for initial processing
             if !initial_events.is_empty() {
-                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, initial_events.len() as u64).await.unwrap();
+                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &processor_name, initial_events.len() as u64).await.unwrap();
             }
 
             // Capture checkpoint state
-            let checkpoint_before = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let checkpoint_before = ctx.verify_checkpoint(&processor_name).await.unwrap();
 
             // Phase 2: Simulate restart by creating new automaton with same name
             drop(automaton1);
-            let automaton2 = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+            let automaton2 = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &processor_name).await.unwrap();
 
             // Verify checkpoint was restored
-            let checkpoint_after_restart = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let checkpoint_after_restart = ctx.verify_checkpoint(&processor_name).await.unwrap();
             assert_eq!(checkpoint_before.processed_count, checkpoint_after_restart.processed_count);
 
             // Phase 3: Continue processing
@@ -216,11 +216,11 @@ proptest! {
             // Wait for recovery processing
             if !recovery_events.is_empty() {
                 let expected_total = initial_events.len() + recovery_events.len();
-                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, expected_total as u64).await.unwrap();
+                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &processor_name, expected_total as u64).await.unwrap();
             }
 
             // Verify recovery worked correctly
-            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let final_checkpoint = ctx.verify_checkpoint(&processor_name).await.unwrap();
             let expected_processed = initial_events.len() + recovery_events.len();
             assert_eq!(final_checkpoint.processed_count, expected_processed as u64);
         });
@@ -231,7 +231,7 @@ proptest! {
 proptest! {
     #[test]
     fn automaton_batch_processing_is_efficient(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         batch_size in batch_sizes(),
         events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
@@ -247,7 +247,7 @@ proptest! {
                 return;
             }
 
-            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &processor_name).await.unwrap();
 
             // Process events in batches
             let mut total_processed = 0;
@@ -267,7 +267,7 @@ proptest! {
                 }
 
                 // Wait for batch to be processed
-                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, total_processed as u64).await.unwrap();
+                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &processor_name, total_processed as u64).await.unwrap();
 
                 let batch_duration = batch_start.elapsed();
 
@@ -276,7 +276,7 @@ proptest! {
             }
 
             // Verify all events were processed
-            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let final_checkpoint = ctx.verify_checkpoint(&processor_name).await.unwrap();
             assert_eq!(final_checkpoint.processed_count, events.len() as u64);
         });
     }
@@ -286,7 +286,7 @@ proptest! {
 proptest! {
     #[test]
     fn automaton_error_handling_is_robust(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         valid_events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
             1..=10
@@ -305,7 +305,7 @@ proptest! {
                 return;
             }
 
-            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &processor_name).await.unwrap();
 
             // Phase 1: Process valid events
             for (source, event_type, payload) in valid_events.iter() {
@@ -319,10 +319,10 @@ proptest! {
             }
 
             if !valid_events.is_empty() {
-                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, valid_events.len() as u64).await.unwrap();
+                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &processor_name, valid_events.len() as u64).await.unwrap();
             }
 
-            let checkpoint_after_valid = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let checkpoint_after_valid = ctx.verify_checkpoint(&processor_name).await.unwrap();
 
             // Phase 2: Process invalid events (should be handled gracefully)
             for payload in invalid_events.iter() {
@@ -351,10 +351,10 @@ proptest! {
 
             // Wait for recovery
             let expected_minimum = valid_events.len() + 1; // +1 for recovery event
-            crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, expected_minimum as u64).await.unwrap();
+            crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &processor_name, expected_minimum as u64).await.unwrap();
 
             // Verify automaton recovered and continued processing
-            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let final_checkpoint = ctx.verify_checkpoint(&processor_name).await.unwrap();
             assert!(final_checkpoint.processed_count >= checkpoint_after_valid.processed_count);
         });
     }
@@ -364,7 +364,7 @@ proptest! {
 proptest! {
     #[test]
     fn automaton_memory_usage_is_bounded(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         large_events in proptest::collection::vec(
             (event_sources(), event_types(), adversarial_payloads()),
             1..=50
@@ -380,7 +380,7 @@ proptest! {
                 return;
             }
 
-            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &automaton_name).await.unwrap();
+            let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, &processor_name).await.unwrap();
 
             // Process large events with controlled timing
             let mut processed_count = 0;
@@ -400,16 +400,16 @@ proptest! {
 
                 // Periodically check that processing is keeping up
                 if processed_count % 10 == 0 {
-                    let checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+                    let checkpoint = ctx.verify_checkpoint(&processor_name).await.unwrap();
                     // Should be processing events, not accumulating indefinitely
                     assert!(checkpoint.processed_count > 0);
                 }
             }
 
             // Final verification
-            crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &automaton_name, processed_count as u64).await.unwrap();
+            crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, &processor_name, processed_count as u64).await.unwrap();
 
-            let final_checkpoint = ctx.verify_checkpoint(&automaton_name).await.unwrap();
+            let final_checkpoint = ctx.verify_checkpoint(&processor_name).await.unwrap();
             assert_eq!(final_checkpoint.processed_count, processed_count as u64);
         });
     }
@@ -419,7 +419,7 @@ proptest! {
 proptest! {
     #[test]
     fn multiple_automata_coordination_is_correct(
-        automaton_names in proptest::collection::vec(automaton_names(), 2..=5),
+        processor_names in proptest::collection::vec(processor_names(), 2..=5),
         events in proptest::collection::vec(
             (event_sources(), event_types(), event_payloads()),
             1..=30
@@ -430,14 +430,14 @@ proptest! {
             let ctx = crate::sinex_test_utils::test_context::TestContext::new().await.unwrap();
 
             // Skip if no events to test
-            if events.is_empty() || automaton_names.is_empty() {
+            if events.is_empty() || processor_names.is_empty() {
                 return;
             }
 
             // Start multiple automata
             let mut automata = Vec::new();
-            for automaton_name in automaton_names.iter() {
-                let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, automaton_name).await.unwrap();
+            for processor_name in processor_names.iter() {
+                let automaton = crate::sinex_test_utils::test_context::TestContext::start_test_automaton(&ctx, processor_name).await.unwrap();
                 automata.push(automaton);
             }
 
@@ -453,13 +453,13 @@ proptest! {
             }
 
             // Wait for all automata to process events
-            for automaton_name in automaton_names.iter() {
-                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, automaton_name, events.len() as u64).await.unwrap();
+            for processor_name in processor_names.iter() {
+                crate::sinex_test_utils::test_context::TestContext::wait_for_checkpoint_progress(&ctx, processor_name, events.len() as u64).await.unwrap();
             }
 
             // Verify each automaton processed all events
-            for automaton_name in automaton_names.iter() {
-                let checkpoint = ctx.verify_checkpoint(automaton_name).await.unwrap();
+            for processor_name in processor_names.iter() {
+                let checkpoint = ctx.verify_checkpoint(processor_name).await.unwrap();
                 assert_eq!(checkpoint.processed_count, events.len() as u64);
             }
 

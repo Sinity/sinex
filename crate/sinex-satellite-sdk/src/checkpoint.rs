@@ -51,7 +51,7 @@ use tracing::{debug, info, warn};
 struct CheckpointRecord {
     pub id: Ulid,
     #[allow(dead_code)] // Used by database query but not in code
-    pub automaton_name: String,
+    pub processor_name: String,
     #[allow(dead_code)] // Used by database query but not in code
     pub consumer_group: String,
     #[allow(dead_code)] // Used by database query but not in code

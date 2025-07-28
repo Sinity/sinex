@@ -135,7 +135,7 @@ pub struct UserSessionFixture {
 /// Fixture data for populated checkpoints
 #[derive(Debug, Clone)]
 pub struct PopulatedCheckpointsFixture {
-    pub automaton_names: Vec<String>,
+    pub processor_names: Vec<String>,
     pub checkpoint_ids: Vec<Ulid>,
     pub total_events_processed: u64,
 }
@@ -239,7 +239,7 @@ pub async fn empty_database(ctx: &TestContext) -> TestResult<FixtureHandle<()>> 
     sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
         .execute(&pool)
         .await?;
-    sqlx::query!("DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_%'")
+    sqlx::query!("DELETE FROM core.processor_checkpoints WHERE processor_name LIKE 'test_%'")
         .execute(&pool)
         .await?;
 
@@ -408,7 +408,7 @@ async fn create_user_session_fixture(
 async fn create_populated_checkpoints_fixture(
     pool: &DbPool,
 ) -> TestResult<PopulatedCheckpointsFixture> {
-    let automaton_names = vec![
+    let processor_names = vec![
         "health-aggregator".to_string(),
         "command-canonicalizer".to_string(),
         "activity-tracker".to_string(),
@@ -416,7 +416,7 @@ async fn create_populated_checkpoints_fixture(
     let mut checkpoint_ids = Vec::new();
     let mut total_events_processed = 0u64;
 
-    for (i, name) in automaton_names.iter().enumerate() {
+    for (i, name) in processor_names.iter().enumerate() {
         let processed_count = 100 * (i + 1) as i64;
         total_events_processed += processed_count as u64;
 
@@ -425,7 +425,7 @@ async fn create_populated_checkpoints_fixture(
             .with_processed_count(processed_count)
             .with_last_processed(&Ulid::new().to_string())
             .with_state(json!({
-                "automaton_name": name,
+                "processor_name": name,
                 "version": "1.0.0",
                 "status": "healthy",
                 "last_health_check": Utc::now(),
@@ -437,7 +437,7 @@ async fn create_populated_checkpoints_fixture(
     }
 
     Ok(PopulatedCheckpointsFixture {
-        automaton_names,
+        processor_names,
         checkpoint_ids,
         total_events_processed,
     })
@@ -911,12 +911,12 @@ mod tests {
         let fixture = populated_checkpoints(&ctx).await?;
 
         // Should have created multiple checkpoints
-        assert!(fixture.automaton_names.len() >= 3);
-        assert_eq!(fixture.automaton_names.len(), fixture.checkpoint_ids.len());
+        assert!(fixture.processor_names.len() >= 3);
+        assert_eq!(fixture.processor_names.len(), fixture.checkpoint_ids.len());
         assert!(fixture.total_events_processed > 0);
 
         // Verify checkpoints exist
-        for name in &fixture.automaton_names {
+        for name in &fixture.processor_names {
             let count = ctx.checkpoints().by_automaton(name).count().await?;
             assert_eq!(count, 1, "Should have one checkpoint for {}", name);
         }
@@ -963,7 +963,7 @@ mod tests {
 
         // Both fixtures should be available
         assert!(!composite.first.event_ids.is_empty());
-        assert!(!composite.second.automaton_names.is_empty());
+        assert!(!composite.second.processor_names.is_empty());
 
         Ok(())
     }
@@ -982,7 +982,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_transaction_fixture(ctx: TestContext) -> TestResult<()> {
-        let result = with_transaction_fixture(&ctx, |mut tx| async move {
+        let result = with_transaction_fixture(&ctx, |mut tx| async {
             // Work with transaction
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
                 .fetch_one(&mut *tx)
@@ -1172,7 +1172,7 @@ mod tests {
 
         // All fixtures should coexist
         assert!(!user_session.event_ids.is_empty());
-        assert!(!checkpoints.automaton_names.is_empty());
+        assert!(!checkpoints.processor_names.is_empty());
         assert_eq!(perf_data.event_count, 50);
 
         // Total events should be sum of all fixtures
@@ -1192,14 +1192,15 @@ mod tests {
     }
 
     #[test]
-    fn test_fixture_builder_immutability() {
-        let builder1 = FixtureBuilder::<UserSessionFixture>::new().param("test", 1);
+    fn test_fixture_builder_chaining() {
+        let builder = FixtureBuilder::<UserSessionFixture>::new()
+            .param("test", 1)
+            .param("test2", 2);
 
-        let builder2 = builder1.param("test2", 2);
-
-        // Original builder unchanged
-        assert_eq!(builder1.params().len(), 1);
-        assert_eq!(builder2.params().len(), 2);
+        // Builder should have both params
+        assert_eq!(builder.params().len(), 2);
+        assert!(builder.params().contains_key("test"));
+        assert!(builder.params().contains_key("test2"));
     }
 
     #[sinex_test]

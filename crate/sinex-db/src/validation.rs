@@ -258,7 +258,7 @@ pub struct UlidOrderingViolation {
 /// Checkpoint consistency issue found during integrity checks
 #[derive(Debug, Clone)]
 pub struct CheckpointInconsistency {
-    pub automaton_name: String,
+    pub processor_name: String,
     pub checkpoint_ulid: Option<Ulid>,
     pub last_processed_ulid: Option<Ulid>,
     pub inconsistency_type: CheckpointInconsistencyType,
@@ -918,7 +918,7 @@ impl<'a> DataIntegrityValidator<'a> {
         // Get all active automatons and their checkpoints
         #[derive(sqlx::FromRow)]
         struct CheckpointRecord {
-            automaton_name: String,
+            processor_name: String,
             last_processed_id: Option<sqlx::types::Uuid>,
             #[allow(dead_code)]
             processed_count: Option<i64>,
@@ -932,7 +932,7 @@ impl<'a> DataIntegrityValidator<'a> {
             .await?;
 
         for checkpoint in checkpoints {
-            let automaton_name = checkpoint.automaton_name;
+            let processor_name = checkpoint.processor_name;
 
             // Check if checkpoint refers to valid event
             if let Some(last_processed_uuid) = &checkpoint.last_processed_id {
@@ -945,7 +945,7 @@ impl<'a> DataIntegrityValidator<'a> {
 
                 if !event_exists {
                     inconsistencies.push(CheckpointInconsistency {
-                        automaton_name: automaton_name.clone(),
+                        processor_name: processor_name.clone(),
                         checkpoint_ulid: Some(last_processed_ulid),
                         last_processed_ulid: Some(last_processed_ulid),
                         inconsistency_type: CheckpointInconsistencyType::CheckpointAheadOfEvents,
@@ -965,7 +965,7 @@ impl<'a> DataIntegrityValidator<'a> {
 
                 if newer_events_count > 0 {
                     inconsistencies.push(CheckpointInconsistency {
-                        automaton_name: automaton_name.clone(),
+                        processor_name: processor_name.clone(),
                         checkpoint_ulid: Some(last_processed_ulid),
                         last_processed_ulid: Some(last_processed_ulid),
                         inconsistency_type: CheckpointInconsistencyType::CheckpointBehindEvents,
@@ -980,7 +980,7 @@ impl<'a> DataIntegrityValidator<'a> {
                 let time_since_update = Utc::now().signed_duration_since(last_activity);
                 if time_since_update > ChronoDuration::hours(1) {
                     inconsistencies.push(CheckpointInconsistency {
-                        automaton_name: automaton_name.clone(),
+                        processor_name: processor_name.clone(),
                         checkpoint_ulid: checkpoint
                             .last_processed_id
                             .map(crate::query_helpers::uuid_to_ulid),

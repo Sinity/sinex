@@ -489,11 +489,11 @@ async fn test_concurrent_checkpoint_update_conflicts(ctx: TestContext) -> TestRe
             // Each task tries to update the same checkpoint
             let update_result = sqlx::query!(
                 r#"
-                UPDATE core.automaton_checkpoints
+                UPDATE core.processor_checkpoints
                 SET processed_count = processed_count + 1,
                     last_processed_id = $1,
                     updated_at = NOW()
-                WHERE automaton_name = $2
+                WHERE processor_name = $2
                   AND consumer_group = $3
                   AND consumer_name = $4
                 "#,

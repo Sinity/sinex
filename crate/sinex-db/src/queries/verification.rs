@@ -108,15 +108,15 @@ impl VerificationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_one::<CheckpointIdRecord>(pool)`
     pub fn insert_test_checkpoint(
-        automaton_name: String,
+        processor_name: String,
         consumer_group: String,
         consumer_name: String,
         processed_count: i64,
         state_data: JsonValue,
     ) -> QueryBuilder {
-        QueryBuilder::insert(tables::AUTOMATON_CHECKPOINTS)
+        QueryBuilder::insert(tables::PROCESSOR_CHECKPOINTS)
             .columns(&[
-                "automaton_name",
+                "processor_name",
                 "consumer_group",
                 "consumer_name",
                 "last_processed_id",
@@ -124,7 +124,7 @@ impl VerificationQueries {
                 "state_data",
             ])
             .values(&[
-                QueryParam::String(automaton_name),
+                QueryParam::String(processor_name),
                 QueryParam::String(consumer_group),
                 QueryParam::String(consumer_name),
                 QueryParam::OptionalUlid(None), // NULL::ulid

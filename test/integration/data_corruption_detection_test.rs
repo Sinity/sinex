@@ -545,8 +545,8 @@ async fn test_checkpoint_data_corruption(ctx: TestContext) -> TestResult {
     for (i, data) in checkpoint_data.iter().enumerate() {
         let result = sqlx::query!(
             r#"
-            INSERT INTO core.automaton_checkpoints (
-                automaton_name, last_processed_id, processed_count,
+            INSERT INTO core.processor_checkpoints (
+                processor_name, last_processed_id, processed_count,
                 last_activity, checkpoint_data
             ) VALUES ($1, $2::uuid, $3, $4, $5)
             "#,
@@ -592,7 +592,7 @@ async fn test_checkpoint_data_corruption(ctx: TestContext) -> TestResult {
 
     // Cleanup
     sqlx::query!(
-        "DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_automaton_%'"
+        "DELETE FROM core.processor_checkpoints WHERE processor_name LIKE 'test_automaton_%'"
     )
     .execute(pool)
     .await?;

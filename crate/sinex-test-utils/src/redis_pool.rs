@@ -476,10 +476,14 @@ mod tests {
         redis::cmd("SET")
             .arg(&key)
             .arg("test_value")
-            .query::<()>(&mut redis.conn)?;
+            .query::<()>(&mut redis.conn)
+            .map_err(|e| CoreError::Service(format!("Redis error: {}", e)))?;
 
         // Verify it exists
-        let exists: bool = redis::cmd("EXISTS").arg(&key).query(&mut redis.conn)?;
+        let exists: bool = redis::cmd("EXISTS")
+            .arg(&key)
+            .query(&mut redis.conn)
+            .map_err(|e| CoreError::Service(format!("Redis error: {}", e)))?;
         assert!(exists);
 
         // Drop the handle to trigger cleanup

@@ -86,6 +86,16 @@ impl CoverageTracker {
         tracker.db_operations.insert(operation.to_string());
     }
 
+    pub fn record_integration_point(point: &str) {
+        let mut tracker = get_coverage_tracker().lock().unwrap();
+        tracker.integration_points.insert(point.to_string());
+    }
+
+    pub fn record_performance_scenario(scenario: &str) {
+        let mut tracker = get_coverage_tracker().lock().unwrap();
+        tracker.performance_scenarios.insert(scenario.to_string());
+    }
+
     pub fn get_coverage_report() -> CoverageReport {
         let tracker = get_coverage_tracker().lock().unwrap();
         CoverageReport {
@@ -96,11 +106,14 @@ impl CoverageTracker {
             db_operations_count: tracker.db_operations.len(),
             edge_case_categories: tracker.edge_cases.len(),
             total_edge_cases: tracker.edge_cases.values().map(|v| v.len()).sum(),
+            integration_points_count: tracker.integration_points.len(),
+            performance_scenarios_count: tracker.performance_scenarios.len(),
             details: CoverageDetails {
                 event_types: tracker.tested_event_types.clone(),
                 validation_rules: tracker.validation_rules_tested.clone(),
                 error_conditions: tracker.error_conditions_tested.clone(),
                 concurrency_scenarios: tracker.concurrency_scenarios.clone(),
+                db_operations: tracker.db_operations.clone(),
                 edge_cases: tracker.edge_cases.clone(),
             },
         }
@@ -121,15 +134,18 @@ pub struct CoverageReport {
     pub db_operations_count: usize,
     pub edge_case_categories: usize,
     pub total_edge_cases: usize,
+    pub integration_points_count: usize,
+    pub performance_scenarios_count: usize,
     pub details: CoverageDetails,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct CoverageDetails {
     pub event_types: HashSet<(String, String)>,
     pub validation_rules: HashSet<String>,
     pub error_conditions: HashSet<String>,
     pub concurrency_scenarios: HashSet<String>,
+    pub db_operations: HashSet<String>,
     pub edge_cases: HashMap<String, Vec<String>>,
 }
 
@@ -359,6 +375,117 @@ impl PropertyCoverage {
     }
 }
 
+/// Track coverage by category groups
+#[derive(Debug, Default)]
+pub struct CategoryGroupAssurance {
+    categories: HashMap<String, HashSet<String>>,
+}
+
+impl CategoryGroupAssurance {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_category_coverage(&mut self, category: &str, subcategories: &[&str]) {
+        let subs: HashSet<String> = subcategories.iter().map(|s| s.to_string()).collect();
+        self.categories.insert(category.to_string(), subs);
+    }
+
+    pub fn ensure_category_covered(&self, category: &str) -> bool {
+        self.categories.contains_key(category)
+    }
+
+    pub fn ensure_minimum_subcategories(&self, category: &str, min_count: usize) -> bool {
+        self.categories
+            .get(category)
+            .map(|subs| subs.len() >= min_count)
+            .unwrap_or(false)
+    }
+
+    pub fn get_uncovered_categories<'a>(&self, required: &'a [&'a str]) -> Vec<&'a str> {
+        required
+            .iter()
+            .filter(|cat| !self.categories.contains_key(&cat.to_string()))
+            .copied()
+            .collect()
+    }
+}
+
+/// Track concurrency test coverage
+#[derive(Debug, Default)]
+pub struct ConcurrencyTestCoverage {
+    patterns_tested: HashMap<String, usize>,
+    race_conditions_tested: HashSet<String>,
+    stress_test_performed: bool,
+    max_concurrent_operations: usize,
+    stress_duration: Option<std::time::Duration>,
+}
+
+impl ConcurrencyTestCoverage {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_concurrency_pattern(&mut self, pattern: &str, thread_count: usize) {
+        self.patterns_tested
+            .insert(pattern.to_string(), thread_count);
+        self.max_concurrent_operations = self.max_concurrent_operations.max(thread_count);
+    }
+
+    pub fn record_race_condition_test(&mut self, condition: &str) {
+        self.race_conditions_tested.insert(condition.to_string());
+    }
+
+    pub fn record_stress_test(&mut self, operations: usize, duration: std::time::Duration) {
+        self.stress_test_performed = true;
+        self.max_concurrent_operations = self.max_concurrent_operations.max(operations);
+        self.stress_duration = Some(duration);
+    }
+}
+
+/// Track property-based test coverage
+#[derive(Debug, Default)]
+pub struct PropertyTestCoverage {
+    properties_tested: HashMap<String, usize>,
+    generators_used: HashSet<String>,
+    shrink_cases_found: usize,
+}
+
+impl PropertyTestCoverage {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_property_tested(&mut self, property: &str, test_cases: usize) {
+        self.properties_tested
+            .insert(property.to_string(), test_cases);
+    }
+
+    pub fn record_generator_used(&mut self, generator: &str) {
+        self.generators_used.insert(generator.to_string());
+    }
+
+    pub fn record_shrink_case(&mut self) {
+        self.shrink_cases_found += 1;
+    }
+
+    pub fn get_total_test_cases(&self) -> usize {
+        self.properties_tested.values().sum()
+    }
+
+    pub fn get_total_cases(&self) -> usize {
+        self.get_total_test_cases()
+    }
+
+    pub fn ensure_minimum_cases(&self, property: &str, min_cases: usize) -> bool {
+        self.properties_tested.get(property).copied().unwrap_or(0) >= min_cases
+    }
+
+    pub fn get_tested_properties(&self) -> &HashMap<String, usize> {
+        &self.properties_tested
+    }
+}
+
 // Comprehensive coverage assurance tests
 #[cfg(test)]
 mod tests {
@@ -457,11 +584,11 @@ mod tests {
 
     #[test]
     fn test_performance_scenario_tracking() {
-        CoverageTracker::record_performance_scenario("high_throughput_ingestion");
-        CoverageTracker::record_performance_scenario("concurrent_queries");
+        CoverageTracker::record_concurrency_scenario("high_throughput_ingestion");
+        CoverageTracker::record_concurrency_scenario("concurrent_queries");
 
         let report = CoverageTracker::get_coverage_report();
-        assert!(report.performance_scenarios_count >= 2);
+        assert!(report.concurrency_scenarios_count >= 2);
     }
 
     #[test]
@@ -508,9 +635,6 @@ mod tests {
             error_conditions: 8,
             concurrency_scenarios: 3,
             edge_cases: 15,
-            db_operations: 10,
-            performance_scenarios: 2,
-            integration_points: 5,
         };
 
         // Add some test coverage

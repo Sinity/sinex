@@ -758,7 +758,7 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
             let stream_key = format!("sinex:test:checkpoint:{}", test_id);
             let group_name = format!("checkpoint_group_{}", test_id);
             let consumer_name = "checkpoint_consumer";
-            let automaton_name = format!("test_automaton_{}", test_id);
+            let processor_name = format!("test_automaton_{}", test_id);
 
             // Create consumer group
             let _: RedisResult<String> = redis
@@ -792,7 +792,7 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
             // Create checkpoint manager
             let checkpoint_mgr = CheckpointManager::new(
                 ctx.pool(),
-                automaton_name.clone(),
+                processor_name.clone(),
                 group_name.clone(),
                 consumer_name.to_string(),
             );

@@ -214,8 +214,8 @@ impl<'ctx> PropertyTester<'ctx> {
     ) -> TestResult<()>
     where
         S: Strategy<Value = T>,
-        F: for<'a> Fn(&'a TestContext, T) -> Fut + 'static,
-        Fut: std::future::Future<Output = TestResult<()>> + 'static,
+        F: Fn(&TestContext, T) -> Fut,
+        Fut: std::future::Future<Output = TestResult<()>>,
     {
         for case_num in 0..test_cases {
             let tree = strategy.new_tree(&mut self.runner).map_err(|e| {
@@ -379,7 +379,7 @@ mod tests {
             // Should be usable in event creation
             let event = ctx
                 .event()
-                .source(source)
+                .source(&source)
                 .type_("test.property")
                 .insert()
                 .await?;
@@ -651,19 +651,25 @@ mod tests {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test edge cases with property strategies
+        let long_source = "a".repeat(256);
+        let large_payload_content = "x".repeat(1000);
         let edge_cases = vec![
-            ("", "empty.test", json!({})),             // Empty source should fail
-            ("a".repeat(256), "test.long", json!({})), // Very long source
-            ("test", "", json!({})),                   // Empty type should fail
-            ("test", "no_dot", json!({})),             // Type without dot might fail
-            ("test-123", "test.123", json!({"key": "x".repeat(1000)})), // Large payload
+            ("", "empty.test", json!({})), // Empty source should fail
+            (long_source.as_str(), "test.long", json!({})), // Very long source
+            ("test", "", json!({})),       // Empty type should fail
+            ("test", "no_dot", json!({})), // Type without dot might fail
+            (
+                "test-123",
+                "test.123",
+                json!({"key": large_payload_content}),
+            ), // Large payload
         ];
 
         for (source, event_type, payload) in edge_cases {
             let result = ctx
                 .event()
-                .source(&source)
-                .type_(&event_type)
+                .source(source)
+                .type_(event_type)
                 .payload(payload)
                 .insert()
                 .await;

@@ -43,13 +43,13 @@ impl ValidationQueries {
             .limit(limit)
     }
 
-    /// Get all automaton checkpoints
+    /// Get all processor checkpoints
     ///
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointRecord>(pool)`
     pub fn get_all_checkpoints() -> QueryBuilder {
-        QueryBuilder::select(tables::AUTOMATON_CHECKPOINTS).columns(&[
-            "automaton_name",
+        QueryBuilder::select(tables::PROCESSOR_CHECKPOINTS).columns(&[
+            "processor_name",
             "last_processed_id::uuid as last_processed_id",
             "processed_count",
             "last_activity",

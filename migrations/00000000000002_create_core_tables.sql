@@ -1,4 +1,14 @@
 -- Create core event storage tables with unified architecture
+
+-- Create helper function for updated_at triggers
+CREATE OR REPLACE FUNCTION set_current_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 --
 -- Technical Implementation Module: TimescaleDB Configuration
 --
@@ -348,3 +358,163 @@ COMMENT ON TABLE core.operations_log IS 'Audit log of all administrative operati
 COMMENT ON TABLE metrics.sinex_metrics IS 'System telemetry and performance metrics';
 COMMENT ON TABLE core.entities IS 'Knowledge graph entities extracted from events';
 COMMENT ON TABLE core.entity_relations IS 'Relationships between entities in the knowledge graph';
+
+-- ============================================================================
+-- Git-Annex Blob Management
+-- ============================================================================
+--
+-- Registry for large files managed by git-annex. This table tracks metadata
+-- about binary content that's too large for direct database storage.
+--
+CREATE TABLE IF NOT EXISTS core.blobs (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    annex_key TEXT UNIQUE NOT NULL,
+    original_filename TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    mime_type TEXT,
+    checksum_sha256 TEXT NOT NULL,
+    checksum_blake3 TEXT,
+    storage_backend TEXT NOT NULL DEFAULT 'git-annex',
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_verified_at TIMESTAMPTZ,
+    verification_status TEXT CHECK (verification_status IN ('pending', 'verified', 'missing', 'corrupted'))
+);
+
+CREATE INDEX idx_blobs_annex_key ON core.blobs(annex_key);
+CREATE INDEX idx_blobs_checksum_sha256 ON core.blobs(checksum_sha256);
+CREATE INDEX idx_blobs_checksum_blake3 ON core.blobs(checksum_blake3) WHERE checksum_blake3 IS NOT NULL;
+CREATE INDEX idx_blobs_verification ON core.blobs(verification_status, last_verified_at);
+
+-- ============================================================================
+-- Hierarchical Tagging System
+-- ============================================================================
+--
+-- Flexible tagging/categorization that complements the formal knowledge graph.
+-- Tags are user-defined labels that can be organized hierarchically.
+--
+CREATE TABLE IF NOT EXISTS core.tags (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    name TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    color TEXT,
+    icon TEXT,
+    parent_id ULID REFERENCES core.tags(id),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_tags_parent ON core.tags(parent_id) WHERE parent_id IS NOT NULL;
+CREATE INDEX idx_tags_name ON core.tags(name);
+
+-- ============================================================================
+-- Event Annotations
+-- ============================================================================
+--
+-- ## Event Annotations Schema (TIM-EventAnnotationsSchema)
+--
+-- Provides flexible annotation system for events with:
+-- - Multiple annotation types (tag, comment, summary, analysis)
+-- - Actor tracking for provenance (user vs AI agent)
+-- - Direct text annotations (no concept linking required)
+-- - Structured metadata in JSONB format
+--
+-- This is the "human knowledge layer" that captures understanding not
+-- present in raw event data.
+--
+CREATE TABLE IF NOT EXISTS core.event_annotations (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    annotation_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by TEXT NOT NULL DEFAULT 'user'
+);
+
+CREATE INDEX idx_event_annotations_event ON core.event_annotations(event_id);
+CREATE INDEX idx_event_annotations_type ON core.event_annotations(annotation_type);
+CREATE INDEX idx_event_annotations_created ON core.event_annotations(created_at);
+CREATE INDEX idx_event_annotations_search ON core.event_annotations USING gin(to_tsvector('english', content));
+
+-- ============================================================================
+-- Event Relations
+-- ============================================================================
+--
+-- Captures relationships between events to understand causality, workflows,
+-- and patterns. These relations can be discovered automatically or defined
+-- manually.
+--
+CREATE TABLE IF NOT EXISTS core.event_relations (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    from_event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    to_event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL,
+    confidence FLOAT DEFAULT 1.0 CHECK (confidence >= 0 AND confidence <= 1),
+    detected_by TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT no_self_event_relations CHECK (from_event_id != to_event_id),
+    CONSTRAINT unique_event_relation UNIQUE(from_event_id, to_event_id, relation_type)
+);
+
+CREATE INDEX idx_event_relations_from ON core.event_relations(from_event_id);
+CREATE INDEX idx_event_relations_to ON core.event_relations(to_event_id);
+CREATE INDEX idx_event_relations_type ON core.event_relations(relation_type);
+CREATE INDEX idx_event_relations_confidence ON core.event_relations(confidence) WHERE confidence < 1.0;
+
+-- ============================================================================
+-- Event Clusters
+-- ============================================================================
+--
+-- Groups events into meaningful clusters like sessions, workflows, or
+-- incidents. Clusters provide context for understanding event sequences.
+--
+CREATE TABLE IF NOT EXISTS core.event_clusters (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    name TEXT NOT NULL,
+    cluster_type TEXT NOT NULL,
+    summary TEXT,
+    time_start TIMESTAMPTZ NOT NULL,
+    time_end TIMESTAMPTZ NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_event_clusters_type ON core.event_clusters(cluster_type);
+CREATE INDEX idx_event_clusters_time ON core.event_clusters(time_start, time_end);
+
+-- ============================================================================
+-- Event Cluster Membership
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS core.event_cluster_members (
+    cluster_id ULID NOT NULL REFERENCES core.event_clusters(id) ON DELETE CASCADE,
+    event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    role TEXT,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    PRIMARY KEY (cluster_id, event_id)
+);
+
+CREATE INDEX idx_event_cluster_members_event ON core.event_cluster_members(event_id);
+
+-- Add triggers for updated_at
+CREATE TRIGGER set_event_annotations_updated_at 
+    BEFORE UPDATE ON core.event_annotations 
+    FOR EACH ROW 
+    EXECUTE FUNCTION set_current_timestamp();
+
+CREATE TRIGGER set_event_clusters_updated_at 
+    BEFORE UPDATE ON core.event_clusters 
+    FOR EACH ROW 
+    EXECUTE FUNCTION set_current_timestamp();
+
+-- Add comments for new tables
+COMMENT ON TABLE core.blobs IS 'Registry of git-annex managed binary files';
+COMMENT ON TABLE core.tags IS 'Hierarchical tagging system for flexible categorization';
+COMMENT ON TABLE core.event_annotations IS 'User annotations and notes on individual events';
+COMMENT ON TABLE core.event_relations IS 'Discovered or defined relationships between events';
+COMMENT ON TABLE core.event_clusters IS 'Grouped collections of related events';
+COMMENT ON TABLE core.event_cluster_members IS 'Membership of events in clusters';

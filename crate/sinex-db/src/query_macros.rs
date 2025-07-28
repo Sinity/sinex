@@ -404,12 +404,13 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_macro_compilation() {
+    async fn test_macro_compilation(ctx: TestContext) -> TestResult<()> {
         // These tests just verify the macros compile correctly
         // They don't execute because we don't have a real database in tests
 
         // Test that the macros expand to valid Rust code
         // The actual functionality is tested in integration tests
         assert!(true);
+        Ok(())
     }
 }

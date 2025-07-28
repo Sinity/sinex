@@ -98,27 +98,27 @@ async fn find_events_by_type_and_source(
 /// Example 4: Using domain-specific query modules
 async fn get_latest_checkpoint(
     pool: &PgPool,
-    automaton_name: &str,
+    processor_name: &str,
 ) -> Result<Option<Ulid>, CoreError> {
     // ❌ WRONG: Direct table access
     // let result = sqlx::query!(
     //     r#"
     //     SELECT last_processed_id
-    //     FROM core.automaton_checkpoints
-    //     WHERE automaton_name = $1
+    //     FROM core.processor_checkpoints
+    //     WHERE processor_name = $1
     //     "#,
-    //     automaton_name
+    //     processor_name
     // )
     // .fetch_optional(pool)
     // .await?;
 
     // ✅ CORRECT: Using dedicated query module
     // Note: This is a simplified example - actual checkpoint queries would use the proper API
-    QueryBuilder::select("core.automaton_checkpoints")
+    QueryBuilder::select("core.processor_checkpoints")
         .columns(&["last_processed_id"])
         .where_eq(
-            "automaton_name",
-            QueryParam::String(automaton_name.to_string()),
+            "processor_name",
+            QueryParam::String(processor_name.to_string()),
         )
         .fetch_optional::<(Option<Ulid>,)>(pool)
         .await
@@ -167,7 +167,7 @@ async fn insert_events_batch(pool: &PgPool, events: &[RawEvent]) -> Result<(), C
 async fn process_event_with_checkpoint(
     pool: &PgPool,
     event: &RawEvent,
-    automaton_name: &str,
+    processor_name: &str,
 ) -> Result<(), CoreError> {
     // ✅ CORRECT: For transaction-based operations, use raw SQL or separate operations
     // Note: QueryBuilder currently doesn't support transactions directly
@@ -187,12 +187,12 @@ async fn process_event_with_checkpoint(
         .map_err(|e| CoreError::Database(format!("insert_event: {}", e)))?;
 
     // Update checkpoint
-    QueryBuilder::update("core.automaton_checkpoints")
+    QueryBuilder::update("core.processor_checkpoints")
         .set("last_processed_id", QueryParam::Ulid(event.id))
         .set("last_activity", QueryParam::Timestamp(chrono::Utc::now()))
         .where_eq(
-            "automaton_name",
-            QueryParam::String(automaton_name.to_string()),
+            "processor_name",
+            QueryParam::String(processor_name.to_string()),
         )
         .execute(pool)
         .await

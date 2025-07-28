@@ -866,15 +866,8 @@ impl<'ctx> DeploymentTestUtils<'ctx> {
             .map_err(Into::into)
     }
 
-    /// Test environment compatibility
-    pub async fn test_environment_compatibility(
-        &self,
-        _env_type: crate::deployment_scenario_utils::EnvironmentType,
-    ) -> TestResult<crate::deployment_scenario_utils::CompatibilityTestResult> {
-        let _tester = self.create_tester().await?;
-        // This would need implementation in the deployment utils
-        todo!("Implementation depends on deployment_scenario_utils having test execution methods")
-    }
+    // Removed unimplemented test_environment_compatibility method.
+    // This functionality should be implemented when deployment scenario testing is actually needed.
 }
 
 /// Fluent event builder with schema validation

@@ -1955,7 +1955,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
         Option<String>,            // repo_url
     );
     let manifest: ManifestRow = sqlx::query_as(
-        "SELECT automaton_name, description, version, status, agent_type,
+        "SELECT processor_name, description, version, status, agent_type,
                 config_template_json, produces_event_types, subscribes_to_event_types,
                 required_capabilities, llm_dependencies, repo_url
          FROM core.processor_manifests
@@ -2013,7 +2013,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
              status = $2,
              last_heartbeat_ts = $3,
              produces_event_types = $4::jsonb
-         WHERE automaton_name = $5",
+         WHERE processor_name = $5",
     )
     .bind("1.1.0")
     .bind("stopped")
@@ -2074,7 +2074,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO sinex_schemas.work_queue (event_id, target_automaton_name)
+        "INSERT INTO sinex_schemas.work_queue (event_id, target_processor_name)
          VALUES ($1::uuid, $2)",
     )
     .bind(event_id.to_uuid())
@@ -2103,7 +2103,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 
     // Verify work queue items were cascade deleted
     let queue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_processor_name = $1",
     )
     .bind("delete_test_agent")
     .fetch_one(ctx.pool())

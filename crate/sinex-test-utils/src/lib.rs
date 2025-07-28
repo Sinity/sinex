@@ -1287,7 +1287,7 @@ mod tests {
         );
 
         // Now actually access a fixture
-        let _user_session = scenarios.user_session("test_user").await?;
+        let _user_session = scenarios.user_session().await?;
 
         // Should have created events
         let after_fixture = ctx.test_event_count().await;
@@ -1298,7 +1298,7 @@ mod tests {
 
         // Accessing same fixture again should reuse it
         let count_before_reuse = ctx.test_event_count().await;
-        let _same_session = scenarios.user_session("test_user").await?;
+        let _same_session = scenarios.user_session().await?;
         let count_after_reuse = ctx.test_event_count().await;
 
         assert_eq!(

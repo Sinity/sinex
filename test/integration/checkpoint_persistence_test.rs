@@ -80,7 +80,7 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
         vec![EventFilter::new(Some("test".to_string()), None)]
     }
 
-    fn automaton_name(&self) -> &str {
+    fn processor_name(&self) -> &str {
         &self.name
     }
 }

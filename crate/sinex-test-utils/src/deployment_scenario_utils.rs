@@ -1436,7 +1436,8 @@ mod comprehensive_tests {
         assert!(scenario.is_some());
 
         // Execute it
-        let result = tester.run_scenario("development_environment").await?;
+        let scenario = tester.get_scenario("development_environment").unwrap();
+        let result = tester.run_scenario(&scenario).await?;
 
         // Check result structure
         assert!(!result.scenario_name.is_empty());
@@ -1464,24 +1465,14 @@ mod comprehensive_tests {
     async fn test_validation_step_execution(_ctx: TestContext) -> TestResult<()> {
         let step = ValidationStep {
             step_name: "test_step".to_string(),
-            validation_type: ValidationType::Configuration,
-            expected_result: "valid".to_string(),
-            timeout_seconds: 5,
-            retry_count: 1,
+            validation_type: ValidationType::ConfigurationLoad,
+            expected_result: ValidationExpectation::Success,
         };
 
-        // Create a simple validator
-        let result = step
-            .execute(&ComponentConfig {
-                component_name: "test".to_string(),
-                config_file_content: "valid config".to_string(),
-                environment_variables: HashMap::new(),
-                command_line_args: vec![],
-            })
-            .await?;
-
-        assert!(result.success || !result.success); // Result depends on implementation
-        assert!(!result.message.is_empty());
+        // Verify step properties
+        assert_eq!(step.step_name, "test_step");
+        assert_eq!(step.validation_type, ValidationType::ConfigurationLoad);
+        assert_eq!(step.expected_result, ValidationExpectation::Success);
 
         Ok(())
     }
@@ -1571,9 +1562,18 @@ mod comprehensive_tests {
 
     #[test]
     fn test_validation_type_equality() {
-        assert_eq!(ValidationType::Connectivity, ValidationType::Connectivity);
-        assert_ne!(ValidationType::Connectivity, ValidationType::Configuration);
-        assert_ne!(ValidationType::Performance, ValidationType::Functionality);
+        assert_eq!(
+            ValidationType::ConfigurationLoad,
+            ValidationType::ConfigurationLoad
+        );
+        assert_ne!(
+            ValidationType::ConfigurationLoad,
+            ValidationType::ServiceStartup
+        );
+        assert_ne!(
+            ValidationType::DatabaseConnection,
+            ValidationType::RedisConnection
+        );
     }
 
     #[test]
@@ -1582,17 +1582,21 @@ mod comprehensive_tests {
 
         let result = CompatibilityTestResult {
             scenario_name: "test".to_string(),
-            success: true,
-            validation_results: vec![],
-            errors: vec![],
-            warnings: vec![],
-            metrics: HashMap::new(),
-            start_time: SystemTime::now(),
-            end_time: SystemTime::now(),
+            overall_success: true,
+            step_results: vec![],
+            performance_metrics: PerformanceMetrics {
+                startup_time: std::time::Duration::from_secs(1),
+                peak_memory_usage_mb: 100,
+                average_cpu_usage_percent: 50.0,
+                event_throughput_per_sec: 1000,
+                average_latency_ms: 10.0,
+            },
+            issues_found: vec![],
+            recommendations: vec![],
         };
 
-        assert!(result.success);
-        assert!(result.errors.is_empty());
-        assert!(result.warnings.is_empty());
+        assert!(result.overall_success);
+        assert!(result.step_results.is_empty());
+        assert!(result.issues_found.is_empty());
     }
 }

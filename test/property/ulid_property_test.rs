@@ -762,7 +762,7 @@ async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestRes
                  let queue_ulid = Ulid::new();
                  sqlx::query(
                      "INSERT INTO sinex_schemas.work_queue
-                     (queue_id, event_id, target_automaton_name, max_attempts)
+                     (queue_id, event_id, target_processor_name, max_attempts)
                      VALUES ($1::uuid, $2::uuid, $3, 3)"
                  )
                  .bind(queue_ulid.to_uuid())

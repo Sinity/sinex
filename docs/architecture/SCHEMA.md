@@ -8,7 +8,7 @@ The Sinex database uses PostgreSQL with TimescaleDB for time-series optimization
 - ✅ Source material tracking (raw schema)
 - ✅ Schema registry and validation (sinex_schemas)
 - ✅ System telemetry (metrics schema)
-- ⚠️ Knowledge management partially implemented (km schema - some tables may be obsolete)
+- ✅ Knowledge management in core schema (artifacts, entities, relations)
 - ❌ Event relations not yet implemented (planned)
 - ❌ Artifact management abandoned (architecture changed)
 
@@ -35,10 +35,6 @@ The Sinex database uses PostgreSQL with TimescaleDB for time-series optimization
 ## Schemas
 - **core**: Main event storage and entity management ✅
 - **raw**: Source material registry ✅
-- **km**: Knowledge management (concepts, relations, embeddings) - ⚠️ PARTIALLY IMPLEMENTED
-  - ✅ concepts, relations, event_annotations - legitimate knowledge graph functionality
-  - ⚠️ artifacts, artifact_revisions - potentially obsolete, architecture changed
-  - ✅ embeddings, llm_interactions - implemented for AI integration
 - **metrics**: System telemetry ✅
 - **sinex**: Legacy compatibility (deprecated) ⚠️
 - **sinex_schemas**: Schema registry and validation ✅
@@ -138,10 +134,10 @@ Relationships between entities with temporal validity. Part of the implemented e
 
 **Note**: Event relations (event_relations table) were planned but not implemented. The design considered a unified _relations table for both events and entities.
 
-### core.automaton_checkpoints
-Processing state for event automata.
+### core.processor_checkpoints
+Processing state for all event processors (ingestors, automata, system).
 - **id**: ULID (PK)
-- **automaton_name**: TEXT
+- **processor_name**: TEXT
 - **consumer_group**: TEXT
 - **consumer_name**: TEXT
 - **last_processed_id**: ULID
@@ -255,142 +251,79 @@ External data provenance tracking. Critical for maintaining the chain of custody
 
 ## Knowledge Management Tables
 
-⚠️ **WARNING**: The km schema contains both legitimate tables and mistakenly added ones:
-- ✅ **Legitimate**: concepts, relations, event_annotations, embeddings, llm_interactions (knowledge graph functionality)
-- ❌ **Mistakenly Added**: artifacts, artifact_revisions (added during migration reorganization from TIM design docs, never intended for implementation)
+Knowledge management functionality is integrated into the core schema alongside event processing.
 
-### km.concepts
-Knowledge graph concepts with embeddings. Central to the knowledge management system.
+### core.artifacts
+Central registry of all knowledge artifacts in the system.
 
 **Implementation Status**: ✅ Fully implemented
 
 - **id**: ULID (PK)
-- **concept_name**: TEXT - Human-readable name
-- **concept_type**: TEXT - Type categorization (person, project, technology, etc.)
-- **description**: TEXT - Detailed description
-- **metadata**: JSONB - Flexible additional properties
-- **embedding**: vector(1536) - For semantic search (uses pgvector)
-- **created_at**: TIMESTAMPTZ
-- **updated_at**: TIMESTAMPTZ
-- **created_by**: TEXT - Actor who created this (user or automaton)
-
-**Constraints**:
-- UNIQUE (concept_name, concept_type) - Prevents duplicate concepts
-
-**Indexes**:
-- B-tree on concept_type for filtering
-- B-tree on concept_name for lookups
-- IVFFlat on embedding for vector search (100 lists)
-
-### km.relations
-Relationships between concepts in the knowledge graph.
-
-**Implementation Status**: ✅ Fully implemented
-
-- **id**: ULID (PK)
-- **from_concept_id**: ULID (FK) - Source concept
-- **to_concept_id**: ULID (FK) - Target concept
-- **relation_type**: TEXT - Semantic relationship type
-- **confidence**: REAL (0-1) - Relationship strength/confidence
-- **metadata**: JSONB - Additional properties
-- **created_at**: TIMESTAMPTZ
-- **created_by**: TEXT - Who established this relation
-
-**Constraints**:
-- UNIQUE (from_concept_id, to_concept_id, relation_type) - No duplicate relations
-- CHECK (from_concept_id != to_concept_id) - No self-relations
-
-**Indexes**:
-- B-tree on from_concept_id
-- B-tree on to_concept_id
-- B-tree on relation_type
-
-### km.event_annotations
-Links events to concepts. Enables semantic tagging and knowledge extraction from raw events.
-
-**Implementation Status**: ✅ Implemented
-
-- **id**: ULID (PK)
-- **event_id**: ULID - Reference to core.events (no FK to avoid coupling)
-- **concept_id**: ULID (FK) - Links to km.concepts
-- **annotation_type**: TEXT - Type of annotation (tag, comment, summary, analysis)
-- **confidence**: REAL (0-1) - For automated annotations
-- **metadata**: JSONB - Additional annotation properties
-- **created_at**: TIMESTAMPTZ
-- **created_by**: TEXT - User or automaton that created annotation
-
-**Design Note**: This links events to knowledge concepts. The TIM proposed direct text annotations without concept requirement, which could be a future enhancement.
-
-### km.artifacts ⚠️ INCORRECTLY ADDED
-**WARNING**: These tables were mistakenly added during migration reorganization (commit ffe3fdce) based on the TIM-CoreArtifactsSchema design document. They were never part of the actual implementation and appear to be AI-generated during documentation work. The architecture uses events as the primary data model, not artifacts.
-
-Versioned knowledge documents (if implemented).
-- **id**: ULID (PK)
-- **artifact_type**: TEXT - Would have been: pkm_note, webpage_archive, email_message, pdf_document, task_item
-- **title**: TEXT
-- **uri**: TEXT - External URI if applicable
+- **type**: TEXT - artifact type (note, webpage, email, file, document, code, media, pkm_note, task_item)
+- **title**: TEXT - Human-readable title
+- **source_url**: TEXT - Original URL if applicable
+- **original_path**: TEXT - Original file path if applicable
+- **mime_type**: TEXT - MIME type of content
+- **size_bytes**: BIGINT - File size if applicable
+- **checksum**: TEXT - Content hash for integrity
 - **metadata**: JSONB - Type-specific properties
 - **created_at**: TIMESTAMPTZ
 - **updated_at**: TIMESTAMPTZ
-- **created_by**: TEXT
+- **deleted_at**: TIMESTAMPTZ - Soft delete support
+- **created_from_event_id**: ULID (FK) - Event that created this artifact
+- **blob_id**: ULID (FK) - Reference to core.blobs for large files
 
-**Original Design Intent** (from TIM-CoreArtifactsSchema):
-- Separate metadata from content for efficiency
-- Support multiple artifact types with type-specific metadata
-- Integration with Yjs CRDTs for real-time collaboration (never implemented)
+### core.artifact_contents
+Versioned content storage for artifacts.
 
-### km.artifact_revisions ⚠️ INCORRECTLY ADDED
-**WARNING**: Like km.artifacts, this table was mistakenly added during migration reorganization and was never intended to be implemented.
-
-Content versions for artifacts (if implemented).
-- **revision_id**: ULID (PK)
-- **artifact_id**: ULID (FK)
-- **revision_number**: INTEGER - Sequential per artifact
-- **content**: TEXT - Actual content or snapshot
-- **content_hash**: TEXT - BLAKE3 for deduplication
-- **metadata**: JSONB - Could include Yjs state vectors
-- **created_at**: TIMESTAMPTZ
-- **created_by**: TEXT
-
-**Note**: The full TIM specification included canonical identifiers, tags denormalization, integration with core.blobs, and full-text search capabilities that were never implemented.
-
-### km.embeddings
-Vector embeddings for various content types. This differs from the TIM-KnowledgeGraphSchema design which proposed separate embeddings per table.
-
-**Implementation Note**: Current implementation uses a generic embeddings cache with content hashing. The migration includes a different structure than the TIM proposed.
+**Implementation Status**: ✅ Fully implemented
 
 - **id**: ULID (PK)
-- **content_hash**: TEXT (UNIQUE) - BLAKE3 hash for deduplication
-- **content_type**: TEXT - Type of content that was embedded
-- **embedding**: vector(1536) - pgvector type for semantic search
-- **model_name**: TEXT - Which embedding model was used
-- **metadata**: JSONB - Additional context about the embedding
+- **artifact_id**: ULID (FK) - Parent artifact
+- **version**: INTEGER - Sequential version number
+- **content**: TEXT - Actual text content
+- **content_type**: TEXT - Content format (text/plain, text/markdown, etc.)
+- **extracted_text**: TEXT - Searchable text from binary formats
+- **word_count**: INTEGER - For reading time estimates
+- **char_count**: INTEGER - Character count
+- **metadata**: JSONB - Version-specific metadata
 - **created_at**: TIMESTAMPTZ
+- **created_from_event_id**: ULID (FK) - Event that created this version
 
-**Indexes**:
-- B-tree on content_hash for fast lookups
-- IVFFlat on embedding for vector similarity search
+**Constraints**:
+- UNIQUE(artifact_id, version)
 
-**Future Enhancements**: See docs/roadmap/features/embeddings-and-semantic-search.md for comprehensive semantic search design.
+### core.blobs
+Registry of git-annex managed binary files.
 
-### km.llm_interactions
-Tracks AI model interactions for auditing, cost tracking, and analysis.
+**Implementation Status**: ✅ Fully implemented
 
-**Implementation Status**: ✅ Implemented but schema differs from migration
-
-**Migration Schema**:
 - **id**: ULID (PK)
-- **interaction_type**: TEXT - Type of interaction
-- **model_name**: TEXT - Which LLM was used
-- **model_version**: TEXT - Model version if known
-- **prompt**: TEXT - Full prompt sent
-- **response**: TEXT - Full response received
-- **token_count**: INTEGER - Total tokens used
-- **latency_ms**: INTEGER - Response time
-- **metadata**: JSONB - Additional context
+- **annex_key**: TEXT (UNIQUE) - Git-annex key
+- **original_filename**: TEXT - Original file name
+- **size_bytes**: BIGINT - File size
+- **mime_type**: TEXT - MIME type
+- **checksum_sha256**: TEXT - SHA256 hash
+- **checksum_blake3**: TEXT - BLAKE3 hash
+- **storage_backend**: TEXT - Storage type (default: 'git-annex')
+- **metadata**: JSONB - Additional properties
 - **created_at**: TIMESTAMPTZ
+- **last_verified_at**: TIMESTAMPTZ - Last integrity check
+- **verification_status**: TEXT - Status (pending, verified, missing, corrupted)
 
-**Note**: The SCHEMA.md version includes context_events and duration_ms which aren't in the migration. This suggests either documentation drift or planned enhancements.
+### core.tags
+Hierarchical tagging system.
+
+**Implementation Status**: ✅ Fully implemented
+
+- **id**: ULID (PK)
+- **name**: TEXT (UNIQUE) - Tag identifier
+- **display_name**: TEXT - User-friendly name
+- **color**: TEXT - Hex color for UI
+- **icon**: TEXT - Icon identifier
+- **parent_id**: ULID (FK) - Parent tag for hierarchy
+- **metadata**: JSONB - Additional properties
+- **created_at**: TIMESTAMPTZ
 
 ## Metrics Tables
 
@@ -471,15 +404,15 @@ Caches validation results for performance. Reduces repeated validation overhead 
 
 The database schema has evolved through several migrations:
 
-1. **00000000000001_initial_schema.sql**: Basic setup with pgx_ulid
-2. **00000000000002_create_core_tables.sql**: Core event storage, entities
-3. **00000000000003_create_domains.sql**: Domain-specific event tables
-4. **00000000000004_create_knowledge_management.sql**: KM tables (contains mistakenly added artifact tables)
-5. **00000000000005_create_sinex_schemas.sql**: Schema registry
-6. **00000000000006_create_metrics_schema.sql**: Telemetry tables
-7. **00000000000007_create_raw_schema.sql**: Source material tracking
+1. **00000000000001_create_schemas.sql**: Schema creation and pgx_ulid
+2. **00000000000002_create_core_tables.sql**: Core event storage, entities, knowledge management
+3. **00000000000003_create_schema_registry.sql**: Schema registry
+4. **00000000000004_create_artifact_tables.sql**: Artifact tables
+5. **00000000000005_create_analytics_views.sql**: Analytics views
+6. **00000000000006_create_helper_functions.sql**: Helper functions
+7. **00000000000007_create_raw_source_material_registry.sql**: Source material tracking
 8. **00000000000008_satellite_coordination.sql**: Service coordination
-9. **00000000000009_add_processor_registry.sql**: Processor manifests
+9. **00000000000009_create_llm_embeddings_infrastructure.sql**: AI/LLM infrastructure
 10. **00000000000010_add_ulid_indices.sql**: Performance optimizations
 
 ## Key Design Patterns
@@ -550,54 +483,63 @@ All event payloads are validated against JSON schemas stored in sinex_schemas.ev
 
 See crate/sinex-ingestd/src/validation.rs for the implementation.
 
-## Original Migration Structure vs Current km Schema
+## AI/LLM Infrastructure Tables
 
-### Original Tables (core schema from migrations 20250103120011-13):
-1. **core.entities** - Knowledge graph nodes (persons, projects, topics, organizations)
-   - Had: type, name, canonical_name, aliases[], description, metadata, merged_into_id
-   - Types: person, project, topic, organization, location, concept, tool, event
+### core.llm_models
+Registry of available LLM models and their capabilities.
 
-2. **core.entity_relations** - Knowledge graph edges
-   - Had: from_entity_id, to_entity_id, relation_type, strength, valid_from/until
+**Implementation Status**: ✅ Fully implemented
 
-3. **core.event_annotations** - User annotations on events
-   - Had: event_id, annotation_type, content, metadata, created_by
-   - Types: note, correction, context, importance
+- **id**: ULID (PK)
+- **provider**: TEXT - Provider name (openai, anthropic, local, etc.)
+- **model_name**: TEXT - Model identifier
+- **model_version**: TEXT - Version if applicable
+- **capabilities**: TEXT[] - Array of capabilities (chat, completion, embeddings, vision)
+- **context_window**: INTEGER - Maximum context size
+- **max_output_tokens**: INTEGER - Maximum response size
+- **cost_per_1k_input_tokens**: DECIMAL(10,6) - Input cost
+- **cost_per_1k_output_tokens**: DECIMAL(10,6) - Output cost
+- **is_active**: BOOLEAN - Whether model is available
+- **metadata**: JSONB - Additional properties
+- **created_at**: TIMESTAMPTZ
+- **deprecated_at**: TIMESTAMPTZ - When model was deprecated
 
-4. **core.artifacts** - Conceptual documents (PKM notes, web pages, emails)
-   - Had: type, title, source_url, mime_type, blob_id references
+### core.prompts
+Reusable prompt templates.
 
-5. **core.embedding_cache** - Deduplication cache
-   - Had: text_hash, embedding_model_id, embedding vector, use_count
+**Implementation Status**: ✅ Fully implemented
 
-### Current km Schema (created during reorganization):
-1. **km.concepts** - Similar to core.entities but:
-   - Missing: aliases[], merged_into_id (for deduplication)
-   - Added: embedding vector(1536) directly in table
-   - Different focus: "concepts" vs "entities"
+- **id**: ULID (PK)
+- **name**: TEXT (UNIQUE) - Template identifier
+- **category**: TEXT - Category (summarization, extraction, analysis, etc.)
+- **template**: TEXT - Template with {{variables}}
+- **system_prompt**: TEXT - System prompt if applicable
+- **variables**: JSONB - Expected variables and types
+- **model_constraints**: JSONB - Model requirements
+- **version**: INTEGER - Version number
+- **is_active**: BOOLEAN - Whether template is active
+- **metadata**: JSONB - Additional properties
+- **created_at**: TIMESTAMPTZ
+- **updated_at**: TIMESTAMPTZ
 
-2. **km.relations** - Similar to core.entity_relations but:
-   - Simplified: no temporal validity (valid_from/until)
-   - Changed: confidence instead of strength
-   - Missing: created_from_event_id provenance
+### core.embedding_cache
+Cache for computed embeddings to avoid redundant API calls.
 
-3. **km.event_annotations** - Different from core.event_annotations:
-   - Links to concepts (concept_id FK) instead of direct text annotations
-   - Added: confidence score
-   - Missing: ability to annotate without linking to a concept
+**Implementation Status**: ✅ Fully implemented
 
-4. **km.artifacts/artifact_revisions** - Simplified from core.artifacts:
-   - Missing many fields from original design
-   - References non-existent features (Yjs CRDTs)
+- **id**: ULID (PK)
+- **text_hash**: TEXT - SHA256 hash of input text
+- **embedding_model_id**: ULID (FK) - Model used
+- **embedding**: vector(1536) - Computed embedding
+- **text_sample**: TEXT - First 1000 chars for debugging
+- **use_count**: INTEGER - Usage counter for LRU
+- **created_at**: TIMESTAMPTZ
+- **last_used_at**: TIMESTAMPTZ - For LRU eviction
 
-5. **km.embeddings** - Different from core.embedding_cache:
-   - Generic cache with content_hash instead of text_hash
-   - Missing: use_count, last_used_at for LRU
-   - Different structure than TIM-EmbeddingGenerationModels design
+**Constraints**:
+- UNIQUE(text_hash, embedding_model_id)
 
-### Summary
-The km schema appears to be a reimplementation created during migration reorganization (commit ffe3fdce) that:
-- Took concepts from the original core.* tables
-- Simplified or modified many aspects
-- Added AI/ML features (embeddings in concepts, llm_interactions)
-- Lost some important features (entity deduplication, temporal validity, direct annotations)
+**Indexes**:
+- B-tree on text_hash
+- B-tree on last_used_at for LRU
+- IVFFlat on embedding for similarity search

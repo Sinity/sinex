@@ -5,7 +5,8 @@
 //! and resource coordination across multiple processes/instances.
 
 use crate::DbPool;
-use sinex_core_types::{CoreError, Result};
+use sinex_core_types::CoreError;
+use sinex_core_types::Result as CoreResult;
 use sinex_core_utils::ResourceGuard;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
@@ -21,7 +22,7 @@ pub struct AdvisoryLock {
 
 impl AdvisoryLock {
     /// Try to acquire an advisory lock immediately (non-blocking)
-    pub async fn try_acquire(pool: &DbPool, key: &str) -> Result<Option<ResourceGuard<Self>>> {
+    pub async fn try_acquire(pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
         let lock_id = hash_key_to_i64(key);
 
         let acquired: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock($1)")
@@ -57,7 +58,7 @@ impl AdvisoryLock {
         pool: &DbPool,
         key: &str,
         timeout: Duration,
-    ) -> Result<ResourceGuard<Self>> {
+    ) -> CoreResult<ResourceGuard<Self>> {
         let lock_id = hash_key_to_i64(key);
 
         // Use tokio timeout for the blocking call
@@ -91,7 +92,7 @@ impl AdvisoryLock {
     }
 
     /// Check if a lock is currently held by any session
-    pub async fn is_locked(pool: &DbPool, key: &str) -> Result<bool> {
+    pub async fn is_locked(pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
 
         // Query pg_locks system view to check if lock exists
@@ -106,7 +107,7 @@ impl AdvisoryLock {
     }
 
     /// Force release a lock (use with caution - should only be used for cleanup)
-    pub async fn force_release(pool: &DbPool, key: &str) -> Result<bool> {
+    pub async fn force_release(pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
 
         let released: bool = sqlx::query_scalar("SELECT pg_advisory_unlock($1)")
@@ -148,7 +149,7 @@ impl DistributedCoordination {
     pub async fn try_become_leader(
         &self,
         service_name: &str,
-    ) -> Result<Option<ResourceGuard<AdvisoryLock>>> {
+    ) -> CoreResult<Option<ResourceGuard<AdvisoryLock>>> {
         let leadership_key = format!("leader:{}", service_name);
         AdvisoryLock::try_acquire(&self.pool, &leadership_key).await
     }
@@ -157,7 +158,7 @@ impl DistributedCoordination {
     pub async fn acquire_job_lock(
         &self,
         job_id: &str,
-    ) -> Result<Option<ResourceGuard<AdvisoryLock>>> {
+    ) -> CoreResult<Option<ResourceGuard<AdvisoryLock>>> {
         let job_key = format!("job:{}", job_id);
         AdvisoryLock::try_acquire(&self.pool, &job_key).await
     }
@@ -167,19 +168,19 @@ impl DistributedCoordination {
         &self,
         resource_name: &str,
         timeout: Duration,
-    ) -> Result<ResourceGuard<AdvisoryLock>> {
+    ) -> CoreResult<ResourceGuard<AdvisoryLock>> {
         let resource_key = format!("resource:{}", resource_name);
         AdvisoryLock::acquire_or_wait(&self.pool, &resource_key, timeout).await
     }
 
     /// Check if a service has a current leader
-    pub async fn has_leader(&self, service_name: &str) -> Result<bool> {
+    pub async fn has_leader(&self, service_name: &str) -> CoreResult<bool> {
         let leadership_key = format!("leader:{}", service_name);
         AdvisoryLock::is_locked(&self.pool, &leadership_key).await
     }
 
     /// Check if a job is currently being processed
-    pub async fn is_job_locked(&self, job_id: &str) -> Result<bool> {
+    pub async fn is_job_locked(&self, job_id: &str) -> CoreResult<bool> {
         let job_key = format!("job:{}", job_id);
         AdvisoryLock::is_locked(&self.pool, &job_key).await
     }
@@ -207,7 +208,7 @@ impl LeadershipGuard {
     }
 
     /// Record leadership in database for monitoring/debugging
-    pub async fn record_leadership(&self, pool: &DbPool) -> Result<()> {
+    pub async fn record_leadership(&self, pool: &DbPool) -> CoreResult<()> {
         sqlx::query(
             "INSERT INTO core.service_leadership (service_name, instance_id, acquired_at, last_heartbeat, version)
              VALUES ($1, $2, NOW(), NOW(), 'unknown')
@@ -223,7 +224,7 @@ impl LeadershipGuard {
     }
 
     /// Update leadership heartbeat
-    pub async fn heartbeat(&self, pool: &DbPool) -> Result<()> {
+    pub async fn heartbeat(&self, pool: &DbPool) -> CoreResult<()> {
         sqlx::query(
             "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1",
         )
@@ -246,54 +247,46 @@ impl LeadershipGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::prelude::*;
     use std::time::Duration;
 
-    async fn get_test_pool() -> DbPool {
-        // This would be implemented based on your test setup
-        todo!("Implement test pool creation")
-    }
-
-    #[tokio::test]
-    async fn test_advisory_lock_try_acquire() {
-        let pool = get_test_pool().await;
+    #[sinex_test]
+    async fn test_advisory_lock_try_acquire(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
 
         // First acquisition should succeed
-        let lock1 = AdvisoryLock::try_acquire(&pool, "test_key").await.unwrap();
+        let lock1 = AdvisoryLock::try_acquire(&pool, "test_key").await?;
         assert!(lock1.is_some());
 
         // Second acquisition should fail (lock held)
-        let lock2 = AdvisoryLock::try_acquire(&pool, "test_key").await.unwrap();
+        let lock2 = AdvisoryLock::try_acquire(&pool, "test_key").await?;
         assert!(lock2.is_none());
 
         // After dropping first lock, should be able to acquire again
         drop(lock1);
         tokio::time::sleep(Duration::from_millis(100)).await; // Allow cleanup
 
-        let lock3 = AdvisoryLock::try_acquire(&pool, "test_key").await.unwrap();
+        let lock3 = AdvisoryLock::try_acquire(&pool, "test_key").await?;
         assert!(lock3.is_some());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_leadership_pattern() {
-        let pool = get_test_pool().await;
+    #[sinex_test]
+    async fn test_leadership_pattern(ctx: TestContext) -> TestResult<()> {
+        let pool = ctx.pool();
         let coordination = DistributedCoordination::new(pool.clone());
 
         // Should be able to become leader
-        let leadership = coordination
-            .try_become_leader("test_service")
-            .await
-            .unwrap();
+        let leadership = coordination.try_become_leader("test_service").await?;
         assert!(leadership.is_some());
 
         // Second instance should not be able to become leader
-        let leadership2 = coordination
-            .try_become_leader("test_service")
-            .await
-            .unwrap();
+        let leadership2 = coordination.try_become_leader("test_service").await?;
         assert!(leadership2.is_none());
 
         // Should report that service has leader
-        let has_leader = coordination.has_leader("test_service").await.unwrap();
+        let has_leader = coordination.has_leader("test_service").await?;
         assert!(has_leader);
+        Ok(())
     }
 }

@@ -275,7 +275,7 @@ impl GenericEventBuilder {
 /// Builder for checkpoint test data
 #[derive(Debug, Clone)]
 pub struct TestCheckpointBuilder {
-    automaton_name: String,
+    processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
     last_processed_id: Option<String>,
@@ -287,9 +287,9 @@ pub struct TestCheckpointBuilder {
 
 impl TestCheckpointBuilder {
     /// Create a new checkpoint builder
-    pub fn new(automaton_name: &str) -> Self {
+    pub fn new(processor_name: &str) -> Self {
         Self {
-            automaton_name: automaton_name.to_string(),
+            processor_name: processor_name.to_string(),
             consumer_group: None,
             consumer_name: None,
             last_processed_id: None,
@@ -348,14 +348,14 @@ impl TestCheckpointBuilder {
 
         let group = self
             .consumer_group
-            .unwrap_or_else(|| format!("{}-group", self.automaton_name));
+            .unwrap_or_else(|| format!("{}-group", self.processor_name));
         let consumer = self
             .consumer_name
-            .unwrap_or_else(|| format!("{}-consumer", self.automaton_name));
+            .unwrap_or_else(|| format!("{}-consumer", self.processor_name));
 
         CheckpointQueries::upsert_checkpoint(
             Ulid::new(),
-            self.automaton_name,
+            self.processor_name,
             group,
             consumer,
             self.last_processed_id,
@@ -590,9 +590,9 @@ impl TestEvents {
     }
 
     /// Create an automaton heartbeat
-    pub fn heartbeat(automaton_name: &str) -> TestEventBuilder {
+    pub fn heartbeat(processor_name: &str) -> TestEventBuilder {
         TestEventBuilder::new("sinex", "automaton.heartbeat")
-            .with_field("automaton_name", json!(automaton_name))
+            .with_field("processor_name", json!(processor_name))
             .with_field("status", json!("running"))
             .with_field("version", json!("1.0.0"))
     }
@@ -813,7 +813,7 @@ mod tests {
 
         // Verify checkpoints were created
         let result: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM core.automaton_checkpoints WHERE automaton_name = ANY($1)",
+            "SELECT COUNT(*) FROM core.processor_checkpoints WHERE processor_name = ANY($1)",
         )
         .bind(&automata)
         .fetch_one(ctx.pool())

@@ -358,7 +358,7 @@ mod tests {
     use sinex_ulid::Ulid;
 
     #[sinex_test]
-    async fn test_raw_event_creation() {
+    async fn test_raw_event_creation(ctx: TestContext) -> TestResult<()> {
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -382,10 +382,11 @@ mod tests {
         assert_eq!(event.host, "localhost");
         assert_eq!(event.ingestor_version, Some("1.0.0".to_string()));
         assert_eq!(event.payload["test"], "data");
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_ulid_in_models() {
+    async fn test_ulid_in_models(ctx: TestContext) -> TestResult<()> {
         let ulid1 = Ulid::new();
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -404,10 +405,11 @@ mod tests {
         // Test ULID parsing
         let parsed_ulid = ulid_str.parse::<Ulid>().unwrap();
         assert_eq!(ulid1, parsed_ulid);
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_event_payload_json_handling() {
+    async fn test_event_payload_json_handling(ctx: TestContext) -> TestResult<()> {
         // Test simple JSON payload
         let simple_payload = json!({"key": "value", "number": 42});
         let event = RawEvent {
@@ -464,10 +466,11 @@ mod tests {
         assert_eq!(complex_event.payload["metadata"]["version"], "1.0");
         assert_eq!(complex_event.payload["data"]["items"][0], 1);
         assert_eq!(complex_event.payload["data"]["enabled"], true);
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_timestamp_handling() {
+    async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
         let now = Utc::now();
         let past = now - chrono::Duration::seconds(3600); // 1 hour ago
 
@@ -495,10 +498,11 @@ mod tests {
         // Test that timestamps are properly set
         assert_eq!(event.ts_ingest, now);
         assert_eq!(event.ts_orig.unwrap(), past);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_pool_creation() {
+    #[sinex_test]
+    async fn test_pool_creation(ctx: TestContext) -> TestResult<()> {
         // This would require a test database
         // For now, just ensure the function compiles and types are correct
 
@@ -506,15 +510,17 @@ mod tests {
         // Cannot actually call them without a database, but we can test they compile
         // Test that the functions exist and have the right signatures
         // Cannot actually call them without a database, but compilation success is the test
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_function_signatures() {
+    async fn test_function_signatures(ctx: TestContext) -> TestResult<()> {
         // Just test that our functions exist and compile
         // We can't test the actual functionality without a database
 
         // This ensures the functions are callable and have the right basic structure
         // This ensures the functions are callable and have the right basic structure
         // Compilation success is the test - no runtime assertion needed
+        Ok(())
     }
 }
