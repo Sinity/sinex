@@ -483,36 +483,43 @@ test-dev:
 
 # === Development Helpers ===
 
-# 🏃 Quick compilation check - show daemon status
+# 🏃 Quick compilation check
 qc:
-    @./scripts/compile-daemon.sh status
+    @cargo check --workspace --all-targets
 
-# 🤖 AI Agent: Get compilation status as JSON (blocks until current sources compiled)
+# 🎯 Quick check specific crate (much faster for single-crate work)
+qcc CRATE:
+    @cargo check -p {{CRATE}}
+
+# 🧠 Smart check - only checks crates with changes
+qcs:
+    @./scripts/smart-check.sh
+
+# 🥓 Run bacon for continuous checking
+watch:
+    @bacon
+
+# 🥓 Watch specific crate continuously (faster)
+watchc CRATE:
+    @cargo watch -x "check -p {{CRATE}}"
+
+# 🧠 Smart watch - auto-detects which crate to watch based on changes/location
+watchs:
+    @./scripts/smart-watch.sh
+
+# 🤖 AI Agent: Get compilation status as JSON
 ai-status:
-    @./scripts/compile-daemon.sh await-current
+    @cargo check --workspace --all-targets --message-format json 2>&1 | jq -s '{status: "completed", errors: [.[] | select(.message.level == "error")], warnings: [.[] | select(.message.level == "warning")]}'
 
 # 🤖 AI Agent: Get errors and warnings as JSON
 ai-errors-json:
-    @if [ -f ~/.sinex-compile-state/live-output.jsonl ]; then \
-        echo '{"errors": ['; \
-        jq -c 'select(.message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}' \
-            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 | sed '$ ! s/$/,/' || echo ''; \
-        echo '], "warnings": ['; \
-        jq -c 'select(.message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}' \
-            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 | sed '$ ! s/$/,/' || echo ''; \
-        echo ']}'; \
-    else \
-        echo '{"error": "No compilation data available"}'; \
-    fi
+    @cargo check --workspace --all-targets --message-format json 2>&1 | \
+        jq -s '{errors: [.[] | select(.message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}], warnings: [.[] | select(.message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}]}'
 
 # 🔍 Show compilation errors from last build (human readable)
 ai-errors:
-    @if [ -f ~/.sinex-compile-state/live-output.jsonl ]; then \
-        jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' \
-            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 || echo "✅ No errors"; \
-    else \
-        echo "No compilation data. Background compilation daemon should be running."; \
-    fi
+    @cargo check --workspace --all-targets --message-format json 2>&1 | \
+        jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' | head -10 || echo "✅ No errors"
 
 # 🔍 Check and show errors immediately
 ce: qc ai-errors

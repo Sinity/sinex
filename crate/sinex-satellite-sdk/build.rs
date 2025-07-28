@@ -12,9 +12,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn generate_version_info() {
-    // Tell cargo to rerun this build script if git state changes
-    println!("cargo:rerun-if-changed=.git/HEAD");
-    println!("cargo:rerun-if-changed=.git/index");
+    // Don't rebuild on every git operation - only on actual version changes
+    // println!("cargo:rerun-if-changed=.git/HEAD");
+    // println!("cargo:rerun-if-changed=.git/index");
 
     // Get commit count as patch version (monotonically increasing)
     let commit_count = get_commit_count().unwrap_or(0);

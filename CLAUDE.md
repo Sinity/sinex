@@ -28,23 +28,18 @@ just setup-fast
 ```
 
 ### Build Performance Optimizations
-The project includes several build optimizations:
+The project is optimized for fast edit-compile-edit development cycles:
 
-- **sccache**: Caches compiled dependencies (enabled automatically)
+- **Incremental compilation**: Enabled for fast rebuilds (better than sccache for development)
 - **mold linker**: Fast linking for improved build times
-- **Dependency precompilation**: `just precompile` to cache rarely-changing deps
-- **Optimized Docker builds**: Uses cargo-chef for layer caching
-- **Parallel compilation**: Uses all CPU cores by default
+- **24 cores parallel compilation**: Maximum parallelism for faster builds
+- **Smart checking**: Only check crates with changes using `just qcs`
+- **No git watching**: build.rs won't trigger rebuilds on every git operation
 
-Monitor build performance:
-```bash
-just cache-stats      # View sccache effectiveness
-```
-
-### Automatic Optimizations
-- **Dependency precompilation**: Automatically runs when Cargo.lock changes
-- **Compilation tracking**: All cargo invocations are logged to `~/.sinex-analytics/`
-- **Performance analytics**: The compilation daemon tracks all builds in `~/.sinex-compile-logs/`
+Check performance:
+- **No changes**: ~0.27s with `just qc`
+- **Single crate**: ~0.67s with `just qcc sinex-db`
+- **Smart check**: ~0.2-0.7s with `just qcs` (only changed crates)
 
 ### Testing (Hierarchical by Speed)
 ```bash
@@ -232,20 +227,33 @@ Three systems work together automatically:
 - Shows progress bars in terminal, JSON in CI/logs
 - Captures timing reports and sccache stats
 
-**3. Git State Tracking** (using git stash)
-- Auto-snapshots code on every change
-- Uses native git stash for efficiency
-- View snapshots: `just git-snapshots`
 
-**Quick Status Commands**:
+**Quick Development Commands**:
 ```bash
-just qc                    # Current build status (instant)
-just ai-status             # Wait for & get compilation status (JSON)
-just ai-errors-json        # Errors/warnings as JSON
-just errors                # Human-readable errors
-just warnings              # Human-readable warnings
-just analytics-recent      # Recent compilation history
+# Compilation checks (optimized for speed)
+just qc                    # Full workspace check (~2-3s)
+just qcc sinex-db         # Check specific crate only (~0.67s) 
+just qcs                   # Smart check - only changed crates (~0.2-0.7s)
+
+# Continuous checking
+just watch                 # Run bacon (uses smart check by default)
+just watchc sinex-db      # Watch specific crate only
+just watchs               # Smart watch - auto-detects active crate
+
+# Error inspection
+just errors               # Show compilation errors
+just warnings             # Show compilation warnings
 ```
+
+**Understanding Smart Commands**:
+- `qcs` only checks crates with git changes - fast but won't show errors from unchanged crates
+- `qcc <crate>` checks one crate - useful when focusing on specific area
+- `qc` checks everything - use when you need to see all errors across workspace
+
+**Development Strategy**:
+1. Start with `just qc` to see all errors
+2. Use `just qcs` for fast iteration while fixing
+3. Run `just qc` again before committing to ensure nothing missed
 
 **Test Analytics**:
 Tests always run with coverage via `test-analytics.sh`:
@@ -276,15 +284,17 @@ cargo build --timings
 # View report at: target/cargo-timings/cargo-timing.html
 ```
 
-**sccache Statistics**:
-```bash
-# View compilation cache performance
-sccache --show-stats
-```
 
-### Standard Development Cycle
+### Development Workflow
+
 ```bash
-just dev                   # fmt + qc + test-fast
+# Quick check compilation
+just qc                    # Full workspace check
+just qcs                   # Smart check (only changed crates)
+just qcc sinex-db         # Check specific crate
+
+# Standard development cycle
+just dev                   # fmt + check + test-fast
 ```
 
 ### Working with Database Changes
