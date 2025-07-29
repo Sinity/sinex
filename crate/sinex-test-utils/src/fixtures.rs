@@ -1075,7 +1075,6 @@ macro_rules! fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1349,7 +1348,7 @@ mod tests {
         let start = std::time::Instant::now();
 
         // Create a user session fixture
-        let fixture = standard_user_session(&ctx).await?;
+        let _fixture = standard_user_session(&ctx).await?;
 
         let elapsed = start.elapsed();
         assert!(
@@ -1391,7 +1390,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_fixture_cleanup_on_drop(ctx: TestContext) -> Result<()> {
-        let fixture_id = {
+        let _fixture_id = {
             let fixture = standard_user_session(&ctx).await?;
             fixture.user_id.clone()
         }; // Fixture dropped here

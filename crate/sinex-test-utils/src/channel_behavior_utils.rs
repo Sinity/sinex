@@ -730,7 +730,6 @@ mod tests {
 #[cfg(test)]
 mod comprehensive_tests {
     use super::*;
-    use crate::prelude::*;
     use tokio::sync::mpsc;
 
     #[sinex_test]
@@ -787,7 +786,7 @@ mod comprehensive_tests {
     #[sinex_test]
     async fn test_backpressure_handling(_ctx: TestContext) -> Result<(), SinexError> {
         let setup = TestChannelSetup::<i32>::zero_capacity();
-        let backpressure = BackpressureManager::new(
+        let _backpressure = BackpressureManager::new(
             10, // high watermark
             5,  // low watermark
         );

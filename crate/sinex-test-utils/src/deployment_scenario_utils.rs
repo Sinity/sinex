@@ -1208,7 +1208,6 @@ mod tests {
 #[cfg(test)]
 mod comprehensive_tests {
     use super::*;
-    use crate::prelude::*;
 
     #[sinex_test]
     async fn test_environment_types(_ctx: TestContext) -> Result<()> {
@@ -1426,7 +1425,7 @@ mod comprehensive_tests {
 
     #[sinex_test]
     async fn test_scenario_execution(_ctx: TestContext) -> Result<()> {
-        let mut tester = ConfigCompatibilityTester::new().await?;
+        let tester = ConfigCompatibilityTester::new().await?;
 
         // Get a scenario
         let scenario = tester.get_scenario("development_environment");
@@ -1575,8 +1574,6 @@ mod comprehensive_tests {
 
     #[test]
     fn test_compatibility_test_result_creation() {
-        use std::time::SystemTime;
-
         let result = CompatibilityResult {
             scenario_name: "test".to_string(),
             overall_success: true,

@@ -175,9 +175,6 @@ pub fn build_test_satellite_config(service_name: &str, socket_path: &str) -> ser
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
-    use std::path::Path;
-    use tempfile::TempDir;
 
     #[sinex_test]
     async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {

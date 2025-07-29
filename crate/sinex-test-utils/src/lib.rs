@@ -401,9 +401,7 @@ pub use test_context::TestContext;
 #[cfg(test)]
 mod tests {
     use super::prelude::*;
-    use crate::database_pool::acquire_test_database;
     use serde_json::json;
-    use std::time::Duration;
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
     //
@@ -520,7 +518,6 @@ mod tests {
     async fn test_property_testing_integration(ctx: TestContext) -> Result<()> {
         // Comprehensive property test with database - test various valid inputs
         // Including parameterized tests for string length handling
-        use proptest::prelude::*;
 
         // Test various string lengths using parameterized macro
         parameterized!([("short", 5), ("medium", 50), ("long", 200),], |(
@@ -1083,7 +1080,7 @@ mod tests {
         let scenarios = ctx.fixtures().scenarios();
 
         // Create a fixture that depends on base events
-        let checkpoint_fixture = scenarios.populated_checkpoints().await?;
+        let _checkpoint_fixture = scenarios.populated_checkpoints().await?;
 
         // Verify the fixture created its dependencies
         let checkpoints = ctx

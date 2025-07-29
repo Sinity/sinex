@@ -456,7 +456,6 @@ impl EventBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
 
     #[test]
     fn test_batch_builder_ordering() {

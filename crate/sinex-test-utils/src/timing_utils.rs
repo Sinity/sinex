@@ -370,13 +370,9 @@ impl<'ctx> TimingUtils<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
-    use std::boxed::Box;
-    use std::future::Future;
-    use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    use std::time::{Duration, Instant};
+    use std::time::Duration;
 
     #[sinex_test]
     async fn test_synchronizer_basic(ctx: TestContext) -> anyhow::Result<()> {
@@ -679,7 +675,7 @@ mod tests {
         assert_eq!(tracker.get(), 0);
 
         // Progress through phases
-        for (i, phase) in phase_names.iter().enumerate() {
+        for (i, _phase) in phase_names.iter().enumerate() {
             assert_eq!(tracker.get(), i);
             tracker.increment();
         }

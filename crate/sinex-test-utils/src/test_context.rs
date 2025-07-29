@@ -2631,7 +2631,7 @@ mod tests {
         assert!(result.is_err());
 
         // Test insert_direct bypasses validation
-        let event = ctx
+        let _event = ctx
             .event()
             .source("") // Would normally fail
             .type_("test")

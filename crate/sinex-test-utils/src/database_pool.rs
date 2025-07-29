@@ -1257,7 +1257,7 @@ mod tests {
 
                 // Do some work
                 use sinex_db::queries::EventQueries;
-                for j in 0..5 {
+                for _j in 0..5 {
                     EventQueries::insert_event(
                         format!("task_{}", i),
                         "stress.test".to_string(),
@@ -1338,7 +1338,7 @@ mod tests {
 
         // Try to allocate multiple databases concurrently
         let mut handles = vec![];
-        for i in 0..5 {
+        for _i in 0..5 {
             let counter = success_count.clone();
             let handle = tokio::spawn(async move {
                 match acquire_test_database().await {

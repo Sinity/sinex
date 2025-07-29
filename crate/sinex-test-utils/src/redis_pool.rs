@@ -397,7 +397,6 @@ pub struct RedisPoolStats {
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use anyhow::Result;
 
     #[sinex_test]
     async fn test_redis_pool_basic() -> Result<()> {
@@ -567,7 +566,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_redis_key_namespacing() -> Result<()> {
-        let mut redis = acquire_test_redis().await?;
+        let redis = acquire_test_redis().await?;
 
         // Test that keys are properly namespaced
         let raw_key = "test_key";
