@@ -17,9 +17,9 @@ COMMENT ON SCHEMA sinex_schemas IS 'JSON schemas for event payload validation';
 CREATE SCHEMA IF NOT EXISTS metrics;
 COMMENT ON SCHEMA metrics IS 'Metrics, analytics, and continuous aggregates';
 
--- Sinex schema for metrics storage (required by sinex-metrics-lib)
+-- Sinex schema for metrics storage (required by sinex-telemetry)
 CREATE SCHEMA IF NOT EXISTS sinex;
-COMMENT ON SCHEMA sinex IS 'Schema for sinex-metrics-lib compatibility';
+COMMENT ON SCHEMA sinex IS 'Schema for sinex-telemetry compatibility';
 
 -- Synthesis schema for derived events
 CREATE SCHEMA IF NOT EXISTS synthesis;

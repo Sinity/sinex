@@ -101,8 +101,6 @@ pub mod knowledge_graph;
 // Domain-specific query modules
 pub mod events;
 
-// Old queries module removed - all functions migrated to domain-specific modules
-
 // Re-export domain-specific query functions
 pub use annotations::{
     create_annotation, delete_annotation, get_annotation_by_id, get_annotations_for_event,
@@ -358,7 +356,7 @@ mod tests {
     use sinex_ulid::Ulid;
 
     #[sinex_test]
-    async fn test_raw_event_creation(ctx: TestContext) -> TestResult<()> {
+    async fn test_raw_event_creation(ctx: TestContext) -> anyhow::Result<()> {
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -386,7 +384,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ulid_in_models(ctx: TestContext) -> TestResult<()> {
+    async fn test_ulid_in_models(ctx: TestContext) -> anyhow::Result<()> {
         let ulid1 = Ulid::new();
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
@@ -409,7 +407,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_payload_json_handling(ctx: TestContext) -> TestResult<()> {
+    async fn test_event_payload_json_handling(ctx: TestContext) -> anyhow::Result<()> {
         // Test simple JSON payload
         let simple_payload = json!({"key": "value", "number": 42});
         let event = RawEvent {
@@ -470,7 +468,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timestamp_handling(ctx: TestContext) -> TestResult<()> {
+    async fn test_timestamp_handling(ctx: TestContext) -> anyhow::Result<()> {
         let now = Utc::now();
         let past = now - chrono::Duration::seconds(3600); // 1 hour ago
 
@@ -502,7 +500,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_pool_creation(ctx: TestContext) -> TestResult<()> {
+    async fn test_pool_creation(ctx: TestContext) -> anyhow::Result<()> {
         // This would require a test database
         // For now, just ensure the function compiles and types are correct
 
@@ -514,7 +512,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_function_signatures(ctx: TestContext) -> TestResult<()> {
+    async fn test_function_signatures(ctx: TestContext) -> anyhow::Result<()> {
         // Just test that our functions exist and compile
         // We can't test the actual functionality without a database
 

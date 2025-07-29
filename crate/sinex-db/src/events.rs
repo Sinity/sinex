@@ -251,7 +251,7 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_insert_event_basic(ctx: TestContext) -> TestResult<()> {
+    async fn test_insert_event_basic(ctx: TestContext) -> anyhow::Result<()> {
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_get_event_by_id(ctx: TestContext) -> TestResult<()> {
+    async fn test_get_event_by_id(ctx: TestContext) -> anyhow::Result<()> {
         // Insert a test event first
         let event = ctx
             .event()
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_count_events(ctx: TestContext) -> TestResult<()> {
+    async fn test_count_events(ctx: TestContext) -> anyhow::Result<()> {
         // Insert multiple events
         for i in 0..5 {
             ctx.event()

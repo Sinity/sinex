@@ -139,7 +139,7 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_path_traversal_sanitization(ctx: TestContext) -> TestResult<()> {
+    async fn test_path_traversal_sanitization(ctx: TestContext) -> anyhow::Result<()> {
         let factory = EventFactory::new("../../../etc/passwd");
         let mut event =
             factory.create_event("security.test", json!({"path": "../../sensitive/file.txt"}));
@@ -158,7 +158,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_null_byte_sanitization(ctx: TestContext) -> TestResult<()> {
+    async fn test_null_byte_sanitization(ctx: TestContext) -> anyhow::Result<()> {
         let factory = EventFactory::new("test\0source");
         let mut event = factory.create_event("security.test", json!({"data": "test\0value"}));
 
@@ -171,7 +171,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_sql_injection_preserved(ctx: TestContext) -> TestResult<()> {
+    async fn test_sql_injection_preserved(ctx: TestContext) -> anyhow::Result<()> {
         let factory = EventFactory::new("security.test");
         let mut event = factory.create_event(
             "sql.injection",

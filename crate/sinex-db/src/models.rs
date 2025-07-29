@@ -57,7 +57,6 @@ use sqlx::FromRow;
 ///    - Deactivates older versions automatically
 ///
 /// 4. **Compatibility Checking**: `scripts/check-schema-compatibility.sh`
-///    - Validates backward compatibility between versions
 ///
 /// ### Not Yet Implemented
 ///
@@ -374,9 +373,6 @@ pub struct ServiceHeartbeat {
     pub dlq_size: u64,
     pub version: String,
 }
-
-// Legacy alias for compatibility
-// Legacy type alias removed - use ServiceHeartbeat directly
 
 // ============================================================================
 // Event Annotations API Models

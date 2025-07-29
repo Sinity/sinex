@@ -5,9 +5,9 @@
 //! and resource coordination across multiple processes/instances.
 
 use crate::DbPool;
-use sinex_core_types::CoreError;
 use sinex_core_types::Result as CoreResult;
 use sinex_core_utils::ResourceGuard;
+use sinex_error::SinexError;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
@@ -69,8 +69,8 @@ impl AdvisoryLock {
                 .await
         })
         .await
-        .map_err(|_| CoreError::Timeout(format!("Advisory lock timeout for key: {}", key)))?
-        .map_err(|e| CoreError::Database(format!("Failed to acquire advisory lock: {}", e)))?;
+        .map_err(|_| SinexError::timeout(format!("Advisory lock timeout for key: {}", key)))?
+        .map_err(|e| SinexError::database(format!("Failed to acquire advisory lock: {}", e)))?;
 
         let lock = AdvisoryLock {
             pool: pool.clone(),
@@ -251,7 +251,7 @@ mod tests {
     use std::time::Duration;
 
     #[sinex_test]
-    async fn test_advisory_lock_try_acquire(ctx: TestContext) -> TestResult<()> {
+    async fn test_advisory_lock_try_acquire(ctx: TestContext) -> anyhow::Result<()> {
         let pool = ctx.pool();
 
         // First acquisition should succeed
@@ -272,7 +272,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_leadership_pattern(ctx: TestContext) -> TestResult<()> {
+    async fn test_leadership_pattern(ctx: TestContext) -> anyhow::Result<()> {
         let pool = ctx.pool();
         let coordination = DistributedCoordination::new(pool.clone());
 

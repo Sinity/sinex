@@ -1,12 +1,14 @@
 -- ============================================================================
--- LLM and AI Infrastructure Tables
+-- LLM Infrastructure Tables
 -- ============================================================================
 --
--- Technical Implementation Module: LLM Resource Orchestration & Embeddings
+-- Technical Implementation Module: LLM Resource Orchestration
 --
--- This migration establishes the AI/ML infrastructure for Sinex, including
--- LLM model management, prompt orchestration, embeddings storage, and 
--- AI-generated content tracking.
+-- This migration establishes the AI infrastructure for Sinex, including
+-- LLM model management, prompt orchestration, and AI-generated content tracking.
+--
+-- Note: Embedding models and cache tables were moved to migration 2 to fix
+-- dependency ordering issues with artifact tables.
 --
 -- ============================================================================
 -- LLM Models Registry
@@ -73,48 +75,6 @@ CREATE INDEX idx_prompt_executions_prompt ON core.prompt_executions(prompt_id);
 CREATE INDEX idx_prompt_executions_model ON core.prompt_executions(model_id);
 CREATE INDEX idx_prompt_executions_time ON core.prompt_executions(executed_at);
 
--- ============================================================================
--- Embedding Models Registry
--- ============================================================================
-CREATE TABLE IF NOT EXISTS core.embedding_models (
-    id ULID PRIMARY KEY DEFAULT gen_ulid(),
-    provider TEXT NOT NULL,
-    model_name TEXT NOT NULL,
-    dimensions INTEGER NOT NULL,
-    max_input_tokens INTEGER,
-    cost_per_1k_tokens DECIMAL(10, 6),
-    is_active BOOLEAN NOT NULL DEFAULT true,
-    metadata JSONB NOT NULL DEFAULT '{}',
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT unique_embedding_model UNIQUE(provider, model_name)
-);
-
-CREATE INDEX idx_embedding_models_active ON core.embedding_models(is_active, provider);
-
--- ============================================================================
--- Embedding Cache for Deduplication
--- ============================================================================
---
--- Proper design for embeddings cache.
--- Caches computed embeddings to avoid redundant API calls.
---
-CREATE TABLE IF NOT EXISTS core.embedding_cache (
-    id ULID PRIMARY KEY DEFAULT gen_ulid(),
-    text_hash TEXT NOT NULL,
-    embedding_model_id ULID NOT NULL REFERENCES core.embedding_models(id),
-    embedding vector(1536) NOT NULL,
-    text_sample TEXT,
-    use_count INTEGER NOT NULL DEFAULT 1,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT unique_text_model_embedding UNIQUE(text_hash, embedding_model_id)
-);
-
-CREATE INDEX idx_embedding_cache_hash ON core.embedding_cache(text_hash);
-CREATE INDEX idx_embedding_cache_lru ON core.embedding_cache(last_used_at);
-CREATE INDEX idx_embedding_cache_vector ON core.embedding_cache 
-    USING ivfflat (embedding vector_cosine_ops)
-    WITH (lists = 100);
 
 -- ============================================================================
 -- AI-Generated Content
@@ -143,21 +103,6 @@ CREATE TRIGGER set_prompts_updated_at
     FOR EACH ROW 
     EXECUTE FUNCTION set_current_timestamp();
 
--- Update last_used_at on embedding cache hits
-CREATE OR REPLACE FUNCTION update_embedding_cache_last_used()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.last_used_at = NOW();
-    NEW.use_count = OLD.use_count + 1;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER update_cache_on_use 
-    BEFORE UPDATE ON core.embedding_cache 
-    FOR EACH ROW 
-    WHEN (OLD.embedding IS NOT DISTINCT FROM NEW.embedding)
-    EXECUTE FUNCTION update_embedding_cache_last_used();
 
 -- ============================================================================
 -- Comments
@@ -165,6 +110,4 @@ CREATE TRIGGER update_cache_on_use
 COMMENT ON TABLE core.llm_models IS 'Registry of available LLM models and their capabilities';
 COMMENT ON TABLE core.prompts IS 'Reusable prompt templates for various AI tasks';
 COMMENT ON TABLE core.prompt_executions IS 'History of all LLM prompt executions';
-COMMENT ON TABLE core.embedding_models IS 'Registry of embedding models for semantic search';
-COMMENT ON TABLE core.embedding_cache IS 'Cache to avoid re-computing embeddings for identical text';
 COMMENT ON TABLE core.ai_generated_content IS 'AI-generated summaries, analyses, and extractions';

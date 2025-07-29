@@ -798,7 +798,7 @@ mod tests {
     use sinex_ulid::Ulid;
 
     #[sinex_test]
-    async fn test_select_query_builder(ctx: TestContext) -> TestResult<()> {
+    async fn test_select_query_builder(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS)
             .columns(&["event_id", "source", "event_type"])
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()))
@@ -815,7 +815,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_insert_query_builder(ctx: TestContext) -> TestResult<()> {
+    async fn test_insert_query_builder(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::insert(tables::EVENTS)
             .columns(&["source", "event_type", "payload"])
             .values(&[
@@ -834,7 +834,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_update_query_builder(ctx: TestContext) -> TestResult<()> {
+    async fn test_update_query_builder(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::update(tables::EVENTS)
             .set("source", QueryParam::String("updated.source".to_string()))
             .set("payload", QueryParam::Json(json!({"updated": true})))
@@ -850,7 +850,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_delete_query_builder(ctx: TestContext) -> TestResult<()> {
+    async fn test_delete_query_builder(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::delete(tables::EVENTS)
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
@@ -862,7 +862,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ulid_array_parameter(ctx: TestContext) -> TestResult<()> {
+    async fn test_ulid_array_parameter(ctx: TestContext) -> anyhow::Result<()> {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_in("event_id", QueryParam::UlidArray(ulids.clone()));
@@ -881,7 +881,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_optional_parameters(ctx: TestContext) -> TestResult<()> {
+    async fn test_optional_parameters(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_eq(
                 "payload_schema_id",
@@ -897,7 +897,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_select_with_conditions(ctx: TestContext) -> TestResult<()> {
+    async fn test_complex_select_with_conditions(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS)
             .columns(&["event_id", "source", "event_type"])
             .where_eq("source", QueryParam::String("test".to_string()))
@@ -917,7 +917,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ulid_to_uuid_conversion(ctx: TestContext) -> TestResult<()> {
+    async fn test_ulid_to_uuid_conversion(ctx: TestContext) -> anyhow::Result<()> {
         let test_ulid = Ulid::new();
         let expected_uuid = crate::query_helpers::ulid_to_uuid(test_ulid);
 
@@ -936,7 +936,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_json_parameter_handling(ctx: TestContext) -> TestResult<()> {
+    async fn test_json_parameter_handling(ctx: TestContext) -> anyhow::Result<()> {
         let test_json = serde_json::json!({
             "test": "value",
             "number": 42,
@@ -966,7 +966,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_bulk_insert(ctx: TestContext) -> TestResult<()> {
+    async fn test_bulk_insert(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::insert(tables::EVENTS)
             .columns(&["source", "event_type", "host", "payload"])
             .values(&[
@@ -990,7 +990,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_where_in_query(ctx: TestContext) -> TestResult<()> {
+    async fn test_where_in_query(ctx: TestContext) -> anyhow::Result<()> {
         let ulids = vec![Ulid::new(), Ulid::new()];
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_in("event_id", QueryParam::UlidArray(ulids.clone()));
@@ -1002,7 +1002,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_count_query(ctx: TestContext) -> TestResult<()> {
+    async fn test_count_query(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS)
             .columns(&["COUNT(*)"])
             .where_eq("source", QueryParam::String("test".to_string()));
@@ -1015,7 +1015,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_update_with_multiple_sets(ctx: TestContext) -> TestResult<()> {
+    async fn test_update_with_multiple_sets(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::update(tables::EVENTS)
             .set("source", QueryParam::String("updated_source".to_string()))
             .set(
@@ -1034,7 +1034,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_raw_condition(ctx: TestContext) -> TestResult<()> {
+    async fn test_raw_condition(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS).where_op(
             "ts_server",
             ">",
@@ -1048,7 +1048,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parameter_type_coercion(ctx: TestContext) -> TestResult<()> {
+    async fn test_parameter_type_coercion(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS)
             .where_eq("payload_schema_id", QueryParam::OptionalUlid(None))
             .where_eq("source_event_ids", QueryParam::OptionalUlidArray(None))
@@ -1066,7 +1066,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_aggregation_query(ctx: TestContext) -> TestResult<()> {
+    async fn test_complex_aggregation_query(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select(tables::EVENTS)
             .columns(&[
                 "source",

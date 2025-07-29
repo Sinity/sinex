@@ -404,7 +404,7 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_macro_compilation(ctx: TestContext) -> TestResult<()> {
+    async fn test_macro_compilation(ctx: TestContext) -> anyhow::Result<()> {
         // These tests just verify the macros compile correctly
         // They don't execute because we don't have a real database in tests
 

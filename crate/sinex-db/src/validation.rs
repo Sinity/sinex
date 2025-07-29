@@ -69,7 +69,7 @@ fn validate_required_string_field(
         })?
         .to_string();
 
-    // Use the ValidationChain directly since it returns Result<T, CoreError>
+    // Use the ValidationChain directly since it returns Result<T, SinexError>
     let _validated_string = ValidationChain::validate(string_value.clone(), field_name)
         .not_empty()
         .into_result()

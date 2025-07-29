@@ -1,7 +1,6 @@
 //! Source Material query registry for external data provenance
 //!
 //! This module provides all database queries related to source material tracking,
-//! replacing the legacy artifact system with a more unified provenance approach.
 //! All queries automatically handle ULID/UUID conversion and provide consistent error handling.
 //!
 //! # Anchor Byte Principle

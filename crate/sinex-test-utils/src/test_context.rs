@@ -661,20 +661,20 @@ impl TestContext {
         E: std::fmt::Display,
     {
         match result {
-            Ok(_) => Err(SinexError::validation(
+            Ok(_) => Err(SinexError::validation(format!(
                 "Expected error containing '{}', but got Ok",
                 expected_text,
-            )),
+            ))),
             Err(err) => {
                 let err_string = err.to_string();
                 if err_string.contains(expected_text) {
                     Ok(())
                 } else {
-                    Err(SinexError::validation(
+                    Err(SinexError::validation(format!(
                         "Error '{}' does not contain '{}'",
                         err_string,
                         expected_text,
-                    ))
+                    )))
                 }
             }
         }
@@ -694,127 +694,10 @@ pub struct FixtureManager<'ctx> {
 }
 
 impl<'ctx> FixtureManager<'ctx> {
-    /// Access scenario fixtures (user sessions, checkpoints, etc.)
-    pub fn scenarios(&self) -> ScenarioFixtures<'_> {
-        ScenarioFixtures { ctx: self.ctx }
-    }
-
-    /// Access performance fixtures (large datasets, pre-warmed data, etc.)
-    pub fn performance(&self) -> PerformanceFixtures<'_> {
-        PerformanceFixtures { ctx: self.ctx }
-    }
-
-    /// Access error fixtures (validation failures, edge cases, etc.)
-    pub fn errors(&self) -> ErrorFixtures<'_> {
-        ErrorFixtures { ctx: self.ctx }
-    }
-
-    // Convenience methods for common fixtures
-
-    /// Standard user session with filesystem, terminal, and clipboard events
-    pub async fn user_session(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::UserSessionFixture>> {
-        self.scenarios().user_session().await
-    }
-
-    /// Large dataset for performance testing (default 10k events)
-    pub async fn large_dataset(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::PerformanceDatasetFixture>> {
-        self.performance().large_dataset().await
-    }
-
-    /// Invalid events and failed operations for error testing
-    pub async fn validation_failures(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::ErrorScenariosFixture>> {
-        self.errors().validation_failures().await
-    }
+    // All fixture methods should be accessed through the fixtures module directly
+    // Example: crate::fixtures::standard_user_session(&ctx).await
 }
 
-/// Scenario fixtures for common test patterns
-pub struct ScenarioFixtures<'ctx> {
-    ctx: &'ctx TestContext,
-}
-
-impl<'ctx> ScenarioFixtures<'ctx> {
-    /// Standard user session with filesystem, terminal, and clipboard events
-    pub async fn user_session(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::UserSessionFixture>> {
-        crate::fixtures::standard_user_session(self.ctx).await
-    }
-
-    /// User session with custom event count and checkpoint intervals
-    pub async fn user_session_with(
-        &self,
-        event_count: usize,
-        checkpoint_interval: usize,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::UserSessionFixture>> {
-        crate::fixtures::user_session_with_params(self.ctx, event_count, checkpoint_interval).await
-    }
-
-    /// Pre-populated processor checkpoints
-    pub async fn populated_checkpoints(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::PopulatedCheckpointsFixture>> {
-        crate::fixtures::populated_checkpoints(self.ctx).await
-    }
-
-    /// Complex multi-event scenario builder
-    pub(crate) fn multi_event(&self) -> crate::builders::TestScenarioBuilder {
-        crate::builders::TestScenarioBuilder::new()
-    }
-}
-
-/// Performance fixtures for testing at scale
-pub struct PerformanceFixtures<'ctx> {
-    ctx: &'ctx TestContext,
-}
-
-impl<'ctx> PerformanceFixtures<'ctx> {
-    /// Large dataset for performance testing (default 10k events)
-    pub async fn large_dataset(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::PerformanceDatasetFixture>> {
-        crate::fixtures::performance_dataset(self.ctx).await
-    }
-
-    /// Large dataset with custom size
-    pub async fn large_dataset_with(
-        &self,
-        event_count: usize,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::PerformanceDatasetFixture>> {
-        crate::fixtures::performance_dataset_with_size(self.ctx, event_count).await
-    }
-
-    /// Pre-warmed database with mixed data types
-    pub async fn pre_warmed_db(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::PreWarmedFixture>> {
-        crate::fixtures::pre_warmed_database(self.ctx).await
-    }
-}
-
-/// Error testing fixtures for validation and edge cases
-pub struct ErrorFixtures<'ctx> {
-    ctx: &'ctx TestContext,
-}
-
-impl<'ctx> ErrorFixtures<'ctx> {
-    /// Invalid events and failed operations for error testing
-    pub async fn validation_failures(
-        &self,
-    ) -> Result<crate::fixtures::FixtureHandle<crate::fixtures::ErrorScenariosFixture>> {
-        crate::fixtures::error_scenarios(self.ctx).await
-    }
-
-    /// Empty database for isolation testing
-    pub async fn empty_database(&self) -> Result<crate::fixtures::FixtureHandle<()>> {
-        crate::fixtures::empty_database(self.ctx).await
-    }
-}
 
 // ===== INTEGRATION TEST UTILITIES =====
 
@@ -1759,10 +1642,10 @@ impl<'ctx> ContextualAssert<'ctx> {
     /// Assert error contains specific message
     pub fn error_contains<T>(self, result: &Result<T>, expected_message: &str) -> Result<Self> {
         match result {
-            Ok(_) => Err(SinexError::validation(
+            Ok(_) => Err(SinexError::validation(format!(
                 "Expected error in '{}' but operation succeeded",
                 self.context,
-            )),
+            ))),
             Err(e) => {
                 let error_message = e.to_string();
                 if error_message.contains(expected_message) {
@@ -2600,8 +2483,7 @@ impl Drop for TestContext {
                                     for key in keys_to_clean {
                                         if let Err(e) = redis::cmd("DEL")
                                             .arg(&key)
-                                            .query_async::<_, ()>(conn)
-                                            .await
+                                            .query::<()>(conn)
                                         {
                                             eprintln!(
                                                 "Failed to clean up Redis key '{}' for test '{}': {}",

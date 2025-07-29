@@ -13,7 +13,7 @@ mod tests {
     use sinex_ulid::Ulid;
 
     #[sinex_test]
-    async fn test_query_builder_select(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_builder_select(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::select("core.events")
             .columns(&["event_id", "source", "event_type"])
             .where_eq("event_id", QueryParam::Ulid(Ulid::new()))
@@ -31,7 +31,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_builder_insert(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_builder_insert(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::insert("core.events")
             .columns(&["source", "event_type", "payload"])
             .values(&[
@@ -51,7 +51,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_builder_update(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_builder_update(ctx: TestContext) -> anyhow::Result<()> {
         let builder = QueryBuilder::update("core.events")
             .set("source", QueryParam::String("updated.source".to_string()))
             .set("payload", QueryParam::Json(json!({"updated": true})))
@@ -68,7 +68,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_builder_delete(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_builder_delete(ctx: TestContext) -> anyhow::Result<()> {
         let builder =
             QueryBuilder::delete("core.events").where_eq("event_id", QueryParam::Ulid(Ulid::new()));
 
@@ -81,7 +81,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_param_ulid_conversion(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_param_ulid_conversion(ctx: TestContext) -> anyhow::Result<()> {
         use crate::query_builder::RawQueryParam;
 
         let ulid = Ulid::new();
@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_param_ulid_array_conversion(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_param_ulid_array_conversion(ctx: TestContext) -> anyhow::Result<()> {
         use crate::query_builder::RawQueryParam;
 
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
@@ -119,7 +119,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_event_queries_builder_patterns(ctx: TestContext) -> TestResult<()> {
+    async fn test_event_queries_builder_patterns(ctx: TestContext) -> anyhow::Result<()> {
         let event_id = Ulid::new();
 
         // Test get_by_id query
@@ -153,7 +153,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_param_types(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_param_types(ctx: TestContext) -> anyhow::Result<()> {
         let test_cases = vec![
             (QueryParam::String("test".to_string()), "text"),
             (QueryParam::OptionalString(Some("test".to_string())), "text"),
@@ -186,7 +186,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_query_building(ctx: TestContext) -> TestResult<()> {
+    async fn test_complex_query_building(ctx: TestContext) -> anyhow::Result<()> {
         let start_time = Utc::now() - chrono::Duration::hours(1);
         let end_time = Utc::now();
         let event_ids = vec![Ulid::new(), Ulid::new()];
@@ -212,7 +212,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_error_handling(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_error_handling(ctx: TestContext) -> anyhow::Result<()> {
         // Test that build() returns appropriate errors for invalid queries
         let builder = QueryBuilder::insert("core.events")
             .columns(&["source", "event_type"])
@@ -230,7 +230,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_query_registry_organization(ctx: TestContext) -> TestResult<()> {
+    async fn test_query_registry_organization(ctx: TestContext) -> anyhow::Result<()> {
         use crate::queries::{CheckpointQueries, EventQueries, OperationQueries, SchemaQueries};
 
         // Test that all query registries are accessible
@@ -249,7 +249,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_migration_benefits(ctx: TestContext) -> TestResult<()> {
+    async fn test_migration_benefits(ctx: TestContext) -> anyhow::Result<()> {
         // Before: Manual ULID/UUID conversion
         let ulid = Ulid::new();
         let uuid = crate::query_helpers::ulid_to_uuid(ulid);
@@ -340,7 +340,7 @@ mod benches {
     #[bench]
     fn bench_query_registry_access(b: &mut Bencher) {
         b.iter(|| {
-            let _ = EventQueries::get_by_id(Ulid::new()).build();
+            let _ = EventQueries::get_by_id(Ulid::new();
         });
     }
 

@@ -4,6 +4,7 @@
 -- Drop triggers
 DROP TRIGGER IF EXISTS set_event_clusters_updated_at ON core.event_clusters;
 DROP TRIGGER IF EXISTS set_event_annotations_updated_at ON core.event_annotations;
+DROP TRIGGER IF EXISTS update_cache_on_use ON core.embedding_cache;
 
 -- Drop views
 DROP VIEW IF EXISTS public.ops_log;
@@ -37,11 +38,11 @@ DROP INDEX IF EXISTS idx_entities_created_from;
 DROP INDEX IF EXISTS idx_entities_canonical;
 DROP INDEX IF EXISTS idx_entities_name;
 DROP INDEX IF EXISTS idx_entities_type;
-DROP INDEX IF EXISTS idx_sinex_metrics_legacy_namespace;
-DROP INDEX IF EXISTS idx_sinex_metrics_legacy_name_time;
 DROP INDEX IF EXISTS idx_operations_log_time;
 DROP INDEX IF EXISTS idx_operations_log_type;
-DROP INDEX IF EXISTS idx_automaton_checkpoints_automaton_processor;
+DROP INDEX IF EXISTS idx_processor_checkpoints_consumer;
+DROP INDEX IF EXISTS idx_processor_checkpoints_processor;
+DROP INDEX IF EXISTS idx_processor_checkpoints_updated;
 DROP INDEX IF EXISTS idx_source_material_checksum;
 DROP INDEX IF EXISTS idx_source_material_uri;
 DROP INDEX IF EXISTS idx_source_material_type_time;
@@ -65,10 +66,10 @@ DROP TABLE IF EXISTS core.tags;
 DROP TABLE IF EXISTS core.blobs;
 DROP TABLE IF EXISTS core.entity_relations;
 DROP TABLE IF EXISTS core.entities;
-DROP TABLE IF EXISTS sinex.metrics;
-DROP TABLE IF EXISTS metrics.sinex_metrics;
+DROP TABLE IF EXISTS core.embedding_cache;
+DROP TABLE IF EXISTS core.embedding_models;
 DROP TABLE IF EXISTS core.operations_log;
-DROP TABLE IF EXISTS core.automaton_checkpoints;
+DROP TABLE IF EXISTS core.processor_checkpoints;
 DROP TABLE IF EXISTS core.events;
 DROP TABLE IF EXISTS raw.source_material_registry;
 DROP TABLE IF EXISTS core.processor_manifests;
@@ -76,3 +77,4 @@ DROP TABLE IF EXISTS core.processor_manifests;
 -- Drop functions
 DROP FUNCTION IF EXISTS set_current_timestamp();
 DROP FUNCTION IF EXISTS ulid_to_timestamptz(ULID);
+DROP FUNCTION IF EXISTS update_embedding_cache_last_used();

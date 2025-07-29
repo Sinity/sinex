@@ -259,7 +259,7 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_path_sanitization(ctx: TestContext) -> TestResult<()> {
+    async fn test_path_sanitization(ctx: TestContext) -> anyhow::Result<()> {
         // Valid paths should work
         assert_eq!(
             SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_unicode_sanitization(ctx: TestContext) -> TestResult<()> {
+    async fn test_unicode_sanitization(ctx: TestContext) -> anyhow::Result<()> {
         // Null byte
         assert_eq!(
             SecurityValidator::sanitize_unicode("test\0value"),
@@ -297,7 +297,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_json_depth(ctx: TestContext) -> TestResult<()> {
+    async fn test_json_depth(ctx: TestContext) -> anyhow::Result<()> {
         let shallow = serde_json::json!({"a": {"b": {"c": 1}}});
         assert!(SecurityValidator::check_json_depth(&shallow, 5).is_ok());
         assert!(SecurityValidator::check_json_depth(&shallow, 2).is_err());
@@ -305,7 +305,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_json_size(ctx: TestContext) -> TestResult<()> {
+    async fn test_json_size(ctx: TestContext) -> anyhow::Result<()> {
         let small = serde_json::json!({"a": 1, "b": 2});
         assert!(SecurityValidator::check_json_size(&small, 10).is_ok());
         assert!(SecurityValidator::check_json_size(&small, 2).is_err());

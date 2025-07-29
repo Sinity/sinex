@@ -139,7 +139,7 @@ impl VerificationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.execute(pool)`
     pub fn delete_test_checkpoint(checkpoint_id: sqlx::types::Uuid) -> QueryBuilder {
-        QueryBuilder::delete(tables::AUTOMATON_CHECKPOINTS)
+        QueryBuilder::delete(tables::PROCESSOR_CHECKPOINTS)
             .where_eq("id", QueryParam::Uuid(checkpoint_id))
     }
 
