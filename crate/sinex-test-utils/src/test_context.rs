@@ -2844,19 +2844,19 @@ mod benches {
     use divan::black_box;
 
     #[sinex_bench]
-    async fn bench_context_creation() -> anyhow::Result<()> {
+    fn bench_context_creation() -> anyhow::Result<()> {
         black_box(TestContext::new().await?);
         Ok(())
     }
 
     #[sinex_bench]
-    async fn bench_context_with_name() -> anyhow::Result<()> {
+    fn bench_context_with_name() -> anyhow::Result<()> {
         black_box(TestContext::with_name("bench_test").await?);
         Ok(())
     }
 
     #[sinex_bench]
-    async fn bench_single_event_creation() -> anyhow::Result<()> {
+    fn bench_single_event_creation() -> anyhow::Result<()> {
         let ctx = TestContext::new().await?;
         black_box(
             ctx.event()
@@ -2870,7 +2870,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_batch_event_creation_small() -> anyhow::Result<()> {
+    fn bench_batch_event_creation_small() -> anyhow::Result<()> {
         let ctx = TestContext::new().await?;
         let batch = ctx.create_event_batch("bench", 10);
         for builder in batch {
@@ -2880,7 +2880,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_batch_event_creation_medium() -> anyhow::Result<()> {
+    fn bench_batch_event_creation_medium() -> anyhow::Result<()> {
         let ctx = TestContext::new().await?;
         let batch = ctx.create_event_batch("bench", 100);
         for builder in batch {
@@ -2893,7 +2893,7 @@ mod benches {
     use crate::bench_context::BenchContext;
 
     #[sinex_bench]
-    async fn bench_query_count_all(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_query_count_all(ctx: &BenchContext) -> anyhow::Result<()> {
         // Load standard query benchmark fixture
         ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
             .await?;
@@ -2908,7 +2908,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_query_fetch_limited(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_query_fetch_limited(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
             .await?;
 
@@ -2921,7 +2921,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_query_filtered(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_query_filtered(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
             .await?;
 
@@ -2934,7 +2934,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_concurrent_operations() -> anyhow::Result<()> {
+    fn bench_concurrent_operations() -> anyhow::Result<()> {
         let ctx = TestContext::new().await?;
         let results = ctx
             .run_concurrent(4, |ctx, i| async move {
@@ -2951,7 +2951,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_simple_assertions() -> anyhow::Result<()> {
+    fn bench_simple_assertions() -> anyhow::Result<()> {
         let ctx = TestContext::new().await?;
         ctx.assert("test1").eq(&5, &5)?;
         ctx.assert("test2").that(true, "should be true")?;

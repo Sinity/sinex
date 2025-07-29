@@ -198,7 +198,7 @@ mod benches {
 
     // Benchmark the standard fixtures themselves
     #[sinex_bench]
-    async fn bench_time_series_small(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_time_series_small(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.load_fixture(&TIME_SERIES_FIXTURE, DatasetSize::Small)
             .await?;
         // Just measure fixture load time
@@ -206,7 +206,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_query_fixture_medium(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_query_fixture_medium(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.load_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
             .await?;
         // Measure fixture generation/load

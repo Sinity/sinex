@@ -87,6 +87,16 @@ impl DatasetSize {
             Self::Custom(n) => format!("custom_{}", n),
         }
     }
+
+    pub fn fixture_name(&self) -> &'static str {
+        match self {
+            Self::Empty => "empty",
+            Self::Small => "small",
+            Self::Medium => "medium",
+            Self::Large => "large",
+            Self::Custom(_) => "custom",
+        }
+    }
 }
 
 /// Declarative fixture set specification
@@ -437,7 +447,7 @@ mod benches {
     use crate::sinex_bench;
 
     #[sinex_bench]
-    async fn bench_fixture_id_generation() -> anyhow::Result<()> {
+    fn bench_fixture_id_generation() -> anyhow::Result<()> {
         let manager = FixtureManager::new();
         let fixtures = FixtureSet::new()
             .with_events(DatasetSize::Medium, 1337)

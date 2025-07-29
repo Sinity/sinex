@@ -426,12 +426,7 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
         None
     };
 
-    // Validate it's async
-    if input.sig.asyncness.is_none() {
-        return syn::Error::new_spanned(input.sig.fn_token, "sinex_bench functions must be async")
-            .to_compile_error()
-            .into();
-    }
+    // Remove async validation - benchmarks should be synchronous since the macro handles async internally
 
     // Check function parameters
     let mut takes_context = false;
@@ -468,9 +463,12 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                     bencher.bench_local(|| {
                         ctx.runtime.block_on(async {
-                            // Call the actual async function with ctx and arg parameters
-                            let async_fn = |ctx: &sinex_test_utils::bench_context::BenchContext, arg: #arg_type| async move { #fn_body };
-                            let result: anyhow::Result<()> = async_fn(ctx, arg).await;
+                            // The function body contains .await calls, so we wrap it in an async block
+                            let result: anyhow::Result<()> = async {
+                                let ctx = ctx;
+                                let arg = arg;
+                                #fn_body
+                            }.await;
                             result.unwrap()
                         })
                     });
@@ -494,9 +492,11 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 bencher.bench_local(|| {
                     ctx.runtime.block_on(async {
-                        // Call the actual async function with ctx parameter
-                        let async_fn = |ctx: &sinex_test_utils::bench_context::BenchContext| async move { #fn_body };
-                        let result: anyhow::Result<()> = async_fn(ctx).await;
+                        // The function body contains .await calls, so we wrap it in an async block
+                        let result: anyhow::Result<()> = async {
+                            let ctx = ctx;
+                            #fn_body
+                        }.await;
                         result.unwrap()
                     })
                 });
@@ -512,7 +512,10 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                     bencher.bench_local(|| {
                         runtime.block_on(async {
-                            let result: anyhow::Result<()> = async { #fn_body }.await;
+                            let result: anyhow::Result<()> = async {
+                                let arg = arg;
+                                #fn_body
+                            }.await;
                             result.unwrap()
                         })
                     });
@@ -535,7 +538,9 @@ pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
 
                 bencher.bench_local(|| {
                     runtime.block_on(async {
-                        let result: anyhow::Result<()> = async { #fn_body }.await;
+                        let result: anyhow::Result<()> = async {
+                            #fn_body
+                        }.await;
                         result.unwrap()
                     })
                 });

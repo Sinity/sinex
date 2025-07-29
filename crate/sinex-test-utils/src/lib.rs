@@ -294,7 +294,7 @@
 //!     use sinex_test_utils::prelude::*;
 //!     
 //!     #[sinex_bench]
-//!     async fn bench_query_performance(ctx: &BenchContext) -> anyhow::Result<()> {
+//!     fn bench_query_performance(ctx: &BenchContext) -> anyhow::Result<()> {
 //!         // Direct access to standard fixtures
 //!         ctx.query_bench(DatasetSize::Medium).await?;
 //!         let results = query_recent_events(ctx.pool(), 1000).await?;
@@ -303,7 +303,7 @@
 //!     
 //!     // Parameterized benchmarks
 //!     #[sinex_bench(args = [10, 100, 1000])]
-//!     async fn bench_bulk_insert(ctx: &BenchContext, count: usize) -> anyhow::Result<()> {
+//!     fn bench_bulk_insert(ctx: &BenchContext, count: usize) -> anyhow::Result<()> {
 //!         let events = generate_events(count);
 //!         insert_events(ctx.pool(), &events).await?;
 //!         Ok(())
@@ -1121,7 +1121,7 @@ mod benches {
 
     // Basic event operations benchmark
     #[sinex_bench]
-    async fn bench_event_creation(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_event_creation(ctx: &BenchContext) -> anyhow::Result<()> {
         // Simple event creation - measures database round-trip
         use sinex_db::queries::EventQueries;
 
@@ -1168,7 +1168,7 @@ mod benches {
 
     // Query performance with fixtures
     #[sinex_bench]
-    async fn bench_query_by_source(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_query_by_source(ctx: &BenchContext) -> anyhow::Result<()> {
         use sinex_db::queries::EventQueries;
 
         // Load standard query fixture once per bench run
@@ -1185,7 +1185,7 @@ mod benches {
 
     // Complex query patterns
     #[sinex_bench]
-    async fn bench_count_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_count_queries(ctx: &BenchContext) -> anyhow::Result<()> {
         use sinex_db::queries::EventQueries;
 
         ctx.time_series(DatasetSize::Small).await?;
@@ -1202,7 +1202,7 @@ mod benches {
 
     // Aggregation queries benchmark
     #[sinex_bench]
-    async fn bench_aggregation_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_aggregation_queries(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.query_bench(DatasetSize::Small).await?;
 
         // TODO: Replace with EventQueries::group_by_source() once implemented
@@ -1218,7 +1218,7 @@ mod benches {
             r#"SELECT source, COUNT(*) as "count!"
                FROM core.events 
                GROUP BY source 
-               ORDER BY count DESC 
+               ORDER BY COUNT(*) DESC 
                LIMIT 10"#
         )
         .fetch_all(ctx.pool())
@@ -1230,7 +1230,7 @@ mod benches {
 
     // Time-based queries
     #[sinex_bench]
-    async fn bench_time_range_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_time_range_queries(ctx: &BenchContext) -> anyhow::Result<()> {
         use sinex_db::queries::EventQueries;
 
         ctx.time_series(DatasetSize::Medium).await?;
@@ -1251,7 +1251,7 @@ mod benches {
 
     // JSON payload queries
     #[sinex_bench]
-    async fn bench_json_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_json_queries(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.query_bench(DatasetSize::Small).await?;
 
         // Query by JSON field
@@ -1277,7 +1277,7 @@ mod benches {
 
     // Concurrent operations benchmark
     #[sinex_bench]
-    async fn bench_concurrent_inserts(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_concurrent_inserts(ctx: &BenchContext) -> anyhow::Result<()> {
         use futures::future;
 
         // Reset to clean state
@@ -1317,7 +1317,7 @@ mod benches {
 
     // Benchmark using test utilities directly
     #[sinex_bench]
-    async fn bench_test_utils_event_creation(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_test_utils_event_creation(ctx: &BenchContext) -> anyhow::Result<()> {
         // This demonstrates using test utils in benchmarks
         use serde_json::json;
         use sinex_events::EventFactory;
@@ -1352,7 +1352,7 @@ mod benches {
 
     // Benchmark fixture loading performance
     #[sinex_bench(args = [DatasetSize::Small, DatasetSize::Medium])]
-    async fn bench_fixture_loading(ctx: &BenchContext, size: DatasetSize) -> anyhow::Result<()> {
+    fn bench_fixture_loading(ctx: &BenchContext, size: DatasetSize) -> anyhow::Result<()> {
         // Reset first
         crate::db_common::reset_database(ctx.pool()).await?;
 

@@ -1397,7 +1397,7 @@ mod benches {
     /// This measures the time to acquire a clean database from the pool,
     /// including advisory lock acquisition and cleanup verification.
     #[sinex_bench]
-    async fn bench_acquire_database() -> anyhow::Result<()> {
+    fn bench_acquire_database() -> anyhow::Result<()> {
         let db = acquire_test_database().await?;
         // Database is automatically returned on drop
         drop(db);
@@ -1409,10 +1409,7 @@ mod benches {
     /// Measures contention and performance when multiple tasks
     /// try to acquire databases simultaneously.
     #[sinex_bench(args = [2, 4, 8, 16])]
-    async fn bench_concurrent_acquisition(
-        _ctx: &BenchContext,
-        concurrency: usize,
-    ) -> anyhow::Result<()> {
+    fn bench_concurrent_acquisition(_ctx: &BenchContext, concurrency: usize) -> anyhow::Result<()> {
         let handles: Vec<_> = (0..concurrency)
             .map(|_| tokio::spawn(async move { acquire_test_database().await.unwrap() }))
             .collect();
@@ -1429,7 +1426,7 @@ mod benches {
     ///
     /// Measures the time to clean a database with various amounts of data
     #[sinex_bench]
-    async fn bench_database_cleanup() -> anyhow::Result<()> {
+    fn bench_database_cleanup() -> anyhow::Result<()> {
         // Setup: Get a database and populate it
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -1459,7 +1456,7 @@ mod benches {
 
     /// Benchmark template database operations
     #[sinex_bench]
-    async fn bench_ensure_template_database() -> anyhow::Result<()> {
+    fn bench_ensure_template_database() -> anyhow::Result<()> {
         let config = PoolConfig::default();
         // This should be fast after first run (cached)
         ensure_template_database(&config.admin_url, &config.base_url).await?;
@@ -1468,7 +1465,7 @@ mod benches {
 
     /// Benchmark pool health check
     #[sinex_bench]
-    async fn bench_pool_health_check() -> anyhow::Result<()> {
+    fn bench_pool_health_check() -> anyhow::Result<()> {
         // Ensure pool is initialized
         let _ = acquire_test_database().await?;
 
@@ -1478,7 +1475,7 @@ mod benches {
 
     /// Benchmark database statistics collection
     #[sinex_bench]
-    async fn bench_get_database_stats() -> anyhow::Result<()> {
+    fn bench_get_database_stats() -> anyhow::Result<()> {
         let db = acquire_test_database().await?;
 
         // Insert some varied data

@@ -543,7 +543,7 @@ mod benches {
     /// This measures the time to completely clean a database with various
     /// amounts of existing data.
     #[sinex_bench]
-    async fn bench_reset_empty_database(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_reset_empty_database(ctx: &BenchContext) -> anyhow::Result<()> {
         // Database is already empty from reset_and_load
         reset_database(ctx.pool()).await?;
         Ok(())
@@ -553,7 +553,7 @@ mod benches {
     ///
     /// Measures reset performance when database contains events and related data
     #[sinex_bench]
-    async fn bench_reset_populated_database(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_reset_populated_database(ctx: &BenchContext) -> anyhow::Result<()> {
         // Setup: Insert some data
         use sinex_db::queries::EventQueries;
         for i in 0..10 {
@@ -591,14 +591,14 @@ mod benches {
 
     /// Benchmark cache clearing operation
     #[sinex_bench]
-    async fn bench_clear_pg_cache(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_clear_pg_cache(ctx: &BenchContext) -> anyhow::Result<()> {
         clear_pg_cache(ctx.pool()).await?;
         Ok(())
     }
 
     /// Benchmark row count collection
     #[sinex_bench]
-    async fn bench_get_row_counts(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_get_row_counts(ctx: &BenchContext) -> anyhow::Result<()> {
         // Setup: Insert varied amounts of data
         reset_database(ctx.pool()).await?;
 
@@ -640,14 +640,14 @@ mod benches {
 
     /// Benchmark database state verification
     #[sinex_bench]
-    async fn bench_verify_clean_state(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_verify_clean_state(ctx: &BenchContext) -> anyhow::Result<()> {
         verify_clean_state(ctx.pool()).await?;
         Ok(())
     }
 
     /// Benchmark applying test optimizations
     #[sinex_bench]
-    async fn bench_apply_optimizations(ctx: &BenchContext) -> anyhow::Result<()> {
+    fn bench_apply_optimizations(ctx: &BenchContext) -> anyhow::Result<()> {
         apply_test_optimizations(ctx.pool()).await?;
         Ok(())
     }

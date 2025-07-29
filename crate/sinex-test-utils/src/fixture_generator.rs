@@ -496,7 +496,7 @@ mod benches {
     use crate::sinex_bench;
 
     #[sinex_bench]
-    async fn bench_generate_small_dataset() -> anyhow::Result<()> {
+    fn bench_generate_small_dataset() -> anyhow::Result<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
         divan::black_box(events);
@@ -504,7 +504,7 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_generate_sql() -> anyhow::Result<()> {
+    fn bench_generate_sql() -> anyhow::Result<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
         let sql = gen.generate_sql(&events);
