@@ -158,7 +158,7 @@ pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
-    last_processed_id: Option<String>,
+    last_processed_id: Option<Ulid>,
     processed_count: i64,
     state_data: Option<JsonValue>,
     checkpoint_version: i32,
@@ -193,8 +193,8 @@ impl TestCheckpointBuilder {
     }
 
     /// Set the last processed ID
-    pub fn with_last_processed(mut self, id: &str) -> Self {
-        self.last_processed_id = Some(id.to_string());
+    pub fn with_last_processed(mut self, id: Ulid) -> Self {
+        self.last_processed_id = Some(id);
         self
     }
 

@@ -432,7 +432,7 @@ async fn create_user_session_fixture(
         let checkpoint_id = Ulid::new();
         TestCheckpointBuilder::new(&format!("test_processor_{}", user_id))
             .with_processed_count((event_count / checkpoint_interval * checkpoint_interval) as i64)
-            .with_last_processed(&event_ids[checkpoint_interval - 1].to_string())
+            .with_last_processed(event_ids[checkpoint_interval - 1])
             .with_state(json!({
                 "user_id": user_id,
                 "session_start": session_start,
@@ -485,7 +485,7 @@ async fn create_populated_checkpoints_fixture(
         let checkpoint_id = Ulid::new();
         TestCheckpointBuilder::new(name)
             .with_processed_count(processed_count)
-            .with_last_processed(&Ulid::new().to_string())
+            .with_last_processed(Ulid::new())
             .with_state(json!({
                 "processor_name": name,
                 "version": "1.0.0",
