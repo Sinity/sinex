@@ -5,7 +5,7 @@
 
 use sinex_events::constants::event_types;
 use sinex_macros::{auto_db_metrics, auto_event_metrics, auto_metrics, auto_resource_metrics};
-use sinex_metrics_lib::{export_json, export_prometheus, init_metrics};
+use sinex_telemetry::{export_json, export_prometheus, init_metrics};
 use tokio::time::{sleep, Duration};
 
 // Example of automatic function metrics

@@ -1,12 +1,9 @@
 [package]
-name = "sinex-metrics-lib"
+name = "sinex-telemetry"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
-[[bin]]
-name = "sinex-metrics"
-path = "src/main.rs"
 
 [dependencies]
 # Core async and concurrency
@@ -54,8 +51,11 @@ sinex-ulid = { path = "../sinex-ulid" }
 sinex-error = { path = "../sinex-error" }
 sinex-macros = { path = "../sinex-macros" }
 sinex-db = { path = "../sinex-db" }
+sinex-events = { path = "../sinex-events" }
 
 [dev-dependencies]
 tokio-test = "0.4"
 tempfile = { workspace = true }
-sinex-events = { path = "../sinex-events" }
+rand = "0.8"
+sinex-test-utils = { path = "../sinex-test-utils", features = ["bench"] }
+

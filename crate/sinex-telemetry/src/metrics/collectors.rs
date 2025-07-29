@@ -1,7 +1,67 @@
-//! Metrics Collection Infrastructure
+//! # Metrics Collection Infrastructure
 //!
 //! This module provides the core infrastructure for collecting and managing metrics
 //! across the Sinex system.
+//!
+//! ## Overview
+//!
+//! The collectors module implements a flexible framework for gathering metrics from
+//! various sources including system resources, process statistics, and custom metrics.
+//! It supports both pull-based collection (where collectors are queried) and push-based
+//! collection (where metrics are actively reported).
+//!
+//! ## Components
+//!
+//! - [`MetricsCollector`] - Trait for implementing custom metric collectors
+//! - [`SystemMetricsCollector`] - Collects system-wide metrics (CPU, memory, disk, network)
+//! - [`ProcessMetricsCollector`] - Collects process-specific metrics
+//! - [`BackgroundCollector`] - Runs collectors periodically in the background
+//! - [`MetricEntry`] - Represents a single metric observation
+//! - [`MetricType`] and [`MetricValue`] - Type system for different metric kinds
+//!
+//! ## Usage
+//!
+//! ```rust,ignore
+//! use sinex_telemetry::metrics::collectors::{
+//!     SystemMetricsCollector, register_collector, start_background_collectors
+//! };
+//! use std::time::Duration;
+//!
+//! // Register a system metrics collector
+//! let collector = Box::new(SystemMetricsCollector::new(
+//!     "system".to_string(),
+//!     Duration::from_secs(30),
+//! ));
+//! register_collector(collector);
+//!
+//! // Start background collection
+//! start_background_collectors().await;
+//! ```
+//!
+//! ## Custom Collectors
+//!
+//! Implement the `MetricsCollector` trait to create custom collectors:
+//!
+//! ```rust,ignore
+//! struct MyCollector;
+//!
+//! impl MetricsCollector for MyCollector {
+//!     fn collect(&self) -> Vec<MetricEntry> {
+//!         vec![MetricEntry {
+//!             name: "my_metric".to_string(),
+//!             help: "My custom metric".to_string(),
+//!             metric_type: MetricType::Gauge,
+//!             value: MetricValue::Gauge(42.0),
+//!             labels: HashMap::new(),
+//!             timestamp: current_timestamp(),
+//!         }]
+//!     }
+//!     
+//!     fn name(&self) -> &str {
+//!         "my_collector"
+//!     }
+//! }
+//! ```
 
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
@@ -413,28 +473,87 @@ fn get_process_file_descriptors(pid: u32) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_system_metrics_collector() {
+    #[sinex_test]
+    async fn test_system_metrics_collector(_ctx: TestContext) -> anyhow::Result<()> {
         let collector =
             SystemMetricsCollector::new("test_system".to_string(), Duration::from_secs(10));
 
         let metrics = collector.collect();
         assert!(!metrics.is_empty());
         assert_eq!(collector.name(), "test_system");
+
+        // Verify all expected metric types
+        let metric_names: Vec<String> = metrics.iter().map(|m| m.name.clone()).collect();
+        assert!(metric_names.contains(&"sinex_system_memory_usage_bytes".to_string()));
+        assert!(metric_names.contains(&"sinex_system_memory_available_bytes".to_string()));
+        assert!(metric_names.contains(&"sinex_system_cpu_usage_percent".to_string()));
+        assert!(metric_names.contains(&"sinex_system_load_average_1m".to_string()));
+        assert!(metric_names.contains(&"sinex_system_disk_usage_bytes".to_string()));
+        assert!(metric_names.contains(&"sinex_system_disk_io_read_bytes_total".to_string()));
+        assert!(metric_names.contains(&"sinex_system_disk_io_write_bytes_total".to_string()));
+        assert!(metric_names.contains(&"sinex_system_network_bytes_received_total".to_string()));
+        assert!(metric_names.contains(&"sinex_system_network_bytes_sent_total".to_string()));
+
+        // Verify metric types
+        for metric in metrics {
+            match metric.name.as_str() {
+                name if name.ends_with("_total") => {
+                    assert_eq!(metric.metric_type, MetricType::Counter);
+                    assert!(matches!(metric.value, MetricValue::Counter(_)));
+                }
+                _ => {
+                    assert_eq!(metric.metric_type, MetricType::Gauge);
+                    assert!(matches!(metric.value, MetricValue::Gauge(_)));
+                }
+            }
+        }
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_process_metrics_collector() {
+    #[sinex_test]
+    async fn test_process_metrics_collector(_ctx: TestContext) -> anyhow::Result<()> {
         let collector = ProcessMetricsCollector::new("test_process".to_string());
 
         let metrics = collector.collect();
         assert!(!metrics.is_empty());
         assert_eq!(collector.name(), "test_process");
+
+        // Verify process-specific metrics
+        assert_eq!(metrics.len(), 3);
+
+        for metric in &metrics {
+            // All process metrics should have pid label
+            assert!(metric.labels.contains_key("pid"));
+            assert_eq!(metric.labels["pid"], std::process::id().to_string());
+
+            match metric.name.as_str() {
+                "sinex_process_memory_usage_bytes" => {
+                    assert_eq!(metric.metric_type, MetricType::Gauge);
+                    assert!(matches!(metric.value, MetricValue::Gauge(_)));
+                }
+                "sinex_process_cpu_usage_percent" => {
+                    assert_eq!(metric.metric_type, MetricType::Gauge);
+                    assert!(matches!(metric.value, MetricValue::Gauge(_)));
+                }
+                "sinex_process_file_descriptors" => {
+                    assert_eq!(metric.metric_type, MetricType::Gauge);
+                    assert!(matches!(metric.value, MetricValue::Gauge(_)));
+                }
+                _ => panic!("Unexpected metric: {}", metric.name),
+            }
+        }
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metrics_storage() {
+    #[sinex_test]
+    async fn test_metrics_storage(_ctx: TestContext) -> anyhow::Result<()> {
+        // Clear any existing metrics
+        METRICS_STORAGE.write().clear();
+
         let metric = MetricEntry {
             name: "test_metric".to_string(),
             help: "Test metric".to_string(),
@@ -444,15 +563,120 @@ mod tests {
             timestamp: current_timestamp(),
         };
 
-        store_metric_entry(metric);
+        store_metric_entry(metric.clone());
 
         let stored_metrics = get_all_stored_metrics();
         assert_eq!(stored_metrics.len(), 1);
         assert_eq!(stored_metrics[0].name, "test_metric");
+        assert_eq!(stored_metrics[0].help, "Test metric");
+
+        // Test with labels
+        let labeled_metric = MetricEntry {
+            name: "test_metric".to_string(),
+            help: "Test metric with labels".to_string(),
+            metric_type: MetricType::Counter,
+            value: MetricValue::Counter(100.0),
+            labels: HashMap::from([
+                ("method".to_string(), "GET".to_string()),
+                ("status".to_string(), "200".to_string()),
+            ]),
+            timestamp: current_timestamp(),
+        };
+
+        store_metric_entry(labeled_metric);
+
+        let stored_metrics = get_all_stored_metrics();
+        assert_eq!(stored_metrics.len(), 2); // Original + labeled
+
+        // Clear storage
+        METRICS_STORAGE.write().clear();
+
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_background_collector() {
+    #[sinex_test]
+    async fn test_metric_value_types(_ctx: TestContext) -> anyhow::Result<()> {
+        // Test Summary value
+        let summary = SummaryValue {
+            count: 100,
+            sum: 5000.0,
+            quantiles: HashMap::from([
+                ("0.5".to_string(), 45.0),
+                ("0.9".to_string(), 85.0),
+                ("0.99".to_string(), 98.0),
+            ]),
+        };
+
+        let summary_metric = MetricEntry {
+            name: "test_summary".to_string(),
+            help: "Test summary metric".to_string(),
+            metric_type: MetricType::Summary,
+            value: MetricValue::Summary(summary.clone()),
+            labels: HashMap::new(),
+            timestamp: current_timestamp(),
+        };
+
+        store_metric_entry(summary_metric);
+
+        let stored = get_all_stored_metrics();
+        if let MetricValue::Summary(stored_summary) = &stored[0].value {
+            assert_eq!(stored_summary.count, 100);
+            assert_eq!(stored_summary.sum, 5000.0);
+            assert_eq!(stored_summary.quantiles.get("0.5"), Some(&45.0));
+        } else {
+            panic!("Expected Summary metric value");
+        }
+
+        // Clear storage
+        METRICS_STORAGE.write().clear();
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_global_collectors_registry(_ctx: TestContext) -> anyhow::Result<()> {
+        // Clear any existing collectors
+        METRICS_COLLECTORS.write().clear();
+
+        let collector1 = Box::new(SystemMetricsCollector::new(
+            "sys1".to_string(),
+            Duration::from_secs(1),
+        ));
+        let collector2 = Box::new(ProcessMetricsCollector::new("proc1".to_string()));
+
+        register_collector(collector1);
+        register_collector(collector2);
+
+        let all_metrics = collect_all_metrics();
+
+        // Should have metrics from both collectors
+        let sources: Vec<String> = all_metrics
+            .iter()
+            .filter_map(|m| {
+                if m.name.starts_with("sinex_system") {
+                    Some("system".to_string())
+                } else if m.name.starts_with("sinex_process") {
+                    Some("process".to_string())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert!(sources.contains(&"system".to_string()));
+        assert!(sources.contains(&"process".to_string()));
+
+        // Clear collectors
+        METRICS_COLLECTORS.write().clear();
+
+        Ok(())
+    }
+
+    #[sinex_test(timeout = 1)]
+    async fn test_background_collector(ctx: TestContext) -> anyhow::Result<()> {
+        // Clear storage
+        METRICS_STORAGE.write().clear();
+
         let collector =
             SystemMetricsCollector::new("test_system".to_string(), Duration::from_secs(1));
 
@@ -464,11 +688,164 @@ mod tests {
             background_collector.run().await;
         });
 
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // Wait for at least one collection cycle
+        ctx.timing().wait(Duration::from_millis(150)).await?;
+
         handle.abort();
 
         // Check that metrics were collected
         let stored_metrics = get_all_stored_metrics();
         assert!(!stored_metrics.is_empty());
+
+        // Verify metrics were actually stored with proper keys
+        let storage = METRICS_STORAGE.read();
+        for (key, metric) in storage.iter() {
+            assert!(key.starts_with(&metric.name));
+
+            // If metric has labels, key should contain them
+            if !metric.labels.is_empty() {
+                for (label_key, label_value) in &metric.labels {
+                    assert!(key.contains(&format!("{}={}", label_key, label_value)));
+                }
+            }
+        }
+
+        // Clear storage
+        drop(storage);
+        METRICS_STORAGE.write().clear();
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_concurrent_metric_storage(ctx: TestContext) -> anyhow::Result<()> {
+        use tokio::task::JoinSet;
+
+        // Clear storage
+        METRICS_STORAGE.write().clear();
+
+        let mut tasks = JoinSet::new();
+
+        // Spawn multiple tasks writing metrics concurrently
+        for i in 0..10 {
+            tasks.spawn(async move {
+                for j in 0..10 {
+                    let metric = MetricEntry {
+                        name: format!("concurrent_metric_{}", i),
+                        help: "Concurrent test metric".to_string(),
+                        metric_type: MetricType::Counter,
+                        value: MetricValue::Counter((i * 10 + j) as f64),
+                        labels: HashMap::from([("worker".to_string(), i.to_string())]),
+                        timestamp: current_timestamp(),
+                    };
+                    store_metric_entry(metric);
+                    tokio::time::sleep(Duration::from_micros(100)).await;
+                }
+            });
+        }
+
+        // Wait for all tasks
+        while let Some(result) = tasks.join_next().await {
+            result?;
+        }
+
+        // Verify all metrics were stored correctly
+        let stored = get_all_stored_metrics();
+        assert_eq!(stored.len(), 10); // 10 unique metric names (latest value for each)
+
+        // Clear storage
+        METRICS_STORAGE.write().clear();
+
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "bench"))]
+mod benches {
+    use super::*;
+    use sinex_test_utils::prelude::*;
+
+    #[sinex_bench]
+    async fn bench_system_metrics_collection(ctx: &mut BenchContext) -> anyhow::Result<()> {
+        let collector =
+            SystemMetricsCollector::new("bench_system".to_string(), Duration::from_secs(1));
+
+        ctx.bench("system_metrics_collection", || {
+            collector.collect();
+        });
+
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_process_metrics_collection(ctx: &mut BenchContext) -> anyhow::Result<()> {
+        let collector = ProcessMetricsCollector::new("bench_process".to_string());
+
+        ctx.bench("process_metrics_collection", || {
+            collector.collect();
+        });
+
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_metric_storage(ctx: &mut BenchContext) -> anyhow::Result<()> {
+        let metric = MetricEntry {
+            name: "bench_metric".to_string(),
+            help: "Benchmark metric".to_string(),
+            metric_type: MetricType::Counter,
+            value: MetricValue::Counter(42.0),
+            labels: HashMap::from([
+                ("method".to_string(), "GET".to_string()),
+                ("endpoint".to_string(), "/api/v1/events".to_string()),
+            ]),
+            timestamp: current_timestamp(),
+        };
+
+        ctx.bench("metric_storage", || {
+            store_metric_entry(metric.clone());
+        });
+
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_collect_all_metrics(ctx: &mut BenchContext) -> anyhow::Result<()> {
+        // Register some collectors
+        METRICS_COLLECTORS.write().clear();
+        register_collector(Box::new(SystemMetricsCollector::new(
+            "bench1".to_string(),
+            Duration::from_secs(1),
+        )));
+        register_collector(Box::new(ProcessMetricsCollector::new("bench2".to_string())));
+
+        ctx.bench("collect_all_metrics", || {
+            collect_all_metrics();
+        });
+
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_get_all_stored_metrics(ctx: &mut BenchContext) -> anyhow::Result<()> {
+        // Pre-populate storage
+        METRICS_STORAGE.write().clear();
+        for i in 0..100 {
+            let metric = MetricEntry {
+                name: format!("bench_stored_{}", i),
+                help: "Benchmark stored metric".to_string(),
+                metric_type: MetricType::Gauge,
+                value: MetricValue::Gauge(i as f64),
+                labels: HashMap::new(),
+                timestamp: current_timestamp(),
+            };
+            store_metric_entry(metric);
+        }
+
+        ctx.bench("get_all_stored_metrics", || {
+            get_all_stored_metrics();
+        });
+
+        Ok(())
     }
 }
