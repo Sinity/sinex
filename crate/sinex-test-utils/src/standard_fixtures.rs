@@ -196,20 +196,19 @@ mod benches {
     use crate::bench::*;
 
     // Benchmark the standard fixtures themselves
-    bench_with_db!(bench_time_series_small, |ctx: &BenchContext| async move {
+    #[sinex_bench]
+    async fn bench_time_series_small(ctx: &BenchContext) -> anyhow::Result<()> {
         ctx.ensure_fixture(&TIME_SERIES_FIXTURE, DatasetSize::Small)
             .await?;
         // Just measure fixture load time
         Ok(())
-    });
+    }
 
-    bench_with_db!(
-        bench_query_fixture_medium,
-        |ctx: &BenchContext| async move {
-            ctx.ensure_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
-                .await?;
-            // Measure fixture generation/load
-            Ok(())
-        }
-    );
+    #[sinex_bench]
+    async fn bench_query_fixture_medium(ctx: &BenchContext) -> anyhow::Result<()> {
+        ctx.ensure_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
+            .await?;
+        // Measure fixture generation/load
+        Ok(())
+    }
 }

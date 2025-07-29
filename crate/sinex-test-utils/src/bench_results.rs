@@ -456,6 +456,7 @@ fn read_divan_results() -> Result<Vec<BenchmarkResult>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     fn test_benchmark_comparison() -> Result<()> {

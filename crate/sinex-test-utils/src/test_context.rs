@@ -2900,7 +2900,7 @@ mod benches {
 
         // Measure the count query
         use sinex_db::queries::EventQueries;
-        let count = EventQueries::new(ctx.pool()).count().await?;
+        let (count,) = EventQueries::count_all().fetch_one::<(i64,)>(ctx.pool()).await?;
         black_box(count);
         Ok(())
     }
@@ -2911,7 +2911,7 @@ mod benches {
             .await?;
 
         use sinex_db::queries::EventQueries;
-        let events = EventQueries::new(ctx.pool()).limit(10).fetch().await?;
+        let events = EventQueries::get_recent(Some(10), None).fetch_all::<sinex_db::events::EventRecord>(ctx.pool()).await?;
         black_box(events);
         Ok(())
     }
@@ -2922,10 +2922,8 @@ mod benches {
             .await?;
 
         use sinex_db::queries::EventQueries;
-        let events = EventQueries::new(ctx.pool())
-            .by_source("filesystem")
-            .by_type("file.created")
-            .fetch()
+        let events = EventQueries::get_by_event_type("file.created".to_string(), Some(100), None)
+            .fetch_all::<sinex_db::events::EventRecord>(ctx.pool())
             .await?;
         black_box(events);
         Ok(())

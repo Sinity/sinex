@@ -778,7 +778,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::SinexError;
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]

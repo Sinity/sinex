@@ -212,7 +212,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
 
     // Example function with auto-metrics
-    #[sinex_telemetry::auto_metrics]
+    #[sinex_macros::auto_metrics]
     async fn process_data(data: &str) -> Result<String, std::io::Error> {
         // Simulate processing
         tokio::time::sleep(Duration::from_millis(15)).await;

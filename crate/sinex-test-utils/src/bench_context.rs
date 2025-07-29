@@ -288,6 +288,7 @@ impl DualMeasurement {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prelude::DatasetSize;
 
     #[tokio::test]
     async fn test_dataset_size() {

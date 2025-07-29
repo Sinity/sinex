@@ -1135,7 +1135,7 @@ mod benches {
             None,
             None,
         )
-        .fetch_one::<RawEvent>(ctx.pool())
+        .fetch_one::<sinex_db::events::EventRecord>(ctx.pool())
         .await?;
 
         Ok(())
@@ -1145,6 +1145,7 @@ mod benches {
     #[sinex_bench(args = [10, 100, 1000])]
     async fn bench_batch_insert(ctx: &BenchContext, count: usize) -> anyhow::Result<()> {
         use sinex_db::queries::EventQueries;
+        use crate::prelude::DatasetSize;
 
         // Insert events using query builders
         for i in 0..count {
@@ -1206,8 +1207,14 @@ mod benches {
 
         // TODO: Replace with EventQueries::group_by_source() once implemented
         // Group by source with counts
-        let results: Vec<(String, i64)> = sqlx::query_as!(
-            (String, i64),
+        #[derive(sqlx::FromRow)]
+        struct SourceCount {
+            source: String,
+            count: i64,
+        }
+        
+        let results: Vec<SourceCount> = sqlx::query_as!(
+            SourceCount,
             r#"SELECT source, COUNT(*) as count 
                FROM core.events 
                GROUP BY source 
@@ -1248,9 +1255,15 @@ mod benches {
         ctx.query_bench(DatasetSize::Small).await?;
 
         // Query by JSON field
-        let results: Vec<(Ulid, serde_json::Value)> = sqlx::query_as!(
-            (Ulid, serde_json::Value),
-            r#"SELECT id::uuid as "id: _", payload 
+        #[derive(sqlx::FromRow)]
+        struct EventPayload {
+            id: sqlx::types::Uuid,
+            payload: serde_json::Value,
+        }
+        
+        let results: Vec<EventPayload> = sqlx::query_as!(
+            EventPayload,
+            r#"SELECT event_id::uuid as "id!", payload 
                FROM core.events 
                WHERE payload->>'type' = 'measurement' 
                LIMIT 50"#

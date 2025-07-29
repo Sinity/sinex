@@ -588,9 +588,10 @@ mod benches {
     // Removed bench_load_fixture as it tests non-existent fixtures
 
     /// Benchmark cache clearing operation
-    bench_with_db!(bench_clear_pg_cache, |ctx: &BenchContext| async move {
+    #[sinex_bench]
+    async fn bench_clear_pg_cache(ctx: &BenchContext) -> anyhow::Result<()> {
         clear_pg_cache(ctx.pool()).await
-    });
+    }
 
     /// Benchmark row count collection
     #[sinex_bench]
