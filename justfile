@@ -211,20 +211,20 @@ sqlx-check:
 # 🔄 Reset test database (for integration tests)
 db-reset:
     @echo "🔄 Resetting test database..."
-    dropdb --if-exists sinex_test
-    createdb sinex_test
-    DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql" sqlx migrate run
+    dropdb --if-exists --force sinex_dev
+    createdb sinex_dev
+    DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" sqlx migrate run
 
 # 🧪 Setup test database (create if not exists)
 db-setup:
     @echo "🧪 Setting up test database..."
-    createdb sinex_test 2>/dev/null || true
-    DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql" sqlx migrate run
+    createdb sinex_dev 2>/dev/null || true
+    DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" sqlx migrate run
 
 # 🧹 Clean test database
 db-clean:
     @echo "🧹 Cleaning test database..."
-    dropdb --if-exists sinex_test
+    dropdb --if-exists --force sinex_dev
 
 # === Schema Management ===
 
@@ -338,20 +338,11 @@ release:
 
 # 📊 Show recent compilation errors
 errors:
-    @just ai-errors
+    @cargo check --workspace --all-targets 2>&1 | grep -E "^error\[E[0-9]+\]:|^error:" -A 3 | head -20 || echo "✅ No errors"
 
 # 🔍 Show compilation warnings
 warnings:
-    @echo "🔍 Showing compilation warnings..."
-    @if [ -f "$HOME/.sinex-compile-logs/last-result.json" ]; then \
-        log=$(jq -r '.log' "$HOME/.sinex-compile-logs/last-result.json" 2>/dev/null); \
-        if [ -n "$log" ] && [ -f "$log" ]; then \
-            echo "Warnings: $(jq -r '.warnings // 0' "$HOME/.sinex-compile-logs/last-result.json")"; \
-            jq -r 'select(.message.level == "warning") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' "$log" 2>/dev/null | head -10 || echo "No warnings"; \
-        fi; \
-    else \
-        echo "No compilation results. Run 'just compile-start' first"; \
-    fi
+    @cargo check --workspace --all-targets 2>&1 | grep "^warning:" -A 2 | head -20 || echo "✅ No warnings"
 
 
 
@@ -421,11 +412,6 @@ update:
     @echo "📦 Updating dependencies..."
     cargo update
 
-# 🚀 Show sccache statistics
-cache-stats:
-    @echo "🚀 sccache statistics:"
-    @sccache --show-stats || echo "sccache not available"
-
 
 # === Common Workflows ===
 
@@ -453,8 +439,6 @@ pr-check:
     just test-unit
     just test-integration
     @echo "✅ PR validation passed! Safe to push."
-
-
 
 
 # 🧹 Clean test artifacts and reset environment
@@ -507,22 +491,18 @@ watchc CRATE:
 watchs:
     @./scripts/smart-watch.sh
 
-# 🤖 AI Agent: Get compilation status as JSON
-ai-status:
-    @cargo check --workspace --all-targets --message-format json 2>&1 | jq -s '{status: "completed", errors: [.[] | select(.message.level == "error")], warnings: [.[] | select(.message.level == "warning")]}'
+# 🤖 Get compilation status as JSON (for AI agents)
+status-json:
+    @cargo check --workspace --all-targets --message-format json 2>&1 | jq -s '{status: "completed", errors: [.[] | select(.reason == "compiler-message" and .message.level == "error")], warnings: [.[] | select(.reason == "compiler-message" and .message.level == "warning")]}'
 
-# 🤖 AI Agent: Get errors and warnings as JSON
-ai-errors-json:
+# 🤖 Get errors and warnings as JSON (for AI agents)
+errors-json:
     @cargo check --workspace --all-targets --message-format json 2>&1 | \
-        jq -s '{errors: [.[] | select(.message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}], warnings: [.[] | select(.message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}]}'
-
-# 🔍 Show compilation errors from last build (human readable)
-ai-errors:
-    @cargo check --workspace --all-targets --message-format json 2>&1 | \
-        jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' | head -10 || echo "✅ No errors"
+        jq -s '{errors: [.[] | select(.reason == "compiler-message" and .message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}], warnings: [.[] | select(.reason == "compiler-message" and .message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}]}'
 
 # 🔍 Check and show errors immediately
-ce: qc ai-errors
+ce: qc errors
+
 
 
 
@@ -565,13 +545,6 @@ list-tests:
 
 
 # === Environment Management ===
-
-# 🧹 Clean sccache
-cache-clean:
-    @echo "🧹 Cleaning sccache..."
-    @sccache --stop-server 2>/dev/null || true
-    @rm -rf ~/.cache/sccache
-    @echo "✅ sccache cleaned"
 
 # === Aliases ===
 alias t := test
