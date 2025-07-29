@@ -12,135 +12,15 @@ use sinex_db;
 use sinex_events::EventFactory;
 use sinex_ulid::Ulid;
 
-// Re-export everything from sinex-events event builders
-pub use sinex_events::event_builders::*;
+// Re-export only necessary production builders from sinex-events
+// These are used by tests that need to create events directly
+pub(crate) use sinex_events::event_builders::*;
 
 // Additional type aliases for test compatibility
-pub type HyprlandEventType = WindowManagerEventType;
-
-/// Fluent builder for test events
-#[derive(Debug, Clone)]
-pub struct TestEventBuilder {
-    source: String,
-    event_type: String,
-    host: Option<String>,
-    payload: JsonValue,
-    ts_orig: Option<DateTime<Utc>>,
-    ingestor_version: Option<String>,
-    payload_schema_id: Option<Ulid>,
-    source_event_ids: Option<Vec<Ulid>>,
-}
-
-impl TestEventBuilder {
-    /// Create a new test event builder
-    pub fn new(source: &str, event_type: &str) -> Self {
-        Self {
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-            host: None,
-            payload: json!({}),
-            ts_orig: None,
-            ingestor_version: None,
-            payload_schema_id: None,
-            source_event_ids: None,
-        }
-    }
-
-    /// Set the payload
-    pub fn with_payload(mut self, payload: JsonValue) -> Self {
-        self.payload = payload;
-        self
-    }
-
-    /// Add a field to the payload
-    pub fn with_field(mut self, key: &str, value: JsonValue) -> Self {
-        if let Some(obj) = self.payload.as_object_mut() {
-            obj.insert(key.to_string(), value);
-        }
-        self
-    }
-
-    /// Set the original timestamp
-    pub fn with_timestamp(mut self, ts: DateTime<Utc>) -> Self {
-        self.ts_orig = Some(ts);
-        self
-    }
-
-    /// Set the host
-    pub fn with_host(mut self, host: &str) -> Self {
-        self.host = Some(host.to_string());
-        self
-    }
-
-    /// Set the ingestor version
-    pub fn with_version(mut self, version: &str) -> Self {
-        self.ingestor_version = Some(version.to_string());
-        self
-    }
-
-    /// Set the payload schema ID
-    pub fn with_schema(mut self, schema_id: Ulid) -> Self {
-        self.payload_schema_id = Some(schema_id);
-        self
-    }
-
-    /// Set source event IDs
-    pub fn with_source_events(mut self, ids: Vec<Ulid>) -> Self {
-        self.source_event_ids = Some(ids);
-        self
-    }
-
-    /// Build the event without inserting
-    pub fn build(self) -> RawEvent {
-        let mut event =
-            EventFactory::new(&self.source).create_event(&self.event_type, self.payload);
-
-        if let Some(host) = self.host {
-            event.host = host;
-        }
-        if let Some(ts) = self.ts_orig {
-            event.ts_orig = Some(ts);
-        }
-        if let Some(version) = self.ingestor_version {
-            event.ingestor_version = Some(version);
-        }
-        if let Some(schema_id) = self.payload_schema_id {
-            event.payload_schema_id = Some(schema_id);
-        }
-        if let Some(ids) = self.source_event_ids {
-            event.source_event_ids = Some(ids);
-        }
-
-        event
-    }
-
-    /// Insert the event into the database
-    pub async fn insert(self, pool: &DbPool) -> TestResult<RawEvent> {
-        let host = self
-            .host
-            .clone()
-            .unwrap_or_else(|| gethostname::gethostname().to_string_lossy().to_string());
-
-        // Use production EventQueries directly instead of intermediate TestQueries
-        use sinex_db::queries::EventQueries;
-        EventQueries::insert_event(
-            self.source,
-            self.event_type,
-            host,
-            self.payload,
-            self.ts_orig,
-            self.ingestor_version,
-            self.payload_schema_id,
-            self.source_event_ids,
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(Into::into)
-    }
-}
+pub(crate) type HyprlandEventType = WindowManagerEventType;
 
 /// Generic event builder that can create any type of event
-pub struct GenericEventBuilder {
+pub(crate) struct GenericEventBuilder {
     factory: EventFactory,
     event_type: String,
     payload: Option<serde_json::Value>,
@@ -212,7 +92,7 @@ impl GenericEventBuilder {
 
     pub fn heartbeat(self) -> Self {
         let mut new_builder = Self {
-            event_type: "automaton.heartbeat".to_string(),
+            event_type: "processor.heartbeat".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
@@ -274,7 +154,7 @@ impl GenericEventBuilder {
 
 /// Builder for checkpoint test data
 #[derive(Debug, Clone)]
-pub struct TestCheckpointBuilder {
+pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
@@ -343,7 +223,7 @@ impl TestCheckpointBuilder {
     }
 
     /// Insert the checkpoint
-    pub async fn insert(self, pool: &DbPool) -> TestResult<()> {
+    pub async fn insert(self, pool: &DbPool) -> Result<()> {
         use sinex_db::queries::CheckpointQueries;
 
         let group = self
@@ -376,9 +256,10 @@ impl TestCheckpointBuilder {
 
 /// Builder for test scenarios with multiple events
 #[derive(Debug)]
-pub struct TestScenarioBuilder {
-    events: Vec<TestEventBuilder>,
+pub(crate) struct TestScenarioBuilder {
+    events: Vec<RawEvent>,
     checkpoints: Vec<TestCheckpointBuilder>,
+    pool: Option<DbPool>,
 }
 
 impl TestScenarioBuilder {
@@ -387,21 +268,27 @@ impl TestScenarioBuilder {
         Self {
             events: Vec::new(),
             checkpoints: Vec::new(),
+            pool: None,
         }
     }
 
     /// Add an event to the scenario
-    pub fn with_event(mut self, event: TestEventBuilder) -> Self {
+    pub fn with_event(mut self, event: RawEvent) -> Self {
         self.events.push(event);
         self
     }
 
     /// Add multiple events from the same source
     pub fn with_events_from_source(mut self, source: &str, event_type: &str, count: usize) -> Self {
+        let factory = EventFactory::new(source);
         for i in 0..count {
-            let event = TestEventBuilder::new(source, event_type)
-                .with_field("index", json!(i))
-                .with_field("batch", json!(true));
+            let event = factory.create_event(
+                event_type,
+                json!({
+                    "index": i,
+                    "batch": true
+                }),
+            );
             self.events.push(event);
         }
         self
@@ -414,13 +301,13 @@ impl TestScenarioBuilder {
     }
 
     /// Execute the scenario
-    pub async fn execute(self, pool: &DbPool) -> TestResult<ScenarioResult> {
+    pub async fn execute(self, pool: &DbPool) -> Result<ScenarioResult> {
         let mut event_ids = Vec::new();
 
         // Insert all events
-        for event_builder in self.events {
-            let event = event_builder.insert(pool).await?;
-            event_ids.push(event.id);
+        for event in self.events {
+            let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
+            event_ids.push(inserted.id);
         }
 
         // Insert all checkpoints
@@ -438,13 +325,13 @@ impl TestScenarioBuilder {
 
 /// Result of executing a test scenario
 #[derive(Debug)]
-pub struct ScenarioResult {
+pub(crate) struct ScenarioResult {
     pub event_ids: Vec<Ulid>,
     pub event_count: usize,
 }
 
 /// Builder for batch event operations
-pub struct BatchEventBuilder {
+pub(crate) struct BatchEventBuilder {
     base_source: String,
     base_event_type: String,
     count: usize,
@@ -489,36 +376,38 @@ impl BatchEventBuilder {
 
     /// Build all events without inserting
     pub fn build(self) -> Vec<RawEvent> {
+        let factory = EventFactory::new(&self.base_source);
         (0..self.count)
             .map(|i| {
-                let mut builder = TestEventBuilder::new(&self.base_source, &self.base_event_type)
-                    .with_payload((self.payload_generator)(i));
+                let mut event =
+                    factory.create_event(&self.base_event_type, (self.payload_generator)(i));
 
                 if let Some(spacing) = self.time_spacing {
                     let event_time = self.start_time + spacing * i as i32;
-                    builder = builder.with_timestamp(event_time);
+                    event.ts_orig = Some(event_time);
                 }
 
-                builder.build()
+                event
             })
             .collect()
     }
 
     /// Insert all events in batch
-    pub async fn insert(self, pool: &DbPool) -> TestResult<Vec<RawEvent>> {
+    pub async fn insert(self, pool: &DbPool) -> Result<Vec<RawEvent>> {
+        let factory = EventFactory::new(&self.base_source);
         let mut results = Vec::new();
 
         for i in 0..self.count {
-            let mut builder = TestEventBuilder::new(&self.base_source, &self.base_event_type)
-                .with_payload((self.payload_generator)(i));
+            let mut event =
+                factory.create_event(&self.base_event_type, (self.payload_generator)(i));
 
             if let Some(spacing) = self.time_spacing {
                 let event_time = self.start_time + spacing * i as i32;
-                builder = builder.with_timestamp(event_time);
+                event.ts_orig = Some(event_time);
             }
 
-            let event = builder.insert(pool).await?;
-            results.push(event);
+            let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
+            results.push(inserted);
         }
 
         Ok(results)
@@ -526,7 +415,7 @@ impl BatchEventBuilder {
 }
 
 /// Generic event builder for test flexibility
-pub struct EventBuilder;
+pub(crate) struct EventBuilder;
 
 impl EventBuilder {
     /// Create a generic event builder with source and type
@@ -563,101 +452,11 @@ impl EventBuilder {
     }
 }
 
-/// Common test event patterns
-pub struct TestEvents;
-
-impl TestEvents {
-    /// Create a filesystem event
-    pub fn filesystem(path: &str) -> TestEventBuilder {
-        TestEventBuilder::new("fs", "file.created")
-            .with_field("path", json!(path))
-            .with_field("size", json!(1024))
-    }
-
-    /// Create a shell command event
-    pub fn shell_command(command: &str) -> TestEventBuilder {
-        TestEventBuilder::new("shell", "command.executed")
-            .with_field("command", json!(command))
-            .with_field("exit_code", json!(0))
-            .with_field("duration_ms", json!(100))
-    }
-
-    /// Create a clipboard event
-    pub fn clipboard(content: &str) -> TestEventBuilder {
-        TestEventBuilder::new("clipboard", "content.changed")
-            .with_field("content", json!(content))
-            .with_field("content_type", json!("text/plain"))
-    }
-
-    /// Create an automaton heartbeat
-    pub fn heartbeat(processor_name: &str) -> TestEventBuilder {
-        TestEventBuilder::new("sinex", "automaton.heartbeat")
-            .with_field("processor_name", json!(processor_name))
-            .with_field("status", json!("running"))
-            .with_field("version", json!("1.0.0"))
-    }
-
-    /// Create a test event with minimal fields
-    pub fn minimal() -> TestEventBuilder {
-        TestEventBuilder::new("test", "test.event").with_field("minimal", json!(true))
-    }
-
-    /// Create a test event with large payload
-    pub fn large_payload(size_kb: usize) -> TestEventBuilder {
-        let data = "x".repeat(size_kb * 1024);
-        TestEventBuilder::new("test", "large.payload")
-            .with_field("data", json!(data))
-            .with_field("size_kb", json!(size_kb))
-    }
-}
-
 // Comprehensive builder tests
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::prelude::*;
-
-    #[sinex_test]
-    async fn test_all_event_builders(_ctx: TestContext) -> TestResult<()> {
-        // Test all event builder types create valid events
-        let test_cases = vec![
-            ("fs", "file.created"),
-            ("fs", "file.modified"),
-            ("fs", "directory.created"),
-            ("shell.kitty", "command.executed"),
-            ("shell.kitty", "session.started"),
-            ("wm.hyprland", "window.focused"),
-            ("wm.hyprland", "workspace.changed"),
-            ("clipboard", "content.copied"),
-            ("system", "boot"),
-            ("sinex", "automaton.heartbeat"),
-        ];
-
-        for (source, event_type) in test_cases {
-            let mut builder = TestEventBuilder::new(source, event_type);
-
-            // Add some fields
-            builder = builder
-                .with_field("test", json!(true))
-                .with_field("index", json!(42))
-                .with_field("data", json!({"nested": "value"}));
-
-            let event = builder.build();
-
-            // Verify all fields
-            assert_eq!(event.source, source);
-            assert_eq!(event.event_type, event_type);
-            assert!(!event.id.to_string().is_empty());
-            assert!(!event.host.is_empty());
-
-            // Verify payload contains all fields
-            assert_eq!(event.payload["test"], json!(true));
-            assert_eq!(event.payload["index"], json!(42));
-            assert_eq!(event.payload["data"], json!({"nested": "value"}));
-        }
-
-        Ok(())
-    }
 
     #[test]
     fn test_batch_builder_ordering() {
@@ -695,7 +494,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_scenario_builder(_ctx: TestContext) -> TestResult<()> {
+    async fn test_scenario_builder(_ctx: TestContext) -> Result<()> {
         // Test scenario builder with multiple sources
         let sources = vec!["source1", "source2", "source3"];
         let counts = vec![3, 5, 2];
@@ -709,7 +508,7 @@ mod tests {
         }
 
         // Build the scenario (without inserting to DB)
-        let events: Vec<_> = scenario.events.into_iter().map(|b| b.build()).collect();
+        let events: Vec<_> = scenario.events;
 
         assert_eq!(events.len(), expected_total);
 
@@ -756,45 +555,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_builder_database_integration(ctx: TestContext) -> TestResult<()> {
-        // Property-based test for database insertion
-        let test_cases = vec![
-            ("fs", "file.created", json!({"path": "/test/file.txt"})),
-            ("shell", "command.executed", json!({"command": "ls -la"})),
-            ("clipboard", "content.copied", json!({"content": "test"})),
-            (
-                "wm.hyprland",
-                "window.focused",
-                json!({"title": "Test Window"}),
-            ),
-            ("system", "boot", json!({"kernel": "6.1.0"})),
-        ];
-
-        for (source, event_type, payload) in test_cases {
-            // Test both builders can insert
-            let event1 = TestEventBuilder::new(source, event_type)
-                .with_payload(payload.clone())
-                .insert(ctx.pool())
-                .await?;
-
-            let event2 = GenericEventBuilder::new(source, event_type)
-                .payload(payload.clone())
-                .build();
-
-            // Verify consistency
-            assert_eq!(event1.source, source);
-            assert_eq!(event1.event_type, event_type);
-            assert_eq!(event1.payload, payload);
-            assert_eq!(event2.source, source);
-            assert_eq!(event2.event_type, event_type);
-            assert_eq!(event2.payload, payload);
-        }
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_checkpoint_builder(ctx: TestContext) -> TestResult<()> {
+    async fn test_checkpoint_builder(ctx: TestContext) -> Result<()> {
         // Test checkpoint insertion with various configurations
         let automata = vec!["analytics", "search", "content", "pkm"];
 
@@ -824,7 +585,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_scenario_execution(ctx: TestContext) -> TestResult<()> {
+    async fn test_scenario_execution(ctx: TestContext) -> Result<()> {
         // Build and execute a complex scenario
         let result = TestScenarioBuilder::new()
             .with_events_from_source("fs", "file.created", 5)
@@ -837,23 +598,24 @@ mod tests {
         assert_eq!(result.event_ids.len(), 8);
 
         // Verify all events exist
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE id = ANY($1)")
-            .bind(
-                &result
-                    .event_ids
-                    .iter()
-                    .map(|id| id.to_uuid())
-                    .collect::<Vec<_>>(),
-            )
-            .fetch_one(ctx.pool())
-            .await?;
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE event_id = ANY($1)")
+                .bind(
+                    &result
+                        .event_ids
+                        .iter()
+                        .map(|id| id.to_uuid())
+                        .collect::<Vec<_>>(),
+                )
+                .fetch_one(ctx.pool())
+                .await?;
 
         assert_eq!(count, 8);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_batch_insertion(ctx: TestContext) -> TestResult<()> {
+    async fn test_batch_insertion(ctx: TestContext) -> Result<()> {
         // Test batch insertion with time spacing
         let start = Utc::now() - chrono::Duration::hours(1);
         let events = BatchEventBuilder::new("monitoring", "metric.recorded", 10)
@@ -877,6 +639,79 @@ mod tests {
                 assert_eq!(ts2 - ts1, chrono::Duration::minutes(5));
             }
         }
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_all_domain_specific_builders(ctx: TestContext) -> Result<()> {
+        // Test all specialized event builders work correctly
+        let fs_event = ctx
+            .event()
+            .filesystem()
+            .path("/test/file.txt")
+            .size(1024)
+            .created()
+            .insert()
+            .await?;
+        assert_eq!(fs_event.source, "fs");
+        assert_eq!(fs_event.event_type, "fs.file.created");
+
+        let term_event = ctx
+            .event()
+            .terminal()
+            .command("ls -la")
+            .working_dir("/home")
+            .exit_code(0)
+            .insert()
+            .await?;
+        assert_eq!(term_event.source, "shell-terminal");
+
+        let clip_event = ctx
+            .event()
+            .clipboard()
+            .content("test text")
+            .copied()
+            .insert()
+            .await?;
+        assert_eq!(clip_event.source, "clipboard");
+        assert_eq!(clip_event.event_type, "clipboard.copy");
+
+        let win_event = ctx
+            .event()
+            .window()
+            .title("Test App")
+            .focused()
+            .insert()
+            .await?;
+        assert_eq!(win_event.source, "window-manager");
+
+        let sys_event = ctx
+            .event()
+            .system()
+            .service("nginx")
+            .started()
+            .insert()
+            .await?;
+        assert_eq!(sys_event.source, "systemd");
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_builder_validation(ctx: TestContext) -> Result<()> {
+        // Empty source/type should fail
+        assert!(ctx.event().source("").type_("test").insert().await.is_err());
+        assert!(ctx.event().source("test").type_("").insert().await.is_err());
+
+        // Test other validation rules
+        assert!(ctx
+            .event()
+            .source("test")
+            .type_("") // Empty type
+            .insert()
+            .await
+            .is_err());
 
         Ok(())
     }

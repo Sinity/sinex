@@ -3,6 +3,10 @@ name = "sinex-test-utils"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+bench = ["dep:divan", "dep:hostname", "dep:num_cpus", "dep:sysinfo", "dep:sha2"]
+
 [dependencies]
 # Core dependencies
 anyhow = "1.0"
@@ -49,11 +53,19 @@ fastrand = "2.0"
 jsonschema = "0.17"
 tokio-stream = { version = "0.1", features = ["net"] }
 
+# Benchmarking dependencies (optional)
+divan = { version = "0.1", optional = true }
+hostname = { version = "0.4", optional = true }
+num_cpus = { version = "1.16", optional = true }
+sysinfo = { version = "0.30", optional = true }
+sha2 = { version = "0.10", optional = true }
+
 [dev-dependencies]
 # For self-testing
-criterion = { version = "0.5", features = ["html_reports"] }
 tokio-test = "0.4"
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 [[bench]]
 name = "test_utils_bench"
 harness = false
+

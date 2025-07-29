@@ -12,6 +12,16 @@ chrono.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 sinex-ulid = { path = "../sinex-ulid" }
+displaydoc = "0.2"
+indexmap = { version = "2.0", features = ["serde"] }
+anyhow.workspace = true
+
+[dev-dependencies]
+criterion = "0.5"
 
 [lints]
 workspace = true
+
+[[bench]]
+name = "error_bench"
+harness = false

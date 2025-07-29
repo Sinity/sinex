@@ -1,116 +1,64 @@
-//! Performance benchmarks for sinex-test-utils
+//! Benchmarks for sinex-test-utils to ensure performance
 //!
-//! Run with: cargo bench --bench test_utils_bench
+//! Run with: cargo bench --package sinex-test-utils
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
 use sinex_test_utils::prelude::*;
-use tokio::runtime::Runtime;
+use std::time::Duration;
 
-fn bench_test_context_creation(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-
-    c.bench_function("test_context_creation", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let ctx = TestContext::with_name("bench").await.unwrap();
-                black_box(ctx);
-            })
-        })
-    });
-}
-
+/// Benchmark event creation performance
 fn bench_event_creation(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let ctx = rt.block_on(TestContext::with_name("bench")).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("event_creation");
+    group.measurement_time(Duration::from_secs(10));
 
-    group.bench_function("simple_event", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let event = ctx.event().source("bench").type_("test").build().unwrap();
-                black_box(event);
-            })
-        })
+    // Benchmark single event creation
+    group.bench_function("single_event", |b| {
+        b.to_async(&runtime).iter(|| async {
+            let ctx = TestContext::new().await.unwrap();
+            black_box(
+                ctx.event()
+                    .source("bench")
+                    .type_("test.event")
+                    .field("index", 1)
+                    .insert()
+                    .await
+                    .unwrap(),
+            );
+        });
     });
 
-    group.bench_function("filesystem_event", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let event = ctx
-                    .event()
-                    .filesystem()
-                    .path("/test/file.txt")
-                    .size(1024)
-                    .created()
-                    .build()
-                    .unwrap();
-                black_box(event);
-            })
-        })
-    });
+    // Benchmark batch event creation
+    for size in [10, 100, 1000].iter() {
+        group.bench_with_input(BenchmarkId::new("batch_events", size), size, |b, &size| {
+            b.to_async(&runtime).iter(|| async {
+                let ctx = TestContext::new().await.unwrap();
+                let batch = ctx.create_event_batch("bench", size);
 
-    group.bench_function("complex_event", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let event = ctx
-                    .event()
-                    .source("complex")
-                    .type_("test")
-                    .field("field1", "value1")
-                    .field("field2", 42)
-                    .field("field3", true)
-                    .field("field4", serde_json::json!({"nested": "object"}))
-                    .build()
-                    .unwrap();
-                black_box(event);
-            })
-        })
-    });
-
-    group.finish();
-}
-
-fn bench_event_insertion(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-
-    let mut group = c.benchmark_group("event_insertion");
-    group.sample_size(50); // Reduce sample size for database operations
-
-    for size in [1, 10, 100].iter() {
-        group.throughput(Throughput::Elements(*size as u64));
-        group.bench_with_input(BenchmarkId::from_parameter(size), size, |b, &size| {
-            b.iter(|| {
-                rt.block_on(async {
-                    let ctx = TestContext::with_name("bench_insert").await.unwrap();
-
-                    for i in 0..size {
-                        ctx.event()
-                            .source("bench")
-                            .type_("test")
-                            .field("index", i)
-                            .insert()
-                            .await
-                            .unwrap();
-                    }
-                })
-            })
+                for builder in batch {
+                    black_box(builder.insert().await.unwrap());
+                }
+            });
         });
     }
 
     group.finish();
 }
 
-fn bench_event_querying(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+/// Benchmark query performance
+fn bench_queries(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
-    // Setup: Insert test data
-    let ctx = rt.block_on(TestContext::with_name("bench_query")).unwrap();
-    rt.block_on(async {
-        for i in 0..100 {
+    // Setup: create test data
+    runtime.block_on(async {
+        let ctx = TestContext::with_name("bench_setup").await.unwrap();
+
+        // Create 1000 events for querying
+        for i in 0..1000 {
             ctx.event()
-                .source(if i % 2 == 0 { "even" } else { "odd" })
-                .type_(format!("type_{}", i % 5))
+                .source(if i % 2 == 0 { "source-a" } else { "source-b" })
+                .type_(if i % 3 == 0 { "type-x" } else { "type-y" })
                 .field("index", i)
                 .insert()
                 .await
@@ -118,144 +66,124 @@ fn bench_event_querying(c: &mut Criterion) {
         }
     });
 
-    let mut group = c.benchmark_group("event_querying");
-    group.sample_size(100);
+    let mut group = c.benchmark_group("queries");
 
-    group.bench_function("query_all", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let events = ctx.events().fetch().await.unwrap();
-                black_box(events);
-            })
-        })
+    // Benchmark different query patterns
+    group.bench_function("count_all", |b| {
+        b.to_async(&runtime).iter(|| async {
+            let ctx = TestContext::with_name("bench_query").await.unwrap();
+            black_box(ctx.events().count().await.unwrap());
+        });
     });
 
-    group.bench_function("query_by_source", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let events = ctx.events().by_source("even").fetch().await.unwrap();
-                black_box(events);
-            })
-        })
+    group.bench_function("fetch_limited", |b| {
+        b.to_async(&runtime).iter(|| async {
+            let ctx = TestContext::with_name("bench_query").await.unwrap();
+            black_box(ctx.events().limit(10).fetch().await.unwrap());
+        });
     });
 
-    group.bench_function("query_with_limit", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let events = ctx.events().limit(10).fetch().await.unwrap();
-                black_box(events);
-            })
-        })
-    });
-
-    group.bench_function("count_query", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let count = ctx.events().count().await.unwrap();
-                black_box(count);
-            })
-        })
+    group.bench_function("filtered_fetch", |b| {
+        b.to_async(&runtime).iter(|| async {
+            let ctx = TestContext::with_name("bench_query").await.unwrap();
+            black_box(
+                ctx.events()
+                    .by_source("source-a")
+                    .by_type("type-x")
+                    .fetch()
+                    .await
+                    .unwrap(),
+            );
+        });
     });
 
     group.finish();
 }
 
+/// Benchmark concurrent operations
+fn bench_concurrent(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    let mut group = c.benchmark_group("concurrent");
+    group.sample_size(10); // Reduce sample size for concurrent tests
+
+    for workers in [2, 4, 8].iter() {
+        group.bench_with_input(
+            BenchmarkId::new("concurrent_tasks", workers),
+            workers,
+            |b, &workers| {
+                b.to_async(&runtime).iter(|| async {
+                    let ctx = TestContext::new().await.unwrap();
+                    black_box(
+                        ctx.run_concurrent(workers, |ctx, i| async move {
+                            ctx.event()
+                                .source("concurrent")
+                                .type_("task")
+                                .field("worker", i)
+                                .insert()
+                                .await
+                        })
+                        .await
+                        .unwrap(),
+                    );
+                });
+            },
+        );
+    }
+
+    group.finish();
+}
+
+/// Benchmark TestContext creation and cleanup
+fn bench_context_lifecycle(c: &mut Criterion) {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+    let mut group = c.benchmark_group("context_lifecycle");
+
+    group.bench_function("context_creation", |b| {
+        b.to_async(&runtime).iter(|| async {
+            black_box(TestContext::new().await.unwrap());
+        });
+    });
+
+    group.bench_function("context_with_name", |b| {
+        b.to_async(&runtime).iter(|| async {
+            black_box(TestContext::with_name("bench_test").await.unwrap());
+        });
+    });
+
+    group.finish();
+}
+
+/// Benchmark assertion performance
 fn bench_assertions(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let ctx = rt.block_on(TestContext::with_name("bench_assert")).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
 
     let mut group = c.benchmark_group("assertions");
 
-    group.bench_function("simple_assertion", |b| {
-        b.iter(|| {
-            let result = ctx.assert("test").eq(&5, &5);
-            black_box(result);
-        })
+    group.bench_function("simple_assertions", |b| {
+        b.to_async(&runtime).iter(|| async {
+            let ctx = TestContext::new().await.unwrap();
+
+            // Multiple assertions
+            ctx.assert("test1").eq(&5, &5).unwrap();
+            ctx.assert("test2").that(true, "should be true").unwrap();
+            ctx.assert("test3").not_empty(&vec![1, 2, 3]).unwrap();
+
+            black_box(());
+        });
     });
 
-    group.bench_function("chained_assertions", |b| {
-        b.iter(|| {
-            let vec = vec![1, 2, 3];
-            let result = ctx
-                .assert("test")
-                .eq(&vec.len(), &3)
-                .and_then(|a| a.not_empty(&vec))
-                .and_then(|a| a.has_size(&vec, 3));
-            black_box(result);
-        })
-    });
+    group.bench_function("event_assertions", |b| {
+        b.to_async(&runtime).iter(|| async {
+            let ctx = TestContext::new().await.unwrap();
 
-    group.finish();
-}
+            let event = ctx.event().source("bench").type_("test").build().unwrap();
 
-fn bench_database_pool(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
+            ctx.assert("event check").event_eq(&event, &event).unwrap();
 
-    let mut group = c.benchmark_group("database_pool");
-    group.sample_size(50);
-
-    group.bench_function("acquire_database", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let db = sinex_test_utils::database_pool::acquire_test_database()
-                    .await
-                    .unwrap();
-                black_box(db);
-                // Database automatically returned to pool on drop
-            })
-        })
-    });
-
-    group.bench_function("concurrent_acquisition", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let handles: Vec<_> = (0..4)
-                    .map(|_| {
-                        tokio::spawn(async {
-                            sinex_test_utils::database_pool::acquire_test_database()
-                                .await
-                                .unwrap()
-                        })
-                    })
-                    .collect();
-
-                for handle in handles {
-                    let db = handle.await.unwrap();
-                    black_box(db);
-                }
-            })
-        })
-    });
-
-    group.finish();
-}
-
-fn bench_mock_operations(c: &mut Criterion) {
-    let rt = Runtime::new().unwrap();
-    let ctx = rt.block_on(TestContext::with_name("bench_mock")).unwrap();
-
-    let mut group = c.benchmark_group("mock_operations");
-
-    group.bench_function("filesystem_mock", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let fs = ctx.mocks().filesystem();
-                fs.create_file("/bench/test.txt", b"content").await.unwrap();
-                let exists = fs.exists("/bench/test.txt").await;
-                black_box(exists);
-            })
-        })
-    });
-
-    group.bench_function("database_mock", |b| {
-        b.iter(|| {
-            rt.block_on(async {
-                let db = ctx.mocks().database();
-                let conn = db.connection().await.unwrap();
-                let result = conn.execute("INSERT INTO test VALUES (1)").await;
-                black_box(result);
-            })
-        })
+            black_box(());
+        });
     });
 
     group.finish();
@@ -263,12 +191,10 @@ fn bench_mock_operations(c: &mut Criterion) {
 
 criterion_group!(
     benches,
-    bench_test_context_creation,
     bench_event_creation,
-    bench_event_insertion,
-    bench_event_querying,
-    bench_assertions,
-    bench_database_pool,
-    bench_mock_operations
+    bench_queries,
+    bench_concurrent,
+    bench_context_lifecycle,
+    bench_assertions
 );
 criterion_main!(benches);

@@ -142,7 +142,7 @@ pub enum ValidationExpectation {
 
 /// Result of a compatibility test
 #[derive(Debug, Clone)]
-pub struct CompatibilityTestResult {
+pub struct CompatibilityResult {
     pub scenario_name: String,
     pub overall_success: bool,
     pub step_results: Vec<StepResult>,
@@ -204,11 +204,9 @@ pub enum IssueSeverity {
 
 impl ConfigCompatibilityTester {
     /// Create a new configuration compatibility tester
-    pub async fn new() -> TestResult<Self> {
+    pub async fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
-            sinex_error::CoreError::io_error("temp_directory")
-                .with_context("source", e.to_string())
-                .build()
+            sinex_error::SinexError::io("temp_directory").with_context("source", e.to_string())
         })?;
 
         let mut tester = Self {
@@ -221,7 +219,7 @@ impl ConfigCompatibilityTester {
     }
 
     /// Initialize standard test scenarios
-    async fn initialize_test_scenarios(&mut self) -> TestResult<()> {
+    async fn initialize_test_scenarios(&mut self) -> Result<()> {
         // Development environment scenario
         self.add_development_scenario().await?;
 
@@ -240,7 +238,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_development_scenario(&mut self) -> TestResult<()> {
+    async fn add_development_scenario(&mut self) -> Result<()> {
         let scenario = CompatibilityTestScenario {
             name: "development_environment".to_string(),
             description: "Test configuration compatibility in development environment".to_string(),
@@ -341,7 +339,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_production_scenario(&mut self) -> TestResult<()> {
+    async fn add_production_scenario(&mut self) -> Result<()> {
         let scenario = CompatibilityTestScenario {
             name: "production_environment".to_string(),
             description: "Test configuration compatibility in production environment".to_string(),
@@ -446,7 +444,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_high_availability_scenario(&mut self) -> TestResult<()> {
+    async fn add_high_availability_scenario(&mut self) -> Result<()> {
         let scenario = CompatibilityTestScenario {
             name: "high_availability".to_string(),
             description: "Test configuration for high availability deployment".to_string(),
@@ -541,7 +539,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_resource_constrained_scenario(&mut self) -> TestResult<()> {
+    async fn add_resource_constrained_scenario(&mut self) -> Result<()> {
         let scenario = CompatibilityTestScenario {
             name: "resource_constrained".to_string(),
             description: "Test configuration in resource-constrained environment (IoT/Edge)"
@@ -615,7 +613,7 @@ impl ConfigCompatibilityTester {
         Ok(())
     }
 
-    async fn add_failure_scenarios(&mut self) -> TestResult<()> {
+    async fn add_failure_scenarios(&mut self) -> Result<()> {
         // Database unavailable scenario
         let db_failure_scenario = CompatibilityTestScenario {
             name: "database_unavailable".to_string(),
@@ -738,7 +736,7 @@ impl ConfigCompatibilityTester {
     }
 
     /// Run all compatibility test scenarios
-    pub async fn run_all_tests(&self) -> TestResult<Vec<CompatibilityTestResult>> {
+    pub async fn run_all_tests(&self) -> Result<Vec<CompatibilityResult>> {
         let mut results = Vec::new();
 
         for scenario in &self.test_scenarios {
@@ -754,7 +752,7 @@ impl ConfigCompatibilityTester {
     pub async fn run_scenario(
         &self,
         scenario: &CompatibilityTestScenario,
-    ) -> TestResult<CompatibilityTestResult> {
+    ) -> Result<CompatibilityResult> {
         let start_time = std::time::Instant::now();
         let mut step_results = Vec::new();
         let mut issues_found = Vec::new();
@@ -801,7 +799,7 @@ impl ConfigCompatibilityTester {
 
         let recommendations = self.generate_recommendations(scenario, &issues_found);
 
-        let result = CompatibilityTestResult {
+        let result = CompatibilityResult {
             scenario_name: scenario.name.clone(),
             overall_success,
             step_results,
@@ -828,7 +826,7 @@ impl ConfigCompatibilityTester {
         Ok(result)
     }
 
-    async fn setup_test_environment(&self, scenario: &CompatibilityTestScenario) -> TestResult<()> {
+    async fn setup_test_environment(&self, scenario: &CompatibilityTestScenario) -> Result<()> {
         // Create configuration files for each component
         for component in &scenario.components {
             let config_path = self
@@ -838,9 +836,8 @@ impl ConfigCompatibilityTester {
             fs::write(&config_path, &component.config_file_content)
                 .await
                 .map_err(|e| {
-                    sinex_error::CoreError::io_error(&config_path)
+                    sinex_error::SinexError::io(config_path.display().to_string())
                         .with_context("source", e.to_string())
-                        .build()
                 })?;
         }
 
@@ -854,7 +851,7 @@ impl ConfigCompatibilityTester {
         &self,
         scenario: &CompatibilityTestScenario,
         step: &ValidationStep,
-    ) -> TestResult<StepResult> {
+    ) -> Result<StepResult> {
         let start_time = std::time::Instant::now();
         let mut warnings = Vec::new();
         let mut errors = Vec::new();
@@ -1112,7 +1109,7 @@ impl ConfigCompatibilityTester {
 }
 
 /// Generate a comprehensive compatibility report
-pub fn generate_compatibility_report(results: &[CompatibilityTestResult]) -> String {
+pub fn generate_compatibility_report(results: &[CompatibilityResult]) -> String {
     let mut report = String::new();
 
     report.push_str("# Configuration Compatibility Test Report\n\n");
@@ -1214,7 +1211,7 @@ mod comprehensive_tests {
     use crate::prelude::*;
 
     #[sinex_test]
-    async fn test_environment_types(_ctx: TestContext) -> TestResult<()> {
+    async fn test_environment_types(_ctx: TestContext) -> Result<()> {
         // Test all environment type variants
         let env_types = vec![
             EnvironmentType::Development,
@@ -1239,7 +1236,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_dependency_types(_ctx: TestContext) -> TestResult<()> {
+    async fn test_dependency_types(_ctx: TestContext) -> Result<()> {
         // Test all dependency type variants
         assert_eq!(DependencyType::Database, DependencyType::Database);
         assert_eq!(DependencyType::Redis, DependencyType::Redis);
@@ -1251,7 +1248,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_dependency_availability(_ctx: TestContext) -> TestResult<()> {
+    async fn test_dependency_availability(_ctx: TestContext) -> Result<()> {
         // Test all availability states
         assert_eq!(
             DependencyAvailability::Available,
@@ -1274,7 +1271,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_resource_constraints_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_resource_constraints_creation(_ctx: TestContext) -> Result<()> {
         let constraints = ResourceConstraints {
             max_memory_mb: Some(1024),
             max_cpu_cores: Some(4),
@@ -1291,7 +1288,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_component_config_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_component_config_creation(_ctx: TestContext) -> Result<()> {
         let mut env_vars = HashMap::new();
         env_vars.insert("LOG_LEVEL".to_string(), "debug".to_string());
         env_vars.insert("PORT".to_string(), "8080".to_string());
@@ -1315,7 +1312,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_external_dependency_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_external_dependency_creation(_ctx: TestContext) -> Result<()> {
         let dep = ExternalDependency {
             name: "postgres".to_string(),
             dependency_type: DependencyType::Database,
@@ -1332,7 +1329,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_expected_outcome_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_expected_outcome_creation(_ctx: TestContext) -> Result<()> {
         let outcome = ExpectedOutcome {
             should_succeed: true,
             expected_warnings: vec!["Deprecated config option".to_string()],
@@ -1353,7 +1350,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_validation_step_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_validation_step_creation(_ctx: TestContext) -> Result<()> {
         let step = ValidationStep {
             step_name: "check_database".to_string(),
             validation_type: ValidationType::DatabaseConnection,
@@ -1368,7 +1365,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_compatibility_scenario_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_compatibility_scenario_creation(_ctx: TestContext) -> Result<()> {
         let scenario = CompatibilityTestScenario {
             name: "test_scenario".to_string(),
             description: "Test scenario description".to_string(),
@@ -1415,7 +1412,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_config_compatibility_tester_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_config_compatibility_tester_creation(_ctx: TestContext) -> Result<()> {
         let tester = ConfigCompatibilityTester::new().await?;
 
         // Should have some default scenarios
@@ -1428,7 +1425,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_scenario_execution(_ctx: TestContext) -> TestResult<()> {
+    async fn test_scenario_execution(_ctx: TestContext) -> Result<()> {
         let mut tester = ConfigCompatibilityTester::new().await?;
 
         // Get a scenario
@@ -1447,7 +1444,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_multiple_scenario_management(_ctx: TestContext) -> TestResult<()> {
+    async fn test_multiple_scenario_management(_ctx: TestContext) -> Result<()> {
         let tester = ConfigCompatibilityTester::new().await?;
 
         // List all scenarios
@@ -1462,7 +1459,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_validation_step_execution(_ctx: TestContext) -> TestResult<()> {
+    async fn test_validation_step_execution(_ctx: TestContext) -> Result<()> {
         let step = ValidationStep {
             step_name: "test_step".to_string(),
             validation_type: ValidationType::ConfigurationLoad,
@@ -1478,7 +1475,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_resource_constraint_validation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_resource_constraint_validation(_ctx: TestContext) -> Result<()> {
         let constraints = ResourceConstraints {
             max_memory_mb: Some(1024),
             max_cpu_cores: Some(2),
@@ -1504,7 +1501,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_environment_setup_combinations(_ctx: TestContext) -> TestResult<()> {
+    async fn test_environment_setup_combinations(_ctx: TestContext) -> Result<()> {
         // Test various environment combinations
         let setups = vec![
             EnvironmentSetup {
@@ -1580,7 +1577,7 @@ mod comprehensive_tests {
     fn test_compatibility_test_result_creation() {
         use std::time::SystemTime;
 
-        let result = CompatibilityTestResult {
+        let result = CompatibilityResult {
             scenario_name: "test".to_string(),
             overall_success: true,
             step_results: vec![],
