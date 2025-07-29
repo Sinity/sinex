@@ -85,58 +85,15 @@ test FILE="" *ARGS:
         cargo nextest run -- {{ARGS}}; \
     fi
 
-# 📁 Test a specific file (finds tests in the file)
-test-file FILE *ARGS:
-    @echo "📁 Running tests in file: {{FILE}}"
-    @# Convert file path to test pattern
-    @if [[ "{{FILE}}" == *".rs" ]]; then \
-        # Extract crate name and module path \
-        if [[ "{{FILE}}" == crate/* ]]; then \
-            crate=$$(echo "{{FILE}}" | cut -d/ -f2); \
-            echo "Testing in crate: $$crate"; \
-            cd "crate/$$crate" && cargo nextest run -- {{ARGS}}; \
-        else \
-            echo "Testing file: {{FILE}}"; \
-            cargo nextest run -- {{ARGS}}; \
-        fi; \
-    else \
-        echo "⚠️  Not a Rust file: {{FILE}}"; \
-    fi
 
 
 
 
 
-# 🚦 Pre-edit status check (call before making changes)
-pre-edit:
-    @echo "📸 Capturing pre-edit state..."
-    @echo ""
-    @echo "📝 Recent changes:"
-    @git status --short | head -10 || true
 
-# 🎯 Post-edit check (call after changes to see impact)
-post-edit:
-    @echo "🔍 Checking impact of changes..."
-    @just check
-
-# 📋 Check continuously and save to log (better for AI/scripts)
-check-continuous:
-    @echo "📋 Starting continuous compilation check..."
-    @echo "Output will be saved to compilation-watch.log"
-    cargo watch -x "check --workspace --all-targets --message-format short" 2>&1 | tee compilation-watch.log
-
-# 🔄 Watch and report errors/warnings
-watch-errors:
-    @echo "🔄 Watching for compilation errors..."
-    cargo watch -s 'just check-all && just errors || just errors'
-
-# 👀 Watch and compile only (no tests)
-watch-check:
-    @echo "👀 Watching for compilation..."
-    cargo watch -x check
 
 # 👀 Watch and run specific command
-watch-cmd CMD:
+watch CMD="check":
     @echo "👀 Watching and running: {{CMD}}"
     cargo watch -x "{{CMD}}"
 
@@ -146,20 +103,11 @@ watch-cmd CMD:
 
 
 
-# 📊 Run tests and show parallelism statistics
-test-parallel-stats *ARGS:
-    @echo "📊 Running tests with parallelism statistics..."
-    NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run --profile parallel --reporter libtest-json -- {{ARGS}} | jq -r 'select(.type == "suite") | "\(.event): \(.exec_time // 0)s' || cargo nextest run --profile parallel -- {{ARGS}}
 
-# 🛡️ Run tests with reliable profile (180s timeout, 2 threads, 3 retries)
-test-reliable-profile *ARGS:
-    @echo "🛡️ Running tests with reliable profile (180s timeout, 2 threads, 3 retries)..."
-    cargo nextest run -P reliable -- {{ARGS}}
-
-# 🐛 Run tests with debug profile (300s timeout, 1 thread, full output)
-test-debug-profile *ARGS:
-    @echo "🐛 Running tests with debug profile (300s timeout, 1 thread, full output)..."
-    cargo nextest run -P debug -- {{ARGS}}
+# 🛡️ Run tests with limited parallelism (for flaky tests)
+test-reliable *ARGS:
+    @echo "🛡️ Running tests with limited parallelism..."
+    cargo nextest run -j 2 -- {{ARGS}}
 
 # === VM Tests ===
 
@@ -254,14 +202,7 @@ schema-diff:
     @echo "📊 Schema changes:"
     ./scripts/schema-dev.sh diff
 
-# 📈 Show schema statistics
-schema-stats:
-    @echo "📈 Schema statistics:"
-    ./scripts/schema-dev.sh stats
 
-# 🔄 Full schema workflow: generate, validate, check compatibility
-schema-workflow: schema-generate schema-validate schema-check
-    @echo "✅ Schema workflow complete"
 
 # === Running Services ===
 
@@ -270,8 +211,6 @@ host *ARGS:
     @echo "🖥️ Starting sinex-gateway RPC server..."
     cargo run --bin sinex-gateway rpc-server {{ARGS}}
 
-# Alias for host command
-gateway *ARGS: (host ARGS)
 
 # 📥 Run sinex-ingestd gRPC server (satellite coordinator)
 ingestd *ARGS:
@@ -348,7 +287,6 @@ warnings:
 
 # 🎨 Format all code with rustfmt
 fmt:
-    @echo "🎨 Formatting code..."
     cargo fmt --all
 
 # 📋 Lint code with clippy (enforce warnings as errors)
@@ -385,8 +323,6 @@ monitor:
     @echo "Press 'q' to detach, Ctrl+q to quit mprocs"
     @tmux attach-session -t sinex-mprocs || echo "⚠️  No session found. Is sinex-devtools running?"
 
-# 🖥️ Alias for monitor
-mprocs: monitor
 
 # 🧹 Clean all build artifacts, caches, and logs
 clean:
@@ -407,18 +343,10 @@ docs:
 
 
 
-# 📦 Update all dependencies to latest compatible versions
-update:
-    @echo "📦 Updating dependencies..."
-    cargo update
 
 
 # === Common Workflows ===
 
-# 🎯 Run command in specific crate directory
-in CRATE CMD *ARGS:
-    @echo "🎯 Running '{{CMD}} {{ARGS}}' in {{CRATE}}..."
-    @cd crate/{{CRATE}} && {{CMD}} {{ARGS}}
 
 # ⚡ Quick development cycle - Format, check, and run fast tests
 dev: fmt qc test-fast
@@ -454,10 +382,6 @@ test-results:
     @if [ -f target/nextest/default/junit.xml ]; then echo "📄 JUnit results: target/nextest/default/junit.xml"; else echo "⚠️  No JUnit results found"; fi
     @if [ -d target/llvm-cov/html ]; then echo "📊 Coverage report: target/llvm-cov/html/index.html"; else echo "⚠️  No coverage report found"; fi
 
-# 🧪 Run tests with strict 2-minute timeout (for user constraint)
-test-strict:
-    @echo "🧪 Running tests with strict 2-minute timeout..."
-    timeout 120 just test-fast-profile || echo "⚠️  Tests exceeded 2-minute limit"
 
 # 🔄 Quick development test cycle (under 2 minutes)
 test-dev: 
@@ -480,16 +404,9 @@ qcs:
     @./scripts/smart-check.sh
 
 # 🥓 Run bacon for continuous checking
-watch:
-    @bacon
+bacon:
+    bacon
 
-# 🥓 Watch specific crate continuously (faster)
-watchc CRATE:
-    @cargo watch -x "check -p {{CRATE}}"
-
-# 🧠 Smart watch - auto-detects which crate to watch based on changes/location
-watchs:
-    @./scripts/smart-watch.sh
 
 # 🤖 Get compilation status as JSON (for AI agents)
 status-json:
@@ -521,11 +438,10 @@ todos:
 
 # 📊 Show crate dependencies
 deps PKG="":
+    @echo "📊 Dependencies{{PKG}}:"
     @if [ -z "{{PKG}}" ]; then \
-        echo "📊 Workspace dependencies:"; \
         cargo tree --workspace; \
     else \
-        echo "📊 Dependencies for {{PKG}}:"; \
         cargo tree -p {{PKG}}; \
     fi
 
@@ -544,8 +460,6 @@ list-tests:
 
 
 
-# === Environment Management ===
-
 # === Aliases ===
 alias t := test
 alias b := build
@@ -556,93 +470,5 @@ alias tp := test-pkg
 alias e := errors
 alias w := warnings
 
-# === Analytics Commands ===
 
-# 📊 What changed since last build?
-changes-since-build:
-    @echo "📊 Changes since last successful build:"
-    @if [ -f ~/.sinex-compile-state/last-build-snapshot.txt ]; then \
-        echo "Files from last build vs now:"; \
-        echo ""; \
-        diff -u ~/.sinex-compile-state/last-build-snapshot.txt <(git status --porcelain) | grep -E "^[+-]" | head -20 || echo "No changes"; \
-    else \
-        echo "No build snapshot yet"; \
-    fi
-
-# 📊 Show recent compilations
-analytics-recent:
-    @echo "📊 Recent compilations:"
-    @tail -20 ~/.sinex-analytics/compilations/index.csv 2>/dev/null | column -t -s'|' || echo "No compilation data yet"
-
-# 📈 Show compilation statistics
-analytics-stats:
-    @echo "📈 Compilation statistics:"
-    @if [ -f ~/.sinex-analytics/compilations/index.csv ]; then \
-        total=$(wc -l < ~/.sinex-analytics/compilations/index.csv); \
-        success=$(awk -F'|' '$4==0' ~/.sinex-analytics/compilations/index.csv | wc -l); \
-        avg_time=$(awk -F'|' '{sum+=$3; count++} END {if(count>0) print int(sum/count) "ms"}' ~/.sinex-analytics/compilations/index.csv); \
-        echo "  Total builds: $total"; \
-        echo "  Successful: $success ($(( success * 100 / total ))%)"; \
-        echo "  Average time: $avg_time"; \
-    else \
-        echo "No compilation data yet"; \
-    fi
-
-# 📸 Show git state snapshots
-git-snapshots:
-    @echo "📸 Recent git snapshots:"
-    @git stash list | grep "auto-snapshot" | head -10 || echo "No snapshots yet"
-
-# 🛑 Stop git state tracker
-git-tracker-stop:
-    @./scripts/git-state-tracker.sh stop
-
-# 📊 Git tracker status
-git-tracker-status:
-    @./scripts/git-state-tracker.sh status
-
-# === Benchmarking ===
-
-# 📊 Run all benchmarks with JSON export
-bench-all:
-    @echo "📊 Running all benchmarks..."
-    cargo bench --features bench -- --export=json > target/bench-results.json
-    @echo "✅ Results saved to target/bench-results.json"
-
-# ⚡ Quick benchmarks with small dataset
-bench-quick:
-    @echo "⚡ Running quick benchmarks (small dataset)..."
-    BENCH_DATASET=small cargo bench --features bench -- query
-
-# 🔍 Compare benchmarks with main branch
-bench-compare:
-    @echo "🔍 Comparing with main branch..."
-    git stash push -m "bench-compare stash"
-    git checkout main
-    cargo bench --features bench -- --export=json > target/bench-main.json
-    git checkout -
-    git stash pop || true
-    cargo bench --features bench -- --export=json > target/bench-current.json
-    @echo "✅ Comparison ready: target/bench-main.json vs target/bench-current.json"
-
-# 🎯 Benchmark specific crate
-bench-crate CRATE:
-    @echo "🎯 Benchmarking crate: {{CRATE}}"
-    cargo bench --features bench --bin {{CRATE}} -- --export=json
-
-# 🗂️ Generate benchmark datasets
-bench-generate-datasets:
-    @echo "🗂️ Generating benchmark datasets..."
-    @echo "⚠️  Note: Dataset generation tools need to be implemented"
-    @echo "For now, create fixtures manually in fixtures/datasets/"
-
-# 📈 Run benchmarks for sinex-test-utils
-bench-test-utils:
-    @echo "📈 Benchmarking sinex-test-utils..."
-    cargo bench --features bench --bin sinex-test-utils
-
-# 🧹 Clean benchmark results
-bench-clean:
-    @echo "🧹 Cleaning benchmark results..."
-    rm -rf target/bench-*.json target/benchmarks/
 
