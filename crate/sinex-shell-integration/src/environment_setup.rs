@@ -219,7 +219,7 @@ impl EnvironmentSetup {
         // Read existing profile
         let existing_content = if profile_file.exists() {
             fs::read_to_string(&profile_file).await.map_err(|e| {
-                sinex_core_types::CoreError::Io(format!("Failed to read profile file: {}", e))
+                sinex_core_types::SinexError::io(format!("Failed to read profile file: {}", e))
             })?
         } else {
             String::new()
@@ -246,7 +246,7 @@ impl EnvironmentSetup {
         fs::write(&profile_file, updated_content)
             .await
             .map_err(|e| {
-                sinex_core_types::CoreError::Io(format!("Failed to write profile file: {}", e))
+                sinex_core_types::SinexError::io(format!("Failed to write profile file: {}", e))
             })?;
 
         info!("Modified shell profile: {}", profile_file.display());
@@ -262,7 +262,7 @@ impl EnvironmentSetup {
 
         // Read current profile
         let current_content = fs::read_to_string(&profile_file).await.map_err(|e| {
-            sinex_core_types::CoreError::Io(format!("Failed to read profile file: {}", e))
+            sinex_core_types::SinexError::io(format!("Failed to read profile file: {}", e))
         })?;
 
         // Remove Sinex section
@@ -290,7 +290,7 @@ impl EnvironmentSetup {
         fs::write(&profile_file, cleaned_content)
             .await
             .map_err(|e| {
-                sinex_core_types::CoreError::Io(format!("Failed to write profile file: {}", e))
+                sinex_core_types::SinexError::io(format!("Failed to write profile file: {}", e))
             })?;
 
         info!("Cleaned up shell profile: {}", profile_file.display());
@@ -302,7 +302,7 @@ impl EnvironmentSetup {
             ShellType::Bash => {
                 // Try .bash_profile first, then .bashrc
                 let home = dirs::home_dir().ok_or_else(|| {
-                    sinex_core_types::CoreError::Configuration("Cannot find home directory".to_string())
+                    sinex_core_types::SinexError::configuration("Cannot find home directory".to_string())
                 })?;
 
                 let bash_profile = home.join(".bash_profile");
@@ -314,17 +314,17 @@ impl EnvironmentSetup {
             }
             ShellType::Zsh => {
                 let home = dirs::home_dir().ok_or_else(|| {
-                    sinex_core_types::CoreError::Configuration("Cannot find home directory".to_string())
+                    sinex_core_types::SinexError::configuration("Cannot find home directory".to_string())
                 })?;
                 Ok(home.join(".zshrc"))
             }
             ShellType::Fish => {
                 let home = dirs::home_dir().ok_or_else(|| {
-                    sinex_core_types::CoreError::Configuration("Cannot find home directory".to_string())
+                    sinex_core_types::SinexError::configuration("Cannot find home directory".to_string())
                 })?;
                 Ok(home.join(".config/fish/config.fish"))
             }
-            _ => Err(sinex_core_types::CoreError::Configuration(format!(
+            _ => Err(sinex_core_types::SinexError::configuration(format!(
                 "Profile modification not supported for {}",
                 self.shell_info.shell_type.name()
             ))),

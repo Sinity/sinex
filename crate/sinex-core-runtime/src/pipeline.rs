@@ -4,7 +4,8 @@
 //! with configurable stages and error handling.
 
 use serde::{Deserialize, Serialize};
-use sinex_core_types::{CoreError, RawEvent, Result};
+use sinex_core_types::RawEvent;
+use sinex_error::{Result, SinexError};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{debug, error};
@@ -263,15 +264,16 @@ impl PipelineStage for ValidationStage {
     async fn process(&self, event: RawEvent) -> Result<RawEvent> {
         // Validate the event structure
         if event.source.is_empty() {
-            return Err(CoreError::Validation(
-                "Event source cannot be empty".to_string(),
-            ));
+            return Err(SinexError::validation("Event source cannot be empty")
+                .with_id("event_id", event.id.to_string())
+                .with_context("stage", self.name()));
         }
 
         if event.event_type.is_empty() {
-            return Err(CoreError::Validation(
-                "Event type cannot be empty".to_string(),
-            ));
+            return Err(SinexError::validation("Event type cannot be empty")
+                .with_id("event_id", event.id.to_string())
+                .with_context("source", &event.source)
+                .with_context("stage", self.name()));
         }
 
         Ok(event)

@@ -4,7 +4,7 @@
 //! arbitrary sleeps and provide reliable synchronization patterns. All functions
 //! use exponential backoff and proper timeout handling.
 
-use sinex_core_types::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 use std::time::{Duration, Instant};
 
 /// Generic wait for condition with exponential backoff
@@ -39,7 +39,7 @@ where
         backoff = (backoff * 2).min(Duration::from_secs(1));
     }
 
-    Err(CoreError::Timeout(format!(
+    Err(SinexError::timeout(format!(
         "{} timeout after {} seconds",
         check_name, timeout_secs
     )))
@@ -70,7 +70,7 @@ pub async fn wait_with_cancel(
 ) -> Result<()> {
     tokio::select! {
         _ = tokio::time::sleep(duration) => Ok(()),
-        _ = &mut cancel_receiver => Err(CoreError::Cancelled("Wait cancelled".to_string())),
+        _ = &mut cancel_receiver => Err(SinexError::cancelled("Wait cancelled")),
     }
 }
 
@@ -116,7 +116,7 @@ where
         Ok(())
     } else {
         let pending_names: Vec<&str> = pending.into_iter().map(|(name, _)| name).collect();
-        Err(CoreError::Timeout(format!(
+        Err(SinexError::timeout(format!(
             "Conditions not met after {} seconds: {:?}",
             timeout_secs, pending_names
         )))
@@ -153,7 +153,7 @@ where
                 delay = (delay * 2).min(max_delay);
             }
             Err(e) => {
-                return Err(CoreError::MaxRetriesExceeded(format!(
+                return Err(SinexError::max_retries_exceeded(format!(
                     "{} failed after {} attempts: {}",
                     operation_name, max_attempts, e
                 )));
@@ -202,7 +202,7 @@ where
         tokio::time::sleep(adaptive_delay).await;
     }
 
-    Err(CoreError::Timeout(format!(
+    Err(SinexError::timeout(format!(
         "{} timeout after {} seconds (adaptive backoff)",
         check_name, timeout_secs
     )))
@@ -259,7 +259,7 @@ where
         Ok(())
     } else {
         let pending_names: Vec<&str> = pending.into_iter().map(|(name, _)| name).collect();
-        Err(CoreError::Timeout(format!(
+        Err(SinexError::timeout(format!(
             "Conditions not met after {} seconds: {:?}",
             timeout_secs, pending_names
         )))

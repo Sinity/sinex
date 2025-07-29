@@ -13,6 +13,9 @@ sinex-db = { path = "../sinex-db" }
 sinex-services = { path = "../sinex-services" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-annex = { path = "../sinex-annex" }
+sinex-telemetry = { path = "../sinex-telemetry" }
+sinex-events = { path = "../sinex-events" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 
 # Async runtime
 tokio = { workspace = true, features = ["full"] }

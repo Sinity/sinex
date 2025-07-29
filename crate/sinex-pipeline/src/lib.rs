@@ -3,7 +3,7 @@
 //! This module provides multi-stage event processing pipeline
 //! with configurable stages and error handling.
 
-use sinex_error::{CoreError, Result};
+use sinex_error::{SinexError, Result};
 use sinex_events::RawEvent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -261,11 +261,11 @@ impl PipelineStage for ValidationStage {
     async fn process(&self, event: RawEvent) -> Result<RawEvent> {
         // Validate the event structure
         if event.source.is_empty() {
-            return Err(CoreError::Validation("Event source cannot be empty".to_string()));
+            return Err(SinexError::validation("Event source cannot be empty"));
         }
         
         if event.event_type.is_empty() {
-            return Err(CoreError::Validation("Event type cannot be empty".to_string()));
+            return Err(SinexError::validation("Event type cannot be empty"));
         }
         
         Ok(event)

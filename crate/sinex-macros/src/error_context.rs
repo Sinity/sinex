@@ -8,7 +8,7 @@ use syn::{
 
 /// Procedural macro for automatic error context enrichment
 ///
-/// This macro wraps functions that return `Result<T, E>` where `E: Into<CoreError>`
+/// This macro wraps functions that return `Result<T, E>` where `E: Into<SinexError>`
 /// and automatically adds contextual information to any errors that occur.
 ///
 /// # Attributes
@@ -20,7 +20,7 @@ use syn::{
 ///
 /// ```rust
 /// #[with_context]
-/// fn simple_function() -> Result<(), CoreError> {
+/// fn simple_function() -> Result<(), SinexError> {
 ///     // Errors will include function name and module path
 ///     Ok(())
 /// }
@@ -426,7 +426,7 @@ mod tests {
     #[test]
     fn test_result_type_detection() {
         // Test valid Result types
-        let result_unit: Type = parse_quote!(Result<(), CoreError>);
+        let result_unit: Type = parse_quote!(Result<(), SinexError>);
         assert!(is_result_type(&result_unit));
 
         let result_string: Type = parse_quote!(Result<String>);
@@ -446,7 +446,7 @@ mod tests {
     #[test]
     fn test_return_type_detection() {
         // Test valid return types
-        let return_result: ReturnType = parse_quote!(-> Result<(), CoreError>);
+        let return_result: ReturnType = parse_quote!(-> Result<(), SinexError>);
         assert!(is_result_return_type(&return_result));
 
         // Test invalid return types

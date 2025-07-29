@@ -4,7 +4,8 @@
 //! including performance measurement, health monitoring, and advanced error reporting.
 
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
-use sinex_core_types::{CoreError, RawEvent, Result};
+use sinex_core_types::RawEvent;
+use sinex_error::{Result, SinexError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -122,7 +123,7 @@ impl EnhancedEventSender {
 
                 tracing::error!("[{}] {}: {}", self.source_name, error_msg, context);
 
-                Err(CoreError::Unknown(format!(
+                Err(SinexError::unknown(format!(
                     "{} (source: {}, event_type: {}, context: {}, duration_ms: {})",
                     error_msg,
                     self.source_name,
@@ -155,7 +156,7 @@ impl EnhancedEventSender {
                 self.performance_tracker
                     .record_send_failure(start_time.elapsed());
 
-                Err(CoreError::Unknown(format!(
+                Err(SinexError::unknown(format!(
                     "{} (source: {}, event_type: {}, timeout: {:?}, context: {})",
                     error_msg, self.source_name, event_type, timeout_duration, context
                 )))

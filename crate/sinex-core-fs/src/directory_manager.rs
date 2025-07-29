@@ -4,7 +4,8 @@
 //! consistent error handling and permissions.
 
 use serde::{Deserialize, Serialize};
-use sinex_core_types::{filesystem, CoreError, Result};
+use sinex_core_types::filesystem;
+use sinex_error::{Result, SinexError};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tracing::{debug, info};
@@ -48,19 +49,17 @@ impl DirectoryManager {
 
         if self.config.create_parents {
             fs::create_dir_all(&full_path).await.map_err(|e| {
-                CoreError::Io(format!(
-                    "Failed to create directory {} (operation: create_directory_all): {}",
-                    full_path.display(),
-                    e
-                ))
+                SinexError::io(format!("Failed to create directory: {}", e))
+                    .with_path(&full_path)
+                    .with_operation("create_directory_all")
+                    .with_context("create_parents", true)
             })?;
         } else {
             fs::create_dir(&full_path).await.map_err(|e| {
-                CoreError::Io(format!(
-                    "Failed to create directory {} (operation: create_directory): {}",
-                    full_path.display(),
-                    e
-                ))
+                SinexError::io(format!("Failed to create directory: {}", e))
+                    .with_path(&full_path)
+                    .with_operation("create_directory")
+                    .with_context("create_parents", false)
             })?;
         }
 
@@ -74,11 +73,9 @@ impl DirectoryManager {
         let full_path = self.config.base_path.join(path);
 
         fs::remove_dir_all(&full_path).await.map_err(|e| {
-            CoreError::Io(format!(
-                "Failed to remove directory {} (operation: remove_directory): {}",
-                full_path.display(),
-                e
-            ))
+            SinexError::io(format!("Failed to remove directory: {}", e))
+                .with_path(&full_path)
+                .with_operation("remove_directory")
         })?;
 
         debug!("Removed directory: {:?}", full_path);
@@ -93,7 +90,7 @@ impl DirectoryManager {
         match fs::metadata(&full_path).await {
             Ok(metadata) => Ok(metadata.is_dir()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(CoreError::Io(format!(
+            Err(e) => Err(SinexError::io(format!(
                 "Failed to check directory {} (operation: directory_exists): {}",
                 full_path.display(),
                 e
@@ -108,7 +105,7 @@ impl DirectoryManager {
 
         let mut entries = Vec::new();
         let mut dir_entries = fs::read_dir(&full_path).await.map_err(|e| {
-            CoreError::Io(format!(
+            SinexError::io(format!(
                 "Failed to read directory {} (operation: list_directory): {}",
                 full_path.display(),
                 e
@@ -116,7 +113,7 @@ impl DirectoryManager {
         })?;
 
         while let Some(entry) = dir_entries.next_entry().await.map_err(|e| {
-            CoreError::Io(format!(
+            SinexError::io(format!(
                 "Failed to read directory entry in {} (operation: read_directory_entry): {}",
                 full_path.display(),
                 e

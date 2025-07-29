@@ -3,9 +3,13 @@
 use anyhow::{Context, Result};
 use sinex_annex::BlobManager;
 use sinex_db::create_pool;
+use sinex_satellite_sdk::grpc_client::IngestClient;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
+use sinex_telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 /// Container holding all service instances
 #[derive(Clone)]
@@ -14,6 +18,7 @@ pub struct ServiceContainer {
     pub content: Arc<ContentService>,
     pub pkm: Arc<PkmService>,
     pub search: Arc<SearchService>,
+    pub telemetry: Option<Arc<TelemetryAccumulator>>,
 }
 
 impl ServiceContainer {
@@ -48,12 +53,72 @@ impl ServiceContainer {
                 .context("Failed to create blob manager")?,
         );
 
+        // Initialize telemetry
+        let telemetry = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
+            // Create channel for telemetry events
+            let (tx, mut rx) = mpsc::channel(100);
+
+            // Spawn task to forward telemetry events to ingestd
+            let ingest_socket_clone = ingest_socket.clone();
+            tokio::spawn(async move {
+                let mut ingest_client = match IngestClient::new(&ingest_socket_clone).await {
+                    Ok(client) => client,
+                    Err(e) => {
+                        tracing::error!("Failed to create ingest client for telemetry: {}", e);
+                        return;
+                    }
+                };
+
+                let mut batch = Vec::new();
+                let mut last_flush = std::time::Instant::now();
+
+                while let Some(event) = rx.recv().await {
+                    batch.push(event);
+
+                    // Flush on batch size or timeout
+                    if batch.len() >= 10 || last_flush.elapsed() > Duration::from_secs(5) {
+                        if let Err(e) = ingest_client.ingest_batch(&batch).await {
+                            tracing::warn!("Failed to send telemetry batch: {}", e);
+                        }
+                        batch.clear();
+                        last_flush = std::time::Instant::now();
+                    }
+                }
+
+                // Final flush
+                if !batch.is_empty() {
+                    if let Err(e) = ingest_client.ingest_batch(&batch).await {
+                        tracing::warn!("Failed to send final telemetry batch: {}", e);
+                    }
+                }
+            });
+
+            let accumulator = TelemetryAccumulator::new("sinex-gateway")
+                .with_event_sender(tx.clone())
+                .with_interval(Duration::from_secs(300)); // 5 minutes
+
+            // Set global telemetry
+            sinex_telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+
+            // Spawn telemetry emitter
+            accumulator.clone().spawn_emitter();
+
+            // Also spawn system telemetry emitter
+            let system_emitter = SystemTelemetryEmitter::new(tx);
+            system_emitter.spawn_emitter();
+
+            Some(Arc::new(accumulator))
+        } else {
+            None
+        };
+
         // Initialize all services
         Ok(Self {
             analytics: Arc::new(AnalyticsService::new(pool.clone())),
             content: Arc::new(ContentService::new(pool.clone(), blob_manager)),
             pkm: Arc::new(PkmService::new(pool.clone())),
             search: Arc::new(SearchService::new(pool)),
+            telemetry,
         })
     }
 }

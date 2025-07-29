@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 # Core types
 sinex-core-types = { path = "../sinex-core-types" }
+sinex-error = { path = "../sinex-error" }
 
 # Utilities
 anyhow = { workspace = true }

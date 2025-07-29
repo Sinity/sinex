@@ -5,7 +5,7 @@
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use sinex_core_types::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 
 /// Parse JSON from a string with error context
 pub fn parse_json<T: DeserializeOwned>(
@@ -14,7 +14,7 @@ pub fn parse_json<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     serde_json::from_str(json_str).map_err(|e| {
-        CoreError::Serialization(format!(
+        SinexError::serialization(format!(
             "Failed to parse {} (operation: {}, json_length: {}): {}",
             context_type,
             operation,
@@ -31,7 +31,7 @@ pub fn parse_json_file<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     serde_json::from_str(json_str).map_err(|e| {
-        CoreError::Serialization(format!(
+        SinexError::serialization(format!(
             "Failed to parse JSON file {} (operation: {}, json_length: {}): {}",
             file_path.as_ref().display(),
             operation,
@@ -44,7 +44,7 @@ pub fn parse_json_file<T: DeserializeOwned>(
 /// Parse JSON Value from a string with error context
 pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> Result<Value> {
     serde_json::from_str(json_str).map_err(|e| {
-        CoreError::Serialization(format!(
+        SinexError::serialization(format!(
             "Failed to parse {} as JSON (operation: {}, preview: {}): {}",
             context_type,
             operation,
@@ -61,7 +61,7 @@ pub fn extract_field<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     let field_value = value.get(field_name).ok_or_else(|| {
-        CoreError::Validation(format!(
+        SinexError::validation(format!(
             "Missing field: {} (operation: {}, available_fields: {:?})",
             field_name,
             operation,
@@ -73,7 +73,7 @@ pub fn extract_field<T: DeserializeOwned>(
     })?;
 
     serde_json::from_value(field_value.clone()).map_err(|e| {
-        CoreError::Serialization(format!(
+        SinexError::serialization(format!(
             "Failed to deserialize field: {} (operation: {}): {}",
             field_name, operation, e
         ))
@@ -87,7 +87,7 @@ pub fn to_json_value<T: serde::Serialize>(
     operation: &str,
 ) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| {
-        CoreError::Serialization(format!(
+        SinexError::serialization(format!(
             "Failed to serialize {} (operation: {}): {}",
             context_type, operation, e
         ))

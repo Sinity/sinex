@@ -5,11 +5,10 @@
 
 use crate::{
     checkpoint::{CheckpointManager, CheckpointState},
-    stream_processor::{ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor, TimeHorizon},
+    stream_processor::{ProcessorType, ScanArgs, StatefulStreamProcessor, TimeHorizon},
     SatelliteResult,
 };
 use chrono::Utc;
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};

@@ -96,7 +96,7 @@ impl HookManager {
         config: &IntegrationConfig,
     ) -> sinex_core_types::Result<()> {
         if !self.shell_info.capabilities.supports_hooks {
-            return Err(sinex_core_types::CoreError::Configuration(format!(
+            return Err(sinex_core_types::SinexError::configuration(format!(
                 "Shell {} does not support hooks",
                 self.shell_info.shell_type.name()
             )));
@@ -138,7 +138,7 @@ impl HookManager {
         config: &IntegrationConfig,
     ) -> sinex_core_types::Result<()> {
         let config_file = self.shell_info.config_path.as_ref().ok_or_else(|| {
-            sinex_core_types::CoreError::Configuration("No config file found for shell".to_string())
+            sinex_core_types::SinexError::configuration("No config file found for shell".to_string())
         })?;
 
         // Create backup if requested
@@ -154,7 +154,7 @@ impl HookManager {
         // Read existing config
         let existing_content = if config_file.exists() {
             fs::read_to_string(config_file).await.map_err(|e| {
-                sinex_core_types::CoreError::Io(format!("Failed to read config file: {}", e))
+                sinex_core_types::SinexError::io(format!("Failed to read config file: {}", e))
             })?
         } else {
             String::new()
@@ -171,7 +171,7 @@ impl HookManager {
 
         // Write updated config
         fs::write(config_file, updated_content).await.map_err(|e| {
-            sinex_core_types::CoreError::Io(format!("Failed to write config file: {}", e))
+            sinex_core_types::SinexError::io(format!("Failed to write config file: {}", e))
         })?;
 
         // Record installation
@@ -191,13 +191,13 @@ impl HookManager {
     /// Uninstall a specific hook
     pub async fn uninstall_hook(&mut self, hook_type: &HookType) -> sinex_core_types::Result<()> {
         let installation = self.installed_hooks.remove(hook_type).ok_or_else(|| {
-            sinex_core_types::CoreError::Configuration("Hook not installed".to_string())
+            sinex_core_types::SinexError::configuration("Hook not installed".to_string())
         })?;
 
         // Read current config
         let current_content = fs::read_to_string(&installation.config_file)
             .await
-            .map_err(|e| sinex_core_types::CoreError::Io(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| sinex_core_types::SinexError::io(format!("Failed to read config file: {}", e)))?;
 
         // Remove hook content
         let updated_content = current_content.replace(&installation.hook_content, "");
@@ -206,7 +206,7 @@ impl HookManager {
         fs::write(&installation.config_file, updated_content)
             .await
             .map_err(|e| {
-                sinex_core_types::CoreError::Io(format!("Failed to write config file: {}", e))
+                sinex_core_types::SinexError::io(format!("Failed to write config file: {}", e))
             })?;
 
         info!("Uninstalled {:?} hook", hook_type);
@@ -216,7 +216,7 @@ impl HookManager {
     /// Verify that hooks are properly installed
     pub async fn verify_hooks(&self) -> sinex_core_types::Result<bool> {
         let config_file = self.shell_info.config_path.as_ref().ok_or_else(|| {
-            sinex_core_types::CoreError::Configuration("No config file found".to_string())
+            sinex_core_types::SinexError::configuration("No config file found".to_string())
         })?;
 
         if !config_file.exists() {
@@ -225,7 +225,7 @@ impl HookManager {
 
         let content = fs::read_to_string(config_file)
             .await
-            .map_err(|e| sinex_core_types::CoreError::Io(format!("Failed to read config file: {}", e)))?;
+            .map_err(|e| sinex_core_types::SinexError::io(format!("Failed to read config file: {}", e)))?;
 
         // Check if all installed hooks are present
         for installation in self.installed_hooks.values() {
@@ -328,7 +328,7 @@ end"#,
                 sinex_notify_cmd
             )),
 
-            _ => Err(sinex_core_types::CoreError::Configuration(format!(
+            _ => Err(sinex_core_types::SinexError::configuration(format!(
                 "Hook {:?} not supported for shell {}",
                 hook_type,
                 self.shell_info.shell_type.name()
@@ -348,7 +348,7 @@ end"#,
 
         fs::copy(config_file, &backup_file)
             .await
-            .map_err(|e| sinex_core_types::CoreError::Io(format!("Failed to create backup: {}", e)))?;
+            .map_err(|e| sinex_core_types::SinexError::io(format!("Failed to create backup: {}", e)))?;
 
         info!("Created backup at {}", backup_file.display());
         Ok(backup_file)

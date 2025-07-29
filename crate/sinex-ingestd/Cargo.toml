@@ -58,6 +58,7 @@ sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+sinex-telemetry = { path = "../sinex-telemetry" }
 
 [build-dependencies]
 tonic-build.workspace = true

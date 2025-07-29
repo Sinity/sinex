@@ -16,12 +16,12 @@
 //! ## Basic usage (adds function name and module path):
 //! ```rust
 //! use sinex_macros::with_context;
-//! use sinex_core_types::{CoreError, Result};
+//! use sinex_error::{SinexError, Result};
 //!
 //! #[with_context]
 //! fn read_config() -> Result<String> {
 //!     std::fs::read_to_string("config.toml")
-//!         .map_err(|e| CoreError::Io(e.to_string()))
+//!         .map_err(|e| SinexError::io(e.to_string()))
 //! }
 //! ```
 //!
@@ -94,7 +94,7 @@ use proc_macro::TokenStream;
 /// }
 ///
 /// #[with_context(operation = "database_insert")]
-/// async fn insert_event(event: &RawEvent) -> Result<(), CoreError> {
+/// async fn insert_event(event: &RawEvent) -> Result<(), SinexError> {
 ///     // function body
 /// }
 /// ```
@@ -275,7 +275,7 @@ pub fn db_query(input: TokenStream) -> TokenStream {
 /// use sinex_macros::db_transaction;
 ///
 /// db_transaction! {
-///     async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), CoreError> {
+///     async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
 ///         for event in events {
 ///             // Insert logic here
 ///         }

@@ -194,7 +194,7 @@ fn generate_config_impl(
                 quote! {
                     if let Ok(value) = std::env::var(#env_var) {
                         config.#name = value.parse().map_err(|_| {
-                            sinex_core_types::CoreError::Configuration(format!(
+                            sinex_core_types::SinexError::configuration(format!(
                                 "Invalid value for environment variable {}: {}",
                                 #env_var, value
                             ))
@@ -239,10 +239,10 @@ fn generate_config_impl(
             /// Load configuration from a file
             pub fn from_file<P: AsRef<std::path::Path>>(path: P) -> sinex_core_types::Result<Self> {
                 let contents = std::fs::read_to_string(path)
-                    .map_err(|e| sinex_core_types::CoreError::Io(e.to_string()))?;
+                    .map_err(|e| sinex_core_types::SinexError::io(e.to_string()))?;
 
                 let config: Self = toml::from_str(&contents)
-                    .map_err(|e| sinex_core_types::CoreError::Configuration(e.to_string()))?;
+                    .map_err(|e| sinex_core_types::SinexError::configuration(e.to_string()))?;
 
                 config.validate()
             }

@@ -48,5 +48,4 @@ impl ConfigFactory {
     }
 }
 
-// ConfigExtraction and ConfigMerger are deprecated
 // These were used for file-based configuration merging which is no longer supported

@@ -5,7 +5,7 @@
 
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_core_types::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -136,7 +136,10 @@ impl FileWatcher {
             },
             Config::default(),
         )
-        .map_err(|e| CoreError::Unknown(format!("Failed to create file watcher: {}", e)))?;
+        .map_err(|e| {
+            SinexError::io(format!("Failed to create file watcher: {}", e))
+                .with_operation("notify::watcher::new")
+        })?;
 
         // Watch all configured paths
         for path in &config.watch_paths {
@@ -147,7 +150,10 @@ impl FileWatcher {
             };
 
             watcher.watch(path, mode).map_err(|e| {
-                CoreError::Unknown(format!("Failed to watch path {:?}: {}", path, e))
+                SinexError::io(format!("Failed to watch path: {}", e))
+                    .with_path(path)
+                    .with_context("recursive", config.recursive)
+                    .with_operation("watcher.watch")
             })?;
 
             debug!("Started watching path: {:?}", path);

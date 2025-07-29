@@ -2,14 +2,12 @@
 //!
 //! This module provides advanced D-Bus monitoring with direct signal subscription,
 //! rich metadata extraction, and specialized event parsing. Ported from the
-//! legacy sinex-events-system implementation with satellite architecture support.
 
 use crate::payloads::*;
 use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
