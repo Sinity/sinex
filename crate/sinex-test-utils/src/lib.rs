@@ -1144,8 +1144,8 @@ mod benches {
     // Batch operations benchmark
     #[sinex_bench(args = [10, 100, 1000])]
     async fn bench_batch_insert(ctx: &BenchContext, count: usize) -> anyhow::Result<()> {
-        use sinex_db::queries::EventQueries;
         use crate::prelude::DatasetSize;
+        use sinex_db::queries::EventQueries;
 
         // Insert events using query builders
         for i in 0..count {
@@ -1212,7 +1212,7 @@ mod benches {
             source: String,
             count: i64,
         }
-        
+
         let results: Vec<SourceCount> = sqlx::query_as!(
             SourceCount,
             r#"SELECT source, COUNT(*) as count 
@@ -1260,7 +1260,7 @@ mod benches {
             id: sqlx::types::Uuid,
             payload: serde_json::Value,
         }
-        
+
         let results: Vec<EventPayload> = sqlx::query_as!(
             EventPayload,
             r#"SELECT event_id::uuid as "id!", payload 
