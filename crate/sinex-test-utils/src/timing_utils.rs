@@ -371,9 +371,9 @@ impl<'ctx> TimingUtils<'ctx> {
 mod tests {
     use super::*;
     use crate::prelude::*;
-    use std::pin::Pin;
-    use std::future::Future;
     use std::boxed::Box;
+    use std::future::Future;
+    use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -635,16 +635,16 @@ mod tests {
         // we'll use a simple loop since closures don't implement Clone
         let start = std::time::Instant::now();
         let timeout = Duration::from_secs(5);
-        
+
         loop {
             if counter1.load(Ordering::SeqCst) >= 5 && counter2.load(Ordering::SeqCst) >= 10 {
                 break;
             }
-            
+
             if start.elapsed() > timeout {
                 return Err(anyhow::anyhow!("Timeout waiting for conditions"));
             }
-            
+
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
 

@@ -1468,7 +1468,7 @@ mod benches {
     async fn bench_pool_health_check() -> anyhow::Result<()> {
         // Ensure pool is initialized
         let _ = acquire_test_database().await?;
-        
+
         check_pool_health().await?;
         Ok(())
     }

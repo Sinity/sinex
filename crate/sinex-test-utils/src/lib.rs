@@ -512,7 +512,7 @@ mod tests {
 
         Ok(())
     }
-    
+
     // Removed test_parameterized_pattern - duplicate parameterized testing
     // Removed test_edge_cases_with_parameterized - duplicate edge case testing
 
@@ -521,7 +521,7 @@ mod tests {
         // Comprehensive property test with database - test various valid inputs
         // Including parameterized tests for string length handling
         use proptest::prelude::*;
-        
+
         // Test various string lengths using parameterized macro
         parameterized!([("short", 5), ("medium", 50), ("long", 200),], |(
             name,
@@ -538,7 +538,7 @@ mod tests {
             assert_eq!(event.source, source);
             Ok(())
         });
-        
+
         // Test edge cases with various valid inputs
         let long_source = "x".repeat(50);
         let long_type = format!("type.{}", "x".repeat(30));
@@ -568,7 +568,7 @@ mod tests {
     // Removed test_parameterized_pattern - already consolidated above
 
     // Removed test_edge_cases_with_parameterized - already consolidated above
-    
+
     #[sinex_test]
     async fn test_edge_cases(ctx: TestContext) -> Result<()> {
         // Test with proptest! macro for edge cases
@@ -696,9 +696,7 @@ mod tests {
 
         // Test that custom errors work with Result
         fn failing_operation() -> Result<()> {
-            Err(SinexError::validation(
-                "Custom validation error".to_string(),
-            ).into())
+            Err(SinexError::validation("Custom validation error".to_string()).into())
         }
 
         let result = failing_operation();

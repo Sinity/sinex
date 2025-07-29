@@ -579,7 +579,7 @@ mod benches {
             .execute(ctx.pool())
             .await?;
         }
-        
+
         // Perform the reset
         reset_database(ctx.pool()).await
     }
@@ -627,7 +627,7 @@ mod benches {
             .execute(ctx.pool())
             .await?;
         }
-        
+
         // Perform the count
         let counts = get_row_counts(ctx.pool()).await?;
         divan::black_box(counts);

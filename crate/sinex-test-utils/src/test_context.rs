@@ -1132,7 +1132,7 @@ impl<'ctx> EventBuilder<'ctx> {
         use sinex_db::queries::EventQueries;
 
         use sinex_db::events::EventRecord;
-        
+
         let record: EventRecord = EventQueries::insert_event(
             self.source.unwrap_or_else(|| "test".to_string()),
             self.event_type.unwrap_or_else(|| "test.event".to_string()),
@@ -1145,7 +1145,7 @@ impl<'ctx> EventBuilder<'ctx> {
         )
         .fetch_one(self.ctx.pool())
         .await?;
-        
+
         Ok(record.into())
     }
 
@@ -2691,7 +2691,7 @@ mod tests {
 
     // Merged test_assertion_helpers and test_assertion_api into comprehensive test above
 
-    // Merged test_query_builder_chaining and test_query_builder_flexibility 
+    // Merged test_query_builder_chaining and test_query_builder_flexibility
     // into test_query_builder_chains above
 
     #[sinex_test]

@@ -675,10 +675,7 @@ pub(crate) async fn user_session_with_checkpoints(
 // =============================================================================
 
 /// Run a test with a transaction-scoped fixture
-pub(crate) async fn with_transaction_fixture<F, T>(
-    ctx: &TestContext,
-    fixture_fn: F,
-) -> Result<T>
+pub(crate) async fn with_transaction_fixture<F, T>(ctx: &TestContext, fixture_fn: F) -> Result<T>
 where
     F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> BoxFuture<'a, Result<T>>,
 {
