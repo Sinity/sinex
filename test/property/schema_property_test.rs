@@ -433,7 +433,7 @@ fn test_validation_chain_numeric_properties() {
 // =============================================================================
 
 #[sinex_test]
-async fn test_schema_persistence_properties(ctx: TestContext) -> TestResult {
+async fn test_schema_persistence_properties(ctx: TestContext) -> anyhow::Result<()> {
     proptest::proptest!(|(
         schema_count in 1..=10usize,
         schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
@@ -575,7 +575,7 @@ async fn test_event_validator_edge_cases() -> AnyhowResult<(), anyhow::Error> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_validator_database_integration(ctx: TestContext) -> TestResult {
+async fn test_event_validator_database_integration(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test loading validator from empty database

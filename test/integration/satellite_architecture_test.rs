@@ -15,7 +15,7 @@ use tracing::{info, warn};
 use uuid;
 
 #[sinex_test]
-async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult {
+async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> anyhow::Result<()> {
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());
@@ -76,7 +76,7 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> TestResult 
 }
 
 #[sinex_test]
-async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
+async fn test_satellite_sdk_components(ctx: TestContext) -> anyhow::Result<()> {
     info!("Testing satellite SDK components");
 
     // Test checkpoint manager
@@ -122,7 +122,7 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_satellite_event_flow_simulation(ctx: TestContext) -> TestResult {
+async fn test_satellite_event_flow_simulation(ctx: TestContext) -> anyhow::Result<()> {
     info!("Testing simulated satellite event flow");
 
     // Simulate the flow described in the refactoring plan:

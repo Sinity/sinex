@@ -24,7 +24,7 @@ async fn get_event_by_id(pool: &PgPool, event_id: Ulid) -> Result<RawEvent, Core
     EventQueries::get_by_id(event_id)
         .fetch_one(pool)
         .await
-        .map_err(|e| CoreError::NotFound(format!("event not found: {}", e)))
+        .map_err(|e| CoreError::not_found(format!("event not found: {}", e)))
 }
 
 /// Example 2: INSERT with multiple parameters
@@ -56,7 +56,7 @@ async fn insert_event(pool: &PgPool, event: &RawEvent) -> Result<(), CoreError> 
         ])
         .execute(pool)
         .await
-        .map_err(|e| CoreError::Database(format!("insert_event: {}", e)))?;
+        .map_err(|e| CoreError::database(format!("insert_event: {}", e)))?;
 
     Ok(())
 }
@@ -92,7 +92,7 @@ async fn find_events_by_type_and_source(
         .limit(limit)
         .fetch_all::<RawEvent>(pool)
         .await
-        .map_err(|e| CoreError::Database(format!("find_events_by_type_and_source: {}", e)))
+        .map_err(|e| CoreError::database(format!("find_events_by_type_and_source: {}", e)))
 }
 
 /// Example 4: Using domain-specific query modules
@@ -123,7 +123,7 @@ async fn get_latest_checkpoint(
         .fetch_optional::<(Option<Ulid>,)>(pool)
         .await
         .map(|row| row.map(|r| r.0).flatten())
-        .map_err(|e| CoreError::Database(format!("get_latest_checkpoint: {}", e)))
+        .map_err(|e| CoreError::database(format!("get_latest_checkpoint: {}", e)))
 }
 
 /// Example 5: Batch operations
@@ -157,7 +157,7 @@ async fn insert_events_batch(pool: &PgPool, events: &[RawEvent]) -> Result<(), C
             ])
             .execute(pool)
             .await
-            .map_err(|e| CoreError::Database(format!("insert_event_in_batch: {}", e)))?;
+            .map_err(|e| CoreError::database(format!("insert_event_in_batch: {}", e)))?;
     }
 
     Ok(())
@@ -184,7 +184,7 @@ async fn process_event_with_checkpoint(
         ])
         .execute(pool)
         .await
-        .map_err(|e| CoreError::Database(format!("insert_event: {}", e)))?;
+        .map_err(|e| CoreError::database(format!("insert_event: {}", e)))?;
 
     // Update checkpoint
     QueryBuilder::update("core.processor_checkpoints")
@@ -196,7 +196,7 @@ async fn process_event_with_checkpoint(
         )
         .execute(pool)
         .await
-        .map_err(|e| CoreError::Database(format!("update_checkpoint: {}", e)))?;
+        .map_err(|e| CoreError::database(format!("update_checkpoint: {}", e)))?;
 
     Ok(())
 }
@@ -227,7 +227,7 @@ async fn search_events(
         .limit(filters.limit.unwrap_or(100))
         .fetch_all::<RawEvent>(pool)
         .await
-        .map_err(|e| CoreError::Database(format!("search_events: {}", e)))
+        .map_err(|e| CoreError::database(format!("search_events: {}", e)))
 }
 
 #[derive(Default)]
@@ -251,7 +251,7 @@ async fn get_event_counts_by_source(
         .order_by("count", "DESC")
         .fetch_all::<(String, i64)>(pool)
         .await
-        .map_err(|e| CoreError::Database(format!("get_event_counts_by_source: {}", e)))
+        .map_err(|e| CoreError::database(format!("get_event_counts_by_source: {}", e)))
 }
 
 #[cfg(test)]

@@ -63,9 +63,4 @@ sha2 = { version = "0.10", optional = true }
 [dev-dependencies]
 # For self-testing
 tokio-test = "0.4"
-criterion = { version = "0.5", features = ["async_tokio"] }
-
-[[bench]]
-name = "test_utils_bench"
-harness = false
 

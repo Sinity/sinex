@@ -171,7 +171,7 @@ impl BaselineTracker {
 
 /// Establish baseline for basic database operations
 #[sinex_test]
-async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestResult {
+async fn test_establish_database_operation_baselines(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
 
@@ -362,7 +362,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> TestRe
 
 /// Establish baseline for Redis stream operations
 #[sinex_test]
-async fn test_establish_redis_stream_baselines(ctx: TestContext) -> TestResult {
+async fn test_establish_redis_stream_baselines(ctx: TestContext) -> anyhow::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut redis_conn = redis_client.get_connection().await?;
     let mut tracker = BaselineTracker::new();
@@ -539,7 +539,7 @@ async fn test_establish_redis_stream_baselines(ctx: TestContext) -> TestResult {
 
 /// Establish baseline for concurrent operations
 #[sinex_test]
-async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> TestResult {
+async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
 
@@ -657,7 +657,7 @@ async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> Test
 
 /// Establish baseline for system recovery operations
 #[sinex_test]
-async fn test_establish_recovery_baselines(ctx: TestContext) -> TestResult {
+async fn test_establish_recovery_baselines(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
 

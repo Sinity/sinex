@@ -193,42 +193,17 @@ just test-verbose           # Full output for debugging
 
 ### 🤖 IMPORTANT: AI Agent Guidelines
 
-**NEVER run cargo check/build manually!** A background compilation daemon is already running and continuously compiling your changes. Instead:
+When checking compilation status:
 
 ```bash
-# Get compilation status (blocks until current code is compiled)
-just ai-status
+# Get errors/warnings
+just errors
 
 # Get errors/warnings as JSON
 just ai-errors-json
-
-# Human-readable errors
-just errors
 ```
 
-The compilation daemon:
-- Watches all Rust files and recompiles automatically
-- Maintains up-to-date error/warning information
-- Provides JSON output for easy parsing
-- `ai-status` command blocks until your latest changes are compiled
-
-### Automatic Development Analytics
-
-Three systems work together automatically:
-
-**1. Background Compilation Daemon**
-- Continuously watches and compiles code changes
-- Started automatically in dev shell
-- Provides instant compilation status
-- Stores results in `~/.sinex-compile-state/`
-
-**2. Compilation Analytics** (via cargo wrapper)
-- Every `cargo` command automatically logs to `~/.sinex-analytics/compilations/`
-- Shows progress bars in terminal, JSON in CI/logs
-- Captures timing reports and sccache stats
-
-
-**Quick Development Commands**:
+### Development Commands
 ```bash
 # Compilation checks (optimized for speed)
 just qc                    # Full workspace check (~2-3s)
@@ -255,28 +230,8 @@ just warnings             # Show compilation warnings
 2. Use `just qcs` for fast iteration while fixing
 3. Run `just qc` again before committing to ensure nothing missed
 
-**Test Analytics**:
-Tests always run with coverage via `test-analytics.sh`:
-```bash
-just test-fast   # Runs with coverage, stores results
-just test-all    # Full suite with coverage
-```
+### Cargo Timing Reports
 
-Each test run captures:
-- Full coverage data (JSON, LCOV formats)
-- Test counts and duration
-- Git state at test time
-
-**Additional Features**:
-
-**Build.rs Integration**: 
-The `crate/sinex/build.rs` logs compilation metadata:
-- Compilation timestamp
-- Build profile (debug/release)
-- Target architecture
-- Optimization level
-
-**Cargo Timing Analytics**:
 ```bash
 # Build with detailed timing information
 cargo build --timings
@@ -367,7 +322,6 @@ cargo build --release      # Optimized builds
 ```bash
 just errors                # Show compilation errors
 just warnings              # Show compilation warnings
-just daemon-status         # Check background compilation daemon
 just recent-changes        # Show recent git changes for context
 ```
 

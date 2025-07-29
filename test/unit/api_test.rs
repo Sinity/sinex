@@ -93,7 +93,7 @@ async fn create_and_insert_test_event(
 
 /// Test basic annotation creation
 #[sinex_test]
-async fn test_create_annotation_basic(ctx: TestContext) -> TestResult {
+async fn test_create_annotation_basic(ctx: TestContext) -> anyhow::Result<()> {
     // Create a real event first to satisfy foreign key constraint
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
@@ -122,7 +122,7 @@ async fn test_create_annotation_basic(ctx: TestContext) -> TestResult {
 
 /// Test minimal annotation creation
 #[sinex_test]
-async fn test_create_annotation_minimal(ctx: TestContext) -> TestResult {
+async fn test_create_annotation_minimal(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -147,7 +147,7 @@ async fn test_create_annotation_minimal(ctx: TestContext) -> TestResult {
 
 /// Test annotation retrieval by ID
 #[sinex_test]
-async fn test_get_annotation_by_id(ctx: TestContext) -> TestResult {
+async fn test_get_annotation_by_id(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -175,7 +175,7 @@ async fn test_get_annotation_by_id(ctx: TestContext) -> TestResult {
 
 /// Test annotation retrieval for non-existent ID
 #[sinex_test]
-async fn test_get_annotation_by_id_not_found(ctx: TestContext) -> TestResult {
+async fn test_get_annotation_by_id_not_found(ctx: TestContext) -> anyhow::Result<()> {
     let non_existent_id = Ulid::new();
     let result = get_annotation_by_id(ctx.pool(), non_existent_id).await?;
     assert!(result.is_none());
@@ -184,7 +184,7 @@ async fn test_get_annotation_by_id_not_found(ctx: TestContext) -> TestResult {
 
 /// Test getting annotations for an event
 #[sinex_test]
-async fn test_get_annotations_for_event(ctx: TestContext) -> TestResult {
+async fn test_get_annotations_for_event(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -250,7 +250,7 @@ async fn test_get_annotations_for_event(ctx: TestContext) -> TestResult {
 
 /// Test annotation content update
 #[sinex_test]
-async fn test_update_annotation_content(ctx: TestContext) -> TestResult {
+async fn test_update_annotation_content(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -293,7 +293,7 @@ async fn test_update_annotation_content(ctx: TestContext) -> TestResult {
 
 /// Test annotation deletion
 #[sinex_test]
-async fn test_delete_annotation(ctx: TestContext) -> TestResult {
+async fn test_delete_annotation(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -324,7 +324,7 @@ async fn test_delete_annotation(ctx: TestContext) -> TestResult {
 
 /// Test getting recent annotations
 #[sinex_test]
-async fn test_get_recent_annotations(ctx: TestContext) -> TestResult {
+async fn test_get_recent_annotations(ctx: TestContext) -> anyhow::Result<()> {
     let event1 = create_and_insert_test_event(ctx.pool(), "test_source1", "test_event1").await?;
     let event2 = create_and_insert_test_event(ctx.pool(), "test_source2", "test_event2").await?;
     let event_id1 = event1.id;
@@ -372,7 +372,7 @@ async fn test_get_recent_annotations(ctx: TestContext) -> TestResult {
 
 /// Test annotation with complex metadata
 #[sinex_test]
-async fn test_annotation_complex_metadata(ctx: TestContext) -> TestResult {
+async fn test_annotation_complex_metadata(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -420,7 +420,7 @@ async fn test_annotation_complex_metadata(ctx: TestContext) -> TestResult {
 
 /// Test artifact creation and retrieval
 #[sinex_test]
-async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
+async fn test_create_artifact_basic(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -455,7 +455,7 @@ async fn test_create_artifact_basic(ctx: TestContext) -> TestResult {
 
 /// Test artifact retrieval by ID
 #[sinex_test]
-async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
+async fn test_get_artifact_by_id(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -490,7 +490,7 @@ async fn test_get_artifact_by_id(ctx: TestContext) -> TestResult {
 
 /// Test getting artifacts for an event
 #[sinex_test]
-async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
+async fn test_get_artifacts_for_event(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -549,7 +549,7 @@ async fn test_get_artifacts_for_event(ctx: TestContext) -> TestResult {
 
 /// Test artifact deletion
 #[sinex_test]
-async fn test_delete_artifact(ctx: TestContext) -> TestResult {
+async fn test_delete_artifact(ctx: TestContext) -> anyhow::Result<()> {
     let event = create_and_insert_test_event(ctx.pool(), "test_source", "test_event").await?;
     let event_id = event.id;
 
@@ -581,7 +581,7 @@ async fn test_delete_artifact(ctx: TestContext) -> TestResult {
 
 /// Test knowledge graph entity creation
 #[sinex_test]
-async fn test_create_knowledge_graph_entity(ctx: TestContext) -> TestResult {
+async fn test_create_knowledge_graph_entity(ctx: TestContext) -> anyhow::Result<()> {
     let input = CreateEntityInput {
         entity_type: "person".to_string(),
         name: "John Doe".to_string(),
@@ -604,7 +604,7 @@ async fn test_create_knowledge_graph_entity(ctx: TestContext) -> TestResult {
 
 /// Test knowledge graph relationship creation
 #[sinex_test]
-async fn test_create_knowledge_graph_relationship(ctx: TestContext) -> TestResult {
+async fn test_create_knowledge_graph_relationship(ctx: TestContext) -> anyhow::Result<()> {
     // Create two entities first
     let person_input = CreateEntityInput {
         entity_type: "person".to_string(),
@@ -650,7 +650,7 @@ async fn test_create_knowledge_graph_relationship(ctx: TestContext) -> TestResul
 
 /// Test knowledge graph query by entity type
 #[sinex_test]
-async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
+async fn test_query_entities_by_type(ctx: TestContext) -> anyhow::Result<()> {
     // Create entities of different types
     let inputs = vec![
         CreateEntityInput {
@@ -702,7 +702,7 @@ async fn test_query_entities_by_type(ctx: TestContext) -> TestResult {
 
 /// Test knowledge graph relationship queries
 #[sinex_test]
-async fn test_query_relationships(ctx: TestContext) -> TestResult {
+async fn test_query_relationships(ctx: TestContext) -> anyhow::Result<()> {
     // Create entities and relationships
     let user_input = CreateEntityInput {
         entity_type: "person".to_string(),
@@ -758,7 +758,7 @@ async fn test_query_relationships(ctx: TestContext) -> TestResult {
 
 /// Test configuration validation with valid input
 #[sinex_test]
-async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_valid(_ctx: TestContext) -> anyhow::Result<()> {
     let config: ConfigValue = toml::from_str(
         r#"
         [database]
@@ -792,7 +792,7 @@ async fn test_configuration_validation_valid(_ctx: TestContext) -> TestResult {
 
 /// Test configuration validation with invalid input
 #[sinex_test]
-async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_invalid(_ctx: TestContext) -> anyhow::Result<()> {
     let config: ConfigValue = toml::from_str(
         r#"
         [database]
@@ -838,7 +838,7 @@ async fn test_configuration_validation_invalid(_ctx: TestContext) -> TestResult 
 
 /// Test configuration validation with missing fields
 #[sinex_test]
-async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> anyhow::Result<()> {
     let config: ConfigValue = toml::from_str(
         r#"
         [database]
@@ -870,7 +870,7 @@ async fn test_configuration_validation_missing_fields(_ctx: TestContext) -> Test
 
 /// Test configuration validation with type conversion
 #[sinex_test]
-async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> anyhow::Result<()> {
     let config: ConfigValue = toml::from_str(
         r#"
         [numbers]
@@ -906,7 +906,7 @@ async fn test_configuration_validation_type_conversion(_ctx: TestContext) -> Tes
 
 /// Test multi-validator functionality
 #[sinex_test]
-async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
+async fn test_multi_validator_functionality(_ctx: TestContext) -> anyhow::Result<()> {
     let config: ConfigValue = toml::from_str(
         r#"
         [server]
@@ -952,7 +952,7 @@ async fn test_multi_validator_functionality(_ctx: TestContext) -> TestResult {
 
 /// Test TestContext basic functionality
 #[sinex_test]
-async fn test_test_context_basic_functionality(ctx: TestContext) -> TestResult {
+async fn test_test_context_basic_functionality(ctx: TestContext) -> anyhow::Result<()> {
     // Test basic context properties
     let test_name = ctx.test_name();
     assert!(!test_name.is_empty(), "Test name should not be empty");
@@ -976,7 +976,7 @@ async fn test_test_context_basic_functionality(ctx: TestContext) -> TestResult {
 
 /// Test TestContext event insertion
 #[sinex_test]
-async fn test_test_context_event_insertion(ctx: TestContext) -> TestResult {
+async fn test_test_context_event_insertion(ctx: TestContext) -> anyhow::Result<()> {
     let initial_count = ctx.event_count().await?;
 
     // Insert an event using context
@@ -996,7 +996,7 @@ async fn test_test_context_event_insertion(ctx: TestContext) -> TestResult {
 
 /// Test TestContext event builder
 #[sinex_test]
-async fn test_test_context_event_builder(ctx: TestContext) -> TestResult {
+async fn test_test_context_event_builder(ctx: TestContext) -> anyhow::Result<()> {
     // Test event builder functionality
     let event = ctx
         .event_builder("test_source", "test_event")
@@ -1014,7 +1014,7 @@ async fn test_test_context_event_builder(ctx: TestContext) -> TestResult {
 
 /// Test TestContext timing helpers
 #[sinex_test]
-async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
+async fn test_test_context_timing_helpers(ctx: TestContext) -> anyhow::Result<()> {
     // Test wait for event count
     let initial_count = ctx.event_count().await?;
 
@@ -1047,7 +1047,7 @@ async fn test_test_context_timing_helpers(ctx: TestContext) -> TestResult {
 
 /// Test comprehensive ULID generation and properties
 #[sinex_test]
-async fn test_comprehensive_ulid_generation(_ctx: TestContext) -> TestResult {
+async fn test_comprehensive_ulid_generation(_ctx: TestContext) -> anyhow::Result<()> {
     let ulid = Ulid::new();
 
     // Test basic properties
@@ -1080,7 +1080,7 @@ async fn test_comprehensive_ulid_generation(_ctx: TestContext) -> TestResult {
 
 /// Test ULID ordering and uniqueness
 #[sinex_test]
-async fn test_comprehensive_ulid_ordering(_ctx: TestContext) -> TestResult {
+async fn test_comprehensive_ulid_ordering(_ctx: TestContext) -> anyhow::Result<()> {
     let mut ulids = Vec::new();
 
     // Generate multiple ULIDs
@@ -1107,7 +1107,7 @@ async fn test_comprehensive_ulid_ordering(_ctx: TestContext) -> TestResult {
 
 /// Test ULID string parsing and validation
 #[sinex_test]
-async fn test_comprehensive_ulid_string_parsing(_ctx: TestContext) -> TestResult {
+async fn test_comprehensive_ulid_string_parsing(_ctx: TestContext) -> anyhow::Result<()> {
     let ulid = Ulid::new();
     let ulid_str = ulid.to_string();
 
@@ -1143,7 +1143,7 @@ async fn test_comprehensive_ulid_string_parsing(_ctx: TestContext) -> TestResult
 
 /// Test ULID performance characteristics
 #[sinex_test]
-async fn test_comprehensive_ulid_performance(_ctx: TestContext) -> TestResult {
+async fn test_comprehensive_ulid_performance(_ctx: TestContext) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
     let iterations = 10_000;
 
@@ -1186,7 +1186,7 @@ async fn test_comprehensive_ulid_performance(_ctx: TestContext) -> TestResult {
 
 /// Test ULID edge cases and boundary conditions
 #[sinex_test]
-async fn test_comprehensive_ulid_edge_cases(_ctx: TestContext) -> TestResult {
+async fn test_comprehensive_ulid_edge_cases(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with specific timestamps
     let epoch = chrono::DateTime::from_timestamp(0, 0).unwrap();
     let epoch_ulid = Ulid::from_datetime(epoch);

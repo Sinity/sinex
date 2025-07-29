@@ -434,16 +434,17 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::bench::*;
-    use divan::Bencher;
+    use crate::sinex_bench;
 
-    #[divan::bench]
-    fn bench_fixture_id_generation(bencher: Bencher) {
+    #[sinex_bench]
+    async fn bench_fixture_id_generation() -> anyhow::Result<()> {
         let manager = FixtureManager::new();
         let fixtures = FixtureSet::new()
             .with_events(DatasetSize::Medium, 1337)
             .with_checkpoints(100);
 
-        bencher.bench_local(|| manager.fixture_id(&fixtures, DatasetSize::Medium));
+        let id = manager.fixture_id(&fixtures, DatasetSize::Medium);
+        divan::black_box(id);
+        Ok(())
     }
 }

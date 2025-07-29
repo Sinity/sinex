@@ -46,7 +46,7 @@ async fn setup_test_annex(
 }
 
 #[sinex_test]
-async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult {
+async fn test_file_add_and_retrieve(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     // Create a test file
@@ -71,7 +71,7 @@ async fn test_file_add_and_retrieve(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_large_file_handling(ctx: TestContext) -> TestResult {
+async fn test_large_file_handling(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     // Create 1MB of data
@@ -94,7 +94,7 @@ async fn test_large_file_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_annex_key_lookup(ctx: TestContext) -> TestResult {
+async fn test_annex_key_lookup(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     // Create a test file with known content
@@ -117,7 +117,7 @@ async fn test_annex_key_lookup(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_drop_content(ctx: TestContext) -> TestResult {
+async fn test_drop_content(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     // Create and add a file
@@ -137,7 +137,7 @@ async fn test_drop_content(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_fsck(ctx: TestContext) -> TestResult {
+async fn test_fsck(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     // Add some files
@@ -157,7 +157,7 @@ async fn test_fsck(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_git_annex_configuration(ctx: TestContext) -> TestResult {
+async fn test_git_annex_configuration(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let repo_path = temp_dir.path().to_path_buf();
 
@@ -187,7 +187,7 @@ async fn test_git_annex_configuration(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult {
+async fn test_concurrent_file_operations(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
     let annex = std::sync::Arc::new(annex);
     let mut handles = vec![];
@@ -230,7 +230,7 @@ async fn test_concurrent_file_operations(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult {
+async fn test_files_in_subdirectories(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     // Create subdirectory structure
@@ -256,7 +256,7 @@ async fn test_files_in_subdirectories(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test(timeout = 30)]
-async fn test_annex_deduplication(ctx: TestContext) -> TestResult {
+async fn test_annex_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     let (annex, temp_dir) = setup_test_annex().await?;
 
     let content = b"Duplicate content for dedup test";
@@ -300,7 +300,7 @@ async fn test_annex_deduplication(ctx: TestContext) -> TestResult {
 // ==================== EXTERNAL COMMAND INTEGRATION TESTS ====================
 
 #[sinex_test]
-async fn test_external_command_execution(ctx: TestContext) -> TestResult {
+async fn test_external_command_execution(ctx: TestContext) -> anyhow::Result<()> {
     // Test basic external command execution
     let output = tokio::process::Command::new("echo")
         .arg("Hello, external world!")
@@ -315,7 +315,7 @@ async fn test_external_command_execution(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_command_with_environment(ctx: TestContext) -> TestResult {
+async fn test_external_command_with_environment(ctx: TestContext) -> anyhow::Result<()> {
     // Test command execution with environment variables
     let output = tokio::process::Command::new("env")
         .env("TEST_VAR", "test_value")
@@ -330,7 +330,7 @@ async fn test_external_command_with_environment(ctx: TestContext) -> TestResult 
 }
 
 #[sinex_test]
-async fn test_external_command_working_directory(ctx: TestContext) -> TestResult {
+async fn test_external_command_working_directory(ctx: TestContext) -> anyhow::Result<()> {
     // Create a temporary directory
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
@@ -353,7 +353,7 @@ async fn test_external_command_working_directory(ctx: TestContext) -> TestResult
 }
 
 #[sinex_test]
-async fn test_external_command_error_handling(ctx: TestContext) -> TestResult {
+async fn test_external_command_error_handling(ctx: TestContext) -> anyhow::Result<()> {
     // Test handling of command that returns error
     let output = tokio::process::Command::new("false").output().await?;
 
@@ -364,7 +364,7 @@ async fn test_external_command_error_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_command_timeout(ctx: TestContext) -> TestResult {
+async fn test_external_command_timeout(ctx: TestContext) -> anyhow::Result<()> {
     // Test command timeout handling
     let result = timeout(Duration::from_millis(100), async {
         tokio::process::Command::new("sleep")
@@ -380,7 +380,7 @@ async fn test_external_command_timeout(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_command_stdin_interaction(ctx: TestContext) -> TestResult {
+async fn test_external_command_stdin_interaction(ctx: TestContext) -> anyhow::Result<()> {
     // Test command with stdin input
     let mut child = tokio::process::Command::new("cat")
         .stdin(std::process::Stdio::piped())
@@ -412,7 +412,7 @@ async fn test_external_command_stdin_interaction(ctx: TestContext) -> TestResult
 // ==================== DATABASE INTEGRATION TESTS ====================
 
 #[sinex_test]
-async fn test_external_database_connection(ctx: TestContext) -> TestResult {
+async fn test_external_database_connection(ctx: TestContext) -> anyhow::Result<()> {
     // Test that we can connect to external PostgreSQL database
     let pool = ctx.pool().clone();
 
@@ -427,7 +427,7 @@ async fn test_external_database_connection(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestResult {
+async fn test_external_database_timescaledb_functions(ctx: TestContext) -> anyhow::Result<()> {
     // Test TimescaleDB specific functions
     let pool = ctx.pool().clone();
 
@@ -450,7 +450,7 @@ async fn test_external_database_timescaledb_functions(ctx: TestContext) -> TestR
 }
 
 #[sinex_test]
-async fn test_external_database_extensions(ctx: TestContext) -> TestResult {
+async fn test_external_database_extensions(ctx: TestContext) -> anyhow::Result<()> {
     // Test that required database extensions are available
     let pool = ctx.pool().clone();
 
@@ -477,7 +477,7 @@ async fn test_external_database_extensions(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_database_concurrent_connections(ctx: TestContext) -> TestResult {
+async fn test_external_database_concurrent_connections(ctx: TestContext) -> anyhow::Result<()> {
     // Test concurrent database connections
     let pool = ctx.pool().clone();
     let mut handles = vec![];
@@ -505,7 +505,7 @@ async fn test_external_database_concurrent_connections(ctx: TestContext) -> Test
 }
 
 #[sinex_test]
-async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestResult {
+async fn test_external_database_transaction_isolation(ctx: TestContext) -> anyhow::Result<()> {
     // Test database transaction isolation
     let pool = ctx.pool().clone();
 
@@ -547,7 +547,7 @@ async fn test_external_database_transaction_isolation(ctx: TestContext) -> TestR
 // ==================== FILESYSTEM INTEGRATION TESTS ====================
 
 #[sinex_test]
-async fn test_external_filesystem_operations(ctx: TestContext) -> TestResult {
+async fn test_external_filesystem_operations(ctx: TestContext) -> anyhow::Result<()> {
     // Test basic filesystem operations
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("external_test.txt");
@@ -571,7 +571,7 @@ async fn test_external_filesystem_operations(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_filesystem_permissions(ctx: TestContext) -> TestResult {
+async fn test_external_filesystem_permissions(ctx: TestContext) -> anyhow::Result<()> {
     // Test filesystem permissions (Unix-specific)
     let temp_dir = TempDir::new()?;
     let test_file = temp_dir.path().join("permission_test.txt");
@@ -605,7 +605,7 @@ async fn test_external_filesystem_permissions(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_external_filesystem_symlinks(ctx: TestContext) -> TestResult {
+async fn test_external_filesystem_symlinks(ctx: TestContext) -> anyhow::Result<()> {
     // Test symbolic link operations
     let temp_dir = TempDir::new()?;
     let original_file = temp_dir.path().join("original.txt");

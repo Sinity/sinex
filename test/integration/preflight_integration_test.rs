@@ -13,7 +13,7 @@ use tokio::time::timeout;
 
 /// Test complete preflight verification pipeline with all phases
 #[sinex_test]
-async fn test_complete_preflight_pipeline_success(ctx: TestContext) -> TestResult {
+async fn test_complete_preflight_pipeline_success(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Run complete verification process using the main function logic
@@ -147,7 +147,7 @@ async fn test_complete_preflight_pipeline_success(ctx: TestContext) -> TestResul
 
 /// Test preflight pipeline with early failure (database connectivity)
 #[sinex_test]
-async fn test_preflight_pipeline_early_failure(_ctx: TestContext) -> TestResult {
+async fn test_preflight_pipeline_early_failure(_ctx: TestContext) -> anyhow::Result<()> {
     // Set invalid database URL to trigger early failure
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -173,7 +173,7 @@ async fn test_preflight_pipeline_early_failure(_ctx: TestContext) -> TestResult 
 
 /// Test preflight pipeline timeout handling
 #[sinex_test]
-async fn test_preflight_pipeline_timeout_handling(ctx: TestContext) -> TestResult {
+async fn test_preflight_pipeline_timeout_handling(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Test that each phase completes within reasonable time
@@ -225,7 +225,7 @@ async fn test_preflight_pipeline_timeout_handling(ctx: TestContext) -> TestResul
 
 /// Test preflight pipeline with partial phase failures
 #[sinex_test]
-async fn test_preflight_pipeline_partial_failures(ctx: TestContext) -> TestResult {
+async fn test_preflight_pipeline_partial_failures(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Test individual phases that might warn but not fail
@@ -261,7 +261,7 @@ async fn test_preflight_pipeline_partial_failures(ctx: TestContext) -> TestResul
 
 /// Test that database phase properly sets up for subsequent phases
 #[sinex_test]
-async fn test_phase_interaction_database_setup(ctx: TestContext) -> TestResult {
+async fn test_phase_interaction_database_setup(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // First run database connectivity
@@ -299,7 +299,7 @@ async fn test_phase_interaction_database_setup(ctx: TestContext) -> TestResult {
 
 /// Test configuration-to-services phase interaction
 #[sinex_test]
-async fn test_phase_interaction_config_to_services(ctx: TestContext) -> TestResult {
+async fn test_phase_interaction_config_to_services(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Run configuration phase
@@ -335,7 +335,7 @@ async fn test_phase_interaction_config_to_services(ctx: TestContext) -> TestResu
 
 /// Test multiple concurrent verification runs
 #[sinex_test]
-async fn test_concurrent_verification_runs(ctx: TestContext) -> TestResult {
+async fn test_concurrent_verification_runs(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Launch multiple verification tasks concurrently
@@ -387,7 +387,7 @@ async fn test_concurrent_verification_runs(ctx: TestContext) -> TestResult {
 
 /// Test preflight behavior under resource constraints
 #[sinex_test]
-async fn test_resource_constraint_handling(ctx: TestContext) -> TestResult {
+async fn test_resource_constraint_handling(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Test system resources verification
@@ -424,7 +424,7 @@ async fn test_resource_constraint_handling(ctx: TestContext) -> TestResult {
 
 /// Test preflight integration with real database operations
 #[sinex_test]
-async fn test_integration_with_database_operations(ctx: TestContext) -> TestResult {
+async fn test_integration_with_database_operations(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Run integration verification
@@ -457,7 +457,7 @@ async fn test_integration_with_database_operations(ctx: TestContext) -> TestResu
 
 /// Test preflight with different environment configurations
 #[sinex_test]
-async fn test_different_environment_configurations(_ctx: TestContext) -> TestResult {
+async fn test_different_environment_configurations(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with minimal environment
     env::remove_var("RUST_LOG");
     env::remove_var("SINEX_CONFIG");
@@ -492,7 +492,7 @@ async fn test_different_environment_configurations(_ctx: TestContext) -> TestRes
 
 /// Test error message aggregation across phases
 #[sinex_test]
-async fn test_error_aggregation_across_phases(_ctx: TestContext) -> TestResult {
+async fn test_error_aggregation_across_phases(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with configuration that will generate various warnings/errors
     env::set_var("DATABASE_URL", "postgresql://localhost:5432/test_errors");
 
@@ -544,7 +544,7 @@ async fn test_error_aggregation_across_phases(_ctx: TestContext) -> TestResult {
 
 /// Test preflight performance characteristics
 #[sinex_test]
-async fn test_preflight_performance_characteristics(ctx: TestContext) -> TestResult {
+async fn test_preflight_performance_characteristics(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Measure performance of each phase
@@ -591,7 +591,7 @@ async fn test_preflight_performance_characteristics(ctx: TestContext) -> TestRes
 
 /// Test preflight cleanup and recovery mechanisms
 #[sinex_test]
-async fn test_cleanup_and_recovery_mechanisms(ctx: TestContext) -> TestResult {
+async fn test_cleanup_and_recovery_mechanisms(ctx: TestContext) -> anyhow::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Test that verification doesn't leave artifacts

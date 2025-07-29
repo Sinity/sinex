@@ -627,3 +627,49 @@ git-tracker-stop:
 # 📊 Git tracker status
 git-tracker-status:
     @./scripts/git-state-tracker.sh status
+
+# === Benchmarking ===
+
+# 📊 Run all benchmarks with JSON export
+bench-all:
+    @echo "📊 Running all benchmarks..."
+    cargo bench --features bench -- --export=json > target/bench-results.json
+    @echo "✅ Results saved to target/bench-results.json"
+
+# ⚡ Quick benchmarks with small dataset
+bench-quick:
+    @echo "⚡ Running quick benchmarks (small dataset)..."
+    BENCH_DATASET=small cargo bench --features bench -- query
+
+# 🔍 Compare benchmarks with main branch
+bench-compare:
+    @echo "🔍 Comparing with main branch..."
+    git stash push -m "bench-compare stash"
+    git checkout main
+    cargo bench --features bench -- --export=json > target/bench-main.json
+    git checkout -
+    git stash pop || true
+    cargo bench --features bench -- --export=json > target/bench-current.json
+    @echo "✅ Comparison ready: target/bench-main.json vs target/bench-current.json"
+
+# 🎯 Benchmark specific crate
+bench-crate CRATE:
+    @echo "🎯 Benchmarking crate: {{CRATE}}"
+    cargo bench --features bench --bin {{CRATE}} -- --export=json
+
+# 🗂️ Generate benchmark datasets
+bench-generate-datasets:
+    @echo "🗂️ Generating benchmark datasets..."
+    @echo "⚠️  Note: Dataset generation tools need to be implemented"
+    @echo "For now, create fixtures manually in fixtures/datasets/"
+
+# 📈 Run benchmarks for sinex-test-utils
+bench-test-utils:
+    @echo "📈 Benchmarking sinex-test-utils..."
+    cargo bench --features bench --bin sinex-test-utils
+
+# 🧹 Clean benchmark results
+bench-clean:
+    @echo "🧹 Cleaning benchmark results..."
+    rm -rf target/bench-*.json target/benchmarks/
+

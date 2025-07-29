@@ -188,10 +188,13 @@ fn handle_event(event: &RawEvent) -> Result<(), sinex_error::CoreError> {
         (sources::SINEX, event_types::sinex::PROCESS_HEARTBEAT) => handle_heartbeat(event),
         _ => {
             // Unknown event type/source combination
-            Err(CoreError::Unknown(format!(
-                "Unknown event type: {} from source: {}",
-                event.event_type, event.source
-            )))
+            Err(CoreError::unknown(
+                format!(
+                    "Unknown event type: {} from source: {}",
+                    event.event_type, event.source
+                )
+                .build(),
+            ))
         }
     }
 }

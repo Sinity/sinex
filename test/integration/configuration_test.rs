@@ -1069,7 +1069,7 @@ impl ConfigErrorHandlingTester {
 // ============================================================================
 
 #[sinex_test]
-async fn test_configuration_coverage_analysis(ctx: TestContext) -> TestResult {
+async fn test_configuration_coverage_analysis(ctx: TestContext) -> anyhow::Result<()> {
     println!("🔍 Testing configuration coverage analysis");
 
     let coverage = ConfigurationCoverage::build_coverage_analysis();
@@ -1096,7 +1096,7 @@ async fn test_configuration_coverage_analysis(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_configuration_compatibility_matrix(ctx: TestContext) -> TestResult {
+async fn test_configuration_compatibility_matrix(ctx: TestContext) -> anyhow::Result<()> {
     println!("🔗 Testing configuration compatibility matrix");
 
     let matrix = ConfigCompatibilityMatrix::build_compatibility_matrix();
@@ -1134,7 +1134,7 @@ async fn test_configuration_compatibility_matrix(ctx: TestContext) -> TestResult
 }
 
 #[sinex_test]
-async fn test_environment_specific_configurations(ctx: TestContext) -> TestResult {
+async fn test_environment_specific_configurations(ctx: TestContext) -> anyhow::Result<()> {
     println!("🌍 Testing environment-specific configurations");
 
     let env_tester = EnvironmentConfigTester::build_environment_tester();
@@ -1179,7 +1179,7 @@ async fn test_environment_specific_configurations(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-async fn test_default_configuration_validation(ctx: TestContext) -> TestResult {
+async fn test_default_configuration_validation(ctx: TestContext) -> anyhow::Result<()> {
     println!("⚙️ Testing default configuration validation");
 
     let validator = DefaultConfigValidator::new();
@@ -1216,7 +1216,7 @@ async fn test_default_configuration_validation(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_configuration_error_handling(ctx: TestContext) -> TestResult {
+async fn test_configuration_error_handling(ctx: TestContext) -> anyhow::Result<()> {
     println!("🚨 Testing configuration error handling");
 
     let error_tester = ConfigErrorHandlingTester::new();
@@ -1245,7 +1245,7 @@ async fn test_configuration_error_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_configuration_validation_comprehensive(ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_comprehensive(ctx: TestContext) -> anyhow::Result<()> {
     println!("🔧 Testing comprehensive configuration validation");
 
     // Test environment variable handling
@@ -1280,7 +1280,7 @@ async fn test_configuration_validation_comprehensive(ctx: TestContext) -> TestRe
 }
 
 #[sinex_test]
-async fn test_configuration_migration_compatibility(ctx: TestContext) -> TestResult {
+async fn test_configuration_migration_compatibility(ctx: TestContext) -> anyhow::Result<()> {
     println!("📦 Testing configuration migration compatibility");
 
     // Create test configurations representing different versions
@@ -1311,7 +1311,7 @@ async fn test_configuration_migration_compatibility(ctx: TestContext) -> TestRes
 // ============================================================================
 
 #[sinex_test]
-async fn test_configuration_performance_impact(ctx: TestContext) -> TestResult {
+async fn test_configuration_performance_impact(ctx: TestContext) -> anyhow::Result<()> {
     println!("⚡ Testing configuration performance impact");
 
     let start = std::time::Instant::now();
@@ -1353,7 +1353,7 @@ async fn test_configuration_performance_impact(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_configuration_documentation_completeness(ctx: TestContext) -> TestResult {
+async fn test_configuration_documentation_completeness(ctx: TestContext) -> anyhow::Result<()> {
     println!("📚 Testing configuration documentation completeness");
 
     let coverage = ConfigurationCoverage::build_coverage_analysis();

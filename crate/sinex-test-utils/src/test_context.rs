@@ -184,6 +184,7 @@ use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::QueryBuilder;
 use sinex_error::SinexError;
 use sinex_events::{event_types, sources, EventFactory};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Mutex;
@@ -254,11 +255,21 @@ impl TestContext {
         EventBuilder::new(self)
     }
 
+    /// Create checkpoint builder for tests
+    pub fn checkpoint(&self) -> CheckpointBuilder<'_> {
+        CheckpointBuilder::new(self)
+    }
+
     /// Insert event directly (internal use)
     pub(crate) async fn insert_event_internal(&self, event: &RawEvent) -> Result<RawEvent> {
         let inserted = sinex_db::insert_event_with_validator(self.pool(), event, None)
             .await
-            .map_err(|e| SinexError::database(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database("Failed to insert event")
+                    .with_source(e)
+                    .with_context("event_type", &event.event_type)
+                    .with_context("source", &event.source)
+            })?;
         self.created_events.lock().await.push(inserted.id);
         Ok(inserted)
     }
@@ -283,12 +294,10 @@ impl TestContext {
 
         sinex_core_utils::wait_for_condition_adaptive(
             || async {
-                let count = self
-                    .events()
-                    .count()
-                    .await
-                    .map_err(|e| SinexError::database(e.to_string()))?
-                    as usize;
+                let count =
+                    self.events().count().await.map_err(|e| {
+                        SinexError::database("Failed to count events").with_source(e)
+                    })? as usize;
                 Ok(count >= expected)
             },
             timeout_secs,
@@ -445,10 +454,14 @@ impl TestContext {
                 return Err(SinexError::validation(format!(
                     "Snapshot '{}' mismatch:\nExpected:\n{}\nActual:\n{}",
                     name,
-                    serde_json::to_string_pretty(&existing_value)
-                        .map_err(|e| SinexError::serialization(e.to_string()))?,
-                    serde_json::to_string_pretty(&json_value)
-                        .map_err(|e| SinexError::serialization(e.to_string()))?
+                    serde_json::to_string_pretty(&existing_value).map_err(|e| {
+                        SinexError::serialization("Failed to serialize existing value")
+                            .with_source(e)
+                    })?,
+                    serde_json::to_string_pretty(&json_value).map_err(|e| {
+                        SinexError::serialization("Failed to serialize expected value")
+                            .with_source(e)
+                    })?
                 )));
             }
         } else {
@@ -672,8 +685,7 @@ impl TestContext {
                 } else {
                     Err(SinexError::validation(format!(
                         "Error '{}' does not contain '{}'",
-                        err_string,
-                        expected_text,
+                        err_string, expected_text,
                     )))
                 }
             }
@@ -694,10 +706,194 @@ pub struct FixtureManager<'ctx> {
 }
 
 impl<'ctx> FixtureManager<'ctx> {
-    // All fixture methods should be accessed through the fixtures module directly
-    // Example: crate::fixtures::standard_user_session(&ctx).await
+    /// Access scenario-based fixtures
+    pub fn scenarios(&self) -> ScenarioFixtures<'ctx> {
+        ScenarioFixtures { ctx: self.ctx }
+    }
+
+    /// Access performance testing fixtures
+    pub fn performance(&self) -> PerformanceFixtures<'ctx> {
+        PerformanceFixtures { ctx: self.ctx }
+    }
+
+    /// Access error testing fixtures
+    pub fn errors(&self) -> ErrorFixtures<'ctx> {
+        ErrorFixtures { ctx: self.ctx }
+    }
+
+    // Direct access methods for common fixtures
+    pub async fn user_session(&self) -> Result<crate::fixtures::UserSessionFixture> {
+        let fixture = crate::fixtures::standard_user_session(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate standard user session fixture")
+                    .with_source(e)
+            })?;
+        Ok((*fixture).clone())
+    }
+
+    pub async fn large_dataset(&self) -> Result<crate::fixtures::LargeDatasetFixture> {
+        crate::fixtures::large_event_dataset(self.ctx, 10000)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate large event dataset").with_source(e)
+            })
+    }
+
+    pub async fn validation_failures(&self) -> Result<crate::fixtures::ValidationErrorsFixture> {
+        crate::fixtures::validation_failures(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate validation failures fixture").with_source(e)
+            })
+    }
 }
 
+/// Scenario-based fixtures for testing common user workflows
+pub struct ScenarioFixtures<'ctx> {
+    ctx: &'ctx TestContext,
+}
+
+impl<'ctx> ScenarioFixtures<'ctx> {
+    pub async fn user_session(&self) -> Result<crate::fixtures::UserSessionFixture> {
+        let fixture = crate::fixtures::standard_user_session(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate user session fixture").with_source(e)
+            })?;
+        Ok((*fixture).clone())
+    }
+
+    pub async fn populated_checkpoints(&self) -> Result<crate::fixtures::CheckpointFixture> {
+        let fixture = crate::fixtures::populated_checkpoints(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate populated checkpoints fixture")
+                    .with_source(e)
+            })?;
+        Ok((*fixture).clone())
+    }
+
+    pub async fn terminal_session(&self) -> Result<crate::fixtures::TerminalSessionFixture> {
+        crate::fixtures::terminal_session(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate terminal session fixture").with_source(e)
+            })
+    }
+
+    pub async fn concurrent_operations(
+        &self,
+    ) -> Result<crate::fixtures::ConcurrentOperationsFixture> {
+        crate::fixtures::concurrent_operations(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate concurrent operations fixture")
+                    .with_source(e)
+            })
+    }
+}
+
+/// Performance testing fixtures for benchmarking and load testing
+pub struct PerformanceFixtures<'ctx> {
+    ctx: &'ctx TestContext,
+}
+
+impl<'ctx> PerformanceFixtures<'ctx> {
+    pub async fn small_dataset(&self) -> Result<crate::fixtures::LargeDatasetFixture> {
+        let config = crate::fixture_config::FIXTURE_CONFIG.clone();
+        crate::fixtures::large_event_dataset(self.ctx, config.small_dataset_size)
+            .await
+            .map_err(|e| SinexError::unknown("Failed to generate small dataset").with_source(e))
+    }
+
+    pub async fn medium_dataset(&self) -> Result<crate::fixtures::LargeDatasetFixture> {
+        let config = crate::fixture_config::FIXTURE_CONFIG.clone();
+        crate::fixtures::large_event_dataset(self.ctx, config.medium_dataset_size)
+            .await
+            .map_err(|e| SinexError::unknown("Failed to generate medium dataset").with_source(e))
+    }
+
+    pub async fn large_dataset(&self) -> Result<crate::fixtures::LargeDatasetFixture> {
+        let config = crate::fixture_config::FIXTURE_CONFIG.clone();
+        crate::fixtures::large_event_dataset(self.ctx, config.large_dataset_size)
+            .await
+            .map_err(|e| SinexError::unknown("Failed to generate large dataset").with_source(e))
+    }
+
+    pub async fn dataset_with_size(
+        &self,
+        count: usize,
+    ) -> Result<crate::fixtures::LargeDatasetFixture> {
+        crate::fixtures::large_event_dataset(self.ctx, count)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate dataset with custom size")
+                    .with_source(e)
+                    .with_context("count", count)
+            })
+    }
+
+    pub async fn large_dataset_with(
+        &self,
+        count: usize,
+    ) -> Result<crate::fixtures::LargeDatasetFixture> {
+        crate::fixtures::large_event_dataset(self.ctx, count)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate large dataset with custom count")
+                    .with_source(e)
+            })
+    }
+
+    pub async fn event_storm(&self) -> Result<crate::fixtures::EventStormFixture> {
+        crate::fixtures::event_storm(self.ctx).await.map_err(|e| {
+            SinexError::unknown("Failed to generate event storm fixture").with_source(e)
+        })
+    }
+
+    pub async fn high_volume_checkpoints(
+        &self,
+    ) -> Result<crate::fixtures::HighVolumeCheckpointsFixture> {
+        crate::fixtures::high_volume_checkpoints(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate high volume checkpoints fixture")
+                    .with_source(e)
+            })
+    }
+}
+
+/// Error testing fixtures for validating error handling
+pub struct ErrorFixtures<'ctx> {
+    ctx: &'ctx TestContext,
+}
+
+impl<'ctx> ErrorFixtures<'ctx> {
+    pub async fn validation_failures(&self) -> Result<crate::fixtures::ValidationErrorsFixture> {
+        crate::fixtures::validation_failures(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate large event dataset").with_source(e)
+            })
+    }
+
+    pub async fn schema_violations(&self) -> Result<crate::fixtures::SchemaViolationsFixture> {
+        crate::fixtures::schema_violations(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate large event dataset").with_source(e)
+            })
+    }
+
+    pub async fn malformed_events(&self) -> Result<crate::fixtures::MalformedEventsFixture> {
+        crate::fixtures::malformed_events(self.ctx)
+            .await
+            .map_err(|e| {
+                SinexError::unknown("Failed to generate large event dataset").with_source(e)
+            })
+    }
+}
 
 // ===== INTEGRATION TEST UTILITIES =====
 
@@ -935,7 +1131,9 @@ impl<'ctx> EventBuilder<'ctx> {
         let host = gethostname::gethostname().to_string_lossy().to_string();
         use sinex_db::queries::EventQueries;
 
-        EventQueries::insert_event(
+        use sinex_db::events::EventRecord;
+        
+        let record: EventRecord = EventQueries::insert_event(
             self.source.unwrap_or_else(|| "test".to_string()),
             self.event_type.unwrap_or_else(|| "test.event".to_string()),
             host,
@@ -946,8 +1144,9 @@ impl<'ctx> EventBuilder<'ctx> {
             None, // source_event_ids
         )
         .fetch_one(self.ctx.pool())
-        .await
-        .map_err(Into::into)
+        .await?;
+        
+        Ok(record.into())
     }
 
     /// Build and insert multiple copies of this event
@@ -1173,8 +1372,10 @@ pub struct EventQuery<'ctx> {
     source_filter: Option<String>,
     type_filter: Option<String>,
     id_filter: Option<sinex_ulid::Ulid>,
+    ids_filter: Option<Vec<sinex_ulid::Ulid>>,
     after_filter: Option<DateTime<Utc>>,
     limit_value: Option<i64>,
+    offset_value: Option<i64>,
 }
 
 impl<'ctx> EventQuery<'ctx> {
@@ -1184,8 +1385,10 @@ impl<'ctx> EventQuery<'ctx> {
             source_filter: None,
             type_filter: None,
             id_filter: None,
+            ids_filter: None,
             after_filter: None,
             limit_value: None,
+            offset_value: None,
         }
     }
 
@@ -1207,6 +1410,12 @@ impl<'ctx> EventQuery<'ctx> {
         self
     }
 
+    /// Filter by multiple IDs
+    pub fn by_ids(mut self, ids: Vec<sinex_ulid::Ulid>) -> Self {
+        self.ids_filter = Some(ids);
+        self
+    }
+
     /// Filter events after timestamp
     pub fn after(mut self, timestamp: DateTime<Utc>) -> Self {
         self.after_filter = Some(timestamp);
@@ -1219,33 +1428,52 @@ impl<'ctx> EventQuery<'ctx> {
         self
     }
 
+    /// Offset results
+    pub fn offset(mut self, offset: i64) -> Self {
+        self.offset_value = Some(offset);
+        self
+    }
+
     /// Fetch all matching events
     pub async fn fetch(self) -> Result<Vec<RawEvent>> {
-        match self.id_filter {
-            Some(id) => {
-                let event = EventQueries::get_by_id(id)
+        // Handle single ID filter
+        if let Some(id) = self.id_filter {
+            let event = EventQueries::get_by_id(id)
+                .fetch_optional(self.ctx.pool())
+                .await?;
+            return Ok(event.into_iter().collect());
+        }
+
+        // Handle multiple IDs filter
+        if let Some(ids) = self.ids_filter {
+            let mut events = Vec::new();
+            for id in ids {
+                if let Some(event) = EventQueries::get_by_id(id)
                     .fetch_optional(self.ctx.pool())
-                    .await?;
-                Ok(event.into_iter().collect())
-            }
-            None => {
-                if let Some(source) = self.source_filter {
-                    EventQueries::get_by_source(source, self.limit_value, None)
-                        .fetch_all(self.ctx.pool())
-                        .await
-                        .map_err(Into::into)
-                } else if let Some(event_type) = self.type_filter {
-                    EventQueries::get_by_event_type(event_type, self.limit_value, None)
-                        .fetch_all(self.ctx.pool())
-                        .await
-                        .map_err(Into::into)
-                } else {
-                    EventQueries::get_recent(self.limit_value, None)
-                        .fetch_all(self.ctx.pool())
-                        .await
-                        .map_err(Into::into)
+                    .await?
+                {
+                    events.push(event);
                 }
             }
+            return Ok(events);
+        }
+
+        // Handle other filters
+        if let Some(source) = self.source_filter {
+            EventQueries::get_by_source(source, self.limit_value, self.offset_value)
+                .fetch_all(self.ctx.pool())
+                .await
+                .map_err(Into::into)
+        } else if let Some(event_type) = self.type_filter {
+            EventQueries::get_by_event_type(event_type, self.limit_value, self.offset_value)
+                .fetch_all(self.ctx.pool())
+                .await
+                .map_err(Into::into)
+        } else {
+            EventQueries::get_recent(self.limit_value, self.offset_value)
+                .fetch_all(self.ctx.pool())
+                .await
+                .map_err(Into::into)
         }
     }
 
@@ -1282,6 +1510,111 @@ impl<'ctx> EventQuery<'ctx> {
     }
 }
 
+/// Checkpoint builder for creating test checkpoints
+pub struct CheckpointBuilder<'ctx> {
+    ctx: &'ctx TestContext,
+    processor_name: Option<String>,
+    processed_count: Option<i64>,
+    last_event_id: Option<sinex_ulid::Ulid>,
+    status: Option<String>,
+    metadata: Option<serde_json::Value>,
+}
+
+impl<'ctx> CheckpointBuilder<'ctx> {
+    fn new(ctx: &'ctx TestContext) -> Self {
+        Self {
+            ctx,
+            processor_name: None,
+            processed_count: None,
+            last_event_id: None,
+            status: None,
+            metadata: None,
+        }
+    }
+
+    /// Set processor name
+    pub fn processor(mut self, name: impl Into<String>) -> Self {
+        self.processor_name = Some(name.into());
+        self
+    }
+
+    /// Set processed event count
+    pub fn processed_count(mut self, count: i64) -> Self {
+        self.processed_count = Some(count);
+        self
+    }
+
+    /// Set last processed event ID
+    pub fn last_event_id(mut self, id: sinex_ulid::Ulid) -> Self {
+        self.last_event_id = Some(id);
+        self
+    }
+
+    /// Set checkpoint status
+    pub fn status(mut self, status: impl Into<String>) -> Self {
+        self.status = Some(status.into());
+        self
+    }
+
+    /// Set checkpoint metadata
+    pub fn metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
+    /// Insert checkpoint
+    pub async fn insert(self) -> Result<sinex_ulid::Ulid> {
+        let processor_name = self
+            .processor_name
+            .unwrap_or_else(|| "test-processor".to_string());
+        let checkpoint_id = sinex_ulid::Ulid::new();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO core.processor_checkpoints 
+                (id, processor_name, consumer_group, consumer_name, last_processed_id, processed_count, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            "#,
+            checkpoint_id as sinex_ulid::Ulid,
+            processor_name,
+            "default",
+            "default",
+            self.last_event_id as Option<sinex_ulid::Ulid>,
+            self.processed_count.unwrap_or(0)
+        )
+        .execute(self.ctx.pool())
+        .await
+        .map_err(|e| SinexError::database("Failed to insert checkpoint")
+            .with_source(e)
+            .with_context("processor", &processor_name))?;
+
+        Ok(checkpoint_id)
+    }
+}
+
+/// Simple checkpoint record for tests
+#[derive(sqlx::FromRow)]
+pub struct CheckpointRecord {
+    pub id: uuid::Uuid,
+    pub processor_name: String,
+    pub consumer_group: String,
+    pub consumer_name: String,
+    pub last_processed_id: Option<uuid::Uuid>,
+    pub processed_count: i64,
+}
+
+impl CheckpointRecord {
+    /// Get ID as ULID
+    pub fn ulid_id(&self) -> sinex_ulid::Ulid {
+        sinex_ulid::Ulid::from(self.id)
+    }
+
+    /// Get last processed ID as ULID
+    pub fn ulid_last_processed_id(&self) -> Option<sinex_ulid::Ulid> {
+        self.last_processed_id.map(sinex_ulid::Ulid::from)
+    }
+}
+
 /// Checkpoint query builder
 pub struct CheckpointQuery<'ctx> {
     ctx: &'ctx TestContext,
@@ -1300,6 +1633,48 @@ impl<'ctx> CheckpointQuery<'ctx> {
     pub fn by_processor(mut self, processor: impl Into<String>) -> Self {
         self.processor_filter = Some(processor.into());
         self
+    }
+
+    /// Fetch all matching checkpoints
+    pub async fn fetch(self) -> Result<Vec<CheckpointRecord>> {
+        if let Some(processor) = self.processor_filter {
+            sqlx::query_as!(
+                CheckpointRecord,
+                r#"
+                SELECT 
+                    id::uuid as "id!",
+                    processor_name as "processor_name!",
+                    consumer_group as "consumer_group!",
+                    consumer_name as "consumer_name!",
+                    last_processed_id::uuid as "last_processed_id",
+                    processed_count as "processed_count!"
+                FROM core.processor_checkpoints 
+                WHERE processor_name = $1
+                "#,
+                &processor
+            )
+            .fetch_all(self.ctx.pool())
+            .await
+            .map_err(Into::into)
+        } else {
+            // Fetch all checkpoints
+            sqlx::query_as!(
+                CheckpointRecord,
+                r#"
+                SELECT 
+                    id::uuid as "id!",
+                    processor_name as "processor_name!",
+                    consumer_group as "consumer_group!",
+                    consumer_name as "consumer_name!",
+                    last_processed_id::uuid as "last_processed_id",
+                    processed_count as "processed_count!"
+                FROM core.processor_checkpoints
+                "#
+            )
+            .fetch_all(self.ctx.pool())
+            .await
+            .map_err(Into::into)
+        }
     }
 
     /// Get checkpoint count for processor
@@ -1364,7 +1739,7 @@ impl<'ctx> SchemaTestUtils<'ctx> {
         .map_err(|e| SinexError::database(format!("Failed to register schema: {}", e)))?;
 
         // Parse the returned ID back to ULID
-        let returned_id = sinex_ulid::Ulid::from_string(&result.id)
+        let returned_id = sinex_ulid::Ulid::from_str(&result.id)
             .map_err(|e| SinexError::database(format!("Invalid ULID returned: {}", e)))?;
 
         Ok(returned_id)
@@ -1562,6 +1937,17 @@ impl<'ctx> ContextualAssert<'ctx> {
         Ok(self)
     }
 
+    /// Generic inequality assertion with rich context
+    pub fn not_eq<T: std::fmt::Debug + PartialEq>(self, actual: &T, expected: &T) -> Result<Self> {
+        if actual == expected {
+            return Err(SinexError::validation(format!(
+                "Assertion failed in '{}': expected value to not equal {:?}, but it did",
+                self.context, expected
+            )));
+        }
+        Ok(self)
+    }
+
     /// Boolean condition assertion with context
     pub fn that(self, condition: bool, message: &str) -> Result<Self> {
         if !condition {
@@ -1608,13 +1994,10 @@ impl<'ctx> ContextualAssert<'ctx> {
     pub async fn event_inserts(self, event: &RawEvent) -> Result<sinex_ulid::Ulid> {
         match self.ctx.insert_event_internal(event).await {
             Ok(inserted) => Ok(inserted.id),
-            Err(e) => Err(SinexError::validation(
+            Err(e) => Err(SinexError::validation(format!(
                 "Event insertion failed in '{}': {} (source: {}, type: {})",
-                self.context,
-                e,
-                event.source,
-                event.event_type,
-            )),
+                self.context, e, event.source, event.event_type,
+            ))),
         }
     }
 
@@ -1630,12 +2013,10 @@ impl<'ctx> ContextualAssert<'ctx> {
     {
         match tokio::time::timeout(timeout, operation).await {
             Ok(result) => result,
-            Err(_) => Err(SinexError::validation(
+            Err(_) => Err(SinexError::validation(format!(
                 "Operation '{}' timed out after {:?} in context '{}'",
-                operation_name,
-                timeout,
-                self.context,
-            )),
+                operation_name, timeout, self.context,
+            ))),
         }
     }
 
@@ -2304,161 +2685,276 @@ mod tests {
         Ok(())
     }
 
+    // Removed test_context_provides_isolation - duplicate of test_contexts_are_isolated
+    // Removed test_context_tracks_event_count - functionality tested in other tests
+    // Removed test_context_timing_measurement - covered by test_timing_utilities
+
+    // Merged test_assertion_helpers and test_assertion_api into comprehensive test above
+
+    // Merged test_query_builder_chaining and test_query_builder_flexibility 
+    // into test_query_builder_chains above
+
     #[sinex_test]
-    async fn test_context_provides_isolation(ctx: TestContext) -> Result<()> {
-        // Create events in this context
-        ctx.event()
-            .source("test-isolation")
-            .type_("marker")
-            .field("context", ctx.test_name())
+    async fn test_multiple_schemas(ctx: TestContext) -> Result<()> {
+        // Test managing multiple schemas for different event types
+        let user_schema = ctx
+            .schema()
+            .register(
+                "user",
+                "user.created",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "username": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+                        "email": {"type": "string", "format": "email"},
+                        "age": {"type": "integer", "minimum": 18}
+                    },
+                    "required": ["username", "email"]
+                }),
+            )
+            .await?;
+
+        let product_schema = ctx
+            .schema()
+            .register(
+                "product",
+                "product.added",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "price": {"type": "number", "minimum": 0},
+                        "quantity": {"type": "integer", "minimum": 0}
+                    },
+                    "required": ["name", "price", "quantity"]
+                }),
+            )
+            .await?;
+
+        // Create events with appropriate schemas
+        let user_event = ctx
+            .validated_event(user_schema)
+            .source("user")
+            .type_("user.created")
+            .field("username", "test_user")
+            .field("email", "test@example.com")
+            .field("age", 25)
             .insert()
             .await?;
 
-        // Create a second context
-        let ctx2 = TestContext::with_name("other_test").await?;
+        let product_event = ctx
+            .validated_event(product_schema)
+            .source("product")
+            .type_("product.added")
+            .field("name", "Test Product")
+            .field("price", 19.99)
+            .field("quantity", 100)
+            .insert()
+            .await?;
 
-        // Second context should not see first context's events
-        let other_events = ctx2.events().by_source("test-isolation").count().await?;
-        assert_eq!(other_events, 0);
+        // Verify correct schema validation
+        ctx.schema().assert_valid(&user_event, user_schema).await?;
+        ctx.schema()
+            .assert_valid(&product_event, product_schema)
+            .await?;
 
-        // Original context should still see its event
-        let our_events = ctx.events().by_source("test-isolation").count().await?;
-        assert_eq!(our_events, 1);
+        // Cross-validation should fail
+        ctx.schema()
+            .assert_invalid(&user_event, product_schema)
+            .await?;
+        ctx.schema()
+            .assert_invalid(&product_event, user_schema)
+            .await?;
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_context_tracks_event_count(ctx: TestContext) -> Result<()> {
-        assert_eq!(ctx.test_event_count().await, 0);
+    async fn test_schema_evolution(ctx: TestContext) -> Result<()> {
+        // Test schema versioning and evolution patterns
+        let v1_schema = ctx
+            .schema()
+            .register(
+                "api",
+                "api.request.v1",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "method": {"type": "string"},
+                        "path": {"type": "string"}
+                    },
+                    "required": ["method", "path"]
+                }),
+            )
+            .await?;
 
-        // Insert events and verify count
-        for i in 1..=5 {
+        // Create v1 event
+        let v1_event = ctx
+            .validated_event(v1_schema)
+            .source("api")
+            .type_("api.request.v1")
+            .field("method", "GET")
+            .field("path", "/users")
+            .insert()
+            .await?;
+
+        // Register evolved schema with additional fields
+        let v2_schema = ctx
+            .schema()
+            .register(
+                "api",
+                "api.request.v2",
+                json!({
+                    "type": "object",
+                    "properties": {
+                        "method": {"type": "string"},
+                        "path": {"type": "string"},
+                        "headers": {"type": "object"},
+                        "timestamp": {"type": "string", "format": "date-time"}
+                    },
+                    "required": ["method", "path", "timestamp"]
+                }),
+            )
+            .await?;
+
+        // Create v2 event
+        let v2_event = ctx
+            .validated_event(v2_schema)
+            .source("api")
+            .type_("api.request.v2")
+            .field("method", "POST")
+            .field("path", "/users")
+            .field("headers", json!({"content-type": "application/json"}))
+            .field("timestamp", chrono::Utc::now().to_rfc3339())
+            .insert()
+            .await?;
+
+        // Both should validate against their respective schemas
+        ctx.schema().assert_valid(&v1_event, v1_schema).await?;
+        ctx.schema().assert_valid(&v2_event, v2_schema).await?;
+
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "bench"))]
+mod benches {
+    use super::*;
+    use crate::sinex_bench;
+    use divan::black_box;
+
+    #[sinex_bench]
+    async fn bench_context_creation() -> anyhow::Result<()> {
+        black_box(TestContext::new().await?);
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_context_with_name() -> anyhow::Result<()> {
+        black_box(TestContext::with_name("bench_test").await?);
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_single_event_creation() -> anyhow::Result<()> {
+        let ctx = TestContext::new().await?;
+        black_box(
             ctx.event()
-                .source("count-test")
-                .type_("increment")
-                .field("index", i)
+                .source("bench")
+                .type_("test.event")
+                .field("index", 1)
                 .insert()
-                .await?;
-
-            assert_eq!(ctx.test_event_count().await, i);
-        }
-
+                .await?,
+        );
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_context_timing_measurement(ctx: TestContext) -> Result<()> {
-        let start = ctx.elapsed();
+    #[sinex_bench]
+    async fn bench_batch_event_creation_small() -> anyhow::Result<()> {
+        let ctx = TestContext::new().await?;
+        let batch = ctx.create_event_batch("bench", 10);
+        for builder in batch {
+            black_box(builder.insert().await?);
+        }
+        Ok(())
+    }
 
-        // Do some work
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    #[sinex_bench]
+    async fn bench_batch_event_creation_medium() -> anyhow::Result<()> {
+        let ctx = TestContext::new().await?;
+        let batch = ctx.create_event_batch("bench", 100);
+        for builder in batch {
+            black_box(builder.insert().await?);
+        }
+        Ok(())
+    }
 
-        let end = ctx.elapsed();
-        assert!(end > start);
-        assert!(end.as_millis() >= 50);
+    // For benchmarks that need persistent data, we use BenchContext
+    use crate::bench::BenchContext;
 
-        // Test measure helper (already tested above, so just verify it works)
-        let (result, duration) = ctx
-            .measure(async {
-                tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
-                Ok::<_, SinexError>("done")
+    #[sinex_bench]
+    async fn bench_query_count_all(ctx: &BenchContext) -> anyhow::Result<()> {
+        // Load standard query benchmark fixture
+        ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
+            .await?;
+
+        // Measure the count query
+        use sinex_db::queries::EventQueries;
+        let count = EventQueries::new(ctx.pool()).count().await?;
+        black_box(count);
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_query_fetch_limited(ctx: &BenchContext) -> anyhow::Result<()> {
+        ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
+            .await?;
+
+        use sinex_db::queries::EventQueries;
+        let events = EventQueries::new(ctx.pool()).limit(10).fetch().await?;
+        black_box(events);
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_query_filtered(ctx: &BenchContext) -> anyhow::Result<()> {
+        ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
+            .await?;
+
+        use sinex_db::queries::EventQueries;
+        let events = EventQueries::new(ctx.pool())
+            .by_source("filesystem")
+            .by_type("file.created")
+            .fetch()
+            .await?;
+        black_box(events);
+        Ok(())
+    }
+
+    #[sinex_bench]
+    async fn bench_concurrent_operations() -> anyhow::Result<()> {
+        let ctx = TestContext::new().await?;
+        let results = ctx
+            .run_concurrent(4, |ctx, i| async move {
+                ctx.event()
+                    .source("concurrent")
+                    .type_("task")
+                    .field("worker", i)
+                    .insert()
+                    .await
             })
             .await?;
-
-        assert_eq!(result?, "done");
-        assert!(duration.as_millis() >= 25);
-
+        black_box(results);
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_assertion_helpers(ctx: TestContext) -> Result<()> {
-        // Test various assertion helpers
-        ctx.assert("equality").eq(&5, &5)?;
-
-        let vec = vec![1, 2, 3];
-        ctx.assert("size").has_size(&vec, 3)?;
-        ctx.assert("not empty").not_empty(&vec)?;
-
-        let some_val = Some(42);
-        ctx.assert("some").some(&some_val)?;
-
-        let none_val: Option<i32> = None;
-        ctx.assert("none").none(&none_val)?;
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_query_builder_chaining(ctx: TestContext) -> Result<()> {
-        // Insert test data
-        for i in 0..10 {
-            ctx.event()
-                .source("query-test")
-                .type_(if i < 5 { "type.a" } else { "type.b" })
-                .field("index", i)
-                .insert()
-                .await?;
-        }
-
-        // Test various query combinations
-        let by_source = ctx.events().by_source("query-test").count().await?;
-        assert_eq!(by_source, 10);
-
-        let by_type_a = ctx.events().by_type("type.a").count().await?;
-        assert_eq!(by_type_a, 5);
-
-        let limited = ctx
-            .events()
-            .by_source("query-test")
-            .limit(3)
-            .fetch()
-            .await?;
-        assert_eq!(limited.len(), 3);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_query_builder_flexibility(ctx: TestContext) -> Result<()> {
-        // Test that query builder methods can be called in any order
-        let event = ctx
-            .event()
-            .source("test-query")
-            .type_("event.test")
-            .field("value", 42)
-            .insert()
-            .await?;
-
-        // Query by ID should work
-        let by_id = ctx.events().by_id(event.id).fetch_one().await?;
-        assert_eq!(by_id.as_ref().map(|e| e.id), Some(event.id));
-
-        // Complex queries should work
-        ctx.event()
-            .source("complex-query")
-            .type_("event.complex")
-            .field("status", "active")
-            .insert()
-            .await?;
-
-        ctx.event()
-            .source("complex-query")
-            .type_("event.simple")
-            .field("status", "inactive")
-            .insert()
-            .await?;
-
-        let complex = ctx
-            .events()
-            .by_source("complex-query")
-            .by_type("event.complex")
-            .fetch()
-            .await?;
-        assert_eq!(complex.len(), 1);
-        assert_eq!(complex[0].payload["status"], json!("active"));
-
+    #[sinex_bench]
+    async fn bench_simple_assertions() -> anyhow::Result<()> {
+        let ctx = TestContext::new().await?;
+        ctx.assert("test1").eq(&5, &5)?;
+        ctx.assert("test2").that(true, "should be true")?;
+        ctx.assert("test3").not_empty(&vec![1, 2, 3])?;
+        black_box(());
         Ok(())
     }
 }

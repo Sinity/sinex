@@ -40,8 +40,8 @@
 ///     Ok(())
 /// }
 /// ```
-// Internal macro for parameterized tests
-#[allow(unused_macros)]
+// Macro for parameterized tests
+#[macro_export]
 macro_rules! parameterized {
     ([$($case:expr),* $(,)?], |$param:pat_param| $body:block) => {{
         let cases = vec![$($case),*];

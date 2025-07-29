@@ -16,7 +16,7 @@ use std::str::FromStr;
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_invalid_ulid_parsing(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_invalid_ulid_parsing(ctx: TestContext) -> anyhow::Result<()> {
     // Test various invalid ULID formats that could cause parsing errors
     let invalid_ulids = vec![
         ("not-a-ulid", "Non-ULID string"),
@@ -72,7 +72,7 @@ async fn test_checkpoint_invalid_ulid_parsing(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_ulid_uuid_conversion_errors(ctx: TestContext) -> TestResult {
+async fn test_ulid_uuid_conversion_errors(ctx: TestContext) -> anyhow::Result<()> {
     // Test ULID to UUID conversion edge cases
     let edge_cases = vec![
         // Maximum valid ULID
@@ -107,7 +107,7 @@ async fn test_ulid_uuid_conversion_errors(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_timestamp_conversion_boundaries(ctx: TestContext) -> TestResult {
+async fn test_timestamp_conversion_boundaries(ctx: TestContext) -> anyhow::Result<()> {
     // Test timestamp values that could cause conversion errors
     let edge_timestamps = vec![
         (0i64, "Unix epoch"),
@@ -156,7 +156,7 @@ async fn test_timestamp_conversion_boundaries(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_timestamp_overflow_in_calculations(ctx: TestContext) -> TestResult {
+async fn test_timestamp_overflow_in_calculations(ctx: TestContext) -> anyhow::Result<()> {
     // Test timestamp arithmetic that could overflow
     let base_time = Utc::now();
 
@@ -189,7 +189,7 @@ async fn test_timestamp_overflow_in_calculations(ctx: TestContext) -> TestResult
 // =============================================================================
 
 #[sinex_test]
-async fn test_json_parsing_edge_cases(ctx: TestContext) -> TestResult {
+async fn test_json_parsing_edge_cases(ctx: TestContext) -> anyhow::Result<()> {
     use serde_json::{json, Value};
 
     // Test JSON values that could cause parsing errors
@@ -262,7 +262,7 @@ async fn test_json_parsing_edge_cases(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_database_constraint_violations(ctx: TestContext) -> TestResult {
+async fn test_database_constraint_violations(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
 
     // Create a test event
@@ -341,7 +341,7 @@ async fn test_database_constraint_violations(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_transaction_rollback_scenarios(ctx: TestContext) -> TestResult {
+async fn test_transaction_rollback_scenarios(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
 
     // Test transaction rollback behavior
@@ -407,7 +407,7 @@ async fn test_transaction_rollback_scenarios(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_query_builder_invalid_operations(ctx: TestContext) -> TestResult {
+async fn test_query_builder_invalid_operations(ctx: TestContext) -> anyhow::Result<()> {
     use sinex_db::query_builder::{QueryBuilder, QueryParam};
 
     // Test invalid query builder operations
@@ -454,7 +454,7 @@ async fn test_query_builder_invalid_operations(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_checkpoint_update_conflicts(ctx: TestContext) -> TestResult {
+async fn test_concurrent_checkpoint_update_conflicts(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
     let processor_name = "conflict_test_processor";
     let consumer_group = "test_group";

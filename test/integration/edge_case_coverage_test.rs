@@ -17,7 +17,7 @@ use tempfile::TempDir;
 
 /// Test version tracking when git is unavailable
 #[sinex_test]
-async fn test_version_tracking_no_git(_ctx: TestContext) -> TestResult {
+async fn test_version_tracking_no_git(_ctx: TestContext) -> anyhow::Result<()> {
     // Test version info creation (should not panic even without git)
     let version_info = VersionInfo::current("test-component");
 
@@ -30,7 +30,7 @@ async fn test_version_tracking_no_git(_ctx: TestContext) -> TestResult {
 
 /// Test version tracking performance
 #[sinex_test]
-async fn test_version_tracking_performance(_ctx: TestContext) -> TestResult {
+async fn test_version_tracking_performance(_ctx: TestContext) -> anyhow::Result<()> {
     let start = std::time::Instant::now();
 
     // Version tracking should complete quickly
@@ -53,7 +53,7 @@ async fn test_version_tracking_performance(_ctx: TestContext) -> TestResult {
 
 /// Test repeated version info generation
 #[sinex_test]
-async fn test_repeated_version_info_generation(_ctx: TestContext) -> TestResult {
+async fn test_repeated_version_info_generation(_ctx: TestContext) -> anyhow::Result<()> {
     let start_time = std::time::Instant::now();
 
     // Generate version info many times
@@ -80,7 +80,7 @@ async fn test_repeated_version_info_generation(_ctx: TestContext) -> TestResult 
 
 /// Test filesystem monitor initialization
 #[sinex_test]
-async fn test_filesystem_monitor_initialization(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_initialization(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
@@ -104,7 +104,7 @@ async fn test_filesystem_monitor_initialization(_ctx: TestContext) -> TestResult
 
 /// Test filesystem monitor with invalid paths
 #[sinex_test]
-async fn test_filesystem_monitor_invalid_paths(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_invalid_paths(_ctx: TestContext) -> anyhow::Result<()> {
     let long_path = format!("/{}", "a".repeat(1000));
     let invalid_paths = vec![
         "/nonexistent/path/that/does/not/exist",
@@ -136,7 +136,7 @@ async fn test_filesystem_monitor_invalid_paths(_ctx: TestContext) -> TestResult 
 
 /// Test filesystem monitor with large directory
 #[sinex_test]
-async fn test_filesystem_monitor_large_directory(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_large_directory(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
@@ -177,7 +177,7 @@ async fn test_filesystem_monitor_large_directory(_ctx: TestContext) -> TestResul
 
 /// Test filesystem monitor with invalid configuration
 #[sinex_test]
-async fn test_filesystem_monitor_invalid_config(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_invalid_config(_ctx: TestContext) -> anyhow::Result<()> {
     let invalid_configs = vec![
         // Empty config
         serde_json::json!({}),
@@ -225,7 +225,7 @@ async fn test_filesystem_monitor_invalid_config(_ctx: TestContext) -> TestResult
 
 /// Test version info memory usage
 #[sinex_test]
-async fn test_version_info_memory_usage(_ctx: TestContext) -> TestResult {
+async fn test_version_info_memory_usage(_ctx: TestContext) -> anyhow::Result<()> {
     let start_memory = get_current_memory_usage();
 
     // Create version info multiple times to check for memory leaks
@@ -256,7 +256,7 @@ async fn test_version_info_memory_usage(_ctx: TestContext) -> TestResult {
 
 /// Test concurrent version info generation
 #[sinex_test]
-async fn test_concurrent_version_info_generation(_ctx: TestContext) -> TestResult {
+async fn test_concurrent_version_info_generation(_ctx: TestContext) -> anyhow::Result<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 

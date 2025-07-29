@@ -458,7 +458,7 @@ impl DeadlockStressWorker {
 
 /// Test coordinated checkpoint scenario detection and recovery in satellite architecture
 #[sinex_test(timeout = 300)]
-async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> TestResult {
+async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing coordinated deadlock scenario...");
     let pool = ctx.pool().clone();
 
@@ -936,7 +936,7 @@ impl RaceConditionWorker {
 
 /// Test race condition detection in competitive scenarios
 #[sinex_test(timeout = 300)]
-async fn test_race_condition_detection(ctx: TestContext) -> TestResult {
+async fn test_race_condition_detection(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing race condition detection...");
     let pool = ctx.pool().clone();
 
@@ -1470,7 +1470,7 @@ impl StressTestWorker {
 
 /// Test extreme concurrency stress with many workers
 #[sinex_test(timeout = 600)]
-async fn test_extreme_concurrency_stress(ctx: TestContext) -> TestResult {
+async fn test_extreme_concurrency_stress(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing extreme concurrency stress...");
     let pool = ctx.pool().clone();
     run_migrations(pool).await?;

@@ -157,7 +157,7 @@ impl StreamMetrics {
 
 /// Test basic stream write performance
 #[sinex_test]
-async fn test_stream_write_performance(ctx: TestContext) -> TestResult {
+async fn test_stream_write_performance(ctx: TestContext) -> anyhow::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut metrics = StreamMetrics::new();
 
@@ -236,7 +236,7 @@ async fn test_stream_write_performance(ctx: TestContext) -> TestResult {
 
 /// Test stream read performance with consumer groups
 #[sinex_test]
-async fn test_stream_read_performance(ctx: TestContext) -> TestResult {
+async fn test_stream_read_performance(ctx: TestContext) -> anyhow::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut metrics = StreamMetrics::new();
 
@@ -365,7 +365,7 @@ async fn test_stream_read_performance(ctx: TestContext) -> TestResult {
 
 /// Test concurrent stream processing performance
 #[sinex_test]
-async fn test_concurrent_stream_performance(ctx: TestContext) -> TestResult {
+async fn test_concurrent_stream_performance(ctx: TestContext) -> anyhow::Result<()> {
     let shared_metrics = Arc::new(Mutex::new(StreamMetrics::new()));
 
     let stream_key = "sinex:performance:concurrent-test";
@@ -580,7 +580,7 @@ async fn test_concurrent_stream_performance(ctx: TestContext) -> TestResult {
 
 /// Test stream performance with varying message sizes
 #[sinex_test]
-async fn test_variable_message_size_performance(ctx: TestContext) -> TestResult {
+async fn test_variable_message_size_performance(ctx: TestContext) -> anyhow::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut metrics = StreamMetrics::new();
 

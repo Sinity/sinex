@@ -15,7 +15,7 @@ use tokio::time::timeout;
 
 /// Test database connection failure scenarios
 #[sinex_test]
-async fn test_database_connection_failures(_ctx: TestContext) -> TestResult {
+async fn test_database_connection_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Test case 1: Invalid hostname
     env::set_var("DATABASE_URL", "postgresql://invalid-host:5432/test");
 
@@ -76,7 +76,7 @@ async fn test_database_connection_failures(_ctx: TestContext) -> TestResult {
 
 /// Test database extension failures
 #[sinex_test]
-async fn test_database_extension_failures(_ctx: TestContext) -> TestResult {
+async fn test_database_extension_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with invalid database URL
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -99,7 +99,7 @@ async fn test_database_extension_failures(_ctx: TestContext) -> TestResult {
 
 /// Test migration readiness failures
 #[sinex_test]
-async fn test_migration_readiness_failures(_ctx: TestContext) -> TestResult {
+async fn test_migration_readiness_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with invalid database
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -120,7 +120,7 @@ async fn test_migration_readiness_failures(_ctx: TestContext) -> TestResult {
 
 /// Test resource constraint failure scenarios
 #[sinex_test]
-async fn test_resource_constraint_failures(_ctx: TestContext) -> TestResult {
+async fn test_resource_constraint_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // The resources module is designed to warn rather than fail on constraints
     // But we can test edge cases and error conditions
 
@@ -154,7 +154,7 @@ async fn test_resource_constraint_failures(_ctx: TestContext) -> TestResult {
 
 /// Test filesystem permission failures
 #[sinex_test]
-async fn test_filesystem_permission_failures(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_permission_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Create a read-only directory to test permission failures
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     let readonly_dir = temp_dir.path().join("readonly");
@@ -197,7 +197,7 @@ async fn test_filesystem_permission_failures(_ctx: TestContext) -> TestResult {
 
 /// Test configuration generation failures
 #[sinex_test]
-async fn test_configuration_failures(_ctx: TestContext) -> TestResult {
+async fn test_configuration_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Test case 1: Missing required environment variables
     env::remove_var("DATABASE_URL");
 
@@ -236,7 +236,7 @@ async fn test_configuration_failures(_ctx: TestContext) -> TestResult {
 
 /// Test environment variable validation failures
 #[sinex_test]
-async fn test_environment_validation_failures(_ctx: TestContext) -> TestResult {
+async fn test_environment_validation_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Save original values
     let original_db_url = env::var("DATABASE_URL").ok();
 
@@ -271,7 +271,7 @@ async fn test_environment_validation_failures(_ctx: TestContext) -> TestResult {
 
 /// Test service dependency failures
 #[sinex_test]
-async fn test_service_dependency_failures(_ctx: TestContext) -> TestResult {
+async fn test_service_dependency_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Service verification is designed to warn rather than fail for missing services
     let (status, details, messages) = sinex_preflight::services::verify_service_dependencies()
         .await
@@ -317,7 +317,7 @@ async fn test_service_dependency_failures(_ctx: TestContext) -> TestResult {
 
 /// Test binary availability failures
 #[sinex_test]
-async fn test_binary_availability_failures(_ctx: TestContext) -> TestResult {
+async fn test_binary_availability_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with known non-existent binary
     let output = Command::new("which")
         .arg("definitely_nonexistent_binary_12345")
@@ -343,7 +343,7 @@ async fn test_binary_availability_failures(_ctx: TestContext) -> TestResult {
 
 /// Test end-to-end integration failures
 #[sinex_test]
-async fn test_integration_failures(_ctx: TestContext) -> TestResult {
+async fn test_integration_failures(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with invalid database URL
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -373,7 +373,7 @@ async fn test_integration_failures(_ctx: TestContext) -> TestResult {
 
 /// Test error message formatting and consistency
 #[sinex_test]
-async fn test_error_message_formatting(_ctx: TestContext) -> TestResult {
+async fn test_error_message_formatting(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with various failure scenarios to check message formatting
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/test");
 
@@ -424,7 +424,7 @@ async fn test_error_message_formatting(_ctx: TestContext) -> TestResult {
 
 /// Test error aggregation across multiple phases
 #[sinex_test]
-async fn test_error_aggregation(_ctx: TestContext) -> TestResult {
+async fn test_error_aggregation(_ctx: TestContext) -> anyhow::Result<()> {
     // Create conditions that will generate multiple errors/warnings
     env::remove_var("DATABASE_URL");
 
@@ -476,7 +476,7 @@ async fn test_error_aggregation(_ctx: TestContext) -> TestResult {
 
 /// Test behavior under timeout conditions
 #[sinex_test]
-async fn test_timeout_conditions(_ctx: TestContext) -> TestResult {
+async fn test_timeout_conditions(_ctx: TestContext) -> anyhow::Result<()> {
     // Test with a non-responsive database URL that should timeout
     env::set_var("DATABASE_URL", "postgresql://192.0.2.1:5432/test"); // RFC 5737 test IP
 
@@ -522,7 +522,7 @@ async fn test_timeout_conditions(_ctx: TestContext) -> TestResult {
 
 /// Test graceful degradation when optional components fail
 #[sinex_test]
-async fn test_graceful_degradation(_ctx: TestContext) -> TestResult {
+async fn test_graceful_degradation(_ctx: TestContext) -> anyhow::Result<()> {
     // Test that optional service failures don't prevent overall success
     let (status, details, messages) = sinex_preflight::services::verify_service_dependencies()
         .await
@@ -570,7 +570,7 @@ async fn test_graceful_degradation(_ctx: TestContext) -> TestResult {
 
 /// Test recovery after transient failures
 #[sinex_test]
-async fn test_recovery_mechanisms(ctx: TestContext) -> TestResult {
+async fn test_recovery_mechanisms(ctx: TestContext) -> anyhow::Result<()> {
     // First, test with a failure condition
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/test");
 

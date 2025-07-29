@@ -1390,157 +1390,114 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::bench::*;
-    use divan::Bencher;
+    use crate::sinex_bench;
 
     /// Benchmark database acquisition from pool
     ///
     /// This measures the time to acquire a clean database from the pool,
     /// including advisory lock acquisition and cleanup verification.
-    #[divan::bench]
-    fn bench_acquire_database(bencher: Bencher) {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
-        bencher.bench_local(|| {
-            runtime.block_on(async {
-                let db = acquire_test_database().await.unwrap();
-                // Database is automatically returned on drop
-                drop(db);
-            })
-        });
+    #[sinex_bench]
+    async fn bench_acquire_database() -> anyhow::Result<()> {
+        let db = acquire_test_database().await?;
+        // Database is automatically returned on drop
+        drop(db);
+        Ok(())
     }
 
     /// Benchmark concurrent database acquisition
     ///
     /// Measures contention and performance when multiple tasks
     /// try to acquire databases simultaneously.
-    #[divan::bench(args = [2, 4, 8, 16])]
-    fn bench_concurrent_acquisition(bencher: Bencher, concurrency: usize) {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+    #[sinex_bench(args = [2, 4, 8, 16])]
+    async fn bench_concurrent_acquisition(concurrency: usize) -> anyhow::Result<()> {
+        let handles: Vec<_> = (0..concurrency)
+            .map(|_| tokio::spawn(async { acquire_test_database().await.unwrap() }))
+            .collect();
 
-        bencher.bench_local(|| {
-            runtime.block_on(async {
-                let handles: Vec<_> = (0..concurrency)
-                    .map(|_| tokio::spawn(async { acquire_test_database().await.unwrap() }))
-                    .collect();
-
-                // Wait for all to complete
-                for handle in handles {
-                    let db = handle.await.unwrap();
-                    drop(db);
-                }
-            })
-        });
+        // Wait for all to complete
+        for handle in handles {
+            let db = handle.await?;
+            drop(db);
+        }
+        Ok(())
     }
 
     /// Benchmark database cleanup performance
     ///
     /// Measures the time to clean a database with various amounts of data
-    #[divan::bench]
-    fn bench_database_cleanup(bencher: Bencher) {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+    #[sinex_bench]
+    async fn bench_database_cleanup() -> anyhow::Result<()> {
+        // Setup: Get a database and populate it
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
 
-        bencher
-            .with_inputs(|| {
-                // Setup: Get a database and populate it
-                runtime.block_on(async {
-                    let db = acquire_test_database().await.unwrap();
-                    let pool = db.pool();
+        // Insert test data
+        use sinex_db::queries::EventQueries;
+        for i in 0..100 {
+            EventQueries::insert_event(
+                "bench".to_string(),
+                "test".to_string(),
+                "host".to_string(),
+                serde_json::json!({"index": i}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .execute(pool)
+            .await?;
+        }
 
-                    // Insert test data
-                    use sinex_db::queries::EventQueries;
-                    for i in 0..100 {
-                        EventQueries::insert_event(
-                            "bench".to_string(),
-                            "test".to_string(),
-                            "host".to_string(),
-                            serde_json::json!({"index": i}),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                        .execute(pool)
-                        .await
-                        .unwrap();
-                    }
-
-                    (db, pool.clone())
-                })
-            })
-            .bench_values(|(db, pool)| {
-                runtime.block_on(async {
-                    clean_database(&pool, db.name()).await.unwrap();
-                    drop(db);
-                })
-            });
+        // Perform cleanup
+        clean_database(pool, db.name()).await?;
+        drop(db);
+        Ok(())
     }
 
     /// Benchmark template database operations
-    #[divan::bench]
-    fn bench_ensure_template_database(bencher: Bencher) {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
-        bencher.bench_local(|| {
-            runtime.block_on(async {
-                let config = PoolConfig::default();
-                // This should be fast after first run (cached)
-                ensure_template_database(&config.admin_url, &config.base_url)
-                    .await
-                    .unwrap();
-            })
-        });
+    #[sinex_bench]
+    async fn bench_ensure_template_database() -> anyhow::Result<()> {
+        let config = PoolConfig::default();
+        // This should be fast after first run (cached)
+        ensure_template_database(&config.admin_url, &config.base_url).await?;
+        Ok(())
     }
 
     /// Benchmark pool health check
-    #[divan::bench]
-    fn bench_pool_health_check(bencher: Bencher) {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-
+    #[sinex_bench]
+    async fn bench_pool_health_check() -> anyhow::Result<()> {
         // Ensure pool is initialized
-        runtime.block_on(async {
-            let _ = acquire_test_database().await.unwrap();
-        });
-
-        bencher.bench_local(|| {
-            runtime.block_on(async {
-                check_pool_health().await.unwrap();
-            })
-        });
+        let _ = acquire_test_database().await?;
+        
+        check_pool_health().await?;
+        Ok(())
     }
 
     /// Benchmark database statistics collection
-    #[divan::bench]
-    fn bench_get_database_stats(bencher: Bencher) {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+    #[sinex_bench]
+    async fn bench_get_database_stats() -> anyhow::Result<()> {
+        let db = acquire_test_database().await?;
 
-        bencher
-            .with_inputs(|| {
-                runtime.block_on(async {
-                    let db = acquire_test_database().await.unwrap();
+        // Insert some varied data
+        let pool = db.pool();
+        use sinex_db::queries::EventQueries;
+        for i in 0..50 {
+            EventQueries::insert_event(
+                format!("source_{}", i % 10),
+                "test".to_string(),
+                "bench".to_string(),
+                serde_json::json!({}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .execute(pool)
+            .await?;
+        }
 
-                    // Insert some varied data
-                    let pool = db.pool();
-                    use sinex_db::queries::EventQueries;
-                    for i in 0..50 {
-                        EventQueries::insert_event(
-                            format!("source_{}", i % 10),
-                            "test".to_string(),
-                            "bench".to_string(),
-                            serde_json::json!({}),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                        .execute(pool)
-                        .await
-                        .unwrap();
-                    }
-
-                    db
-                })
-            })
-            .bench_values(|db| runtime.block_on(async { db.get_stats().await.unwrap() }));
+        let stats = db.get_stats().await?;
+        divan::black_box(stats);
+        Ok(())
     }
 }

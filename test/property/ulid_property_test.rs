@@ -441,7 +441,7 @@ fn test_ulid_ordering_property_in_memory() {
 }
 
 #[sinex_test]
-async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
+async fn test_ulid_database_ordering_property(ctx: TestContext) -> anyhow::Result<()> {
     proptest::proptest!(|(
         ulid_count in 3..15usize,
         time_gap_seconds in 1..10u64,
@@ -511,7 +511,7 @@ async fn test_ulid_database_ordering_property(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_ulid_range_query_property(ctx: TestContext) -> TestResult {
+async fn test_ulid_range_query_property(ctx: TestContext) -> anyhow::Result<()> {
     proptest::proptest!(|(
         batch1_size in 2..8usize,
         batch2_size in 2..8usize,
@@ -720,7 +720,7 @@ fn test_ulid_monotonic_property_with_rapid_generation() {
 }
 
 #[sinex_test]
-async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> TestResult {
+async fn test_ulid_foreign_key_consistency_property(ctx: TestContext) -> anyhow::Result<()> {
     proptest::proptest!(|(
          num_relationships in 1..10usize,
      )| {

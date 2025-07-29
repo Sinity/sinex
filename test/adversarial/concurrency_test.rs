@@ -23,7 +23,7 @@ use std::time::Instant;
 
 /// Test worker claim race conditions at microsecond precision
 #[sinex_test]
-async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResult {
+async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Insert event to be claimed
@@ -112,7 +112,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> TestResul
 
 /// Test event causality violation under concurrent processing
 #[sinex_test]
-async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
+async fn test_event_causality_violation(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let order_violations = Arc::new(AtomicU64::new(0));
 
@@ -198,7 +198,7 @@ async fn test_event_causality_violation(ctx: TestContext) -> TestResult {
 
 /// Test concurrent event insertion race conditions
 #[sinex_test]
-async fn test_concurrent_event_insertion_race(ctx: TestContext) -> TestResult {
+async fn test_concurrent_event_insertion_race(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let successful_insertions = Arc::new(AtomicU64::new(0));
     let failed_insertions = Arc::new(AtomicU64::new(0));
@@ -273,7 +273,7 @@ async fn test_concurrent_event_insertion_race(ctx: TestContext) -> TestResult {
 
 /// Test data consistency under concurrent updates
 #[sinex_test]
-async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> TestResult {
+async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create base event
@@ -374,7 +374,7 @@ async fn test_data_consistency_under_concurrent_updates(ctx: TestContext) -> Tes
 
 /// Test worker coordination with microsecond synchronization
 #[sinex_test]
-async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResult {
+async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing microsecond-level worker claim races:");
@@ -493,7 +493,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> TestResu
 
 /// Test worker deadlock prevention
 #[sinex_test]
-async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
+async fn test_worker_deadlock_prevention(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create two events that workers will try to claim in different orders
@@ -611,7 +611,7 @@ async fn test_worker_deadlock_prevention(ctx: TestContext) -> TestResult {
 
 /// Test worker load balancing under concurrent load
 #[sinex_test]
-async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
+async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create many work items
@@ -736,7 +736,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> TestResult {
 
 /// Test database transaction isolation levels
 #[sinex_test]
-async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
+async fn test_database_transaction_isolation(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test event
@@ -854,7 +854,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> TestResult {
 
 /// Test database lock contention
 #[sinex_test]
-async fn test_database_lock_contention(ctx: TestContext) -> TestResult {
+async fn test_database_lock_contention(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create shared resource

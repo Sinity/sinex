@@ -18,7 +18,7 @@ use std::collections::HashSet;
 
 /// Test that event type constants are properly defined and consistent
 #[sinex_test]
-async fn test_event_type_constants(_ctx: TestContext) -> TestResult {
+async fn test_event_type_constants(_ctx: TestContext) -> anyhow::Result<()> {
     // Test that source constants exist and are consistent
     assert_eq!(sources::FS, "fs");
     assert_eq!(sources::SHELL_KITTY, "shell.kitty");
@@ -43,7 +43,7 @@ async fn test_event_type_constants(_ctx: TestContext) -> TestResult {
 
 /// Test event type validation through EventEnvelope variants
 #[sinex_test]
-async fn test_event_envelope_coverage(_ctx: TestContext) -> TestResult {
+async fn test_event_envelope_coverage(_ctx: TestContext) -> anyhow::Result<()> {
     // Test that EventEnvelope covers all major event categories
     let event_factory = EventFactory::new("test");
 
@@ -89,7 +89,7 @@ async fn test_event_envelope_coverage(_ctx: TestContext) -> TestResult {
 
 /// Test event type naming consistency and patterns
 #[sinex_test]
-async fn test_event_type_naming_patterns(_ctx: TestContext) -> TestResult {
+async fn test_event_type_naming_patterns(_ctx: TestContext) -> anyhow::Result<()> {
     let event_factory = EventFactory::new("test");
 
     // Test filesystem event naming follows pattern: object.action
@@ -189,7 +189,7 @@ async fn test_event_type_naming_patterns(_ctx: TestContext) -> TestResult {
 
 /// Test source to event type mapping consistency
 #[sinex_test]
-async fn test_source_event_type_mapping(_ctx: TestContext) -> TestResult {
+async fn test_source_event_type_mapping(_ctx: TestContext) -> anyhow::Result<()> {
     let event_factory = EventFactory::new("test");
 
     // Test that all filesystem events map to 'fs' source
@@ -289,7 +289,7 @@ async fn test_source_event_type_mapping(_ctx: TestContext) -> TestResult {
 
 /// Test that source names are unique and don't conflict
 #[sinex_test]
-async fn test_source_name_uniqueness(_ctx: TestContext) -> TestResult {
+async fn test_source_name_uniqueness(_ctx: TestContext) -> anyhow::Result<()> {
     let sources = vec![
         sources::FS,
         sources::SHELL_KITTY,
@@ -322,7 +322,7 @@ async fn test_source_name_uniqueness(_ctx: TestContext) -> TestResult {
 
 /// Test event type enumeration through EventEnvelope variants
 #[sinex_test]
-async fn test_event_type_enumeration(_ctx: TestContext) -> TestResult {
+async fn test_event_type_enumeration(_ctx: TestContext) -> anyhow::Result<()> {
     // Create events of different types and verify they can be enumerated
     let event_factory = EventFactory::new("test");
 
@@ -422,7 +422,7 @@ async fn test_event_type_enumeration(_ctx: TestContext) -> TestResult {
 
 /// Test TypedRawEvent to RawEvent conversion
 #[sinex_test]
-async fn test_typed_raw_event_conversion(_ctx: TestContext) -> TestResult {
+async fn test_typed_raw_event_conversion(_ctx: TestContext) -> anyhow::Result<()> {
     use chrono::Utc;
     use sinex_events::strongly_typed_events::*;
     use sinex_ulid::Ulid;
@@ -472,7 +472,7 @@ async fn test_typed_raw_event_conversion(_ctx: TestContext) -> TestResult {
 
 /// Test EventEnvelope type safety
 #[sinex_test]
-async fn test_event_envelope_type_safety(_ctx: TestContext) -> TestResult {
+async fn test_event_envelope_type_safety(_ctx: TestContext) -> anyhow::Result<()> {
     use chrono::Utc;
     use sinex_events::strongly_typed_events::*;
     use sinex_ulid::Ulid;
@@ -547,7 +547,7 @@ async fn test_event_envelope_type_safety(_ctx: TestContext) -> TestResult {
 
 /// Test concurrent event creation and processing
 #[sinex_test]
-async fn test_concurrent_event_creation(_ctx: TestContext) -> TestResult {
+async fn test_concurrent_event_creation(_ctx: TestContext) -> anyhow::Result<()> {
     use std::sync::Arc;
     use tokio::task;
 
@@ -636,7 +636,7 @@ async fn test_concurrent_event_creation(_ctx: TestContext) -> TestResult {
 
 /// Test that event IDs are unique even under concurrent creation
 #[sinex_test]
-async fn test_event_id_uniqueness_concurrent(_ctx: TestContext) -> TestResult {
+async fn test_event_id_uniqueness_concurrent(_ctx: TestContext) -> anyhow::Result<()> {
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::task;

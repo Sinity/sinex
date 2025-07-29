@@ -31,7 +31,7 @@ use std::fs;
 
 /// Test startup sequence robustness and error handling
 #[sinex_test(timeout = 60)]
-async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
+async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -240,7 +240,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
 /// Test shutdown sequence and graceful termination
 #[sinex_test]
-async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestResult {
+async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -492,7 +492,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]
-async fn test_configuration_validation_and_reload(ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_and_reload(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -789,7 +789,7 @@ channel_buffer_size = 10000
 
 /// Test data migration safety and version compatibility
 #[sinex_test]
-async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
+async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing
@@ -1156,7 +1156,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult {
+async fn test_graceful_degradation_database_failure(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test checkpoint for degradation testing
@@ -1350,7 +1350,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
 /// Test resource limits and monitoring under load
 #[sinex_test]
-async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
+async fn test_resource_limits_monitoring(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource limits and monitoring under load...");
@@ -1608,7 +1608,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
 /// Test system behavior under resource exhaustion scenarios
 #[sinex_test]
-async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
+async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource exhaustion scenarios...");

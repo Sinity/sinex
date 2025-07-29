@@ -142,7 +142,7 @@ async fn automaton_consumer_with_crashes(
 }
 
 #[sinex_test]
-async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> TestResult {
+async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> anyhow::Result<()> {
     
     // Setup Redis connection
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
@@ -275,7 +275,7 @@ async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn test_consumer_group_scaling_properties(ctx: TestContext) -> TestResult {
+async fn test_consumer_group_scaling_properties(ctx: TestContext) -> anyhow::Result<()> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -532,7 +532,7 @@ async fn test_redis_stream_ordering_guarantees() -> AnyhowResult<(), anyhow::Err
 
 /// Test checkpoint-based recovery after consumer crashes
 #[sinex_test]
-async fn test_checkpoint_recovery_properties(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_recovery_properties(ctx: TestContext) -> anyhow::Result<()> {
 
     proptest!(|(
         events_before_crash in 20..=50usize,

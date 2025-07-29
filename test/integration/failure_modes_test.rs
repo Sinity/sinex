@@ -20,7 +20,7 @@ use tokio::sync::{mpsc, watch, RwLock, Semaphore};
 
 /// Test what happens when event channel fills up
 #[sinex_test]
-async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
+async fn test_channel_backpressure_handling(ctx: TestContext) -> anyhow::Result<()> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
 
     let events_generated = Arc::new(AtomicU64::new(0));
@@ -106,7 +106,7 @@ async fn test_channel_backpressure_handling(ctx: TestContext) -> TestResult {
 
 /// Test event source crash and restart
 #[sinex_test]
-async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
+async fn test_event_source_crash_recovery(ctx: TestContext) -> anyhow::Result<()> {
     struct CrashingEventSource {
         crash_after: u64,
         events_sent: Arc<AtomicU64>,
@@ -197,7 +197,7 @@ async fn test_event_source_crash_recovery(ctx: TestContext) -> TestResult {
 
 /// Test configuration reload during active event processing
 #[sinex_test]
-async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
+async fn test_config_reload_during_processing(ctx: TestContext) -> anyhow::Result<()> {
     let events_before_reload = Arc::new(AtomicU64::new(0));
     let events_after_reload = Arc::new(AtomicU64::new(0));
     let reload_triggered = Arc::new(AtomicBool::new(false));
@@ -318,7 +318,7 @@ async fn test_config_reload_during_processing(ctx: TestContext) -> TestResult {
 
 /// Test connection pool exhaustion scenarios
 #[sinex_test]
-async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
+async fn test_connection_pool_exhaustion(ctx: TestContext) -> anyhow::Result<()> {
     const MAX_CONNECTIONS: usize = 10;
 
     let pool = Arc::new(Semaphore::new(MAX_CONNECTIONS));
@@ -394,7 +394,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> TestResult {
 
 /// Test connection leak detection
 #[sinex_test]
-async fn test_connection_leak_detection(ctx: TestContext) -> TestResult {
+async fn test_connection_leak_detection(ctx: TestContext) -> anyhow::Result<()> {
     const POOL_SIZE: usize = 5;
 
     #[derive(Debug)]
@@ -588,7 +588,7 @@ async fn test_transaction_rollback_behavior(ctx: TestContext) -> AnyhowResult<()
 
 /// Test database restart resilience
 #[sinex_test]
-async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
+async fn test_database_restart_resilience(ctx: TestContext) -> anyhow::Result<()> {
     let queries_before = Arc::new(AtomicU64::new(0));
     let queries_after = Arc::new(AtomicU64::new(0));
     let connection_errors = Arc::new(AtomicU64::new(0));
@@ -673,7 +673,7 @@ async fn test_database_restart_resilience(ctx: TestContext) -> TestResult {
 
 /// Test disk full scenarios during event capture
 #[sinex_test]
-async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
+async fn test_disk_full_handling(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = resources::temp_dir()?;
     let test_path = temp_dir.path().to_path_buf();
 
@@ -739,7 +739,7 @@ async fn test_disk_full_handling(ctx: TestContext) -> TestResult {
 
 /// Test permission changes during filesystem monitoring
 #[sinex_test]
-async fn test_permission_change_handling(_ctx: TestContext) -> TestResult {
+async fn test_permission_change_handling(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watched");
     fs::create_dir(&watch_dir).unwrap();
@@ -810,7 +810,7 @@ async fn test_permission_change_handling(_ctx: TestContext) -> TestResult {
 
 /// Test database connection timeout handling
 #[sinex_test]
-async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
+async fn test_database_connection_timeout(_ctx: TestContext) -> anyhow::Result<()> {
     #[derive(Debug, Clone)]
     struct TimeoutStats {
         attempts: Arc<AtomicU64>,
@@ -919,7 +919,7 @@ async fn test_database_connection_timeout(_ctx: TestContext) -> TestResult {
 
 /// Test gradual memory leak detection
 #[sinex_test]
-async fn test_memory_leak_detection(_ctx: TestContext) -> TestResult {
+async fn test_memory_leak_detection(_ctx: TestContext) -> anyhow::Result<()> {
     #[derive(Clone)]
     struct LeakyComponent {
         data: Arc<RwLock<Vec<Vec<u8>>>>,
@@ -1028,7 +1028,7 @@ async fn test_memory_leak_detection(_ctx: TestContext) -> TestResult {
 
 /// Test orphaned worker detection and cleanup
 #[sinex_test]
-async fn test_orphaned_worker_detection(_ctx: TestContext) -> TestResult {
+async fn test_orphaned_worker_detection(_ctx: TestContext) -> anyhow::Result<()> {
     #[derive(Debug, Clone)]
     struct WorkerState {
         id: String,

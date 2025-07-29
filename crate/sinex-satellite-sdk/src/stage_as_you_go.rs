@@ -321,7 +321,7 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
 
     // Tests would go here
 }

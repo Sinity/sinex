@@ -117,7 +117,7 @@ async fn setup_test_data(pool: &DbPool) -> AnyhowResult<Vec<Ulid>> {
 }
 
 #[sinex_test]
-async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
+async fn test_search_sql_injection_prevention(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -176,7 +176,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_sql_injection_in_filters(ctx: TestContext) -> TestResult {
+async fn test_search_sql_injection_in_filters(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -217,7 +217,7 @@ async fn test_search_sql_injection_in_filters(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_basic_text_search(ctx: TestContext) -> TestResult {
+async fn test_search_basic_text_search(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -258,7 +258,7 @@ async fn test_search_basic_text_search(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_source_filtering(ctx: TestContext) -> TestResult {
+async fn test_search_source_filtering(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -300,7 +300,7 @@ async fn test_search_source_filtering(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_event_type_filtering(ctx: TestContext) -> TestResult {
+async fn test_search_event_type_filtering(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -325,7 +325,7 @@ async fn test_search_event_type_filtering(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_time_range_filtering(ctx: TestContext) -> TestResult {
+async fn test_search_time_range_filtering(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -351,7 +351,7 @@ async fn test_search_time_range_filtering(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_pagination(ctx: TestContext) -> TestResult {
+async fn test_search_pagination(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -396,7 +396,7 @@ async fn test_search_pagination(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_limit_bounds(ctx: TestContext) -> TestResult {
+async fn test_search_limit_bounds(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -434,7 +434,7 @@ async fn test_search_limit_bounds(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_combined_filters(ctx: TestContext) -> TestResult {
+async fn test_search_combined_filters(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -458,7 +458,7 @@ async fn test_search_combined_filters(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_ordering(ctx: TestContext) -> TestResult {
+async fn test_search_ordering(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -489,7 +489,7 @@ async fn test_search_ordering(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_snippet_extraction(ctx: TestContext) -> TestResult {
+async fn test_search_snippet_extraction(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -528,7 +528,7 @@ async fn test_search_snippet_extraction(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_special_characters_in_text(ctx: TestContext) -> TestResult {
+async fn test_search_special_characters_in_text(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -589,7 +589,7 @@ async fn test_search_special_characters_in_text(ctx: TestContext) -> TestResult 
 }
 
 #[sinex_test]
-async fn test_search_empty_results(ctx: TestContext) -> TestResult {
+async fn test_search_empty_results(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -627,7 +627,7 @@ async fn test_search_empty_results(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_search_result_format(ctx: TestContext) -> TestResult {
+async fn test_search_result_format(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -670,7 +670,9 @@ async fn test_search_result_format(ctx: TestContext) -> TestResult {
 /// CRITICAL: Test attempting actual SQL injection that would be visible
 /// This test documents the current vulnerability
 #[sinex_test]
-async fn test_search_sql_injection_limit_offset_vulnerability(ctx: TestContext) -> TestResult {
+async fn test_search_sql_injection_limit_offset_vulnerability(
+    ctx: TestContext,
+) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 

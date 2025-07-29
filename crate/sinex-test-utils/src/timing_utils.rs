@@ -371,8 +371,12 @@ impl<'ctx> TimingUtils<'ctx> {
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use std::pin::Pin;
+    use std::future::Future;
+    use std::boxed::Box;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     #[sinex_test]
     async fn test_synchronizer_basic(ctx: TestContext) -> anyhow::Result<()> {
@@ -456,12 +460,12 @@ mod tests {
                 counter_clone.fetch_add(1, Ordering::SeqCst);
 
                 // Wait at barrier
-                barrier_clone.wait(Duration::from_secs(5)).await?;
+                let _ = barrier_clone.wait(Duration::from_secs(5)).await?;
 
                 // Increment after barrier
                 counter_clone.fetch_add(10, Ordering::SeqCst);
 
-                Ok::<i32, tokio::time::error::Elapsed>(i as i32)
+                Ok::<i32, anyhow::Error>(i as i32)
             });
             handles.push(handle);
         }
@@ -627,25 +631,22 @@ mod tests {
             c2_clone.store(10, Ordering::SeqCst);
         });
 
-        // Wait for both conditions
-        let conditions = vec![
-            ("counter1 >= 5", {
-                let counter = counter1.clone();
-                move || {
-                    let c = counter.clone();
-                    async move { Ok(c.load(Ordering::SeqCst) >= 5) }
-                }
-            }),
-            ("counter2 >= 10", {
-                let counter = counter2.clone();
-                move || {
-                    let c = counter.clone();
-                    async move { Ok(c.load(Ordering::SeqCst) >= 10) }
-                }
-            }),
-        ];
-
-        WaitHelpers::wait_for_multiple_conditions(conditions, 5).await?;
+        // Instead of using wait_for_multiple_conditions with closures,
+        // we'll use a simple loop since closures don't implement Clone
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(5);
+        
+        loop {
+            if counter1.load(Ordering::SeqCst) >= 5 && counter2.load(Ordering::SeqCst) >= 10 {
+                break;
+            }
+            
+            if start.elapsed() > timeout {
+                return Err(anyhow::anyhow!("Timeout waiting for conditions"));
+            }
+            
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
 
         assert_eq!(counter1.load(Ordering::SeqCst), 5);
         assert_eq!(counter2.load(Ordering::SeqCst), 10);

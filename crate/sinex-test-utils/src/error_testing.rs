@@ -664,7 +664,7 @@ mod tests {
     #[sinex_test]
     async fn test_error_chaining(ctx: TestContext) -> Result<(), SinexError> {
         // Test error chaining with source errors
-        let base_error = SinexError::database("connection refused");
+        let _base_error = SinexError::database("connection refused");
 
         let wrapped_error = SinexError::service("Failed to process event");
 

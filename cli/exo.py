@@ -3807,6 +3807,270 @@ def scan(ctx, satellite: Optional[str], all_satellites: bool, since: Optional[st
 
 
 @cli.group()
+def telemetry():
+    """Telemetry and metrics inspection commands."""
+    pass
+
+
+@telemetry.command('prometheus')
+@click.option('--rpc-url', help='RPC server URL', envvar='SINEX_RPC_URL')
+@click.option('--format', '-f', type=click.Choice(['text', 'json']), default='text', 
+              help='Output format (text for Prometheus format, json for structured data)')
+@click.pass_context
+def telemetry_prometheus(ctx, rpc_url: Optional[str], format: str):
+    """Export current Prometheus metrics."""
+    try:
+        client = get_rpc_client(rpc_url)
+        
+        # Call gateway RPC to get metrics
+        response = client.call('telemetry.export_prometheus', {'format': format})
+        
+        if format == 'text':
+            console.print(response['metrics'])
+        else:
+            # JSON format
+            console.print(JSON.from_data(response['metrics'], indent=2))
+            
+    except SinexRPCError as e:
+        console.print(f"[red]RPC Error: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+@telemetry.command('events')
+@click.option('--component', '-c', help='Filter by component name')
+@click.option('--event-type', '-t', help='Filter by telemetry event type')
+@click.option('--since', '-s', help='Start time (ISO format or relative like "1h")')
+@click.option('--limit', '-l', type=int, default=100, help='Maximum number of events to show')
+@click.option('--format', '-f', type=click.Choice(['table', 'json', 'raw']), default='table',
+              help='Output format')
+@click.pass_context
+def telemetry_events(ctx, component: Optional[str], event_type: Optional[str], 
+                    since: Optional[str], limit: int, format: str):
+    """Query telemetry events from the database."""
+    use_db = ctx.obj.get('use_db', False)
+    
+    # Build query conditions
+    conditions = ["source = 'sinex.telemetry'"]
+    params = []
+    
+    if component:
+        conditions.append("payload->>'component' = %s")
+        params.append(component)
+    
+    if event_type:
+        conditions.append("event_type = %s")
+        params.append(event_type)
+    
+    if since:
+        since_dt = parse_time_argument(since)
+        conditions.append("ts_ingest >= %s")
+        params.append(since_dt)
+    
+    # Query telemetry events
+    if use_db:
+        events = _query_telemetry_db(conditions, params, limit)
+    else:
+        # Use RPC
+        try:
+            client = get_rpc_client(ctx.obj.get('rpc_url'))
+            response = client.call('telemetry.query_events', {
+                'component': component,
+                'event_type': event_type,
+                'since': since,
+                'limit': limit
+            })
+            events = response['events']
+        except SinexRPCError as e:
+            console.print(f"[red]RPC Error: {e}[/red]")
+            sys.exit(1)
+    
+    if not events:
+        console.print("[yellow]No telemetry events found.[/yellow]")
+        return
+    
+    # Display results
+    if format == 'json':
+        console.print(JSON.from_data(events, indent=2))
+    elif format == 'raw':
+        for event in events:
+            console.print(event)
+    else:
+        # Table format
+        display_telemetry_table(events)
+
+
+@telemetry.command('summary')
+@click.option('--component', '-c', help='Filter by component name')
+@click.option('--period', '-p', type=click.Choice(['1h', '24h', '7d', '30d']), default='24h',
+              help='Time period for summary')
+@click.option('--rpc-url', help='RPC server URL', envvar='SINEX_RPC_URL')
+@click.pass_context
+def telemetry_summary(ctx, component: Optional[str], period: str, rpc_url: Optional[str]):
+    """Show telemetry summary statistics."""
+    try:
+        client = get_rpc_client(rpc_url)
+        
+        response = client.call('telemetry.summary', {
+            'component': component,
+            'period': period
+        })
+        
+        summary = response['summary']
+        
+        # Display summary
+        console.print(f"\n[bold]Telemetry Summary - Last {period}[/bold]")
+        
+        if component:
+            console.print(f"Component: [cyan]{component}[/cyan]\n")
+        
+        # Event throughput
+        if 'event_throughput' in summary:
+            console.print("[bold]Event Throughput:[/bold]")
+            table = Table(box=box.SIMPLE)
+            table.add_column("Event Type", style="cyan")
+            table.add_column("Count", justify="right")
+            table.add_column("Rate/min", justify="right")
+            
+            for event_type, stats in summary['event_throughput'].items():
+                table.add_row(
+                    event_type,
+                    f"{stats['count']:,}",
+                    f"{stats['rate_per_minute']:.2f}"
+                )
+            console.print(table)
+            console.print()
+        
+        # Performance metrics
+        if 'performance' in summary:
+            console.print("[bold]Performance Metrics:[/bold]")
+            table = Table(box=box.SIMPLE)
+            table.add_column("Operation", style="cyan")
+            table.add_column("Count", justify="right")
+            table.add_column("P50 (ms)", justify="right")
+            table.add_column("P95 (ms)", justify="right")
+            table.add_column("P99 (ms)", justify="right")
+            
+            for op, stats in summary['performance'].items():
+                table.add_row(
+                    op,
+                    f"{stats['count']:,}",
+                    f"{stats['p50']:.1f}",
+                    f"{stats['p95']:.1f}",
+                    f"{stats['p99']:.1f}"
+                )
+            console.print(table)
+            console.print()
+        
+        # Resource usage
+        if 'resources' in summary:
+            console.print("[bold]Resource Usage:[/bold]")
+            table = Table(box=box.SIMPLE)
+            table.add_column("Component", style="cyan")
+            table.add_column("Avg Memory (MB)", justify="right")
+            table.add_column("Peak Memory (MB)", justify="right")
+            table.add_column("Avg CPU %", justify="right")
+            table.add_column("Peak CPU %", justify="right")
+            
+            for comp, stats in summary['resources'].items():
+                table.add_row(
+                    comp,
+                    f"{stats['avg_memory_mb']:.1f}",
+                    f"{stats['peak_memory_mb']:.1f}",
+                    f"{stats['avg_cpu_percent']:.1f}",
+                    f"{stats['peak_cpu_percent']:.1f}"
+                )
+            console.print(table)
+            console.print()
+        
+        # Error summary
+        if 'errors' in summary and summary['errors']:
+            console.print("[bold]Error Summary:[/bold]")
+            table = Table(box=box.SIMPLE)
+            table.add_column("Error Type", style="red")
+            table.add_column("Count", justify="right")
+            table.add_column("Component", style="cyan")
+            
+            for error in summary['errors']:
+                table.add_row(
+                    error['type'],
+                    f"{error['count']:,}",
+                    error.get('component', 'unknown')
+                )
+            console.print(table)
+            
+    except SinexRPCError as e:
+        console.print(f"[red]RPC Error: {e}[/red]")
+        sys.exit(1)
+    except Exception as e:
+        console.print(f"[red]Error: {e}[/red]")
+        sys.exit(1)
+
+
+def _query_telemetry_db(conditions: List[str], params: List[Any], limit: int) -> List[Dict]:
+    """Query telemetry events from database."""
+    with get_db_connection() as conn:
+        with conn.cursor() as cur:
+            where_clause = " AND ".join(conditions)
+            query = f"""
+                SELECT event_id, event_type, ts_ingest, payload
+                FROM core.events
+                WHERE {where_clause}
+                ORDER BY ts_ingest DESC
+                LIMIT %s
+            """
+            params.append(limit)
+            
+            cur.execute(query, params)
+            rows = cur.fetchall()
+            
+            return [dict(row) for row in rows]
+
+
+def display_telemetry_table(events: List[Dict]):
+    """Display telemetry events in a table format."""
+    table = Table(title="Telemetry Events", box=box.ROUNDED)
+    table.add_column("Time", style="green")
+    table.add_column("Component", style="cyan")
+    table.add_column("Type", style="magenta")
+    table.add_column("Details", style="white")
+    
+    for event in events:
+        payload = event['payload']
+        component = payload.get('component', 'unknown')
+        event_type = event['event_type']
+        
+        # Format details based on event type
+        details = ""
+        if event_type == 'events.processed':
+            count = payload.get('count', 0)
+            by_type = payload.get('by_type', {})
+            details = f"Count: {count}, Types: {len(by_type)}"
+        elif event_type == 'operation.performance':
+            operation = payload.get('operation', 'unknown')
+            p50 = payload.get('duration_ms', {}).get('p50', 0)
+            details = f"Op: {operation}, P50: {p50:.1f}ms"
+        elif event_type == 'resource.usage':
+            mem = payload.get('memory_mb', {}).get('current', 0)
+            cpu = payload.get('cpu_percent', {}).get('avg', 0)
+            details = f"Mem: {mem:.1f}MB, CPU: {cpu:.1f}%"
+        elif event_type == 'errors.summary':
+            total = payload.get('total_errors', 0)
+            details = f"Total errors: {total}"
+        
+        table.add_row(
+            event['ts_ingest'].strftime('%Y-%m-%d %H:%M:%S'),
+            component,
+            event_type,
+            details
+        )
+    
+    console.print(table)
+
+
+@cli.group()
 def completion():
     """Shell completion management."""
     pass

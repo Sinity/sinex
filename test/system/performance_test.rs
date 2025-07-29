@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 // ==================== DATABASE PERFORMANCE TESTS ====================
 
 #[sinex_test(timeout = 60)]
-async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
+async fn test_database_insertion_performance(ctx: TestContext) -> anyhow::Result<()> {
     // Test: Basic database insertion performance
     let pool = ctx.pool().clone();
 
@@ -106,7 +106,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_concurrent_insertion_performance(ctx: TestContext) -> TestResult {
+async fn test_concurrent_insertion_performance(ctx: TestContext) -> anyhow::Result<()> {
     // Test: Concurrent database insertion
     let pool = ctx.pool().clone();
 
@@ -253,7 +253,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow
 }
 
 #[sinex_test]
-async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult {
+async fn test_concurrent_processing_performance(ctx: TestContext) -> anyhow::Result<()> {
     // Insert test events
     for i in 0..100 {
         sinex_db::insert_event_with_validator(
@@ -349,7 +349,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> TestResult 
 }
 
 #[sinex_test]
-async fn test_query_latency(ctx: TestContext) -> TestResult {
+async fn test_query_latency(ctx: TestContext) -> anyhow::Result<()> {
     // Insert test data
     for i in 0..1000 {
         sinex_db::insert_event_with_validator(
@@ -394,7 +394,7 @@ async fn test_query_latency(ctx: TestContext) -> TestResult {
 // ==================== MEMORY USAGE TESTS ====================
 
 #[sinex_test]
-async fn test_memory_usage_under_load(ctx: TestContext) -> TestResult {
+async fn test_memory_usage_under_load(ctx: TestContext) -> anyhow::Result<()> {
     // Test memory usage during high-volume operations
     let pool = ctx.pool().clone();
     let initial_memory = get_memory_usage();
@@ -475,7 +475,7 @@ fn get_memory_usage() -> usize {
 // ==================== SCALING TESTS ====================
 
 #[sinex_test]
-async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
+async fn test_scaling_with_worker_count(ctx: TestContext) -> anyhow::Result<()> {
     // Test how performance scales with worker count
     let pool = ctx.pool().clone();
     let events_per_test = 500;
@@ -597,7 +597,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> TestResult {
 // ==================== RESOURCE USAGE TESTS ====================
 
 #[sinex_test]
-async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
+async fn test_database_connection_pooling(ctx: TestContext) -> anyhow::Result<()> {
     // Test database connection pool performance
     let pool = ctx.pool().clone();
     let concurrent_connections = 20;
@@ -657,7 +657,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
+async fn test_large_payload_performance(ctx: TestContext) -> anyhow::Result<()> {
     // Test performance with large event payloads
     let pool = ctx.pool().clone();
     let payload_sizes = vec![1024, 10240, 102400]; // 1KB, 10KB, 100KB
@@ -702,7 +702,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_burst_load_handling(ctx: TestContext) -> TestResult {
+async fn test_burst_load_handling(ctx: TestContext) -> anyhow::Result<()> {
     // Test how system handles burst loads
     let pool = ctx.pool().clone();
     let burst_size = 1000;

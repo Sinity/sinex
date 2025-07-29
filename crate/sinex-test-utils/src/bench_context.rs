@@ -125,7 +125,9 @@ impl BenchContext {
 
     /// Clear PostgreSQL caches for cold cache measurements
     pub async fn clear_cache(&self) -> Result<()> {
-        db_common::clear_pg_cache(&self.pool).await
+        db_common::clear_pg_cache(&self.pool)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to clear cache: {}", e))
     }
 
     /// Run a benchmark with isolation and dual measurement

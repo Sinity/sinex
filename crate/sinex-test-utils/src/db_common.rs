@@ -536,84 +536,56 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::bench::*;
+    use crate::{bench::BenchContext, sinex_bench};
 
     /// Benchmark database reset operation
     ///
     /// This measures the time to completely clean a database with various
     /// amounts of existing data.
-    bench_with_db!(
-        bench_reset_empty_database,
-        |ctx: &BenchContext| async move {
-            // Database is already empty from reset_and_load
-            reset_database(ctx.pool()).await
-        }
-    );
+    #[sinex_bench]
+    async fn bench_reset_empty_database(ctx: &BenchContext) -> anyhow::Result<()> {
+        // Database is already empty from reset_and_load
+        reset_database(ctx.pool()).await
+    }
 
     /// Benchmark database reset with data
     ///
     /// Measures reset performance when database contains events and related data
-    #[divan::bench]
-    fn bench_reset_populated_database(bencher: divan::Bencher) {
-        let ctx = &*BENCH_CONTEXT;
+    #[sinex_bench]
+    async fn bench_reset_populated_database(ctx: &BenchContext) -> anyhow::Result<()> {
+        // Setup: Insert some data
+        use sinex_db::queries::EventQueries;
+        for i in 0..10 {
+            let event = EventQueries::insert_event(
+                "bench".to_string(),
+                "test".to_string(),
+                "test-host".to_string(),
+                serde_json::json!({"index": i}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .fetch_one::<sinex_core_types::RawEvent>(ctx.pool())
+            .await?;
 
-        bencher
-            .with_inputs(|| {
-                // Setup: Insert some data
-                ctx.runtime.block_on(async {
-                    // Insert a few events with related data
-                    use sinex_db::queries::EventQueries;
-                    for i in 0..10 {
-                        let event = EventQueries::insert_event(
-                            "bench".to_string(),
-                            "test".to_string(),
-                            "test-host".to_string(),
-                            serde_json::json!({"index": i}),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                        .fetch_one::<sinex_core_types::RawEvent>(ctx.pool())
-                        .await
-                        .unwrap();
-
-                        // Add annotation
-                        sqlx::query(
-                            "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator) 
-                             VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')"
-                        )
-                        .bind(sinex_ulid::Ulid::new().to_uuid())
-                        .bind(event.id.to_uuid())
-                        .execute(ctx.pool())
-                        .await
-                        .unwrap();
-                    }
-                })
-            })
-            .bench_values(|_| {
-                ctx.runtime.block_on(async {
-                    reset_database(ctx.pool()).await.unwrap()
-                })
-            });
+            // Add annotation
+            sqlx::query(
+                "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator) 
+                 VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')"
+            )
+            .bind(sinex_ulid::Ulid::new().to_uuid())
+            .bind(event.id.to_uuid())
+            .execute(ctx.pool())
+            .await?;
+        }
+        
+        // Perform the reset
+        reset_database(ctx.pool()).await
     }
 
     /// Benchmark fixture loading
-    #[divan::bench(args = ["empty", "small", "medium"])]
-    fn bench_load_fixture(bencher: divan::Bencher, fixture: &str) {
-        let ctx = &*BENCH_CONTEXT;
-
-        bencher.bench_local(|| {
-            ctx.runtime.block_on(async {
-                // Reset first to ensure consistent state
-                reset_database(ctx.pool()).await.unwrap();
-
-                // Note: This will fail until fixtures are actually created
-                // For now, we're benchmarking the attempt
-                let _ = load_fixture(ctx.pool(), fixture).await;
-            })
-        });
-    }
+    // Removed bench_load_fixture as it tests non-existent fixtures
 
     /// Benchmark cache clearing operation
     bench_with_db!(bench_clear_pg_cache, |ctx: &BenchContext| async move {
@@ -621,48 +593,56 @@ mod benches {
     });
 
     /// Benchmark row count collection
-    #[divan::bench]
-    fn bench_get_row_counts(bencher: divan::Bencher) {
-        let ctx = &*BENCH_CONTEXT;
+    #[sinex_bench]
+    async fn bench_get_row_counts(ctx: &BenchContext) -> anyhow::Result<()> {
+        // Setup: Insert varied amounts of data
+        reset_database(ctx.pool()).await?;
 
-        bencher
-            .with_inputs(|| {
-                // Setup: Insert varied amounts of data
-                ctx.runtime.block_on(async {
-                    reset_database(ctx.pool()).await.unwrap();
+        // Insert some events
+        use sinex_db::queries::EventQueries;
+        for i in 0..50 {
+            EventQueries::insert_event(
+                format!("source_{}", i % 5),
+                "test".to_string(),
+                "bench".to_string(),
+                serde_json::json!({}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .execute(ctx.pool())
+            .await?;
+        }
 
-                    // Insert some events
-                    use sinex_db::queries::EventQueries;
-                    for i in 0..50 {
-                        EventQueries::insert_event(
-                            format!("source_{}", i % 5),
-                            "test".to_string(),
-                            "bench".to_string(),
-                            serde_json::json!({}),
-                            None,
-                            None,
-                            None,
-                            None,
-                        )
-                        .execute(ctx.pool())
-                        .await
-                        .unwrap();
-                    }
-                })
-            })
-            .bench_values(|_| {
-                ctx.runtime
-                    .block_on(async { get_row_counts(ctx.pool()).await.unwrap() })
-            });
+        // Insert some checkpoints
+        for i in 0..10 {
+            sqlx::query(
+                "INSERT INTO core.processor_checkpoints (processor_name, last_processed_event_id, processed_count, state) 
+                 VALUES ($1, $2, $3, '{}'::jsonb)"
+            )
+            .bind(format!("satellite_{}", i % 3))
+            .bind(sinex_ulid::Ulid::new().to_uuid())
+            .bind(i as i64 * 10)
+            .execute(ctx.pool())
+            .await?;
+        }
+        
+        // Perform the count
+        let counts = get_row_counts(ctx.pool()).await?;
+        divan::black_box(counts);
+        Ok(())
     }
 
     /// Benchmark database state verification
-    bench_with_db!(bench_verify_clean_state, |ctx: &BenchContext| async move {
+    #[sinex_bench]
+    async fn bench_verify_clean_state(ctx: &BenchContext) -> anyhow::Result<()> {
         verify_clean_state(ctx.pool()).await
-    });
+    }
 
     /// Benchmark applying test optimizations
-    bench_with_db!(bench_apply_optimizations, |ctx: &BenchContext| async move {
+    #[sinex_bench]
+    async fn bench_apply_optimizations(ctx: &BenchContext) -> anyhow::Result<()> {
         apply_test_optimizations(ctx.pool()).await
-    });
+    }
 }

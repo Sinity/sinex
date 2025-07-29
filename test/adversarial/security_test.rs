@@ -63,7 +63,7 @@ enum ExpectedBehavior {
 
 /// Test filesystem monitoring against path traversal attacks
 #[sinex_test]
-async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResult {
+async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let watch_root = temp_dir.path();
 
@@ -158,7 +158,7 @@ async fn test_filesystem_path_traversal_protection(ctx: TestContext) -> TestResu
 
 /// Test various path traversal attack patterns
 #[sinex_test]
-async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> TestResult {
+async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> anyhow::Result<()> {
     let scenarios = vec![
         SecurityScenario {
             name: "path_traversal_basic",
@@ -234,7 +234,7 @@ async fn test_comprehensive_path_traversal_scenarios(ctx: TestContext) -> TestRe
 
 /// Test SQL injection protection in event payloads
 #[sinex_test]
-async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
+async fn test_sql_injection_protection(ctx: TestContext) -> anyhow::Result<()> {
     let sql_injection_payloads = vec![
         "'; DROP TABLE events; --",
         "' OR '1'='1' --",
@@ -299,7 +299,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> TestResult {
 
 /// Test Unicode normalization bypass attacks
 #[sinex_test]
-async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult {
+async fn test_unicode_normalization_attacks(ctx: TestContext) -> anyhow::Result<()> {
     let unicode_attacks = vec![
         // Unicode normalization attacks
         ("admin\u{200B}", "admin with zero-width space"),
@@ -362,7 +362,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> TestResult {
 
 /// Test null byte injection attacks
 #[sinex_test]
-async fn test_null_byte_injection(ctx: TestContext) -> TestResult {
+async fn test_null_byte_injection(ctx: TestContext) -> anyhow::Result<()> {
     let null_byte_attacks = vec![
         ("file.txt\0.exe", "null byte file extension bypass"),
         ("admin\0ignore", "null byte truncation"),
@@ -412,7 +412,7 @@ async fn test_null_byte_injection(ctx: TestContext) -> TestResult {
 
 /// Test protection against resource exhaustion attacks
 #[sinex_test]
-async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
+async fn test_resource_exhaustion_protection(ctx: TestContext) -> anyhow::Result<()> {
     // Test 1: Large JSON payload
     let mut large_json = json!({
         "data": Vec::<String>::with_capacity(10000)
@@ -488,7 +488,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> TestResult {
 
 /// Test comprehensive input validation against malicious inputs
 #[sinex_test]
-async fn test_malicious_input_validation(ctx: TestContext) -> TestResult {
+async fn test_malicious_input_validation(ctx: TestContext) -> anyhow::Result<()> {
     let malicious_inputs = vec![
         // Command injection
         ("; rm -rf /", "command injection"),
@@ -546,7 +546,7 @@ async fn test_malicious_input_validation(ctx: TestContext) -> TestResult {
 
 /// Test query interface against exploitation attempts
 #[sinex_test]
-async fn test_query_interface_exploits(ctx: TestContext) -> TestResult {
+async fn test_query_interface_exploits(ctx: TestContext) -> anyhow::Result<()> {
     // Insert some test data
     let factory = EventFactory::new(sources::TEST);
     for i in 0..5 {

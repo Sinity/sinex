@@ -18,7 +18,7 @@ use tokio::task::JoinSet;
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResult {
+async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
     let processor_name = "concurrent_test_processor";
     let consumer_group = "test_group";
@@ -129,7 +129,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> TestResul
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
     let processor_name = "lost_update_test";
     let consumer_group = "test_group";
@@ -263,7 +263,7 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> TestResult 
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
     let processor_name = "optimistic_lock_test";
     let consumer_group = "test_group";
@@ -376,7 +376,7 @@ async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test(timeout = 60)]
-async fn test_checkpoint_high_contention_stress(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_high_contention_stress(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
     let processor_name = "high_contention_test";
     let consumer_group = "stress_group";
@@ -507,7 +507,7 @@ async fn test_checkpoint_high_contention_stress(ctx: TestContext) -> TestResult 
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_history_consistency(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_history_consistency(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool();
     let processor_name = "history_test";
     let consumer_group = "test_group";

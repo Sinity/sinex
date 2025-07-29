@@ -48,7 +48,7 @@ struct CheckpointRecord {
 
 /// Test batch insertion of multiple events
 #[sinex_test(timeout = 40)]
-async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
+async fn test_batch_event_insertion(ctx: TestContext) -> anyhow::Result<()> {
     let events = generators::test_events(10);
 
     // Insert events concurrently for better performance
@@ -94,7 +94,7 @@ async fn test_batch_event_insertion(ctx: TestContext) -> TestResult {
 
 /// Test querying events by source
 #[sinex_test(timeout = 35)]
-async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
+async fn test_query_events_by_source(ctx: TestContext) -> anyhow::Result<()> {
     // Create test events
     let fs_event1 = events::file_created_event("/test/file1.txt");
     let fs_event2 = events::file_modified_event("/test/file2.txt");
@@ -130,7 +130,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> TestResult {
 
 /// Test invalid event insertion fails appropriately
 #[sinex_test]
-async fn test_invalid_event_insertion_fails(ctx: TestContext) -> TestResult {
+async fn test_invalid_event_insertion_fails(ctx: TestContext) -> anyhow::Result<()> {
     let invalid_event = events::invalid_event();
     assertions::assert_event_insertion_fails(ctx.pool(), &invalid_event).await?;
     Ok(())
@@ -138,7 +138,7 @@ async fn test_invalid_event_insertion_fails(ctx: TestContext) -> TestResult {
 
 /// Test ULID ordering in time-based queries
 #[sinex_test(timeout = 35)]
-async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult {
+async fn test_ulid_time_ordering(ctx: TestContext) -> anyhow::Result<()> {
     // Insert events with a small delay to ensure different timestamps
     let event1 = events::file_created_event("/test/first.txt");
     let id1 = assertions::assert_event_inserted(ctx.pool(), &event1).await?;
@@ -159,7 +159,7 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test(timeout = 40)]
-async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
+async fn test_ulid_ordering_in_database(ctx: TestContext) -> anyhow::Result<()> {
     // Insert multiple events and collect their IDs
     let mut ulids = Vec::new();
 
@@ -188,7 +188,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_ulid_uuid_conversion_consistency(ctx: TestContext) -> TestResult {
+async fn test_ulid_uuid_conversion_consistency(ctx: TestContext) -> anyhow::Result<()> {
     // Test that ULID <-> UUID conversion is consistent
     let original_ulid = Ulid::new();
     let uuid_form = original_ulid.to_uuid();
@@ -212,7 +212,7 @@ async fn test_ulid_uuid_conversion_consistency(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> TestResult {
+async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Verify core.events is a hypertable
@@ -256,7 +256,7 @@ async fn test_raw_events_is_timescale_hypertable(ctx: TestContext) -> TestResult
 }
 
 #[sinex_test]
-async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
+async fn test_timescale_chunk_creation(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Clean up any previous test data
@@ -334,7 +334,7 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
+async fn test_timescale_compression_policy(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Check if compression policy exists
@@ -404,7 +404,7 @@ async fn test_timescale_compression_policy(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_json_schema_registration(ctx: TestContext) -> TestResult {
+async fn test_json_schema_registration(ctx: TestContext) -> anyhow::Result<()> {
     // Register a JSON Schema
     let schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -458,7 +458,7 @@ async fn test_json_schema_registration(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_json_schema_validation_constraint(ctx: TestContext) -> TestResult {
+async fn test_json_schema_validation_constraint(ctx: TestContext) -> anyhow::Result<()> {
     // First, register a strict schema
     let strict_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -539,7 +539,7 @@ async fn test_json_schema_validation_constraint(ctx: TestContext) -> TestResult 
 }
 
 #[sinex_test]
-async fn test_complex_nested_schema_validation(ctx: TestContext) -> TestResult {
+async fn test_complex_nested_schema_validation(ctx: TestContext) -> anyhow::Result<()> {
     // Test deeply nested schema validation
     let complex_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -627,7 +627,7 @@ async fn test_complex_nested_schema_validation(ctx: TestContext) -> TestResult {
 
 /// Test that validation prevents malformed events from being inserted
 #[sinex_test]
-async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResult {
+async fn test_validation_prevents_malformed_events(ctx: TestContext) -> anyhow::Result<()> {
     // Test 1: Valid event should work
     let factory = EventFactory::new(sources::FS);
     let valid_event = factory.create_event(
@@ -658,7 +658,7 @@ async fn test_validation_prevents_malformed_events(ctx: TestContext) -> TestResu
 }
 
 #[sinex_test]
-async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> TestResult {
+async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> anyhow::Result<()> {
     // Register a schema for filesystem events
     let fs_schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
@@ -722,7 +722,7 @@ async fn test_schema_validation_with_registered_schemas(ctx: TestContext) -> Tes
 
 /// Test checkpoint persistence and progress tracking
 #[sinex_test]
-async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_persistence(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create a test automaton checkpoint
@@ -791,7 +791,7 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_update_operations(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     let processor_name = "test_update_automaton";
@@ -856,7 +856,7 @@ async fn test_checkpoint_update_operations(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test checkpoint creation and cleanup patterns
@@ -937,7 +937,7 @@ async fn test_checkpoint_lifecycle_management(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_progress_metrics(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test checkpoints for different automata
@@ -1021,7 +1021,7 @@ async fn test_checkpoint_progress_metrics(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestResult {
+async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test that checkpoint data coordinates with Redis Streams
@@ -1073,7 +1073,7 @@ async fn test_redis_streams_checkpoint_coordination(ctx: TestContext) -> TestRes
 }
 
 #[sinex_test]
-async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestResult {
+async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test checkpoint progress tracking for satellite architecture
@@ -1139,7 +1139,7 @@ async fn test_automaton_checkpoint_progress_tracking(ctx: TestContext) -> TestRe
 // =============================================================================
 
 #[sinex_test]
-async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
+async fn test_connection_pool_max_connections(ctx: TestContext) -> anyhow::Result<()> {
     // Use the existing managed pool instead of creating a new one
     let pool = ctx.pool().clone();
 
@@ -1189,7 +1189,7 @@ async fn test_connection_pool_max_connections(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResult {
+async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Spawn many concurrent tasks
@@ -1221,7 +1221,7 @@ async fn test_connection_pool_concurrent_pressure(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-async fn test_connection_pool_error_recovery(ctx: TestContext) -> TestResult {
+async fn test_connection_pool_error_recovery(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Cause an error on a connection
@@ -1247,7 +1247,7 @@ async fn test_connection_pool_error_recovery(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
+async fn test_connection_pool_statement_cache(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Execute the same prepared statement many times
@@ -1284,7 +1284,7 @@ async fn test_connection_pool_statement_cache(ctx: TestContext) -> TestResult {
 
 /// Test operations_log table basic functionality
 #[sinex_test]
-async fn test_operations_log_basic_functionality(ctx: TestContext) -> TestResult {
+async fn test_operations_log_basic_functionality(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test start_operation function
@@ -1351,7 +1351,7 @@ async fn test_operations_log_basic_functionality(ctx: TestContext) -> TestResult
 
 /// Test operations_log error handling and validation
 #[sinex_test]
-async fn test_operations_log_error_handling(ctx: TestContext) -> TestResult {
+async fn test_operations_log_error_handling(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test invalid operation type
@@ -1407,7 +1407,7 @@ async fn test_operations_log_error_handling(ctx: TestContext) -> TestResult {
 
 /// Test operations_log performance indexes
 #[sinex_test]
-async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
+async fn test_operations_log_index_performance(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create multiple operations for index testing
@@ -1486,7 +1486,7 @@ async fn test_operations_log_index_performance(ctx: TestContext) -> TestResult {
 
 /// Test operations_log auditability and intent tracking
 #[sinex_test]
-async fn test_operations_log_auditability(ctx: TestContext) -> TestResult {
+async fn test_operations_log_auditability(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Simulate a complete workflow with proper audit trail

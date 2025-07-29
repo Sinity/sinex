@@ -493,21 +493,22 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use divan::Bencher;
+    use crate::sinex_bench;
 
-    #[divan::bench]
-    fn bench_generate_small_dataset(bencher: Bencher) {
-        bencher.bench_local(|| {
-            let mut gen = FixtureGenerator::new(DatasetConfig::small());
-            gen.generate_events()
-        });
-    }
-
-    #[divan::bench]
-    fn bench_generate_sql(bencher: Bencher) {
+    #[sinex_bench]
+    async fn bench_generate_small_dataset() -> anyhow::Result<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
+        divan::black_box(events);
+        Ok(())
+    }
 
-        bencher.bench_local(|| gen.generate_sql(&events));
+    #[sinex_bench]
+    async fn bench_generate_sql() -> anyhow::Result<()> {
+        let mut gen = FixtureGenerator::new(DatasetConfig::small());
+        let events = gen.generate_events();
+        let sql = gen.generate_sql(&events);
+        divan::black_box(sql);
+        Ok(())
     }
 }

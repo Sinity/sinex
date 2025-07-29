@@ -92,7 +92,7 @@ impl GenericEventBuilder {
 
     pub fn heartbeat(self) -> Self {
         let mut new_builder = Self {
-            event_type: "processor.heartbeat".to_string(),
+            event_type: "automaton.heartbeat".to_string(),
             ..self
         };
         let mut payload = new_builder.payload.unwrap_or_else(|| serde_json::json!({}));
