@@ -2890,7 +2890,7 @@ mod benches {
     }
 
     // For benchmarks that need persistent data, we use BenchContext
-    use crate::bench::BenchContext;
+    use crate::bench_context::BenchContext;
 
     #[sinex_bench]
     async fn bench_query_count_all(ctx: &BenchContext) -> anyhow::Result<()> {

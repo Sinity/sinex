@@ -3997,6 +3997,7 @@ dependencies = [
 name = "sinex-telemetry"
 version = "0.4.2"
 dependencies = [
+ "anyhow",
  "async-trait",
  "chrono",
  "clap",

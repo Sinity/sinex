@@ -1409,9 +1409,12 @@ mod benches {
     /// Measures contention and performance when multiple tasks
     /// try to acquire databases simultaneously.
     #[sinex_bench(args = [2, 4, 8, 16])]
-    async fn bench_concurrent_acquisition(concurrency: usize) -> anyhow::Result<()> {
+    async fn bench_concurrent_acquisition(
+        _ctx: &BenchContext,
+        concurrency: usize,
+    ) -> anyhow::Result<()> {
         let handles: Vec<_> = (0..concurrency)
-            .map(|_| tokio::spawn(async { acquire_test_database().await.unwrap() }))
+            .map(|_| tokio::spawn(async move { acquire_test_database().await.unwrap() }))
             .collect();
 
         // Wait for all to complete

@@ -545,7 +545,8 @@ mod benches {
     #[sinex_bench]
     async fn bench_reset_empty_database(ctx: &BenchContext) -> anyhow::Result<()> {
         // Database is already empty from reset_and_load
-        reset_database(ctx.pool()).await
+        reset_database(ctx.pool()).await?;
+        Ok(())
     }
 
     /// Benchmark database reset with data
@@ -581,7 +582,8 @@ mod benches {
         }
 
         // Perform the reset
-        reset_database(ctx.pool()).await
+        reset_database(ctx.pool()).await?;
+        Ok(())
     }
 
     /// Benchmark fixture loading
@@ -590,7 +592,8 @@ mod benches {
     /// Benchmark cache clearing operation
     #[sinex_bench]
     async fn bench_clear_pg_cache(ctx: &BenchContext) -> anyhow::Result<()> {
-        clear_pg_cache(ctx.pool()).await
+        clear_pg_cache(ctx.pool()).await?;
+        Ok(())
     }
 
     /// Benchmark row count collection
@@ -638,12 +641,14 @@ mod benches {
     /// Benchmark database state verification
     #[sinex_bench]
     async fn bench_verify_clean_state(ctx: &BenchContext) -> anyhow::Result<()> {
-        verify_clean_state(ctx.pool()).await
+        verify_clean_state(ctx.pool()).await?;
+        Ok(())
     }
 
     /// Benchmark applying test optimizations
     #[sinex_bench]
     async fn bench_apply_optimizations(ctx: &BenchContext) -> anyhow::Result<()> {
-        apply_test_optimizations(ctx.pool()).await
+        apply_test_optimizations(ctx.pool()).await?;
+        Ok(())
     }
 }

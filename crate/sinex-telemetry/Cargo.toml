@@ -58,4 +58,5 @@ tokio-test = "0.4"
 tempfile = { workspace = true }
 rand = "0.8"
 sinex-test-utils = { path = "../sinex-test-utils", features = ["bench"] }
+anyhow = { workspace = true }
 

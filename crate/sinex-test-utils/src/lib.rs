@@ -1215,7 +1215,7 @@ mod benches {
 
         let results: Vec<SourceCount> = sqlx::query_as!(
             SourceCount,
-            r#"SELECT source, COUNT(*) as count 
+            r#"SELECT source, COUNT(*) as "count!"
                FROM core.events 
                GROUP BY source 
                ORDER BY count DESC 

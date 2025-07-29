@@ -193,12 +193,13 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use crate::bench::*;
+    use crate::bench_context::BenchContext;
+    use crate::sinex_bench;
 
     // Benchmark the standard fixtures themselves
     #[sinex_bench]
     async fn bench_time_series_small(ctx: &BenchContext) -> anyhow::Result<()> {
-        ctx.ensure_fixture(&TIME_SERIES_FIXTURE, DatasetSize::Small)
+        ctx.load_fixture(&TIME_SERIES_FIXTURE, DatasetSize::Small)
             .await?;
         // Just measure fixture load time
         Ok(())
@@ -206,7 +207,7 @@ mod benches {
 
     #[sinex_bench]
     async fn bench_query_fixture_medium(ctx: &BenchContext) -> anyhow::Result<()> {
-        ctx.ensure_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
+        ctx.load_fixture(&QUERY_BENCH_FIXTURE, DatasetSize::Medium)
             .await?;
         // Measure fixture generation/load
         Ok(())
