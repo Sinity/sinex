@@ -169,7 +169,7 @@ impl EventSource for TestScannerSatellite {
 // =============================================================================
 
 #[sinex_test]
-async fn test_satellite_basic_initialization(ctx: TestContext) -> TestResult {
+async fn test_satellite_basic_initialization(ctx: TestContext) -> anyhow::Result<()> {
     // Create filesystem satellite
     let mut satellite = TestFilesystemSatellite::new(5);
     // Create a channel for streaming events
@@ -197,7 +197,7 @@ async fn test_satellite_basic_initialization(ctx: TestContext) -> TestResult {
 
 /// Test that satellite can stream events through full pipeline
 #[sinex_test]
-async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> TestResult {
+async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> anyhow::Result<()> {
     // Create a test satellite that generates events
     let mut satellite = TestFilesystemSatellite::new(5);
 
@@ -243,7 +243,7 @@ async fn test_satellite_event_pipeline_integration(ctx: TestContext) -> TestResu
 
 /// Test satellite coordination and multi-satellite scenarios
 #[sinex_test]
-async fn test_multi_satellite_coordination(ctx: TestContext) -> TestResult {
+async fn test_multi_satellite_coordination(ctx: TestContext) -> anyhow::Result<()> {
     // Create multiple satellites of different types
     let mut fs_satellite = TestFilesystemSatellite::new(3);
     let mut cmd_satellite = TestCommandSatellite::new(2);
@@ -314,7 +314,7 @@ async fn test_multi_satellite_coordination(ctx: TestContext) -> TestResult {
 
 /// Test satellite scanner mode (one-time scan) vs sensor mode (continuous)
 #[sinex_test]
-async fn test_satellite_operational_modes(ctx: TestContext) -> TestResult {
+async fn test_satellite_operational_modes(ctx: TestContext) -> anyhow::Result<()> {
     // Test 1: Scanner mode - finite operation
     let (scanner_tx, mut scanner_rx) = mpsc::channel(100);
 
@@ -380,7 +380,7 @@ async fn test_satellite_operational_modes(ctx: TestContext) -> TestResult {
 
 /// Test satellite reconnection and fault tolerance
 #[sinex_test]
-async fn test_satellite_fault_tolerance(ctx: TestContext) -> TestResult {
+async fn test_satellite_fault_tolerance(ctx: TestContext) -> anyhow::Result<()> {
     // Create a channel that simulates failure scenarios
     let (tx, mut rx) = mpsc::channel(100);
 

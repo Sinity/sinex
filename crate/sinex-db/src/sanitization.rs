@@ -139,7 +139,7 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    async fn test_path_traversal_sanitization() {
+    async fn test_path_traversal_sanitization(ctx: TestContext) -> anyhow::Result<()> {
         let factory = EventFactory::new("../../../etc/passwd");
         let mut event =
             factory.create_event("security.test", json!({"path": "../../sensitive/file.txt"}));
@@ -154,10 +154,11 @@ mod tests {
         if let Some(path) = event.payload.get("path").and_then(|v| v.as_str()) {
             assert!(!path.contains(".."));
         }
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_null_byte_sanitization() {
+    async fn test_null_byte_sanitization(ctx: TestContext) -> anyhow::Result<()> {
         let factory = EventFactory::new("test\0source");
         let mut event = factory.create_event("security.test", json!({"data": "test\0value"}));
 
@@ -166,10 +167,11 @@ mod tests {
 
         // Null bytes should be removed
         assert!(!event.source.contains('\0'));
+        Ok(())
     }
 
     #[sinex_test]
-    async fn test_sql_injection_preserved() {
+    async fn test_sql_injection_preserved(ctx: TestContext) -> anyhow::Result<()> {
         let factory = EventFactory::new("security.test");
         let mut event = factory.create_event(
             "sql.injection",
@@ -184,5 +186,6 @@ mod tests {
             event.payload.get("query").unwrap().as_str().unwrap(),
             "'; DROP TABLE events; --"
         );
+        Ok(())
     }
 }

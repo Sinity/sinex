@@ -1,4 +1,14 @@
 -- Create core event storage tables with unified architecture
+
+-- Create helper function for updated_at triggers
+CREATE OR REPLACE FUNCTION set_current_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 --
 -- Technical Implementation Module: TimescaleDB Configuration
 --
@@ -178,10 +188,10 @@ CREATE TABLE IF NOT EXISTS core.archived_events (
     archive_reason TEXT
 );
 
--- Create automaton checkpoints table
-CREATE TABLE IF NOT EXISTS core.automaton_checkpoints (
+-- Create processor checkpoints table (used by all processor types: ingestors, automata, system)
+CREATE TABLE IF NOT EXISTS core.processor_checkpoints (
     id ULID PRIMARY KEY DEFAULT gen_ulid(),
-    automaton_name TEXT NOT NULL,
+    processor_name TEXT NOT NULL,
     consumer_group TEXT NOT NULL DEFAULT 'default',
     consumer_name TEXT NOT NULL DEFAULT 'default',
     last_processed_id ULID,
@@ -193,12 +203,12 @@ CREATE TABLE IF NOT EXISTS core.automaton_checkpoints (
     last_activity TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CONSTRAINT unique_automaton_consumer UNIQUE (automaton_name, consumer_group, consumer_name)
+    CONSTRAINT unique_processor_consumer UNIQUE (processor_name, consumer_group, consumer_name)
 );
 
-CREATE INDEX idx_automaton_checkpoints_updated ON core.automaton_checkpoints (updated_at DESC);
-CREATE INDEX idx_automaton_checkpoints_automaton ON core.automaton_checkpoints (automaton_name);
-CREATE INDEX idx_automaton_checkpoints_consumer ON core.automaton_checkpoints (consumer_group, consumer_name);
+CREATE INDEX idx_processor_checkpoints_updated ON core.processor_checkpoints (updated_at DESC);
+CREATE INDEX idx_processor_checkpoints_processor ON core.processor_checkpoints (processor_name);
+CREATE INDEX idx_processor_checkpoints_consumer ON core.processor_checkpoints (consumer_group, consumer_name);
 
 -- Create operations log for audit trail
 CREATE TABLE IF NOT EXISTS core.operations_log (
@@ -220,38 +230,68 @@ CREATE INDEX idx_operations_log_ts ON core.operations_log (operation_ts DESC);
 CREATE INDEX idx_operations_log_type_ts ON core.operations_log (operation_type, operation_ts DESC);
 CREATE INDEX idx_operations_log_target ON core.operations_log (target_table, target_id) WHERE target_id IS NOT NULL;
 
--- Create metrics table for system telemetry (in metrics schema)
-CREATE TABLE IF NOT EXISTS metrics.sinex_metrics (
-    metric_id ULID PRIMARY KEY DEFAULT gen_ulid(),
-    metric_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    metric_name TEXT NOT NULL,
-    metric_value DOUBLE PRECISION NOT NULL,
-    metric_type TEXT NOT NULL CHECK (metric_type IN ('counter', 'gauge', 'histogram', 'summary')),
-    labels JSONB NOT NULL DEFAULT '{}',
-    source TEXT NOT NULL,
-    host TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+
+
+-- ============================================================================
+-- Embedding Infrastructure (moved from migration 9 to fix dependency order)
+-- ============================================================================
+--
+-- These tables are created here because artifact tables (migration 4) reference
+-- embedding_models. Previously this caused a circular dependency as these were
+-- in migration 9.
+--
+
+-- Embedding Models Registry
+CREATE TABLE IF NOT EXISTS core.embedding_models (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    provider TEXT NOT NULL,
+    model_name TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    max_input_tokens INTEGER,
+    cost_per_1k_tokens DECIMAL(10, 6),
+    is_active BOOLEAN NOT NULL DEFAULT true,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_embedding_model UNIQUE(provider, model_name)
 );
 
-CREATE INDEX idx_sinex_metrics_name_ts ON metrics.sinex_metrics (metric_name, metric_ts DESC);
-CREATE INDEX idx_sinex_metrics_source_ts ON metrics.sinex_metrics (source, metric_ts DESC);
-CREATE INDEX idx_sinex_metrics_labels ON metrics.sinex_metrics USING GIN (labels);
+CREATE INDEX idx_embedding_models_active ON core.embedding_models(is_active, provider);
 
--- Create legacy sinex.metrics table for compatibility with sinex-metrics-lib
-CREATE TABLE IF NOT EXISTS sinex.metrics (
-    id UUID PRIMARY KEY,
-    metric_name TEXT NOT NULL,
-    metric_type TEXT NOT NULL,
-    value DOUBLE PRECISION NOT NULL,
-    labels JSONB NOT NULL DEFAULT '{}',
-    timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    namespace TEXT NOT NULL DEFAULT 'sinex',
-    subsystem TEXT NOT NULL,
-    CONSTRAINT valid_metric_type CHECK (metric_type IN ('counter', 'gauge', 'histogram', 'summary'))
+-- Embedding Cache for Deduplication
+-- Caches computed embeddings to avoid redundant API calls
+CREATE TABLE IF NOT EXISTS core.embedding_cache (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    text_hash TEXT NOT NULL,
+    embedding_model_id ULID NOT NULL REFERENCES core.embedding_models(id),
+    embedding vector(1536) NOT NULL,
+    text_sample TEXT,
+    use_count INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_used_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_text_model_embedding UNIQUE(text_hash, embedding_model_id)
 );
 
-CREATE INDEX idx_sinex_metrics_legacy_name_time ON sinex.metrics (metric_name, timestamp DESC);
-CREATE INDEX idx_sinex_metrics_legacy_namespace ON sinex.metrics (namespace, subsystem, timestamp DESC);
+CREATE INDEX idx_embedding_cache_hash ON core.embedding_cache(text_hash);
+CREATE INDEX idx_embedding_cache_lru ON core.embedding_cache(last_used_at);
+CREATE INDEX idx_embedding_cache_vector ON core.embedding_cache 
+    USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+
+-- Function to update last_used_at on embedding cache hits
+CREATE OR REPLACE FUNCTION update_embedding_cache_last_used()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.last_used_at = NOW();
+    NEW.use_count = OLD.use_count + 1;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER update_cache_on_use 
+    BEFORE UPDATE ON core.embedding_cache 
+    FOR EACH ROW 
+    WHEN (OLD.embedding IS NOT DISTINCT FROM NEW.embedding)
+    EXECUTE FUNCTION update_embedding_cache_last_used();
 
 -- Create entities table for knowledge graph
 --
@@ -343,8 +383,169 @@ CREATE INDEX idx_entity_relations_created_from ON core.entity_relations (created
 COMMENT ON TABLE core.events IS 'Unified event storage for all captured and synthesized events with full provenance tracking';
 COMMENT ON TABLE core.processor_manifests IS 'Registry of all event processors (ingestors and automata) with their configurations';
 COMMENT ON TABLE raw.source_material_registry IS 'Registry of external source materials (files, streams, etc.) that events are derived from';
-COMMENT ON TABLE core.automaton_checkpoints IS 'Processing state for event automata to enable reliable restarts';
+COMMENT ON TABLE core.processor_checkpoints IS 'Processing state for all event processors (ingestors, automata, system) to enable reliable restarts';
 COMMENT ON TABLE core.operations_log IS 'Audit log of all administrative operations performed on the system';
-COMMENT ON TABLE metrics.sinex_metrics IS 'System telemetry and performance metrics';
+COMMENT ON TABLE core.embedding_models IS 'Registry of embedding models for semantic search and vector operations';
+COMMENT ON TABLE core.embedding_cache IS 'Cache of computed embeddings to avoid redundant API calls';
 COMMENT ON TABLE core.entities IS 'Knowledge graph entities extracted from events';
 COMMENT ON TABLE core.entity_relations IS 'Relationships between entities in the knowledge graph';
+
+-- ============================================================================
+-- Git-Annex Blob Management
+-- ============================================================================
+--
+-- Registry for large files managed by git-annex. This table tracks metadata
+-- about binary content that's too large for direct database storage.
+--
+CREATE TABLE IF NOT EXISTS core.blobs (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    annex_key TEXT UNIQUE NOT NULL,
+    original_filename TEXT NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    mime_type TEXT,
+    checksum_sha256 TEXT NOT NULL,
+    checksum_blake3 TEXT,
+    storage_backend TEXT NOT NULL DEFAULT 'git-annex',
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_verified_at TIMESTAMPTZ,
+    verification_status TEXT CHECK (verification_status IN ('pending', 'verified', 'missing', 'corrupted'))
+);
+
+CREATE INDEX idx_blobs_annex_key ON core.blobs(annex_key);
+CREATE INDEX idx_blobs_checksum_sha256 ON core.blobs(checksum_sha256);
+CREATE INDEX idx_blobs_checksum_blake3 ON core.blobs(checksum_blake3) WHERE checksum_blake3 IS NOT NULL;
+CREATE INDEX idx_blobs_verification ON core.blobs(verification_status, last_verified_at);
+
+-- ============================================================================
+-- Hierarchical Tagging System
+-- ============================================================================
+--
+-- Flexible tagging/categorization that complements the formal knowledge graph.
+-- Tags are user-defined labels that can be organized hierarchically.
+--
+CREATE TABLE IF NOT EXISTS core.tags (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    name TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    color TEXT,
+    icon TEXT,
+    parent_id ULID REFERENCES core.tags(id),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_tags_parent ON core.tags(parent_id) WHERE parent_id IS NOT NULL;
+CREATE INDEX idx_tags_name ON core.tags(name);
+
+-- ============================================================================
+-- Event Annotations
+-- ============================================================================
+--
+-- ## Event Annotations Schema (TIM-EventAnnotationsSchema)
+--
+-- Provides flexible annotation system for events with:
+-- - Multiple annotation types (tag, comment, summary, analysis)
+-- - Actor tracking for provenance (user vs AI agent)
+-- - Direct text annotations (no concept linking required)
+-- - Structured metadata in JSONB format
+--
+-- This is the "human knowledge layer" that captures understanding not
+-- present in raw event data.
+--
+CREATE TABLE IF NOT EXISTS core.event_annotations (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    annotation_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    created_by TEXT NOT NULL DEFAULT 'user'
+);
+
+CREATE INDEX idx_event_annotations_event ON core.event_annotations(event_id);
+CREATE INDEX idx_event_annotations_type ON core.event_annotations(annotation_type);
+CREATE INDEX idx_event_annotations_created ON core.event_annotations(created_at);
+CREATE INDEX idx_event_annotations_search ON core.event_annotations USING gin(to_tsvector('english', content));
+
+-- ============================================================================
+-- Event Relations
+-- ============================================================================
+--
+-- Captures relationships between events to understand causality, workflows,
+-- and patterns. These relations can be discovered automatically or defined
+-- manually.
+--
+CREATE TABLE IF NOT EXISTS core.event_relations (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    from_event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    to_event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    relation_type TEXT NOT NULL,
+    confidence FLOAT DEFAULT 1.0 CHECK (confidence >= 0 AND confidence <= 1),
+    detected_by TEXT NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT no_self_event_relations CHECK (from_event_id != to_event_id),
+    CONSTRAINT unique_event_relation UNIQUE(from_event_id, to_event_id, relation_type)
+);
+
+CREATE INDEX idx_event_relations_from ON core.event_relations(from_event_id);
+CREATE INDEX idx_event_relations_to ON core.event_relations(to_event_id);
+CREATE INDEX idx_event_relations_type ON core.event_relations(relation_type);
+CREATE INDEX idx_event_relations_confidence ON core.event_relations(confidence) WHERE confidence < 1.0;
+
+-- ============================================================================
+-- Event Clusters
+-- ============================================================================
+--
+-- Groups events into meaningful clusters like sessions, workflows, or
+-- incidents. Clusters provide context for understanding event sequences.
+--
+CREATE TABLE IF NOT EXISTS core.event_clusters (
+    id ULID PRIMARY KEY DEFAULT gen_ulid(),
+    name TEXT NOT NULL,
+    cluster_type TEXT NOT NULL,
+    summary TEXT,
+    time_start TIMESTAMPTZ NOT NULL,
+    time_end TIMESTAMPTZ NOT NULL,
+    metadata JSONB NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX idx_event_clusters_type ON core.event_clusters(cluster_type);
+CREATE INDEX idx_event_clusters_time ON core.event_clusters(time_start, time_end);
+
+-- ============================================================================
+-- Event Cluster Membership
+-- ============================================================================
+CREATE TABLE IF NOT EXISTS core.event_cluster_members (
+    cluster_id ULID NOT NULL REFERENCES core.event_clusters(id) ON DELETE CASCADE,
+    event_id ULID NOT NULL REFERENCES core.events(event_id) ON DELETE CASCADE,
+    role TEXT,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    metadata JSONB NOT NULL DEFAULT '{}',
+    PRIMARY KEY (cluster_id, event_id)
+);
+
+CREATE INDEX idx_event_cluster_members_event ON core.event_cluster_members(event_id);
+
+-- Add triggers for updated_at
+CREATE TRIGGER set_event_annotations_updated_at 
+    BEFORE UPDATE ON core.event_annotations 
+    FOR EACH ROW 
+    EXECUTE FUNCTION set_current_timestamp();
+
+CREATE TRIGGER set_event_clusters_updated_at 
+    BEFORE UPDATE ON core.event_clusters 
+    FOR EACH ROW 
+    EXECUTE FUNCTION set_current_timestamp();
+
+-- Add comments for new tables
+COMMENT ON TABLE core.blobs IS 'Registry of git-annex managed binary files';
+COMMENT ON TABLE core.tags IS 'Hierarchical tagging system for flexible categorization';
+COMMENT ON TABLE core.event_annotations IS 'User annotations and notes on individual events';
+COMMENT ON TABLE core.event_relations IS 'Discovered or defined relationships between events';
+COMMENT ON TABLE core.event_clusters IS 'Grouped collections of related events';
+COMMENT ON TABLE core.event_cluster_members IS 'Membership of events in clusters';

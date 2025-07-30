@@ -11,7 +11,7 @@ use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
 use test_sinex_test_utils::TestContext;
 
 #[sinex_test]
-async fn test_advisory_lock_basic_acquisition() -> TestResult<()> {
+async fn test_advisory_lock_basic_acquisition() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -36,7 +36,7 @@ async fn test_advisory_lock_basic_acquisition() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_raii_cleanup() -> TestResult<()> {
+async fn test_advisory_lock_raii_cleanup() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -58,7 +58,7 @@ async fn test_advisory_lock_raii_cleanup() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_different_names() -> TestResult<()> {
+async fn test_advisory_lock_different_names() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -79,7 +79,7 @@ async fn test_advisory_lock_different_names() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_leadership_guard_basic() -> TestResult<()> {
+async fn test_leadership_guard_basic() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -107,7 +107,7 @@ async fn test_leadership_guard_basic() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_leadership_guard_heartbeat() -> TestResult<()> {
+async fn test_leadership_guard_heartbeat() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -143,7 +143,7 @@ async fn test_leadership_guard_heartbeat() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_instance_registration() -> TestResult<()> {
+async fn test_distributed_coordination_instance_registration() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -174,7 +174,7 @@ async fn test_distributed_coordination_instance_registration() -> TestResult<()>
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_leadership_election() -> TestResult<()> {
+async fn test_distributed_coordination_leadership_election() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -208,7 +208,7 @@ async fn test_distributed_coordination_leadership_election() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_version_priority() -> TestResult<()> {
+async fn test_distributed_coordination_version_priority() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -254,7 +254,7 @@ async fn test_distributed_coordination_version_priority() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_start_time_tiebreaker() -> TestResult<()> {
+async fn test_distributed_coordination_start_time_tiebreaker() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -289,7 +289,7 @@ async fn test_distributed_coordination_start_time_tiebreaker() -> TestResult<()>
 }
 
 #[sinex_test]
-async fn test_advisory_lock_concurrent_acquisition() -> TestResult<()> {
+async fn test_advisory_lock_concurrent_acquisition() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -321,7 +321,7 @@ async fn test_advisory_lock_concurrent_acquisition() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_with_database_failure_simulation() -> TestResult<()> {
+async fn test_coordination_with_database_failure_simulation() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -344,7 +344,7 @@ async fn test_coordination_with_database_failure_simulation() -> TestResult<()> 
 }
 
 mod test_common {
-    use sinex_core_types::Result as TestResult;
+    use sinex_core_types::Result as anyhow::Result<()>;
     use sinex_db::DbPool;
     
     pub struct TestContext {
@@ -352,7 +352,7 @@ mod test_common {
     }
     
     impl TestContext {
-        pub async fn new() -> TestResult<Self> {
+        pub async fn new() -> anyhow::Result<Self> {
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
@@ -368,7 +368,7 @@ mod test_common {
 }
 
 use test_sinex_test_utils::TestContext;
-type TestResult<T> = sinex_core_types::Result<T>;
+type anyhow::Result<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation
 macro_rules! sinex_test {

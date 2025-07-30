@@ -78,6 +78,9 @@ async fn handle_rpc(
         request.method, request.params
     );
 
+    let start = std::time::Instant::now();
+    let method = request.method.clone();
+
     let result = match request.method.as_str() {
         // Analytics methods
         "analytics.event_count_by_source" => {
@@ -122,10 +125,20 @@ async fn handle_rpc(
         }
     };
 
+    // Record telemetry
+    if let Some(ref telemetry) = state.services.telemetry {
+        let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+        telemetry.record_operation_latency(&format!("rpc.{}", method), duration_ms);
+
+        if result.is_err() {
+            telemetry.record_error("rpc_error");
+        }
+    }
+
     match result {
         Ok(value) => Json(JsonRpcResponse::success(request.id, value)),
         Err(err) => {
-            error!("RPC method {} failed: {}", request.method, err);
+            error!("RPC method {} failed: {}", method, err);
             Json(JsonRpcResponse::error(
                 request.id,
                 -32603,

@@ -48,4 +48,4 @@ sinex-core-types = { path = "../sinex-core-types" }
 sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-events = { path = "../sinex-events" }
 sinex-macros = { path = "../sinex-macros" }
-sinex-metrics-lib = { path = "../sinex-metrics-lib" }
+sinex-telemetry = { path = "../sinex-telemetry" }

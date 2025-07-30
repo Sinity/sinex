@@ -23,7 +23,7 @@
 /// # Example
 /// ```rust
 /// #[sinex_test]
-/// async fn test_file_operations(ctx: TestContext) -> TestResult<()> {
+/// async fn test_file_operations(ctx: TestContext) -> Result<()> {
 ///     parameterized!([
 ///         ("empty", ""),
 ///         ("normal", "/home/user/file.txt"),
@@ -40,6 +40,7 @@
 ///     Ok(())
 /// }
 /// ```
+// Macro for parameterized tests
 #[macro_export]
 macro_rules! parameterized {
     ([$($case:expr),* $(,)?], |$param:pat_param| $body:block) => {{
@@ -51,11 +52,11 @@ macro_rules! parameterized {
             eprintln!("Running parameterized test: {}", case_name);
 
             // ctx available from outer scope
-            let result: $crate::TestResult<()> = async { $body }.await;
+            let result: $crate::Result<()> = async { $body }.await;
 
             // Add context to any errors
             result.map_err(|e| {
-                ::sinex_error::CoreError::Unknown(format!(
+                ::sinex_error::SinexError::unknown(format!(
                     "{}: {}", case_name, e
                 ))
             })?;

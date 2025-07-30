@@ -52,7 +52,7 @@ pub fn db_query(input: TokenStream) -> TokenStream {
 ///
 /// ```rust
 /// db_transaction! {
-///     async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), CoreError> {
+///     async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
 ///         for event in events {
 ///             EventQueries::insert_event(tx, &event.source, &event.event_type, &event.host, event.payload)
 ///                 .await?;
@@ -151,7 +151,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_optional(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_core_types::CoreError::database(e.to_string())
+                        .map_err(|e| sinex_core_types::SinexError::database(e.to_string())
                             .with_context("operation", "query")
                             .with_context("function", stringify!(#fn_name))
                             .build())
@@ -160,7 +160,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_all(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_core_types::CoreError::database(e.to_string())
+                        .map_err(|e| sinex_core_types::SinexError::database(e.to_string())
                             .with_context("operation", "query")
                             .with_context("function", stringify!(#fn_name))
                             .build())
@@ -169,7 +169,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_one(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_core_types::CoreError::database(e.to_string())
+                        .map_err(|e| sinex_core_types::SinexError::database(e.to_string())
                             .with_context("operation", "query")
                             .with_context("function", stringify!(#fn_name))
                             .build())
@@ -180,7 +180,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
             quote! {
                 OperationQueries::execute(pool, #sql, &[#(#param_names),*])
                     .await
-                    .map_err(|e| sinex_core_types::CoreError::database(e.to_string())
+                    .map_err(|e| sinex_core_types::SinexError::database(e.to_string())
                         .with_context("operation", "query")
                         .with_context("function", stringify!(#fn_name))
                         .build())
@@ -211,7 +211,7 @@ fn generate_transaction_function(transaction: &DbTransaction) -> proc_macro2::To
         #[sinex_macros::with_context(operation = "database_transaction")]
         pub #signature {
             let mut tx = #pool_param.begin().await
-                .map_err(|e| sinex_core_types::CoreError::database(e.to_string())
+                .map_err(|e| sinex_core_types::SinexError::database(e.to_string())
                     .with_context("operation", "transaction_begin")
                     .with_context("function", stringify!(#fn_name))
                     .build())?;
@@ -224,7 +224,7 @@ fn generate_transaction_function(transaction: &DbTransaction) -> proc_macro2::To
             match result {
                 Ok(_) => {
                     tx.commit().await
-                        .map_err(|e| sinex_core_types::CoreError::database(e.to_string())
+                        .map_err(|e| sinex_core_types::SinexError::database(e.to_string())
                             .with_context("operation", "transaction_commit")
                             .with_context("function", stringify!(#fn_name))
                             .build())
@@ -366,7 +366,7 @@ mod tests {
     #[test]
     fn test_db_transaction_parsing() {
         let input = quote! {
-            async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), CoreError> {
+            async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
                 for event in events {
                     EventQueries::insert_event(tx, &event.source, "event.type", &event.host, serde_json::json!({}))
                         .await?;

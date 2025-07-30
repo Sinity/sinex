@@ -33,7 +33,7 @@ pub struct TestIngestdHandle {
 
 impl TestIngestdHandle {
     /// Stop the ingestd process
-    pub async fn stop(&mut self) -> TestResult<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -53,7 +53,7 @@ impl Drop for TestIngestdHandle {
 /// Start a test ingestd instance with custom configuration
 pub async fn start_test_ingestd_with_config(
     config: TestIngestdConfig,
-) -> TestResult<TestIngestdHandle> {
+) -> Result<TestIngestdHandle> {
     // For now, return a mock handle
     // In a full implementation, this would start the actual ingestd process
     Ok(TestIngestdHandle {
@@ -70,7 +70,7 @@ pub struct TestSatelliteHandle {
 
 impl TestSatelliteHandle {
     /// Start a new test satellite
-    pub async fn start(config: serde_json::Value, _pool: DbPool) -> TestResult<Self> {
+    pub async fn start(config: serde_json::Value, _pool: DbPool) -> Result<Self> {
         // For now, return a mock handle
         Ok(Self {
             name: config
@@ -83,7 +83,7 @@ impl TestSatelliteHandle {
     }
 
     /// Stop the satellite process
-    pub async fn stop(&mut self) -> TestResult<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -99,7 +99,7 @@ pub struct TestAutomatonHandle {
 
 impl TestAutomatonHandle {
     /// Start a new test automaton
-    pub async fn start(automaton_type: &str, _pool: DbPool, _redis_url: &str) -> TestResult<Self> {
+    pub async fn start(automaton_type: &str, _pool: DbPool, _redis_url: &str) -> Result<Self> {
         // For now, return a mock handle
         Ok(Self {
             name: format!("test-{}", automaton_type),
@@ -108,7 +108,7 @@ impl TestAutomatonHandle {
     }
 
     /// Stop the automaton process
-    pub async fn stop(&mut self) -> TestResult<()> {
+    pub async fn stop(&mut self) -> Result<()> {
         if let Some(mut process) = self.process.take() {
             process.kill().await?;
         }
@@ -144,7 +144,7 @@ impl SatelliteOrchestrator {
             .insert(name.to_string(), handle);
     }
 
-    pub async fn shutdown_all(&self) -> TestResult<()> {
+    pub async fn shutdown_all(&self) -> Result<()> {
         // Shutdown all satellites
         let mut satellites = self.satellites.lock().unwrap();
         for (_, mut handle) in satellites.drain() {
@@ -175,12 +175,9 @@ pub fn build_test_satellite_config(service_name: &str, socket_path: &str) -> ser
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
-    use std::path::Path;
-    use tempfile::TempDir;
 
     #[sinex_test]
-    async fn test_ingestd_config_default(_ctx: TestContext) -> TestResult<()> {
+    async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {
         let config = TestIngestdConfig::default();
 
         assert_eq!(config.socket_path, "/tmp/test-ingestd.sock");
@@ -194,7 +191,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_handle_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_ingestd_handle_creation(_ctx: TestContext) -> Result<()> {
         let config = TestIngestdConfig {
             socket_path: "/tmp/custom-test.sock".to_string(),
             redis_url: "redis://custom:6379".to_string(),
@@ -209,7 +206,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_ingestd_handle_stop(_ctx: TestContext) -> TestResult<()> {
+    async fn test_ingestd_handle_stop(_ctx: TestContext) -> Result<()> {
         let config = TestIngestdConfig::default();
         let mut handle = start_test_ingestd_with_config(config).await?;
 
@@ -223,7 +220,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_creation(ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_handle_creation(ctx: TestContext) -> Result<()> {
         let config = serde_json::json!({
             "name": "test-satellite",
             "source": "test",
@@ -238,7 +235,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_stop(ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_handle_stop(ctx: TestContext) -> Result<()> {
         let config = serde_json::json!({
             "name": "stop-test-satellite",
         });
@@ -255,7 +252,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_handle_default_name(ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_handle_default_name(ctx: TestContext) -> Result<()> {
         // Config without name should use default
         let config = serde_json::json!({
             "source": "test",
@@ -269,7 +266,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_automaton_handle_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_automaton_handle_creation(_ctx: TestContext) -> Result<()> {
         let handle = TestAutomatonHandle {
             name: "test-automaton".to_string(),
             process: None,
@@ -281,7 +278,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_automaton_handle_stop(_ctx: TestContext) -> TestResult<()> {
+    async fn test_automaton_handle_stop(_ctx: TestContext) -> Result<()> {
         let mut handle = TestAutomatonHandle {
             name: "stop-test".to_string(),
             process: None,
@@ -294,7 +291,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_orchestrator_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_orchestrator_creation(_ctx: TestContext) -> Result<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Initial state should be empty
@@ -305,7 +302,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_orchestrator_register(ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_orchestrator_register(ctx: TestContext) -> Result<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register a satellite
@@ -324,7 +321,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_orchestrator_shutdown(_ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_orchestrator_shutdown(_ctx: TestContext) -> Result<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register some handles
@@ -352,7 +349,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_satellite_config_builder(_ctx: TestContext) -> TestResult<()> {
+    async fn test_satellite_config_builder(_ctx: TestContext) -> Result<()> {
         let config = build_test_satellite_config("test-service", "/tmp/test.sock");
 
         assert_eq!(config["name"], "test-service");
@@ -364,7 +361,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_multiple_satellite_management(ctx: TestContext) -> TestResult<()> {
+    async fn test_multiple_satellite_management(ctx: TestContext) -> Result<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Register multiple satellites
@@ -387,7 +384,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_error_handling_in_shutdown(_ctx: TestContext) -> TestResult<()> {
+    async fn test_error_handling_in_shutdown(_ctx: TestContext) -> Result<()> {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Even with no satellites/automata, shutdown should work

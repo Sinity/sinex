@@ -32,7 +32,6 @@ use copypasta::{ClipboardContext, ClipboardProvider};
 use serde_json::json;
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core_types::{RawEvent, Timestamp};
-use sinex_events::constants::sources;
 use sinex_events::EventFactory;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::VecDeque;

@@ -52,7 +52,6 @@ pub enum AutomatonStatus {
     Error,
 }
 
-// Legacy alias for compatibility
 pub type AgentStatus = AutomatonStatus;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

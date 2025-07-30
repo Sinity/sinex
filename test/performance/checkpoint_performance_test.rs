@@ -164,11 +164,11 @@ impl CheckpointMetrics {
 
 /// Test basic checkpoint save and load performance
 #[sinex_test]
-async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_save_load_performance(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = CheckpointMetrics::new();
 
-    let automaton_name = "performance-test-automaton";
+    let processor_name = "performance-test-automaton";
     let consumer_group = "performance-test-group";
 
     println!("💾 Testing checkpoint save/load performance");
@@ -223,16 +223,16 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
 
             let save_result = sqlx::query!(
                 r#"
-                INSERT INTO core.automaton_checkpoints
-                (automaton_name, consumer_group, last_processed_id, state_data)
+                INSERT INTO core.processor_checkpoints
+                (processor_name, consumer_group, last_processed_id, state_data)
                 VALUES ($1, $2, $3, $4)
-                ON CONFLICT (automaton_name, consumer_group)
+                ON CONFLICT (processor_name, consumer_group)
                 DO UPDATE SET
                     last_processed_id = EXCLUDED.last_processed_id,
                     state_data = EXCLUDED.state_data,
                     updated_at = CURRENT_TIMESTAMP
                 "#,
-                automaton_name,
+                processor_name,
                 consumer_group,
                 checkpoint_state.last_processed_id(),
                 checkpoint_state.data
@@ -253,8 +253,8 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
             let load_start = Instant::now();
 
             let load_result = sqlx::query!(
-                "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1 AND consumer_group = $2",
-                automaton_name,
+                "SELECT last_processed_id, state_data FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2",
+                processor_name,
                 consumer_group
             ).fetch_optional(pool).await;
 
@@ -351,7 +351,7 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> TestResult {
 
 /// Test checkpoint recovery performance
 #[sinex_test]
-async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_recovery_performance(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = CheckpointMetrics::new();
 
@@ -367,7 +367,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
     );
 
     for i in 0..automaton_count {
-        let automaton_name = format!("recovery-test-automaton-{}", i);
+        let processor_name = format!("recovery-test-automaton-{}", i);
         let checkpoint_data = json!({
             "processed_count": i * 100,
             "last_event_time": chrono::Utc::now().to_rfc3339(),
@@ -382,11 +382,11 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
 
         sqlx::query!(
             r#"
-            INSERT INTO core.automaton_checkpoints
-            (automaton_name, consumer_group, last_processed_id, state_data)
+            INSERT INTO core.processor_checkpoints
+            (processor_name, consumer_group, last_processed_id, state_data)
             VALUES ($1, $2, $3, $4)
             "#,
-            automaton_name,
+            processor_name,
             consumer_group,
             format!("event-id-{}", i * 100),
             checkpoint_data
@@ -399,13 +399,13 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
 
     // Test individual checkpoint recovery
     for i in 0..automaton_count {
-        let automaton_name = format!("recovery-test-automaton-{}", i);
+        let processor_name = format!("recovery-test-automaton-{}", i);
 
         let recovery_start = Instant::now();
 
         let result = sqlx::query!(
-            "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1 AND consumer_group = $2",
-            automaton_name,
+            "SELECT last_processed_id, state_data FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2",
+            processor_name,
             consumer_group
         ).fetch_optional(pool).await;
 
@@ -441,7 +441,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
             Err(e) => {
                 metrics.record_operation("individual_recovery", recovery_duration, false);
                 metrics.record_consistency_check(false);
-                println!("  Recovery failed for {}: {}", automaton_name, e);
+                println!("  Recovery failed for {}: {}", processor_name, e);
             }
         }
 
@@ -456,7 +456,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
     let bulk_recovery_start = Instant::now();
 
     let bulk_result = sqlx::query!(
-        "SELECT automaton_name, last_processed_id, state_data FROM core.automaton_checkpoints WHERE consumer_group = $1",
+        "SELECT processor_name, last_processed_id, state_data FROM core.processor_checkpoints WHERE consumer_group = $1",
         consumer_group
     ).fetch_all(pool).await;
 
@@ -503,7 +503,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
                 let mut thread_errors = 0;
 
                 for i in 0..10 {
-                    let automaton_name = format!("concurrent-recovery-{}-{}", thread_id, i);
+                    let processor_name = format!("concurrent-recovery-{}-{}", thread_id, i);
 
                     // Create checkpoint
                     let checkpoint_data = json!({
@@ -514,11 +514,11 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
 
                     let save_result = sqlx::query!(
                         r#"
-                        INSERT INTO core.automaton_checkpoints
-                        (automaton_name, consumer_group, last_processed_id, state_data)
+                        INSERT INTO core.processor_checkpoints
+                        (processor_name, consumer_group, last_processed_id, state_data)
                         VALUES ($1, $2, $3, $4)
                         "#,
-                        automaton_name,
+                        processor_name,
                         consumer_group,
                         format!("concurrent-event-{}-{}", thread_id, i),
                         checkpoint_data
@@ -527,8 +527,8 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
                     if save_result.is_ok() {
                         // Immediately try to recover
                         let recovery_result = sqlx::query!(
-                            "SELECT last_processed_id, state_data FROM core.automaton_checkpoints WHERE automaton_name = $1",
-                            automaton_name
+                            "SELECT last_processed_id, state_data FROM core.processor_checkpoints WHERE processor_name = $1",
+                            processor_name
                         ).fetch_optional(&pool_clone).await;
 
                         if recovery_result.is_ok() {
@@ -610,7 +610,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> TestResult {
 
 /// Test checkpoint performance under high frequency updates
 #[sinex_test]
-async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> TestResult {
+async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(CheckpointMetrics::new()));
 
@@ -631,7 +631,7 @@ async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> TestResult 
             let metrics = shared_metrics.clone();
 
             tokio::spawn(async move {
-                let automaton_name = format!("high-freq-automaton-{}", automaton_id);
+                let processor_name = format!("high-freq-automaton-{}", automaton_id);
                 let consumer_group = "high-frequency-group";
 
                 let mut successes = 0;
@@ -655,16 +655,16 @@ async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> TestResult 
 
                     let result = sqlx::query!(
                         r#"
-                        INSERT INTO core.automaton_checkpoints
-                        (automaton_name, consumer_group, last_processed_id, state_data)
+                        INSERT INTO core.processor_checkpoints
+                        (processor_name, consumer_group, last_processed_id, state_data)
                         VALUES ($1, $2, $3, $4)
-                        ON CONFLICT (automaton_name, consumer_group)
+                        ON CONFLICT (processor_name, consumer_group)
                         DO UPDATE SET
                             last_processed_id = EXCLUDED.last_processed_id,
                             state_data = EXCLUDED.state_data,
                             updated_at = CURRENT_TIMESTAMP
                         "#,
-                        automaton_name,
+                        processor_name,
                         consumer_group,
                         format!("event-{}-{}", automaton_id, update_id),
                         checkpoint_data
@@ -751,7 +751,7 @@ async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> TestResult 
     let recovery_start = Instant::now();
 
     let all_checkpoints = sqlx::query!(
-        "SELECT automaton_name, last_processed_id, state_data FROM core.automaton_checkpoints WHERE consumer_group = 'high-frequency-group'"
+        "SELECT processor_name, last_processed_id, state_data FROM core.processor_checkpoints WHERE consumer_group = 'high-frequency-group'"
     ).fetch_all(pool).await?;
 
     let recovery_duration = recovery_start.elapsed();

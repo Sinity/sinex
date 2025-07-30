@@ -75,11 +75,11 @@ CREATE TABLE IF NOT EXISTS pgsodium.key (
 );
 
 -- Example: Encrypted columns
-ALTER TABLE km.artifacts 
+ALTER TABLE core.artifacts 
 ADD COLUMN content_encrypted BYTEA;
 
 -- Encrypt on insert
-INSERT INTO km.artifacts (content_encrypted)
+INSERT INTO core.artifacts (content_encrypted)
 VALUES (pgsodium.crypto_aead_det_encrypt(
     'sensitive content'::bytea,
     'artifacts'::bytea,
@@ -96,7 +96,7 @@ let query = QueryBuilder::new()
         'artifacts'::bytea,
         artifact_id::uuid
     ) as content")
-    .from("km.artifacts")
+    .from("core.artifacts")
     .where_eq("artifact_id", artifact_id);
 ```
 

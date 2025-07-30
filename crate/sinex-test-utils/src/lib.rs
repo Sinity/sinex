@@ -9,7 +9,7 @@
 //! use sinex_test_utils::prelude::*;
 //!
 //! #[sinex_test]
-//! async fn test_filesystem_event(ctx: TestContext) -> TestResult<()> {
+//! async fn test_filesystem_event(ctx: TestContext) -> Result<()> {
 //!     // Create events with fluent builders
 //!     let event = ctx.event()
 //!         .filesystem()
@@ -88,36 +88,79 @@
 //! ```
 //!
 //! ## Fixtures
-//! Reusable test scenarios:
+//! Access reusable test scenarios through the unified fixture manager:
 //!
 //! ```rust
-//! // Standard scenarios
-//! let session = ctx.scenarios().user_session().await?;
-//! let dataset = ctx.performance().large_dataset().await?;
-//! let errors = ctx.errors().validation_failures().await?;
+//! // Access fixtures through ctx.fixtures() namespace
+//! let session = ctx.fixtures().user_session().await?;
+//! let dataset = ctx.fixtures().large_dataset().await?;
+//! let errors = ctx.fixtures().validation_failures().await?;
+//!
+//! // Or use the nested namespaces for better organization
+//! let session = ctx.fixtures().scenarios().user_session().await?;
+//! let dataset = ctx.fixtures().performance().large_dataset().await?;
+//! let errors = ctx.fixtures().errors().validation_failures().await?;
 //! ```
 //!
 //! # Testing Patterns
 //!
-//! ## Property Testing
-//! Use `parameterized!` for data-driven tests with database:
+//! ## Complete Example - Testing a Processing Pipeline
 //!
 //! ```rust
 //! #[sinex_test]
-//! async fn test_edge_cases(ctx: TestContext) -> TestResult<()> {
-//!     parameterized!([
+//! async fn test_file_processing_pipeline(ctx: TestContext) -> Result<()> {
+//!     // 1. Create test events
+//!     let file_event = ctx.event()
+//!         .filesystem()
+//!         .path("/data/input.csv")
+//!         .size(1024 * 1024)  // 1MB
+//!         .created()
+//!         .insert()
+//!         .await?;
+//!     
+//!     // 2. Wait for processing
+//!     ctx.wait_for_event_count(2).await?;  // Original + processed
+//!     
+//!     // 3. Query results
+//!     let processed = ctx.events()
+//!         .by_type("file.processed")
+//!         .fetch_one()
+//!         .await?
+//!         .expect("processed event should exist");
+//!     
+//!     // 4. Make assertions
+//!     ctx.assert("processing validation")
+//!         .that(processed.payload["status"] == "success", "processing should succeed")?
+//!         .that(processed.payload["input_path"] == "/data/input.csv", "path should match")?;
+//!     
+//!     Ok(())
+//! }
+//!
+//! ## Property Testing and Data-Driven Tests
+//! For property testing with database operations, use regular test loops:
+//!
+//! ```rust
+//! #[sinex_test]
+//! async fn test_edge_cases(ctx: TestContext) -> Result<()> {
+//!     let test_cases = [
 //!         ("empty", ""),
 //!         ("unicode", "Hello 世界 🌍"),
 //!         ("large", "x".repeat(1000)),
-//!     ], |(name, value)| {
+//!     ];
+//!     
+//!     for (name, value) in test_cases {
 //!         let event = ctx.event()
 //!             .source("test")
+//!             .type_("edge.case")
 //!             .field("data", value)
+//!             .field("test_name", name)
 //!             .insert()
 //!             .await?;
-//!         assert!(event.id != Ulid::nil());
-//!         Ok(())
-//!     });
+//!         
+//!         // Verify event was stored correctly
+//!         let fetched = ctx.events().by_id(event.id).fetch_one().await?;
+//!         assert!(fetched.is_some());
+//!     }
 //!     Ok(())
 //! }
 //! ```
@@ -126,11 +169,28 @@
 //! ```rust
 //! // Wait for conditions
 //! ctx.wait_for_event_count(5).await?;
-//! ctx.timing().wait_for_events_from("fs", 3).await?;
+//! ctx.wait_for_condition(|| async {
+//!     let count = ctx.events().by_source("fs").count().await?;
+//!     Ok(count >= 3)
+//! }).await?;
 //!
 //! // Coordinate parallel operations
 //! let barrier = ctx.timing().barrier(3);
-//! // ... spawn tasks that wait on barrier
+//! let sync = ctx.timing().synchronizer(Duration::from_secs(5));
+//!
+//! // Measure operation time
+//! let (result, duration) = ctx.measure(async {
+//!     expensive_operation().await
+//! }).await?;
+//!
+//! // Run concurrent tests
+//! let results = ctx.run_concurrent(5, |ctx, i| async move {
+//!     ctx.event()
+//!         .source("concurrent")
+//!         .field("worker", i)
+//!         .insert()
+//!         .await
+//! }).await?;
 //! ```
 //!
 //! ## Schema Validation
@@ -154,128 +214,124 @@
 //!     .await?;
 //! ```
 //!
-//! # Module Organization
+//! ## Rich Assertions with Context
+//! ```rust
+//! // Basic assertions
+//! ctx.assert("data validation")
+//!     .eq(&user.name, "Alice")?
+//!     .that(user.age >= 18, "user must be adult")?
+//!     .has_size(&items, 10)?
+//!     .not_empty(&results)?
+//!     .some(&optional_value)?;
 //!
-//! - **`test_context`** - Core TestContext implementation
-//! - **`database_pool`** - Database isolation and pooling
-//! - **`builders`** - Event and fixture builders
-//! - **`fixtures`** - Reusable test scenarios
-//! - **`timing_utils`** - Synchronization helpers
-//! - **`property_testing`** - Proptest strategies
-//! - **`error_testing`** - Error scenario utilities
+//! // Event-specific assertions
+//! ctx.assert_event_count(5).await?;
+//! ctx.assert_event_exists(event_id).await?;
+//! ctx.assert_no_events().await?;
 //!
-//! # Performance
+//! // Error assertions
+//! let result = risky_operation();
+//! ctx.assert("error handling")
+//!     .error_contains(&result, "permission denied")?;
+//! ```
 //!
-//! The test infrastructure is optimized for speed:
-//! - 64-database pool minimizes contention
-//! - Parallel test execution by default
-//! - Fixture caching reduces setup time
-//! - Smart timeouts based on test type
+//! ## Testing with Fixtures
+//! ```rust
+//! // Use pre-built scenarios
+//! let session = ctx.fixtures().scenarios().user_session().await?;
+//! // session.events contains filesystem, terminal, and clipboard events
 //!
-//! See `TESTING.md` for comprehensive patterns and best practices.
+//! // Performance testing with large datasets
+//! let dataset = ctx.fixtures().performance()
+//!     .large_dataset_with(100_000)
+//!     .await?;
 //!
-//! ## Technical Implementation Module: Test Framework Infrastructure
-
+//! // Error scenario testing
+//! let errors = ctx.fixtures().errors().validation_failures().await?;
+//! // Test error handling with known-bad data
+//! ```
+//!
+//! ## Advanced Patterns
+//! ```rust
+//! // Custom event validation
+//! let schema_id = ctx.schema().register("custom", "user.action",
+//!     json!({
+//!         "type": "object",
+//!         "properties": {
+//!             "action": {"enum": ["login", "logout", "update"]},
+//!             "user_id": {"type": "integer", "minimum": 1}
+//!         },
+//!         "required": ["action", "user_id"]
+//!     })
+//! ).await?;
+//!
+//! // Create only valid events
+//! let event = ctx.validated_event(schema_id)
+//!     .field("action", "login")
+//!     .field("user_id", 123)
+//!     .insert()
+//!     .await?;
+//!
+//! // Test invalid events
+//! let invalid = ctx.event()
+//!     .source("custom")
+//!     .type_("user.action")
+//!     .field("action", "invalid_action")
+//!     .build()?;
+//!     
+//! ctx.schema().assert_invalid(&invalid, schema_id).await?;
+//! ```
+//!
+//!
+//! # Benchmarking (with `bench` feature)
+//!
+//! The `#[sinex_bench]` macro provides a clean interface for async benchmarks:
+//!
+//! ```rust
+//! #[cfg(all(test, feature = "bench"))]
+//! mod benches {
+//!     use super::*;
+//!     use sinex_test_utils::prelude::*;
+//!     
+//!     #[sinex_bench]
+//!     fn bench_query_performance(ctx: &BenchContext) -> anyhow::Result<()> {
+//!         // Direct access to standard fixtures
+//!         ctx.query_bench(DatasetSize::Medium).await?;
+//!         let results = query_recent_events(ctx.pool(), 1000).await?;
+//!         Ok(())
+//!     }
+//!     
+//!     // Parameterized benchmarks
+//!     #[sinex_bench(args = [10, 100, 1000])]
+//!     fn bench_bulk_insert(ctx: &BenchContext, count: usize) -> anyhow::Result<()> {
+//!         let events = generate_events(count);
+//!         insert_events(ctx.pool(), &events).await?;
+//!         Ok(())
+//!     }
+//! }
+//! ```
+//!
+//! Standard fixtures available via BenchContext:
+//! - `ctx.time_series(size)` - Realistic event patterns
+//! - `ctx.query_bench(size)` - Query performance testing
+//! - `ctx.load_test(size)` - High-volume stress testing
+//! - `ctx.satellite_bench(size)` - Satellite-specific patterns
+//!
+//! For custom fixtures, create them inline following the same pattern as tests.
+//!
 // Allow dead code in test utilities - many functions are provided for test use
 #![allow(dead_code)]
-//!
-//! Maturity Level: L4 - Implemented  
-//! Implementation: 98% (Comprehensive test infrastructure with robust database pooling and FK constraint handling)
-//!
-//! ### Testing Excellence
-//!
-//! The Sinex test framework demonstrates exceptional engineering quality through:
-//!
-//! #### TestContext Framework
-//! - **Unified Interface**: All tests access functionality through TestContext
-//! - **Database Isolation**: 64-database pool with PostgreSQL advisory locks
-//! - **Rich Utilities**: Event builders, query abstractions, timing helpers
-//! - **Automatic Cleanup**: Proper FK constraint ordering (core.events → related tables)
-//!
-//! #### Property-Based Testing
-//! - **Invariant Validation**: Using proptest for edge case discovery
-//! - **Domain Strategies**: Custom generators for events, ULIDs, timestamps
-//! - **Shrinking Support**: Minimal failing cases for easier debugging
-//!
-//! #### Smart Timing
-//! - **Deterministic Waits**: Replace arbitrary sleeps with condition polling
-//! - **Event Counting**: Wait for specific event counts or patterns
-//! - **Barrier Synchronization**: Coordinate parallel test operations
-//! - **Timeout Scaling**: Adjust timeouts based on test category
-//!
-//! #### Mock Quality
-//! - **High-Fidelity Doubles**: Mocks closely mirror real service behavior
-//! - **State Management**: Mocks maintain realistic state transitions
-//! - **Failure Injection**: Controlled failure modes for resilience testing
-//! - **Performance Characteristics**: Mocks simulate realistic latencies
-//!
-//! ### Database Pool Optimization
-//! - 64-connection pool with PostgreSQL advisory locks for isolation
-//! - Proper FK constraint cleanup ordering (core.events → related tables)
-//! - ULID to UUID casting for foreign key relationships
-//! - Zero database timeouts in concurrent test execution
-//!
-//! ### Test Categories & Performance
-//! - Unit tests (~5s): Isolated component testing
-//! - Integration tests (~30s): Database and service integration
-//! - System tests (~2min): End-to-end pipeline validation
-//! - Property tests (~1min): Randomized edge case testing
-//! - Adversarial tests (~3min): Security and chaos scenarios
-//! - VM tests (~5-15min): Full NixOS deployment validation
-//!
-//! ### Load Testing & Synthetic Data
-//! - Custom event generators using Faker for realistic data
-//! - Batch insertion optimization with ULID primary keys
-//! - Target: 100,000+ events/sec for stress testing
-//! - Tools: k6, Gatling for API load testing
-//!
-//! ### Chaos Engineering Capabilities
-//! - Service disruption testing (systemd stop/restart/kill)
-//! - Network fault injection (tc/netem for latency/loss)
-//! - Resource exhaustion (disk fill, CPU/memory stress)
-//! - Automated recovery verification
-//!
-//! ### Test Isolation Strategies
-//! - Testcontainers for ephemeral PostgreSQL/Redis instances
-//! - Distributed tracing integration (OpenTelemetry/Jaeger)
-//! - Correlation ID propagation verification
-//! - Complete isolation between concurrent tests
-//!
-//! ### Recent Improvements (July 2025)
-//! - Test duration: 12min → 8.5min (29% improvement)
-//! - Test failure rate: ~15% → <1%
-//! - Fixed timing-sensitive test logic
-//! - Eliminated database connection errors
-//!
-//! ### Macro-Driven Productivity
-//!
-//! The `#[sinex_test]` macro provides:
-//! - Automatic TestContext injection
-//! - Database lifecycle management
-//! - Intelligent timeout handling
-//! - Progress indicators
-//! - Proptest integration
-//!
-//! ### Rich Error Context
-//!
-//! All test failures include:
-//! - Full error chain with causes
-//! - Contextual information (event IDs, timestamps)
-//! - Database state snapshots
-//! - Timing information
-//!
-//! ### Performance Optimizations
-//!
-//! - **Parallel Execution**: Tests run concurrently by default
-//! - **Smart Batching**: Events inserted in optimal batch sizes
-//! - **Connection Pooling**: Minimizes database connection overhead
-//! - **Fixture Caching**: Reusable test scenarios reduce setup time
 
-// Re-export the procedural macro from internal macros crate
+// Re-export the procedural macros from internal macros crate
+#[cfg(feature = "bench")]
+pub use sinex_test_utils_macros::sinex_bench;
 pub use sinex_test_utils_macros::sinex_test;
 
-// Type aliases for test infrastructure
-pub use sinex_core_types::Result as TestResult;
+// Re-export anyhow for test ergonomics
+pub use anyhow::{anyhow, bail, ensure, Context};
+
+// Library Result type using SinexError
+pub type Result<T> = std::result::Result<T, sinex_error::SinexError>;
 
 // Import all the existing modules - all private
 mod builders;
@@ -284,26 +340,57 @@ mod coverage_assurance;
 mod database_pool;
 mod deployment_scenario_utils;
 mod error_testing;
+mod fixture_config;
 mod fixtures;
 mod property_testing;
 mod redis_pool;
 mod satellite_management_utils;
 mod test_context;
+#[macro_use]
 mod test_macros;
 mod timing_utils;
+
+// New benchmark infrastructure modules
+#[cfg(feature = "bench")]
+pub mod bench;
+#[cfg(feature = "bench")]
+pub mod bench_context;
+#[cfg(feature = "bench")]
+pub mod bench_results;
+pub mod db_common;
+#[cfg(feature = "bench")]
+pub mod fixture_generator;
+#[cfg(feature = "bench")]
+pub mod standard_fixtures;
+#[cfg(feature = "bench")]
+pub mod static_fixtures;
 
 // Create prelude module from common/mod.rs
 pub mod prelude {
     // Core test infrastructure - only what's needed
     pub use crate::sinex_test;
-    pub use crate::{TestContext, TestResult};
+    pub use crate::TestContext;
+    pub use anyhow::{bail, ensure, Context, Result};
 
-    // Export our test macros
-    pub use crate::parameterized;
+    // Test macros are now internal only - use TestContext methods instead
 
     // Common imports that tests need
-    pub use sinex_core_types::{CoreError, RawEvent};
-    pub use sinex_error::ErrorContext;
+    pub use sinex_core_types::RawEvent;
+    pub use sinex_error::SinexError;
+
+    // Benchmarking support when feature is enabled
+    #[cfg(feature = "bench")]
+    pub use crate::bench::BENCH_CONTEXT;
+    #[cfg(feature = "bench")]
+    pub use crate::bench_context::BenchContext;
+    #[cfg(feature = "bench")]
+    pub use crate::bench_with_db;
+    #[cfg(feature = "bench")]
+    pub use crate::sinex_bench;
+    #[cfg(feature = "bench")]
+    pub use crate::standard_fixtures;
+    #[cfg(feature = "bench")]
+    pub use crate::static_fixtures::{DatasetSize, FixtureSet};
 }
 
 // Re-export main types for direct import - only what should be public
@@ -314,205 +401,76 @@ pub use test_context::TestContext;
 #[cfg(test)]
 mod tests {
     use super::prelude::*;
-    use crate::database_pool::acquire_test_database;
     use serde_json::json;
-    use std::time::Duration;
+
+    // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
+    //
+    // These tests serve as both verification and examples of how to properly
+    // use the testing infrastructure. They demonstrate:
+    // - Event creation patterns
+    // - Query builder usage
+    // - Assertion helpers
+    // - Timing utilities
+    // - Batch operations
+    // - Property testing
+
+    // === Key Integration Tests ===
+    //
+    // These tests demonstrate the overall sinex-test-utils capabilities.
+    // Module-specific tests should be in their respective modules.
 
     #[sinex_test]
-    async fn test_basic_functionality(ctx: TestContext) -> TestResult<()> {
-        // Test event creation and querying
-        let event = ctx
-            .event()
-            .source("test")
-            .type_("test.event")
-            .field("key", "value")
-            .insert()
-            .await?;
+    async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
+        // Demonstrates a complete workflow using multiple sinex-test-utils features
 
-        assert_eq!(event.source, "test");
-        let events = ctx.events().by_source("test").fetch().await?;
-        assert_eq!(events.len(), 1);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_event_builders(ctx: TestContext) -> TestResult<()> {
-        // Test specialized event builders work
+        // 1. Create events with various builders
         let fs_event = ctx
             .event()
             .filesystem()
-            .path("/test")
+            .path("/data/report.pdf")
+            .size(2048)
             .created()
             .insert()
             .await?;
-        let term_event = ctx.event().terminal().command("ls").insert().await?;
-        let clip_event = ctx
+
+        let term_event = ctx
             .event()
-            .clipboard()
-            .content("text")
-            .copied()
+            .terminal()
+            .command("process-report /data/report.pdf")
+            .working_dir("/app")
+            .success()
             .insert()
             .await?;
-        let win_event = ctx.event().window().title("App").focused().insert().await?;
-        let sys_event = ctx.event().system().boot().insert().await?;
 
-        let events = vec![fs_event, term_event, clip_event, win_event, sys_event];
+        // 2. Query and verify relationships
+        let events = ctx.events().by_source("fs").fetch().await?;
+        assert!(!events.is_empty());
 
-        for event in events {
-            assert!(!event.id.to_string().is_empty());
-        }
+        // 3. Use timing utilities to ensure ordering
+        ctx.timing().wait_for_event_count(2).await?;
 
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_validation(ctx: TestContext) -> TestResult<()> {
-        // Empty source/type should fail
-        assert!(ctx.event().source("").type_("test").insert().await.is_err());
-        assert!(ctx.event().source("test").type_("").insert().await.is_err());
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_queries(ctx: TestContext) -> TestResult<()> {
-        // Create test data
-        for i in 0..3 {
-            ctx.event()
-                .source("query-test")
-                .type_(&format!("type.{}", i))
-                .insert()
-                .await?;
-        }
-
-        // Test queries work
-        assert_eq!(ctx.events().by_source("query-test").fetch().await?.len(), 3);
-        assert_eq!(ctx.events().by_type("type.1").fetch().await?.len(), 1);
-        assert_eq!(
-            ctx.events()
-                .by_source("query-test")
-                .limit(2)
-                .fetch()
-                .await?
-                .len(),
-            2
-        );
+        // 4. Assert with rich context
+        ctx.assert("workflow validation")
+            .eq(&events[0].event_type, &"fs.file.created".to_string())?
+            .that(
+                fs_event.ts_ingest < term_event.ts_ingest,
+                "file should be created before processing",
+            )?;
 
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_assertions(ctx: TestContext) -> TestResult<()> {
-        // Basic assertions
-        ctx.assert("test").eq(&1, &1)?;
-        assert!(ctx.assert("fail").eq(&1, &2).is_err());
+    // Removed test_proptest_integration - consolidated with test_property_testing_integration
 
-        // Event count
-        ctx.event().source("count").type_("test").insert().await?;
-        ctx.event().source("count").type_("test").insert().await?;
-        ctx.assert_event_count(2).await?;
-
-        Ok(())
-    }
+    // NOTE: Module-specific tests have been moved to their respective modules:
+    // - Builder tests -> builders.rs
+    // - Timing tests -> timing_utils.rs
+    // - Database pool tests -> database_pool.rs
+    // - Fixture tests -> fixtures.rs
+    // - Assertion tests -> test_context.rs
 
     #[sinex_test]
-    async fn test_timing(ctx: TestContext) -> TestResult<()> {
-        // Create event and wait for it
-        ctx.event().source("timing").type_("test").insert().await?;
-        ctx.timing().wait_for_event_count(1).await?;
-
-        // Measure operation
-        let (_, duration) = ctx
-            .measure(async { tokio::time::sleep(Duration::from_millis(10)).await })
-            .await?;
-
-        assert!(duration >= Duration::from_millis(10));
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_concurrent(ctx: TestContext) -> TestResult<()> {
-        // Run concurrent tasks
-        let results = ctx
-            .run_concurrent(3, |ctx, i| async move {
-                ctx.event()
-                    .source("concurrent")
-                    .type_(&format!("t{}", i))
-                    .insert()
-                    .await?;
-                Ok(i)
-            })
-            .await?;
-
-        assert_eq!(results, vec![0, 1, 2]);
-        assert_eq!(ctx.events().by_source("concurrent").fetch().await?.len(), 3);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_database_pool(ctx: TestContext) -> TestResult<()> {
-        // Test basic pool functionality
-        let result: i32 = sqlx::query_scalar("SELECT 1").fetch_one(ctx.pool()).await?;
-        assert_eq!(result, 1);
-
-        // Test isolation
-        let db1 = acquire_test_database().await?;
-        let db2 = acquire_test_database().await?;
-        assert_ne!(db1.name(), db2.name());
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_fixtures(ctx: TestContext) -> TestResult<()> {
-        // Fixtures provide reusable test data
-        let session = ctx.scenarios().user_session().await?;
-        assert!(!session.event_ids.is_empty());
-        Ok(())
-    }
-
-    #[test]
-    fn test_builder_validation() {
-        // Test builders with various inputs
-        use crate::builders::TestEventBuilder;
-
-        let long_source = "a".repeat(50);
-        let test_cases = vec![
-            ("fs", "file.created"),
-            ("shell-terminal", "command.executed"),
-            ("service_123", "event.processed_ok"),
-            (long_source.as_str(), "type.very_long_name"),
-            ("x-y-z", "a.b.c.d.e"),
-        ];
-
-        for (source, event_type) in test_cases {
-            let event = TestEventBuilder::new(source, event_type).build();
-            assert_eq!(event.source, source);
-            assert_eq!(event.event_type, event_type);
-            assert!(!event.id.to_string().is_empty());
-            assert!(!event.host.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_builder_with_proptest() {
-        // Property test for pure builder functions
-        use crate::builders::TestEventBuilder;
-        use ::proptest::prelude::*;
-
-        proptest!(|(
-            source in "[a-zA-Z][a-zA-Z0-9_.-]{2,50}",
-            event_type in "[a-zA-Z][a-zA-Z0-9_-]{1,30}\\.[a-zA-Z][a-zA-Z0-9_-]{1,30}"
-        )| {
-            let event = TestEventBuilder::new(&source, &event_type).build();
-            prop_assert_eq!(event.source, source);
-            prop_assert_eq!(event.event_type, event_type);
-            prop_assert!(!event.id.to_string().is_empty());
-        });
-    }
-
-    #[sinex_test]
-    async fn test_database_with_parameterized(ctx: TestContext) -> TestResult<()> {
+    async fn test_database_with_parameterized(ctx: TestContext) -> Result<()> {
         // For tests that need database, use parameterized! for a reasonable number of cases
         // Property tests with thousands of DB operations would be too slow anyway
         parameterized!(
@@ -553,9 +511,32 @@ mod tests {
         Ok(())
     }
 
+    // Removed test_parameterized_pattern - duplicate parameterized testing
+    // Removed test_edge_cases_with_parameterized - duplicate edge case testing
+
     #[sinex_test]
-    async fn test_property_testing_integration(ctx: TestContext) -> TestResult<()> {
-        // Property test with database - test various valid inputs
+    async fn test_property_testing_integration(ctx: TestContext) -> Result<()> {
+        // Comprehensive property test with database - test various valid inputs
+        // Including parameterized tests for string length handling
+
+        // Test various string lengths using parameterized macro
+        parameterized!([("short", 5), ("medium", 50), ("long", 200),], |(
+            name,
+            length,
+        )| {
+            let source = "a".repeat(length);
+            let event = ctx
+                .event()
+                .source(&source)
+                .type_("proptest.length")
+                .field("test_name", name)
+                .insert()
+                .await?;
+            assert_eq!(event.source, source);
+            Ok(())
+        });
+
+        // Test edge cases with various valid inputs
         let long_source = "x".repeat(50);
         let long_type = format!("type.{}", "x".repeat(30));
 
@@ -581,43 +562,12 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_parameterized_pattern(ctx: TestContext) -> TestResult<()> {
-        // Use the parameterized! macro for data-driven tests
-        parameterized!(
-            [
-                // (source, event_type, expected_count)
-                ("test1", "type.a", 1),
-                ("test2", "type.b", 2),
-                ("test3", "type.c", 3),
-            ],
-            |(source, event_type, count)| {
-                // Insert 'count' events
-                for i in 0..count {
-                    ctx.event()
-                        .source(source)
-                        .type_(event_type)
-                        .field("index", i)
-                        .insert()
-                        .await?;
-                }
+    // Removed test_parameterized_pattern - already consolidated above
 
-                // Verify count
-                let events = ctx
-                    .events()
-                    .by_source(source)
-                    .by_type(event_type)
-                    .fetch()
-                    .await?;
-                assert_eq!(events.len(), count as usize);
-                Ok(())
-            }
-        );
-        Ok(())
-    }
+    // Removed test_edge_cases_with_parameterized - already consolidated above
 
     #[sinex_test]
-    async fn test_edge_cases_with_parameterized(ctx: TestContext) -> TestResult<()> {
+    async fn test_edge_cases(ctx: TestContext) -> Result<()> {
         // Test with proptest! macro for edge cases
         // For edge cases that need database, use parameterized approach
         parameterized!(
@@ -669,82 +619,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_isolation(ctx: TestContext) -> TestResult<()> {
-        // Events are isolated between tests
-        ctx.event()
-            .source("isolation")
-            .type_("test")
-            .insert()
-            .await?;
-
-        let ctx2 = TestContext::with_name("other").await?;
-        let events = ctx2.events().by_source("isolation").fetch().await?;
-        assert_eq!(events.len(), 0);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_database_isolation(ctx: TestContext) -> TestResult<()> {
-        // Create multiple contexts and verify complete isolation
-        let contexts = vec![
-            TestContext::with_name("isolation_1").await?,
-            TestContext::with_name("isolation_2").await?,
-            TestContext::with_name("isolation_3").await?,
-        ];
-
-        // Each context inserts events with unique source
-        for (i, test_ctx) in contexts.iter().enumerate() {
-            for j in 0..3 {
-                test_ctx
-                    .event()
-                    .source(&format!("ctx_{}", i))
-                    .type_("isolation.test")
-                    .field("context_id", i)
-                    .field("event_num", j)
-                    .insert()
-                    .await?;
-            }
-        }
-
-        // Verify each context only sees its own events
-        for (i, test_ctx) in contexts.iter().enumerate() {
-            let own_events = test_ctx
-                .events()
-                .by_source(&format!("ctx_{}", i))
-                .fetch()
-                .await?;
-            assert_eq!(
-                own_events.len(),
-                3,
-                "Context {} should see exactly 3 of its own events",
-                i
-            );
-
-            // Should not see events from other contexts
-            for j in 0..3 {
-                if i != j {
-                    let other_events = test_ctx
-                        .events()
-                        .by_source(&format!("ctx_{}", j))
-                        .fetch()
-                        .await?;
-                    assert_eq!(
-                        other_events.len(),
-                        0,
-                        "Context {} should not see events from context {}",
-                        i,
-                        j
-                    );
-                }
-            }
-        }
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_concurrent_test_execution(ctx: TestContext) -> TestResult<()> {
+    async fn test_concurrent_test_execution(ctx: TestContext) -> Result<()> {
         // Test that multiple tests can run concurrently without interference
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
         let mut handles = vec![];
@@ -787,7 +662,7 @@ mod tests {
                     }
                 }
 
-                Ok::<(), CoreError>(())
+                Ok::<(), SinexError>(())
             });
             handles.push(handle);
         }
@@ -796,15 +671,15 @@ mod tests {
         for handle in handles {
             handle
                 .await
-                .map_err(|e| CoreError::Service(format!("Task failed: {}", e)))??;
+                .map_err(|e| SinexError::service(format!("Task failed: {}", e)))??;
         }
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_error_propagation(ctx: TestContext) -> TestResult<()> {
-        // Test that errors propagate correctly through TestResult
+    async fn test_error_propagation(ctx: TestContext) -> Result<()> {
+        // Test that errors propagate correctly through Result
 
         // Test validation error
         let result = ctx
@@ -816,9 +691,9 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("source"));
 
-        // Test that custom errors work with TestResult
-        fn failing_operation() -> TestResult<()> {
-            Err(CoreError::Validation("Custom validation error".to_string()))
+        // Test that custom errors work with Result
+        fn failing_operation() -> Result<()> {
+            Err(SinexError::validation("Custom validation error".to_string()).into())
         }
 
         let result = failing_operation();
@@ -829,7 +704,7 @@ mod tests {
     }
 
     #[sinex_test(timeout = 5)]
-    async fn test_timeout_handling(ctx: TestContext) -> TestResult<()> {
+    async fn test_timeout_handling(ctx: TestContext) -> Result<()> {
         // Test that the timeout attribute works
         // This test should complete quickly, well under 5 seconds
 
@@ -854,150 +729,31 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_test_context_helpers(ctx: TestContext) -> TestResult<()> {
-        // Test various TestContext helper methods
-
-        // Test name should be set
-        assert!(!ctx.test_name().is_empty());
-
-        // Pool should be valid
-        let pool_result: Result<i32, sqlx::Error> =
-            sqlx::query_scalar("SELECT 1").fetch_one(ctx.pool()).await;
-        assert_eq!(pool_result?, 1);
-
-        // Test elapsed time tracking
-        let initial_elapsed = ctx.elapsed();
-        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
-        let after_elapsed = ctx.elapsed();
-        assert!(after_elapsed > initial_elapsed);
-
-        // Test event count tracking
-        let initial_count = ctx.test_event_count().await;
-        ctx.event()
-            .source("helper_test")
-            .type_("test")
-            .insert()
-            .await?;
-        let after_count = ctx.test_event_count().await;
-        assert_eq!(after_count, initial_count + 1);
-
-        Ok(())
-    }
+    // Removed test_test_context_helpers - functionality covered in test_context.rs
 
     #[sinex_test]
-    async fn test_assertion_helpers(ctx: TestContext) -> TestResult<()> {
-        // Test the contextual assertion API
-
-        // Basic assertions
-        ctx.assert("equality test").eq(&5, &5)?;
-        ctx.assert("condition test").that(true, "should be true")?;
-
-        // Collection assertions
-        let items = vec![1, 2, 3];
-        ctx.assert("size test").has_size(&items, 3)?;
-        ctx.assert("not empty test").not_empty(&items)?;
-
-        // Option assertions
-        let some_value = Some(42);
-        let none_value: Option<i32> = None;
-        ctx.assert("some test").some(&some_value)?;
-        ctx.assert("none test").none(&none_value)?;
-
-        // Error assertions
-        let error_result: Result<(), CoreError> =
-            Err(CoreError::Validation("test error".to_string()));
-        ctx.assert("error test")
-            .error_contains(&error_result, "test error")?;
-
-        // Test that assertions fail appropriately
-        let bad_assertion = ctx.assert("should fail").eq(&5, &6);
-        assert!(bad_assertion.is_err());
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_result_type_alias() {
-        // Test that TestResult is properly aliased
-        fn returns_test_result() -> TestResult<String> {
+    async fn test_result_type_alias(_ctx: TestContext) -> Result<()> {
+        // Test that Result is properly aliased
+        fn returns_test_result() -> Result<String> {
             Ok("success".to_string())
         }
 
         let result = returns_test_result();
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "success");
+        assert_eq!(result?, "success");
 
-        fn returns_error() -> TestResult<()> {
-            Err(CoreError::Unknown("test error".to_string()))
+        fn returns_error() -> Result<()> {
+            Err(SinexError::unknown("test error".to_string()).into())
         }
 
         let error_result = returns_error();
         assert!(error_result.is_err());
-    }
-
-    #[sinex_test]
-    async fn test_edge_case_concurrent_isolation(ctx: TestContext) -> TestResult<()> {
-        // Test that concurrent operations are truly isolated
-        use std::sync::atomic::{AtomicBool, Ordering};
-        use std::sync::Arc;
-
-        let found_cross_contamination = Arc::new(AtomicBool::new(false));
-
-        let handles: Vec<_> = (0..10)
-            .map(|i| {
-                let contamination = found_cross_contamination.clone();
-
-                tokio::spawn(async move {
-                    let ctx = TestContext::with_name(&format!("isolation_{}", i)).await?;
-
-                    // Create unique event
-                    let unique_id = uuid::Uuid::new_v4().to_string();
-                    ctx.event()
-                        .source(format!("isolated-{}", i))
-                        .type_("test")
-                        .field("unique_id", unique_id.clone())
-                        .insert()
-                        .await?;
-
-                    // Check for any cross-contamination
-                    for j in 0..10 {
-                        if i != j {
-                            let other_events = ctx
-                                .events()
-                                .by_source(format!("isolated-{}", j))
-                                .fetch()
-                                .await?;
-
-                            if !other_events.is_empty() {
-                                contamination.store(true, Ordering::Relaxed);
-                                return Err(CoreError::Unknown(format!(
-                                    "Context {} can see events from context {}",
-                                    i, j
-                                )));
-                            }
-                        }
-                    }
-
-                    Ok::<_, CoreError>(())
-                })
-            })
-            .collect();
-
-        // Wait for all tasks
-        for handle in handles {
-            handle
-                .await
-                .map_err(|e| CoreError::Service(format!("Task failed: {}", e)))??;
-        }
-
-        assert!(!found_cross_contamination.load(Ordering::Relaxed));
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_builder_method_chaining_order(ctx: TestContext) -> TestResult<()> {
+    async fn test_builder_method_chaining_order(ctx: TestContext) -> Result<()> {
         // Test that builder methods can be called in any order
         let event1 = ctx
             .event()
@@ -1023,7 +779,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_assertion_edge_cases(ctx: TestContext) -> TestResult<()> {
+    async fn test_assertion_edge_cases(ctx: TestContext) -> Result<()> {
         // Test assertion boundary conditions
         let empty_vec: Vec<i32> = vec![];
         let non_empty_vec = vec![1, 2, 3];
@@ -1058,41 +814,7 @@ mod tests {
     // Test Framework Infrastructure Tests - Core State Management
 
     #[sinex_test]
-    async fn test_context_state_isolation_verification(ctx: TestContext) -> TestResult<()> {
-        // Verify that TestContext maintains complete isolation of state
-        let test_name = ctx.test_name();
-        assert!(!test_name.is_empty(), "Test name should be set");
-
-        // Create some state in this context
-        ctx.event()
-            .source("isolation-test")
-            .type_("state.marker")
-            .field("test_name", &test_name)
-            .insert()
-            .await?;
-
-        // Create a second context and verify it doesn't see our state
-        let ctx2 = TestContext::with_name("isolation_verify_2").await?;
-        let other_events = ctx2.events().by_source("isolation-test").fetch().await?;
-        assert_eq!(
-            other_events.len(),
-            0,
-            "Second context should not see first context's events"
-        );
-
-        // Verify our original context still has its state
-        let our_events = ctx.events().by_source("isolation-test").fetch().await?;
-        assert_eq!(
-            our_events.len(),
-            1,
-            "Original context should retain its state"
-        );
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_context_event_count_tracking_accuracy(ctx: TestContext) -> TestResult<()> {
+    async fn test_context_event_count_tracking_accuracy(ctx: TestContext) -> Result<()> {
         // Test that event counting is accurate across operations
         let initial_count = ctx.test_event_count().await;
         assert_eq!(initial_count, 0, "Should start with zero events");
@@ -1108,7 +830,7 @@ mod tests {
 
             let current_count = ctx.test_event_count().await;
             assert_eq!(
-                current_count, i as i64,
+                current_count as usize, i,
                 "Count should match inserted events"
             );
         }
@@ -1136,7 +858,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_context_timing_measurement_precision(ctx: TestContext) -> TestResult<()> {
+    async fn test_context_timing_measurement_precision(ctx: TestContext) -> Result<()> {
         // Test that timing measurements are precise and monotonic
         let start_elapsed = ctx.elapsed();
 
@@ -1154,11 +876,11 @@ mod tests {
         let (result, duration) = ctx
             .measure(async {
                 tokio::time::sleep(tokio::time::Duration::from_millis(25)).await;
-                Ok::<_, CoreError>("measured")
+                Ok::<_, SinexError>("measured")
             })
             .await?;
 
-        assert_eq!(result, "measured");
+        assert_eq!(result.unwrap(), "measured");
         assert!(
             duration.as_millis() >= 25,
             "Measure should capture at least 25ms"
@@ -1180,7 +902,7 @@ mod tests {
     // Database Pool Management Tests
 
     #[sinex_test]
-    async fn test_database_pool_concurrent_allocation(ctx: TestContext) -> TestResult<()> {
+    async fn test_database_pool_concurrent_allocation(ctx: TestContext) -> Result<()> {
         // Test that multiple contexts can be allocated concurrently without deadlock
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
@@ -1232,7 +954,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_database_cleanup_on_drop(ctx: TestContext) -> TestResult<()> {
+    async fn test_database_cleanup_on_drop(ctx: TestContext) -> Result<()> {
         // Test that database is properly cleaned when context is dropped
         let test_id = uuid::Uuid::new_v4().to_string();
 
@@ -1245,7 +967,7 @@ mod tests {
                 .event()
                 .source("cleanup-test")
                 .type_("marker")
-                .field("test_id", &test_id)
+                .field("test_id", test_id)
                 .insert()
                 .await?;
 
@@ -1272,9 +994,9 @@ mod tests {
     // Test Fixture Lifecycle Management
 
     #[sinex_test]
-    async fn test_fixture_lazy_initialization(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_lazy_initialization(ctx: TestContext) -> Result<()> {
         // Test that fixtures are only created when accessed
-        let scenarios = ctx.scenarios();
+        let scenarios = ctx.fixtures().scenarios();
 
         // Track initial event count
         let initial_count = ctx.test_event_count().await;
@@ -1287,7 +1009,7 @@ mod tests {
         );
 
         // Now actually access a fixture
-        let _user_session = scenarios.user_session("test_user").await?;
+        let _user_session = scenarios.user_session().await?;
 
         // Should have created events
         let after_fixture = ctx.test_event_count().await;
@@ -1298,7 +1020,7 @@ mod tests {
 
         // Accessing same fixture again should reuse it
         let count_before_reuse = ctx.test_event_count().await;
-        let _same_session = scenarios.user_session("test_user").await?;
+        let _same_session = scenarios.user_session().await?;
         let count_after_reuse = ctx.test_event_count().await;
 
         assert_eq!(
@@ -1310,7 +1032,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_resource_cleanup(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_resource_cleanup(ctx: TestContext) -> Result<()> {
         // Test that fixture resources are cleaned up properly
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
@@ -1353,12 +1075,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_dependency_resolution(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_dependency_resolution(ctx: TestContext) -> Result<()> {
         // Test that fixtures with dependencies are resolved correctly
-        let scenarios = ctx.scenarios();
+        let scenarios = ctx.fixtures().scenarios();
 
         // Create a fixture that depends on base events
-        let checkpoint_fixture = scenarios.populated_checkpoints().await?;
+        let _checkpoint_fixture = scenarios.populated_checkpoints().await?;
 
         // Verify the fixture created its dependencies
         let checkpoints = ctx
@@ -1380,4 +1102,271 @@ mod tests {
 
         Ok(())
     }
+}
+
+// === Self-Benchmarks: Demonstrating benchmarking capabilities ===
+//
+// These benchmarks serve as both performance tests and examples of how to
+// properly benchmark database operations using sinex-test-utils.
+
+#[cfg(all(test, feature = "bench"))]
+mod benches {
+    use super::*;
+    use crate::prelude::*;
+    use serde_json::json;
+    use sinex_ulid::Ulid;
+
+    // Basic event operations benchmark
+    #[sinex_bench]
+    fn bench_event_creation(ctx: &BenchContext) -> anyhow::Result<()> {
+        // Simple event creation - measures database round-trip
+        use sinex_db::queries::EventQueries;
+
+        EventQueries::insert_event(
+            "bench".to_string(),
+            "perf.test".to_string(),
+            gethostname::gethostname().to_string_lossy().to_string(),
+            json!({"iteration": 1}),
+            Some(chrono::Utc::now()),
+            Some("bench/1.0".to_string()),
+            None,
+            None,
+        )
+        .fetch_one::<sinex_db::events::EventRecord>(ctx.pool())
+        .await?;
+
+        Ok(())
+    }
+
+    // Batch operations benchmark
+    #[sinex_bench(args = [10, 100, 1000])]
+    async fn bench_batch_insert(ctx: &BenchContext, count: usize) -> anyhow::Result<()> {
+        use crate::prelude::DatasetSize;
+        use sinex_db::queries::EventQueries;
+
+        // Insert events using query builders
+        for i in 0..count {
+            EventQueries::insert_event(
+                "bench-batch".to_string(),
+                "batch.test".to_string(),
+                "bench-host".to_string(),
+                json!({"index": i}),
+                Some(chrono::Utc::now()),
+                Some("bench/1.0".to_string()),
+                None,
+                None,
+            )
+            .execute(ctx.pool())
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    // Query performance with fixtures
+    #[sinex_bench]
+    fn bench_query_by_source(ctx: &BenchContext) -> anyhow::Result<()> {
+        use sinex_db::queries::EventQueries;
+
+        // Load standard query fixture once per bench run
+        ctx.query_bench(DatasetSize::Small).await?;
+
+        // Measure query performance using query builder
+        let _events: Vec<RawEvent> =
+            EventQueries::get_by_source("sensor_a".to_string(), Some(100), None)
+                .fetch_all(ctx.pool())
+                .await?;
+
+        Ok(())
+    }
+
+    // Complex query patterns
+    #[sinex_bench]
+    fn bench_count_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+        use sinex_db::queries::EventQueries;
+
+        ctx.time_series(DatasetSize::Small).await?;
+
+        // Count is often faster than fetch
+        let (count,): (i64,) = EventQueries::count_by_source("sensor_b".to_string())
+            .fetch_one(ctx.pool())
+            .await?;
+
+        // Use the result to prevent optimization
+        divan::black_box(count);
+        Ok(())
+    }
+
+    // Aggregation queries benchmark
+    #[sinex_bench]
+    fn bench_aggregation_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+        ctx.query_bench(DatasetSize::Small).await?;
+
+        // TODO: Replace with EventQueries::group_by_source() once implemented
+        // Group by source with counts
+        #[derive(sqlx::FromRow)]
+        struct SourceCount {
+            source: String,
+            count: i64,
+        }
+
+        let results: Vec<SourceCount> = sqlx::query_as!(
+            SourceCount,
+            r#"SELECT source, COUNT(*) as "count!"
+               FROM core.events 
+               GROUP BY source 
+               ORDER BY COUNT(*) DESC 
+               LIMIT 10"#
+        )
+        .fetch_all(ctx.pool())
+        .await?;
+
+        divan::black_box(results);
+        Ok(())
+    }
+
+    // Time-based queries
+    #[sinex_bench]
+    fn bench_time_range_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+        use sinex_db::queries::EventQueries;
+
+        ctx.time_series(DatasetSize::Medium).await?;
+
+        // Query last hour of events
+        let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
+        let end_time = chrono::Utc::now();
+
+        // Use existing time range query builder
+        let events: Vec<RawEvent> =
+            EventQueries::get_by_time_range(cutoff, end_time, Some(100), None)
+                .fetch_all(ctx.pool())
+                .await?;
+
+        divan::black_box(events);
+        Ok(())
+    }
+
+    // JSON payload queries
+    #[sinex_bench]
+    fn bench_json_queries(ctx: &BenchContext) -> anyhow::Result<()> {
+        ctx.query_bench(DatasetSize::Small).await?;
+
+        // Query by JSON field
+        #[derive(sqlx::FromRow)]
+        struct EventPayload {
+            id: sqlx::types::Uuid,
+            payload: serde_json::Value,
+        }
+
+        let results: Vec<EventPayload> = sqlx::query_as!(
+            EventPayload,
+            r#"SELECT event_id::uuid as "id!", payload 
+               FROM core.events 
+               WHERE payload->>'type' = 'measurement' 
+               LIMIT 50"#
+        )
+        .fetch_all(ctx.pool())
+        .await?;
+
+        divan::black_box(results);
+        Ok(())
+    }
+
+    // Concurrent operations benchmark
+    #[sinex_bench]
+    fn bench_concurrent_inserts(ctx: &BenchContext) -> anyhow::Result<()> {
+        use futures::future;
+
+        // Reset to clean state
+        crate::db_common::reset_database(ctx.pool()).await?;
+
+        // Spawn concurrent insert tasks
+        let tasks: Vec<_> = (0..10)
+            .map(|i| {
+                let pool = ctx.pool().clone();
+                async move {
+                    use sinex_db::queries::EventQueries;
+
+                    EventQueries::insert_event(
+                        format!("concurrent-{}", i),
+                        "bench.concurrent".to_string(),
+                        "bench-host".to_string(),
+                        json!({"task": i}),
+                        Some(chrono::Utc::now()),
+                        Some("bench/1.0".to_string()),
+                        None,
+                        None,
+                    )
+                    .execute(&pool)
+                    .await
+                }
+            })
+            .collect();
+
+        // Wait for all to complete
+        let results = future::join_all(tasks).await;
+        for result in results {
+            result?;
+        }
+
+        Ok(())
+    }
+
+    // Benchmark using test utilities directly
+    #[sinex_bench]
+    fn bench_test_utils_event_creation(ctx: &BenchContext) -> anyhow::Result<()> {
+        // This demonstrates using test utils in benchmarks
+        use serde_json::json;
+        use sinex_events::EventFactory;
+        let factory = EventFactory::new("bench-utils");
+        let event = factory.create_event(
+            "perf.test",
+            json!({
+                "metric": "cpu_usage",
+                "value": 75.5,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+        );
+
+        // Insert using query builder
+        use sinex_db::queries::EventQueries;
+
+        EventQueries::insert_event(
+            event.source,
+            event.event_type,
+            event.host,
+            event.payload,
+            event.ts_orig,
+            event.ingestor_version,
+            None,
+            None,
+        )
+        .execute(ctx.pool())
+        .await?;
+
+        Ok(())
+    }
+
+    // Benchmark fixture loading performance
+    #[sinex_bench(args = [DatasetSize::Small, DatasetSize::Medium])]
+    fn bench_fixture_loading(ctx: &BenchContext, size: DatasetSize) -> anyhow::Result<()> {
+        // Reset first
+        crate::db_common::reset_database(ctx.pool()).await?;
+
+        // Load the fixture
+        ctx.time_series(size).await?;
+
+        // Verify it loaded
+        use sinex_db::queries::EventQueries;
+        let (count,): (i64,) = EventQueries::count_all().fetch_one(ctx.pool()).await?;
+
+        assert!(count > 0);
+        Ok(())
+    }
+}
+
+// Enable Divan benchmarks when feature is enabled
+#[cfg(all(test, feature = "bench"))]
+fn main() {
+    divan::main();
 }

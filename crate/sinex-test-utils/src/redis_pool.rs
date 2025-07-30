@@ -3,10 +3,9 @@
 //! Similar to our database pool, this provides fast, isolated Redis instances for tests.
 //! Uses Redis databases (0-15+) or key prefixing for complete test isolation.
 
-use crate::TestResult;
 use once_cell::sync::Lazy;
 use redis::{Client, Connection, RedisResult, Value};
-use sinex_core_types::CoreError;
+use sinex_error::{Result, SinexError};
 use sinex_ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -93,22 +92,22 @@ impl TestRedis {
     }
 
     /// Set a value (with automatic namespacing)
-    pub async fn set<V: redis::ToRedisArgs>(&mut self, key: &str, value: V) -> TestResult<()> {
+    pub async fn set<V: redis::ToRedisArgs>(&mut self, key: &str, value: V) -> Result<()> {
         let namespaced_key = self.key(key);
         redis::cmd("SET")
             .arg(&namespaced_key)
             .arg(value)
             .query(&mut self.conn)
-            .map_err(|e| CoreError::Database(format!("Redis SET failed: {}", e)))
+            .map_err(|e| SinexError::database(format!("Redis SET failed: {}", e)))
     }
 
     /// Get a value (with automatic namespacing)
-    pub async fn get(&mut self, key: &str) -> TestResult<Value> {
+    pub async fn get(&mut self, key: &str) -> Result<Value> {
         let namespaced_key = self.key(key);
         redis::cmd("GET")
             .arg(&namespaced_key)
             .query(&mut self.conn)
-            .map_err(|e| CoreError::Database(format!("Redis GET failed: {}", e)))
+            .map_err(|e| SinexError::database(format!("Redis GET failed: {}", e)))
     }
 
     /// Add to a stream (with automatic namespacing)
@@ -117,7 +116,7 @@ impl TestRedis {
         stream: &str,
         id: &str,
         fields: &[(String, F)],
-    ) -> TestResult<String> {
+    ) -> Result<String> {
         let namespaced_stream = self.key(stream);
         let mut cmd = redis::cmd("XADD");
         cmd.arg(&namespaced_stream).arg(id);
@@ -127,7 +126,7 @@ impl TestRedis {
         }
 
         cmd.query(&mut self.conn)
-            .map_err(|e| CoreError::Database(format!("Redis XADD failed: {}", e)))
+            .map_err(|e| SinexError::database(format!("Redis XADD failed: {}", e)))
     }
 
     /// Read from a stream (with automatic namespacing)
@@ -137,7 +136,7 @@ impl TestRedis {
         ids: &[&str],
         count: Option<usize>,
         block: Option<usize>,
-    ) -> TestResult<Value> {
+    ) -> Result<Value> {
         let mut cmd = redis::cmd("XREAD");
 
         if let Some(c) = count {
@@ -161,7 +160,7 @@ impl TestRedis {
         }
 
         cmd.query(&mut self.conn)
-            .map_err(|e| CoreError::Database(format!("Redis XREAD failed: {}", e)))
+            .map_err(|e| SinexError::database(format!("Redis XREAD failed: {}", e)))
     }
 }
 
@@ -218,20 +217,20 @@ fn clean_redis_namespace(conn: &mut Connection, prefix: &str) -> RedisResult<()>
 
 impl RedisPool {
     /// Create a new Redis pool
-    pub async fn new(config: RedisPoolConfig) -> TestResult<Self> {
+    pub async fn new(config: RedisPoolConfig) -> Result<Self> {
         let client = Client::open(config.url.as_str())
-            .map_err(|e| CoreError::Database(format!("Failed to create Redis client: {}", e)))?;
+            .map_err(|e| SinexError::database(format!("Failed to create Redis client: {}", e)))?;
 
         // Test connection
         let mut test_conn = client
             .get_connection()
-            .map_err(|e| CoreError::Database(format!("Failed to connect to Redis: {}", e)))?;
+            .map_err(|e| SinexError::database(format!("Failed to connect to Redis: {}", e)))?;
 
         // Check Redis version and available databases
         let _info: String = redis::cmd("INFO")
             .arg("server")
             .query(&mut test_conn)
-            .map_err(|e| CoreError::Database(format!("Failed to get Redis info: {}", e)))?;
+            .map_err(|e| SinexError::database(format!("Failed to get Redis info: {}", e)))?;
 
         println!(
             "🔧 Initializing Redis test pool with {} databases",
@@ -243,7 +242,7 @@ impl RedisPool {
         for db_index in 0..config.max_databases {
             // Test if we can select this database
             let mut conn = client.get_connection().map_err(|e| {
-                CoreError::Database(format!(
+                SinexError::database(format!(
                     "Failed to get connection for DB {}: {}",
                     db_index, e
                 ))
@@ -253,7 +252,7 @@ impl RedisPool {
                 .arg(db_index)
                 .query::<()>(&mut conn)
                 .map_err(|e| {
-                    CoreError::Database(format!("Failed to select DB {}: {}", db_index, e))
+                    SinexError::database(format!("Failed to select DB {}: {}", db_index, e))
                 })?;
 
             let slot = Arc::new(RedisSlot {
@@ -273,7 +272,7 @@ impl RedisPool {
     }
 
     /// Acquire a Redis instance from the pool
-    pub async fn acquire(&self) -> TestResult<TestRedis> {
+    pub async fn acquire(&self) -> Result<TestRedis> {
         let start_time = Instant::now();
         let mut attempts = 0;
 
@@ -292,14 +291,14 @@ impl RedisPool {
 
                     // Get connection and select database
                     let mut conn = slot.client.get_connection().map_err(|e| {
-                        CoreError::Database(format!("Failed to get Redis connection: {}", e))
+                        SinexError::database(format!("Failed to get Redis connection: {}", e))
                     })?;
 
                     redis::cmd("SELECT")
                         .arg(slot.db_index)
                         .query::<()>(&mut conn)
                         .map_err(|e| {
-                            CoreError::Database(format!(
+                            SinexError::database(format!(
                                 "Failed to select DB {}: {}",
                                 slot.db_index, e
                             ))
@@ -309,7 +308,7 @@ impl RedisPool {
                     redis::cmd("FLUSHDB")
                         .arg("ASYNC")
                         .query::<()>(&mut conn)
-                        .map_err(|e| CoreError::Database(format!("Failed to flush DB: {}", e)))?;
+                        .map_err(|e| SinexError::database(format!("Failed to flush DB: {}", e)))?;
 
                     let acquisition_time = start_time.elapsed();
                     if acquisition_time > Duration::from_millis(100) {
@@ -329,9 +328,10 @@ impl RedisPool {
 
             // No free slots, wait a bit
             if start_time.elapsed() > self.config.connection_timeout {
-                return Err(CoreError::Database(
-                    "Timeout waiting for available Redis slot".to_string(),
-                ));
+                return Err(SinexError::database(
+                    "Timeout waiting for available Redis slot",
+                ))
+                .into();
             }
 
             tokio::time::sleep(Duration::from_millis(10)).await;
@@ -343,7 +343,7 @@ impl RedisPool {
 static REDIS_POOL: Lazy<TokioMutex<Option<Arc<RedisPool>>>> = Lazy::new(|| TokioMutex::new(None));
 
 /// Acquire a test Redis instance
-pub async fn acquire_test_redis() -> TestResult<TestRedis> {
+pub async fn acquire_test_redis() -> Result<TestRedis> {
     let mut pool_lock = REDIS_POOL.lock().await;
 
     if pool_lock.is_none() {
@@ -396,9 +396,10 @@ pub struct RedisPoolStats {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_redis_pool_basic() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_pool_basic() -> Result<()> {
         let mut redis = acquire_test_redis().await?;
 
         // Basic operations should work
@@ -416,8 +417,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_pool_isolation() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_pool_isolation() -> Result<()> {
         let mut redis1 = acquire_test_redis().await?;
         let mut redis2 = acquire_test_redis().await?;
 
@@ -437,8 +438,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_streams() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_streams() -> Result<()> {
         let mut redis = acquire_test_redis().await?;
 
         // Test stream operations
@@ -467,8 +468,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_pool_cleanup() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_pool_cleanup() -> Result<()> {
         let mut redis = acquire_test_redis().await?;
         let key = redis.key("cleanup_test");
 
@@ -476,10 +477,14 @@ mod tests {
         redis::cmd("SET")
             .arg(&key)
             .arg("test_value")
-            .query::<()>(&mut redis.conn)?;
+            .query::<()>(&mut redis.conn)
+            .map_err(|e| SinexError::service(format!("Redis error: {}", e)))?;
 
         // Verify it exists
-        let exists: bool = redis::cmd("EXISTS").arg(&key).query(&mut redis.conn)?;
+        let exists: bool = redis::cmd("EXISTS")
+            .arg(&key)
+            .query(&mut redis.conn)
+            .map_err(|e| SinexError::service(format!("Redis error: {}", e)))?;
         assert!(exists);
 
         // Drop the handle to trigger cleanup
@@ -495,8 +500,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_pool_concurrent_access() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_pool_concurrent_access() -> Result<()> {
         // Spawn multiple tasks that acquire Redis instances
         let handles: Vec<_> = (0..10)
             .map(|i| {
@@ -533,8 +538,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_pool_stats() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_pool_stats() -> Result<()> {
         // Get initial stats
         let initial_stats = get_redis_pool_stats().await;
         let initial_acquisitions = initial_stats
@@ -559,9 +564,9 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_key_namespacing() -> TestResult<()> {
-        let mut redis = acquire_test_redis().await?;
+    #[sinex_test]
+    async fn test_redis_key_namespacing() -> Result<()> {
+        let redis = acquire_test_redis().await?;
 
         // Test that keys are properly namespaced
         let raw_key = "test_key";
@@ -574,8 +579,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_redis_connection_reuse() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_redis_connection_reuse() -> Result<()> {
         let mut redis = acquire_test_redis().await?;
 
         // Multiple operations on same connection

@@ -120,19 +120,17 @@ pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
-// Legacy automaton exports removed - use StatefulStreamProcessor instead
-pub use checkpoint::{CheckpointManager, CheckpointState};
-pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
-// Legacy EventSource types removed - use StatefulStreamProcessor instead
 pub use crate::redis_stream_consumer::{
     BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,
     RedisConsumerConfig, RedisStreamConsumer,
 };
+pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
     IngestionHistoryEntry, MissingItem, ProcessorCli, ProcessorCliRunner, ProcessorCommand,
     SourceState,
 };
+pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
 pub use grpc_client::IngestClient;
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
@@ -231,7 +229,7 @@ pub mod proto {
 // Re-export commonly used types from dependencies
 pub use sinex_core_types::ValidationChain;
 pub use sinex_db::DbError; // Import DbError for conversion
-pub use sinex_error::ErrorContext;
+pub use sinex_error::SinexError;
 pub use sinex_events::RawEvent;
 pub use sinex_ulid::Ulid;
 
@@ -347,38 +345,37 @@ pub enum SatelliteError {
     Lifecycle(String),
 }
 
-impl From<SatelliteError> for sinex_error::CoreError {
+impl From<SatelliteError> for sinex_error::SinexError {
     fn from(e: SatelliteError) -> Self {
         match e {
-            SatelliteError::Config(_) => sinex_error::CoreError::Configuration(e.to_string()),
-            SatelliteError::Grpc(_) => sinex_error::CoreError::Unknown(e.to_string()),
-            SatelliteError::GrpcTransport(_) => sinex_error::CoreError::Unknown(e.to_string()),
-            SatelliteError::Redis(_) => sinex_error::CoreError::Unknown(e.to_string()),
-            SatelliteError::Database(_) => sinex_error::CoreError::Database(e.to_string()),
-            SatelliteError::DbError(_) => sinex_error::CoreError::Database(e.to_string()),
+            SatelliteError::Config(_) => sinex_error::SinexError::configuration(e.to_string()),
+            SatelliteError::Grpc(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::GrpcTransport(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::Redis(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::Database(_) => sinex_error::SinexError::database(e.to_string()),
+            SatelliteError::DbError(_) => sinex_error::SinexError::database(e.to_string()),
             SatelliteError::Serialization(_) => {
-                sinex_error::CoreError::Serialization(e.to_string())
+                sinex_error::SinexError::serialization(e.to_string())
             }
-            SatelliteError::Io(_) => sinex_error::CoreError::Io(e.to_string()),
-            SatelliteError::General(_) => sinex_error::CoreError::General(e.to_string()),
-            SatelliteError::Processing(_) => sinex_error::CoreError::Unknown(e.to_string()),
-            SatelliteError::Automaton(_) => sinex_error::CoreError::Unknown(e.to_string()),
-            SatelliteError::Checkpoint(_) => sinex_error::CoreError::Unknown(e.to_string()),
-            SatelliteError::Lifecycle(_) => sinex_error::CoreError::Unknown(e.to_string()),
+            SatelliteError::Io(_) => sinex_error::SinexError::io(e.to_string()),
+            SatelliteError::General(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::Processing(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::Automaton(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::Checkpoint(_) => sinex_error::SinexError::unknown(e.to_string()),
+            SatelliteError::Lifecycle(_) => sinex_error::SinexError::unknown(e.to_string()),
         }
     }
 }
 
-impl From<sinex_error::CoreError> for SatelliteError {
-    fn from(e: sinex_error::CoreError) -> Self {
+impl From<sinex_error::SinexError> for SatelliteError {
+    fn from(e: sinex_error::SinexError) -> Self {
         match e {
-            sinex_error::CoreError::Configuration(msg) => SatelliteError::Processing(msg),
-            sinex_error::CoreError::Database(msg) => SatelliteError::Processing(msg),
-            sinex_error::CoreError::Serialization(msg) => SatelliteError::Processing(msg),
-            sinex_error::CoreError::Io(msg) => SatelliteError::Processing(msg),
-            sinex_error::CoreError::Unknown(msg) => SatelliteError::Processing(msg),
-            sinex_error::CoreError::General(msg) => SatelliteError::Processing(msg),
-            sinex_error::CoreError::Validation(msg) => SatelliteError::Processing(msg),
+            sinex_error::SinexError::Configuration(_) => SatelliteError::Processing(e.to_string()),
+            sinex_error::SinexError::Database(_) => SatelliteError::Processing(e.to_string()),
+            sinex_error::SinexError::Serialization(_) => SatelliteError::Processing(e.to_string()),
+            sinex_error::SinexError::Io(_) => SatelliteError::Processing(e.to_string()),
+            sinex_error::SinexError::Unknown(_) => SatelliteError::Processing(e.to_string()),
+            sinex_error::SinexError::Validation(_) => SatelliteError::Processing(e.to_string()),
             _ => SatelliteError::Processing(e.to_string()),
         }
     }

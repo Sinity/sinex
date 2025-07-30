@@ -4,7 +4,7 @@
 //! consistent error handling and context.
 
 use rusqlite::{Connection, OpenFlags, Statement};
-use sinex_core_types::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 use std::path::Path;
 
 /// Helper for opening SQLite databases with consistent error handling
@@ -16,7 +16,7 @@ impl SqliteConnection {
         let path_ref = path.as_ref();
 
         Connection::open_with_flags(path_ref, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
-            CoreError::Database(format!(
+            SinexError::database(format!(
                 "Failed to open database {} (operation: {}, access_mode: read_only): {}",
                 path_ref.display(),
                 operation,
@@ -34,7 +34,7 @@ impl SqliteConnection {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )
         .map_err(|e| {
-            CoreError::Database(format!(
+            SinexError::database(format!(
                 "Failed to open database {} (operation: {}, access_mode: read_write): {}",
                 path_ref.display(),
                 operation,
@@ -46,13 +46,13 @@ impl SqliteConnection {
 
 /// Helper for preparing statements with consistent error handling
 pub trait SqliteStatementExt {
-    fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement>;
+    fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement<'_>>;
 }
 
 impl SqliteStatementExt for Connection {
-    fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement> {
+    fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement<'_>> {
         self.prepare(sql).map_err(|e| {
-            CoreError::Database(format!(
+            SinexError::database(format!(
                 "Failed to prepare statement (operation: {}, sql_length: {}): {}",
                 operation,
                 sql.len(),
@@ -104,7 +104,7 @@ impl<'a> SqliteQueryBuilder<'a> {
                 error_msg.push_str(&format!(", {}: {}", key, value));
             }
 
-            CoreError::Database(error_msg)
+            SinexError::database(error_msg)
         })
     }
 }

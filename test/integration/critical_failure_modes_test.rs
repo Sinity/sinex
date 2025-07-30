@@ -15,7 +15,7 @@ use tempfile::TempDir;
 
 /// Test version tracking with corrupted git environment
 #[sinex_test]
-async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> TestResult {
+async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> anyhow::Result<()> {
     // Create a temporary directory with fake git directory
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
@@ -43,7 +43,7 @@ async fn test_version_tracking_corrupted_git(_ctx: TestContext) -> TestResult {
 
 /// Test version tracking performance under stress
 #[sinex_test]
-async fn test_version_tracking_stress(_ctx: TestContext) -> TestResult {
+async fn test_version_tracking_stress(_ctx: TestContext) -> anyhow::Result<()> {
     let start_time = std::time::Instant::now();
 
     // Generate many version infos quickly
@@ -70,7 +70,7 @@ async fn test_version_tracking_stress(_ctx: TestContext) -> TestResult {
 
 /// Test filesystem monitor with very large number of files
 #[sinex_test]
-async fn test_filesystem_monitor_large_scale(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_large_scale(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
@@ -133,7 +133,7 @@ async fn test_filesystem_monitor_large_scale(_ctx: TestContext) -> TestResult {
 
 /// Test filesystem monitor with very deep directory structure
 #[sinex_test]
-async fn test_filesystem_monitor_deep_directories(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_deep_directories(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let mut current_path = temp_dir.path().to_path_buf();
 
@@ -185,7 +185,7 @@ async fn test_filesystem_monitor_deep_directories(_ctx: TestContext) -> TestResu
 
 /// Test filesystem monitor with extreme configuration values
 #[sinex_test]
-async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
@@ -245,7 +245,7 @@ async fn test_filesystem_monitor_extreme_config(_ctx: TestContext) -> TestResult
 
 /// Test filesystem monitor with special file names
 #[sinex_test]
-async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 
@@ -306,7 +306,7 @@ async fn test_filesystem_monitor_special_filenames(_ctx: TestContext) -> TestRes
 
 /// Test filesystem monitor recovery from initialization errors
 #[sinex_test]
-async fn test_filesystem_monitor_error_recovery(_ctx: TestContext) -> TestResult {
+async fn test_filesystem_monitor_error_recovery(_ctx: TestContext) -> anyhow::Result<()> {
     // First try with invalid configuration
     let invalid_config = serde_json::json!({
         "watch_patterns": "/this/path/definitely/does/not/exist/anywhere",
@@ -346,7 +346,7 @@ async fn test_filesystem_monitor_error_recovery(_ctx: TestContext) -> TestResult
 
 /// Test concurrent filesystem monitor creation
 #[sinex_test]
-async fn test_concurrent_filesystem_monitor_creation(_ctx: TestContext) -> TestResult {
+async fn test_concurrent_filesystem_monitor_creation(_ctx: TestContext) -> anyhow::Result<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 

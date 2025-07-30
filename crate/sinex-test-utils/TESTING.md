@@ -1,4 +1,6 @@
-# Sinex Testing Guide
+# Sinex Test Utils - Detailed Testing Guide
+
+> **Note**: This is the comprehensive testing guide. For a quick start, see `/TESTING.md` in the project root.
 
 This guide covers testing patterns, best practices, and advanced techniques for the Sinex event system using the sinex-test-utils crate.
 

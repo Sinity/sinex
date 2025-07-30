@@ -249,10 +249,9 @@ mod tests {
     use chrono::Utc;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use sinex_test_utils::{database_pool, TestConfig, TestContext};
 
     #[sinex_test]
-    async fn test_insert_event_basic(ctx: TestContext) -> TestResult {
+    async fn test_insert_event_basic(ctx: TestContext) -> anyhow::Result<()> {
         let event = RawEvent {
             id: Ulid::new(),
             source: "test.source".to_string(),
@@ -271,15 +270,18 @@ mod tests {
             associated_blob_ids: None,
         };
 
-        let result = insert_event(ctx.pool(), &event).await?;
-        assert_eq!(result.event_id, event.id);
-        assert_eq!(result.source, event.source);
-        assert_eq!(result.event_type, event.event_type);
+        let result_id = insert_event(ctx.pool(), &event).await?;
+        assert_eq!(result_id, event.id);
+
+        // Verify the event was inserted correctly by fetching it back
+        let inserted = get_event_by_id(ctx.pool(), result_id).await?;
+        assert_eq!(inserted.source, event.source);
+        assert_eq!(inserted.event_type, event.event_type);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_get_event_by_id(ctx: TestContext) -> TestResult {
+    async fn test_get_event_by_id(ctx: TestContext) -> anyhow::Result<()> {
         // Insert a test event first
         let event = ctx
             .event()
@@ -290,10 +292,7 @@ mod tests {
             .await?;
 
         // Retrieve it by ID
-        let retrieved = get_event_by_id(ctx.pool(), event.id).await?;
-        assert!(retrieved.is_some());
-
-        let retrieved_event = retrieved.unwrap();
+        let retrieved_event = get_event_by_id(ctx.pool(), event.id).await?;
         assert_eq!(retrieved_event.id, event.id);
         assert_eq!(retrieved_event.source, "get.test");
         assert_eq!(retrieved_event.event_type, "test.get");
@@ -302,7 +301,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_count_events(ctx: TestContext) -> TestResult {
+    async fn test_count_events(ctx: TestContext) -> anyhow::Result<()> {
         // Insert multiple events
         for i in 0..5 {
             ctx.event()

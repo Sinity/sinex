@@ -1,7 +1,6 @@
 //! Enhanced payload structures for system events
 //!
 //! This module provides comprehensive payload structures for D-Bus signals,
-//! journal entries, and other system events, ported from the legacy
 //! sinex-events-system implementation.
 
 use serde::{Deserialize, Serialize};

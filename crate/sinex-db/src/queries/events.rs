@@ -16,6 +16,25 @@ use sqlx::PgPool;
 /// Event query registry with centralized event operations
 pub struct EventQueries;
 
+/// Standard column projection for event queries
+const EVENT_COLUMNS: &[&str] = &[
+    "event_id::uuid as \"id!\"",
+    "source as \"source!\"",
+    "event_type as \"event_type!\"",
+    "ts_ingest as \"ts_ingest!\"",
+    "ts_orig",
+    "host as \"host!\"",
+    "ingestor_version",
+    "payload_schema_id::uuid as \"payload_schema_id\"",
+    "payload as \"payload!\"",
+    "source_event_ids::ulid[] as \"source_event_ids\"",
+    "source_material_id::uuid as \"source_material_id\"",
+    "source_material_offset_start",
+    "source_material_offset_end",
+    "anchor_byte",
+    "associated_blob_ids::uuid[] as \"associated_blob_ids\"",
+];
+
 impl EventQueries {
     /// Get an event by ID
     ///
@@ -23,18 +42,7 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_one::<RawEvent>(pool)`
     pub fn get_by_id(event_id: Ulid) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_eq("event_id", QueryParam::Ulid(event_id))
     }
 
@@ -73,18 +81,7 @@ impl EventQueries {
                 QueryParam::OptionalUlid(payload_schema_id),
                 QueryParam::OptionalUlidArray(source_event_ids),
             ])
-            .returning(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .returning(EVENT_COLUMNS)
     }
 
     /// Insert event with ULID array handling
@@ -123,18 +120,7 @@ impl EventQueries {
 
         builder = builder.values(&values);
 
-        builder.returning(&[
-            "event_id::uuid as \"id!\"",
-            "source as \"source!\"",
-            "event_type as \"event_type!\"",
-            "ts_ingest as \"ts_ingest!\"",
-            "ts_orig",
-            "host as \"host!\"",
-            "ingestor_version",
-            "payload_schema_id::uuid as \"payload_schema_id\"",
-            "payload as \"payload!\"",
-            "source_event_ids::ulid[] as \"source_event_ids\"",
-        ])
+        builder.returning(EVENT_COLUMNS)
     }
 
     /// Count total events
@@ -198,18 +184,7 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_recent(limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
         let mut builder = QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .order_by("ts_ingest", "DESC");
 
         if let Some(limit) = limit {
@@ -229,18 +204,7 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_by_source(source: String, limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
         let mut builder = QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_eq("source", QueryParam::String(source))
             .order_by("ts_ingest", "DESC");
 
@@ -265,18 +229,7 @@ impl EventQueries {
         offset: Option<i64>,
     ) -> QueryBuilder {
         let mut builder = QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_eq("event_type", QueryParam::String(event_type))
             .order_by("ts_ingest", "DESC");
 
@@ -297,18 +250,7 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_by_ids(event_ids: Vec<Ulid>) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_in("event_id", QueryParam::UlidArray(event_ids))
             .order_by("ts_ingest", "DESC")
     }
@@ -324,18 +266,7 @@ impl EventQueries {
         offset: Option<i64>,
     ) -> QueryBuilder {
         let mut builder = QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_op("ts_ingest", ">=", QueryParam::Timestamp(start_time))
             .where_op("ts_ingest", "<=", QueryParam::Timestamp(end_time))
             .order_by("ts_ingest", "DESC");
@@ -405,19 +336,7 @@ impl EventQueries {
     /// QueryBuilder that can be executed with `.fetch_all::<RawEvent>(pool)`
     pub fn get_with_blobs(limit: Option<i64>, offset: Option<i64>) -> QueryBuilder {
         let mut builder = QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "associated_blob_ids::uuid[] as \"associated_blob_ids!\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_op(
                 "associated_blob_ids",
                 "IS NOT",
@@ -494,23 +413,7 @@ impl EventQueries {
                 QueryParam::UlidArray(vec![blob_id]),
                 QueryParam::OptionalUlidArray(source_event_ids),
             ])
-            .returning(&[
-                "event_id::uuid as \"id!\"",
-                "source as \"source!\"",
-                "event_type as \"event_type!\"",
-                "ts_ingest as \"ts_ingest!\"",
-                "ts_orig",
-                "host as \"host!\"",
-                "ingestor_version",
-                "payload_schema_id::uuid as \"payload_schema_id\"",
-                "payload as \"payload!\"",
-                "source_material_id::uuid as \"source_material_id\"",
-                "source_material_offset_start",
-                "source_material_offset_end",
-                "anchor_byte",
-                "associated_blob_ids::uuid[] as \"associated_blob_ids\"",
-                "source_event_ids::ulid[] as \"source_event_ids\"",
-            ])
+            .returning(EVENT_COLUMNS)
     }
 
     /// Find canonical command event by time window and command text
@@ -689,12 +592,7 @@ impl EventQueries {
         end_time: DateTime<Utc>,
     ) -> QueryBuilder {
         QueryBuilder::select(tables::EVENTS)
-            .columns(&[
-                "event_id::uuid as \"id!\"",
-                "ts_ingest as \"timestamp!\"",
-                "payload as \"payload!\"",
-                "host as \"host!\"",
-            ])
+            .columns(EVENT_COLUMNS)
             .where_eq("source", QueryParam::String(process_name))
             .where_eq(
                 "event_type",

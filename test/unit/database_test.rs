@@ -245,7 +245,7 @@ stateful_proptest! {
             // Force rollback
             let result = ctx.transaction(|tx| async move {
                 tx.insert_event(&arbitrary_event()).await?;
-                Err(CoreError::Database("Forced rollback".into()))
+                Err(CoreError::database("Forced rollback".into()).build())
             }).await;
 
             assert!(result.is_err());

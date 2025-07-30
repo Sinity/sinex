@@ -23,7 +23,6 @@
 
 use regex::Regex;
 use serde_json::json;
-use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;

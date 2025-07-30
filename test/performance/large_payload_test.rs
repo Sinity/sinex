@@ -16,7 +16,7 @@ use tokio::time::timeout;
 // =============================================================================
 
 #[sinex_test(timeout = 300)] // 5 minute timeout for large operations
-async fn test_progressive_payload_sizes(ctx: TestContext) -> TestResult {
+async fn test_progressive_payload_sizes(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing progressive payload sizes...");
 
     let pool = ctx.pool();
@@ -181,7 +181,7 @@ async fn test_progressive_payload_sizes(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_deeply_nested_json_structures(ctx: TestContext) -> TestResult {
+async fn test_deeply_nested_json_structures(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing deeply nested JSON structures...");
 
     let pool = ctx.pool();
@@ -287,7 +287,7 @@ async fn test_deeply_nested_json_structures(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test(timeout = 120)]
-async fn test_large_arrays_and_objects(ctx: TestContext) -> TestResult {
+async fn test_large_arrays_and_objects(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing large arrays and objects...");
 
     let pool = ctx.pool();
@@ -420,7 +420,7 @@ async fn test_large_arrays_and_objects(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_large_payload_memory_pressure(ctx: TestContext) -> TestResult {
+async fn test_concurrent_large_payload_memory_pressure(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing concurrent large payload memory pressure...");
 
     let pool = ctx.pool();

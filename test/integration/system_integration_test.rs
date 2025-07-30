@@ -46,7 +46,7 @@ fn create_comprehensive_config() -> serde_json::Value {
 }
 
 #[sinex_test]
-async fn test_system_startup_with_all_configurations(ctx: TestContext) -> TestResult {
+async fn test_system_startup_with_all_configurations(ctx: TestContext) -> anyhow::Result<()> {
     let config = create_comprehensive_config();
 
     // Validate configuration structure
@@ -339,7 +339,7 @@ async fn test_monitoring_system_startup(_config: &serde_json::Value) -> AnyhowRe
 }
 
 #[sinex_test]
-async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> TestResult {
+async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> anyhow::Result<()> {
     let mut config = create_comprehensive_config();
 
     config.enabled_events = vec![
@@ -431,7 +431,7 @@ async fn test_annex_fallback_scenario() -> AnyhowResult<bool> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_systemd_notify_protocol(ctx: TestContext) -> TestResult {
+async fn test_systemd_notify_protocol(ctx: TestContext) -> anyhow::Result<()> {
     use mock_types::{SystemdEvent, SystemdNotifier};
 
     let notifier = SystemdNotifier::new();
@@ -472,7 +472,7 @@ async fn test_systemd_notify_protocol(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_resource_limits_configuration(ctx: TestContext) -> TestResult {
+async fn test_resource_limits_configuration(ctx: TestContext) -> anyhow::Result<()> {
     let presets = vec![
         ("lite", ResourcePreset::lite()),
         ("normal", ResourcePreset::normal()),
@@ -524,7 +524,7 @@ async fn test_resource_limits_configuration(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_deployment_checklist_automation(ctx: TestContext) -> TestResult {
+async fn test_deployment_checklist_automation(ctx: TestContext) -> anyhow::Result<()> {
     let mut checklist = DeploymentChecklist::new();
 
     checklist.add_check("Database connectivity", || async { Ok(true) });
@@ -561,7 +561,7 @@ async fn test_deployment_checklist_automation(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestResult {
+async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> anyhow::Result<()> {
     println!("🚀 Starting comprehensive abstraction integration test");
 
     // Create a simple test configuration
@@ -648,7 +648,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> TestRes
 // =============================================================================
 
 #[sinex_test]
-async fn test_database_disconnection_recovery(ctx: TestContext) -> TestResult {
+async fn test_database_disconnection_recovery(ctx: TestContext) -> anyhow::Result<()> {
     let recovery_test = test_database_connection_recovery(ctx.pool()).await?;
     assert!(
         recovery_test,
@@ -902,7 +902,7 @@ impl Clone for SystemHealthMonitor {
 }
 
 #[sinex_test]
-async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> TestResult {
+async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
@@ -1087,7 +1087,7 @@ const LARGE_PAYLOAD_SIZE: usize = 10 * 1024 * 1024;
 const EXTREME_PAYLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 #[sinex_test]
-async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
+async fn test_small_payload_handling(ctx: TestContext) -> anyhow::Result<()> {
     let small_content = "x".repeat(SMALL_PAYLOAD_SIZE / 2);
     let payload = json!({
         "content": small_content,
@@ -1114,7 +1114,7 @@ async fn test_small_payload_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
+async fn test_large_payload_handling(ctx: TestContext) -> anyhow::Result<()> {
     let large_content = "b".repeat(LARGE_PAYLOAD_SIZE);
     let payload = json!({
         "very_large_text": large_content,
@@ -1157,7 +1157,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_extreme_payload_rejection(ctx: TestContext) -> TestResult {
+async fn test_extreme_payload_rejection(ctx: TestContext) -> anyhow::Result<()> {
     let extreme_content = "c".repeat(EXTREME_PAYLOAD_SIZE);
     let payload = json!({
         "extreme_text": extreme_content,
@@ -1243,7 +1243,7 @@ async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
 }
 
 #[sinex_test]
-async fn test_exo_cli_error_handling(ctx: TestContext) -> TestResult {
+async fn test_exo_cli_error_handling(ctx: TestContext) -> anyhow::Result<()> {
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
 
     let output = Command::new("python3")
@@ -1589,7 +1589,7 @@ impl GitAnnexTestRepo {
 }
 
 #[sinex_test]
-async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> TestResult {
+async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     let annex_repo = GitAnnexTestRepo::new().await?;
@@ -1795,7 +1795,7 @@ async fn test_event_processing_with_annex_blobs(
 }
 
 #[sinex_test]
-async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> TestResult {
+async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     test_annex_unavailable_fallback(pool).await?;
@@ -1896,7 +1896,7 @@ use mock_types::*;
 // =============================================================================
 
 #[sinex_test]
-async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
+async fn test_agent_manifest_create(ctx: TestContext) -> anyhow::Result<()> {
     // Create a complete agent manifest
     let result = sqlx::query(
         "INSERT INTO core.processor_manifests
@@ -1955,7 +1955,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
         Option<String>,            // repo_url
     );
     let manifest: ManifestRow = sqlx::query_as(
-        "SELECT automaton_name, description, version, status, agent_type,
+        "SELECT processor_name, description, version, status, agent_type,
                 config_template_json, produces_event_types, subscribes_to_event_types,
                 required_capabilities, llm_dependencies, repo_url
          FROM core.processor_manifests
@@ -1985,7 +1985,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
+async fn test_agent_manifest_update(ctx: TestContext) -> anyhow::Result<()> {
     // Create agent
     sqlx::query("INSERT INTO core.processor_manifests (processor_name, processor_type, version) VALUES ($1, 'automaton', $2)")
         .bind("update_test_agent")
@@ -2013,7 +2013,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
              status = $2,
              last_heartbeat_ts = $3,
              produces_event_types = $4::jsonb
-         WHERE automaton_name = $5",
+         WHERE processor_name = $5",
     )
     .bind("1.1.0")
     .bind("stopped")
@@ -2048,7 +2048,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
+async fn test_agent_manifest_delete(ctx: TestContext) -> anyhow::Result<()> {
     // Create agent
     sqlx::query("INSERT INTO core.processor_manifests (processor_name, processor_type, version) VALUES ($1, 'automaton', $2)")
         .bind("delete_test_agent")
@@ -2074,7 +2074,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
     .unwrap();
 
     sqlx::query(
-        "INSERT INTO sinex_schemas.work_queue (event_id, target_automaton_name)
+        "INSERT INTO sinex_schemas.work_queue (event_id, target_processor_name)
          VALUES ($1::uuid, $2)",
     )
     .bind(event_id.to_uuid())
@@ -2103,7 +2103,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 
     // Verify work queue items were cascade deleted
     let queue_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_automaton_name = $1",
+        "SELECT COUNT(*) FROM sinex_schemas.work_queue WHERE target_processor_name = $1",
     )
     .bind("delete_test_agent")
     .fetch_one(ctx.pool())
@@ -2116,7 +2116,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
+async fn test_agent_status_transitions(ctx: TestContext) -> anyhow::Result<()> {
     // Create agent in pending state
     sqlx::query(
         "INSERT INTO core.processor_manifests (processor_name, processor_type, version, status)
@@ -2191,7 +2191,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResult {
+async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> anyhow::Result<()> {
     // Create agent with complex capabilities
     let capabilities = json!({
         "filesystem_read": ["/home/user/documents", "/var/log/app"],
@@ -2256,7 +2256,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-async fn test_agent_event_subscription_queries(ctx: TestContext) -> TestResult {
+async fn test_agent_event_subscription_queries(ctx: TestContext) -> anyhow::Result<()> {
     // Create multiple agents with different subscriptions
     let agents = vec![
         (

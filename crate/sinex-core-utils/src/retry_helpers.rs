@@ -3,7 +3,7 @@
 //! This module provides utilities for retrying async operations with
 //! configurable backoff strategies.
 
-use sinex_core_types::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -106,7 +106,7 @@ where
             }
             Err(e) => {
                 if attempt >= config.max_attempts {
-                    return Err(CoreError::Unknown(format!(
+                    return Err(SinexError::unknown(format!(
                         "Operation '{}' failed after {} attempts: {}",
                         operation_name, attempt, e
                     )));
@@ -181,7 +181,7 @@ where
             }
             Err(e) => {
                 if attempt >= config.max_attempts || !should_retry(&e) {
-                    return Err(CoreError::Unknown(format!(
+                    return Err(SinexError::unknown(format!(
                         "Operation '{}' failed: {}",
                         operation_name, e
                     )));
@@ -221,7 +221,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_success_first_attempt() {
-        let result = retry_simple("test_op", || Ok::<_, CoreError>(42)).await;
+        let result = retry_simple("test_op", || Ok::<_, SinexError>(42)).await;
         assert_eq!(result.unwrap(), 42);
     }
 

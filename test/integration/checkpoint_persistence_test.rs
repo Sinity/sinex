@@ -80,7 +80,7 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
         vec![EventFilter::new(Some("test".to_string()), None)]
     }
 
-    fn automaton_name(&self) -> &str {
+    fn processor_name(&self) -> &str {
         &self.name
     }
 }
@@ -89,7 +89,7 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
 #[sinex_test]
 async fn test_checkpoint_persistence_and_restart_recovery(
     ctx: crate::TestContext,
-) -> crate::TestResult {
+) -> crate::anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut redis_conn = ctx.redis().await?;
     // Start ingestd for this test

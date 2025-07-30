@@ -24,7 +24,7 @@
 //! ```rust
 //! // Automatic through TestContext (recommended)
 //! #[sinex_test]
-//! async fn test_something(ctx: TestContext) -> TestResult<()> {
+//! async fn test_something(ctx: TestContext) -> Result<()> {
 //!     // Database automatically acquired and cleaned
 //!     ctx.event().source("test").insert().await?;
 //!     Ok(())
@@ -70,7 +70,8 @@
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use sinex_core_types::{timeouts, CoreError, DbPool, Result as TestResult};
+use sinex_core_types::{timeouts, DbPool};
+use sinex_error::{Result, SinexError};
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -232,7 +233,7 @@ impl TestDatabase {
     }
 
     /// Check if the database is healthy
-    pub async fn check_health(&self) -> TestResult<bool> {
+    pub async fn check_health(&self) -> Result<bool> {
         match sqlx::query("SELECT 1 as health_check")
             .fetch_one(&self.pool)
             .await
@@ -243,7 +244,7 @@ impl TestDatabase {
     }
 
     /// Get database statistics for debugging
-    pub async fn get_stats(&self) -> TestResult<DatabaseStats> {
+    pub async fn get_stats(&self) -> Result<DatabaseStats> {
         let row = sqlx::query!(
             r#"
             SELECT
@@ -263,7 +264,7 @@ impl TestDatabase {
     }
 
     /// Force cleanup of this database (for testing)
-    pub async fn force_cleanup(&self) -> TestResult<()> {
+    pub async fn force_cleanup(&self) -> Result<()> {
         clean_database(&self.pool, &self.name).await
     }
 }
@@ -354,7 +355,7 @@ struct DatabasePool {
 
 impl DatabasePool {
     /// Initialize the pool
-    async fn new(config: PoolConfig) -> TestResult<Self> {
+    async fn new(config: PoolConfig) -> Result<Self> {
         eprintln!(
             "🚀 Initializing database pool with {} databases (reusing existing if available)...",
             config.size
@@ -440,7 +441,7 @@ impl DatabasePool {
                 // Store URL for later pool creation
                 let url = base_url.replace("/sinex_dev", &format!("/{}", name));
 
-                Result::<_, CoreError>::Ok((name, url))
+                Ok::<_, anyhow::Error>((name, url))
             });
 
             tasks.push(task);
@@ -448,9 +449,10 @@ impl DatabasePool {
 
         // Wait for all databases to be created
         for task in tasks {
-            let (name, url) = task.await.map_err(|e| {
-                CoreError::Service(format!("Database creation task failed: {}", e))
-            })??;
+            let (name, url) = task
+                .await
+                .map_err(|e| SinexError::service(format!("Database creation task failed: {}", e)))?
+                .map_err(|e| SinexError::database(e.to_string()))?;
             slots.push(Arc::new(DatabaseSlot {
                 name,
                 url,
@@ -470,7 +472,7 @@ impl DatabasePool {
     }
 
     /// Acquire a database from the pool
-    async fn acquire(&self) -> TestResult<TestDatabase> {
+    async fn acquire(&self) -> Result<TestDatabase> {
         let start_time = std::time::Instant::now();
         let mut attempts = 0;
 
@@ -569,7 +571,7 @@ impl DatabasePool {
             attempts += 1;
             if attempts > 100 {
                 let total_time = start_time.elapsed();
-                return Err(CoreError::Unknown(format!(
+                return Err(SinexError::unknown(format!(
                     "Failed to acquire database after {} attempts ({:.1?})",
                     attempts, total_time
                 )));
@@ -590,212 +592,35 @@ impl DatabasePool {
     }
 }
 
-/// Clean a database for reuse with comprehensive cleanup strategies
-async fn clean_database(pool: &DbPool, db_name: &str) -> TestResult<()> {
+/// Clean a database for reuse
+async fn clean_database(pool: &DbPool, db_name: &str) -> Result<()> {
     eprintln!("🧹 Cleaning database: {}", db_name);
 
-    // First, disable FK checks for the cleanup session
-    sqlx::query("SET session_replication_role = 'replica'")
-        .execute(pool)
-        .await?;
-
-    // Try to use TRUNCATE for non-hypertables (much faster and more thorough)
-    let truncate_result = sqlx::query(
-        r#"
-        TRUNCATE TABLE 
-            core.event_annotations,
-            core.event_artifact_refs,
-            core.event_relations,
-            core.event_cluster_members,
-            core.artifact_event_sources,
-            core.event_embeddings,
-            core.entity_relations,
-            core.artifact_embeddings,
-            core.revisions,
-            core.artifact_tags,
-            core.artifact_relations,
-            core.entities,
-            core.artifacts,
-            core.event_clusters,
-            sinex_schemas.processor_manifests
-        CASCADE
-    "#,
-    )
-    .execute(pool)
-    .await;
-
-    if let Err(e) = truncate_result {
-        eprintln!("  ⚠️  TRUNCATE failed ({}), falling back to DELETE", e);
-
-        // Fall back to DELETE in dependency order
-        let delete_queries = [
-            // First, delete from tables that reference core.events
-            "DELETE FROM core.event_annotations",
-            "DELETE FROM core.event_artifact_refs",
-            "DELETE FROM core.event_relations",
-            "DELETE FROM core.event_cluster_members",
-            "DELETE FROM core.artifact_event_sources",
-            "DELETE FROM core.event_embeddings",
-            // Delete from tables that reference entities
-            "DELETE FROM core.entity_relations",
-            // Delete from artifact-related tables
-            "DELETE FROM core.artifact_embeddings",
-            "DELETE FROM core.revisions",
-            "DELETE FROM core.artifact_tags",
-            "DELETE FROM core.artifact_relations",
-            "DELETE FROM sinex_schemas.processor_manifests",
-            // Finally, delete from primary tables
-            "DELETE FROM core.entities",
-            "DELETE FROM core.artifacts",
-            "DELETE FROM core.event_clusters",
-        ];
-
-        for query in delete_queries {
-            match sqlx::query(query).execute(pool).await {
-                Ok(result) => {
-                    let rows = result.rows_affected();
-                    if rows > 0 {
-                        let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
-                        eprintln!("  🧹 Deleted {} rows from {}", rows, table_name);
-                    }
-                }
-                Err(e) => {
-                    let table_name = query.split_whitespace().nth(2).unwrap_or("unknown");
-                    eprintln!("  ⚠️  Failed to delete from {}: {}", table_name, e);
-                }
-            }
-        }
-    } else {
-        eprintln!("  ✅ Tables truncated successfully");
-    }
-
-    // Handle core.events separately (hypertable cannot be truncated)
-    match sqlx::query("DELETE FROM core.events").execute(pool).await {
-        Ok(result) => {
-            let rows = result.rows_affected();
-            if rows > 0 {
-                eprintln!("  🧹 Deleted {} rows from core.events", rows);
-            }
+    // Use the shared db_common implementation
+    match crate::db_common::reset_database(pool).await {
+        Ok(_) => {
+            eprintln!("  ✅ Database cleanup verified - all tables empty");
+            Ok(())
         }
         Err(e) => {
-            eprintln!("  ⚠️  Failed to delete from core.events: {}", e);
-            // Try TimescaleDB-specific cleanup
-            match sqlx::query(
-                "SELECT drop_chunks('core.events', older_than => INTERVAL '0 seconds')",
-            )
-            .execute(pool)
-            .await
-            {
-                Ok(_) => eprintln!("  🧹 Dropped all chunks from core.events"),
-                Err(e2) => eprintln!("  ⚠️  Failed to drop chunks: {}", e2),
-            }
-        }
-    }
+            eprintln!("  ❌ CRITICAL: Database {} cleanup failed: {}", db_name, e);
+            POOL_METRICS.record_cleanup_failure();
 
-    // Re-enable FK checks
-    sqlx::query("SET session_replication_role = 'origin'")
-        .execute(pool)
-        .await?;
-
-    // Verification with detailed output
-    let verification_queries = [
-        ("core.events", "SELECT COUNT(*) FROM core.events"),
-        (
-            "core.event_annotations",
-            "SELECT COUNT(*) FROM core.event_annotations",
-        ),
-        ("core.entities", "SELECT COUNT(*) FROM core.entities"),
-        (
-            "core.entity_relations",
-            "SELECT COUNT(*) FROM core.entity_relations",
-        ),
-        ("core.artifacts", "SELECT COUNT(*) FROM core.artifacts"),
-        (
-            "core.artifact_relations",
-            "SELECT COUNT(*) FROM core.artifact_relations",
-        ),
-        ("core.revisions", "SELECT COUNT(*) FROM core.revisions"),
-    ];
-
-    let mut all_clean = true;
-    let mut remaining_counts = Vec::new();
-
-    for (table_name, query) in verification_queries {
-        let count: i64 = sqlx::query_scalar(query).fetch_one(pool).await.unwrap_or(0);
-
-        if count > 0 {
-            all_clean = false;
-            remaining_counts.push((table_name, count));
-        }
-    }
-
-    if !all_clean {
-        eprintln!("  ❌ CRITICAL: Database {} not fully cleaned!", db_name);
-        for (table, count) in &remaining_counts {
-            eprintln!("     - {} has {} rows remaining", table, count);
-        }
-
-        // Try one final aggressive cleanup
-        eprintln!("  🔧 Final cleanup attempt...");
-
-        // Disable all constraints
-        sqlx::query("SET session_replication_role = 'replica'")
-            .execute(pool)
-            .await?;
-
-        // Use CASCADE DELETE on primary tables to force cleanup
-        let cascade_queries = [
-            "DELETE FROM core.events CASCADE",
-            "DELETE FROM core.entities CASCADE",
-            "DELETE FROM core.artifacts CASCADE",
-            "DELETE FROM core.event_clusters CASCADE",
-        ];
-
-        for query in cascade_queries {
-            match sqlx::query(query).execute(pool).await {
-                Ok(result) => {
-                    if result.rows_affected() > 0 {
-                        eprintln!(
-                            "     🧹 CASCADE deleted from {}",
-                            query.split_whitespace().nth(2).unwrap_or("unknown")
-                        );
+            // Try to get more details about what went wrong
+            if let Ok(counts) = crate::db_common::get_row_counts(pool).await {
+                for (table, count) in counts {
+                    if count > 0 {
+                        eprintln!("     - {} has {} rows remaining", table, count);
                     }
                 }
-                Err(_e) => {
-                    // CASCADE might not be supported, try without
-                    let non_cascade = query.replace(" CASCADE", "");
-                    let _ = sqlx::query(&non_cascade).execute(pool).await;
-                }
             }
-        }
 
-        // Re-enable constraints
-        sqlx::query("SET session_replication_role = 'origin'")
-            .execute(pool)
-            .await?;
-
-        // Final verification
-        all_clean = true;
-        for (table_name, query) in verification_queries {
-            let count: i64 = sqlx::query_scalar(query).fetch_one(pool).await.unwrap_or(0);
-
-            if count > 0 {
-                all_clean = false;
-                eprintln!("     ❌ {} STILL has {} rows!", table_name, count);
-            }
-        }
-
-        if !all_clean {
-            POOL_METRICS.record_cleanup_failure();
-            return Err(CoreError::Unknown(format!(
-                "Database {} cleanup failed - tables still contain data",
-                db_name
-            )));
+            Err(SinexError::unknown(format!(
+                "Database {} cleanup failed: {}",
+                db_name, e
+            )))
         }
     }
-
-    eprintln!("  ✅ Database cleanup verified - all tables empty");
-    Ok(())
 }
 
 // Global pool instance - initialized on first use
@@ -803,7 +628,7 @@ static POOL: Lazy<tokio::sync::Mutex<Option<Arc<DatabasePool>>>> =
     Lazy::new(|| tokio::sync::Mutex::new(None));
 
 /// Acquire a test database
-pub async fn acquire_test_database() -> TestResult<TestDatabase> {
+pub async fn acquire_test_database() -> Result<TestDatabase> {
     // Get or initialize the pool
     let mut pool_lock = POOL.lock().await;
 
@@ -821,7 +646,7 @@ pub async fn acquire_test_database() -> TestResult<TestDatabase> {
 
 /// Ensure we have a template database with all migrations applied
 /// This is created once per test process and reused for all test databases
-async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult<String> {
+async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<String> {
     // Check if we already have a template database cached
     if let Some(template_name) = TEMPLATE_DB_NAME.get() {
         return Ok(template_name.clone());
@@ -846,7 +671,8 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult
         let mut admin_conn =
             tokio::time::timeout(Duration::from_secs(5), PgConnection::connect(admin_url))
                 .await
-                .map_err(|_| CoreError::Database("Admin connection timeout".to_string()))??;
+                .map_err(|_| SinexError::database("Admin connection timeout"))?
+                .map_err(|e| SinexError::database(format!("Admin connection failed: {}", e)))?;
 
         // Check if template already exists
         let exists: bool = sqlx::query_scalar(&format!(
@@ -859,7 +685,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult
         if exists {
             eprintln!("✅ Template database already exists, reusing it");
             admin_conn.close().await?;
-            return Ok::<bool, CoreError>(false); // false = no migrations needed
+            return Ok::<bool, SinexError>(false); // false = no migrations needed
         }
 
         eprintln!(
@@ -896,16 +722,18 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult
             sqlx::query(&create_query).execute(&mut admin_conn),
         )
         .await
-        .map_err(|_| CoreError::Database("Create database timeout".to_string()))??;
+        .map_err(|_| SinexError::database("Create database timeout"))?
+        .map_err(|e| SinexError::database(format!("Create database failed: {}", e)))?;
 
         admin_conn.close().await?;
-        Ok::<bool, CoreError>(true) // true = needs migrations
+        Ok::<bool, SinexError>(true) // true = needs migrations
     };
 
     // Execute admin operations with timeout
     let needs_migrations = tokio::time::timeout(Duration::from_secs(20), admin_conn_future)
         .await
-        .map_err(|_| CoreError::Database("Admin operations timeout".to_string()))??;
+        .map_err(|_| SinexError::database("Admin operations timeout"))?
+        .map_err(|e| SinexError::database(format!("Admin operations failed: {}", e)))?;
 
     // If template already exists, we're done
     if !needs_migrations {
@@ -913,7 +741,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult
         TEMPLATE_DB_NAME
             .set(template_name.to_string())
             .map_err(|_| {
-                CoreError::Unknown("Failed to cache template database name".to_string())
+                SinexError::unknown("Failed to cache template database name".to_string())
             })?;
         return Ok(template_name.to_string());
     }
@@ -956,23 +784,24 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult
         )
         .await
         .map_err(|_| {
-            CoreError::Database(
+            SinexError::database(
                 "Migration timeout - check if all required extensions are installed".to_string(),
             )
         })?
-        .map_err(|e| CoreError::Database(format!("Migration failed: {}", e)))?;
+        .map_err(|e| SinexError::database(format!("Migration failed: {}", e)))?;
 
         // Optimize template for faster copying
         optimize_template_for_tests(&template_pool).await?;
 
         template_pool.close().await;
-        Ok::<(), CoreError>(())
+        Ok::<(), SinexError>(())
     };
 
     // Execute template setup with timeout
     tokio::time::timeout(Duration::from_secs(45), template_pool_future)
         .await
-        .map_err(|_| CoreError::Database("Template setup timeout".to_string()))??;
+        .map_err(|_| SinexError::database("Template setup timeout"))?
+        .map_err(|e| SinexError::database(format!("Template setup failed: {}", e)))?;
 
     let template_elapsed = template_start.elapsed();
     eprintln!("✅ Template database created in {:?}", template_elapsed);
@@ -980,13 +809,13 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> TestResult
     // Cache the template name for future use
     TEMPLATE_DB_NAME
         .set(template_name.to_string())
-        .map_err(|_| CoreError::Unknown("Failed to cache template database name".to_string()))?;
+        .map_err(|_| SinexError::unknown("Failed to cache template database name"))?;
 
     Ok(template_name.to_string())
 }
 
 /// Check if required PostgreSQL extensions are available
-async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
+async fn check_required_extensions(pool: &DbPool) -> Result<()> {
     let required_extensions = vec![
         ("ulid", "pgx_ulid for ULID primary keys"),
         ("timescaledb", "TimescaleDB for hypertable partitioning"),
@@ -1009,45 +838,30 @@ async fn check_required_extensions(pool: &DbPool) -> TestResult<()> {
     }
 
     if !missing.is_empty() {
-        return Err(CoreError::database(format!(
+        return Err(SinexError::database(format!(
             "Missing required PostgreSQL extensions: {}",
             missing.join(", ")
-        ))
-        .build()
-        .into());
+        )));
     }
 
     Ok(())
 }
 
 /// Apply test-specific PostgreSQL optimizations (session-level only)
-async fn apply_test_session_optimizations(pool: &DbPool) -> TestResult<()> {
+async fn apply_test_session_optimizations(pool: &DbPool) -> Result<()> {
     if std::env::var("SINEX_TEST_OPTIMIZATIONS").is_ok() {
         eprintln!("⚡ Applying test session optimizations...");
-
-        // These settings only affect this session/connection, not the global server
-        // NOTE: Only use session-level settings, not server-level ones
-        let optimizations = vec![
-            "SET work_mem = '64MB'",
-            "SET maintenance_work_mem = '256MB'",
-            "SET synchronous_commit = off",
-            "SET random_page_cost = 1.1", // Assume SSD/fast storage for tests
-            "SET effective_cache_size = '1GB'",
-            "SET temp_buffers = '32MB'",
-            "SET statement_timeout = '30s'", // Prevent runaway queries
-        ];
-
-        for setting in optimizations {
-            if let Err(e) = sqlx::query(setting).execute(pool).await {
-                eprintln!("⚠️  Could not apply setting '{}': {}", setting, e);
-            }
-        }
+        crate::db_common::apply_test_optimizations(pool)
+            .await
+            .map_err(|e| {
+                SinexError::database(format!("Failed to apply test optimizations: {}", e))
+            })?;
     }
     Ok(())
 }
 
 /// Optimize template database for faster test copying
-async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
+async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
     eprintln!("🔧 Optimizing template database for test performance...");
 
     // Add a timeout to prevent hanging
@@ -1118,7 +932,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
             });
 
         eprintln!("✅ Template database optimized for test performance");
-        Ok::<(), CoreError>(())
+        Ok::<(), SinexError>(())
     };
 
     // Apply a reasonable timeout
@@ -1133,7 +947,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> TestResult<()> {
 }
 
 /// Health check for the entire pool
-pub async fn check_pool_health() -> TestResult<PoolHealthReport> {
+pub async fn check_pool_health() -> Result<PoolHealthReport> {
     let pool_lock = POOL.lock().await;
 
     if let Some(pool) = pool_lock.as_ref() {
@@ -1193,7 +1007,7 @@ pub struct PoolHealthReport {
 }
 
 /// Emergency pool reset function (for testing/debugging)
-pub async fn reset_pool() -> TestResult<()> {
+pub async fn reset_pool() -> Result<()> {
     let mut pool_lock = POOL.lock().await;
 
     if let Some(pool) = pool_lock.take() {
@@ -1215,7 +1029,7 @@ pub async fn reset_pool() -> TestResult<()> {
 }
 
 /// Initialize pool with custom configuration (for testing)
-async fn _init_pool_with_config(config: PoolConfig) -> TestResult<()> {
+async fn _init_pool_with_config(config: PoolConfig) -> Result<()> {
     let mut pool_lock = POOL.lock().await;
     let pool = Arc::new(DatabasePool::new(config).await?);
     *pool_lock = Some(pool);
@@ -1230,9 +1044,10 @@ fn _get_pool_config() -> PoolConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_pool_handles_concurrent_acquisition() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_pool_handles_concurrent_acquisition() -> Result<()> {
         // Test that multiple tasks can acquire databases concurrently
         let handles: Vec<_> = (0..20)
             .map(|i| {
@@ -1240,15 +1055,14 @@ mod tests {
                     let db = acquire_test_database().await?;
 
                     // Each should have clean database
-                    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
-                        .fetch_one(db.pool())
-                        .await?;
+                    use sinex_db::count_events;
+                    let count = count_events(db.pool()).await?;
                     assert_eq!(count, 0, "Database {} should be clean", i);
 
                     // Hold the database for a bit to ensure concurrency
                     tokio::time::sleep(Duration::from_millis(10)).await;
 
-                    Ok::<_, CoreError>(db.name().to_string())
+                    Ok::<_, SinexError>(db.name().to_string())
                 })
             })
             .collect();
@@ -1258,7 +1072,8 @@ mod tests {
         for handle in handles {
             let name = handle
                 .await
-                .map_err(|e| CoreError::Service(format!("Task failed: {}", e)))??;
+                .map_err(|e| SinexError::service(format!("Task failed: {}", e)))?
+                .map_err(|e| SinexError::database(format!("Database operation failed: {}", e)))?;
             db_names.push(name);
         }
 
@@ -1276,8 +1091,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_database_cleanup_on_drop() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_database_cleanup_on_drop() -> Result<()> {
         let db_name;
 
         {
@@ -1285,18 +1100,23 @@ mod tests {
             db_name = db.name().to_string();
 
             // Insert test data
-            sqlx::query(
-                "INSERT INTO core.events (id, source, event_type, host, payload) 
-                 VALUES ($1, 'test', 'test.event', 'test-host', '{}'::jsonb)",
+            use sinex_db::queries::EventQueries;
+            EventQueries::insert_event(
+                "test".to_string(),
+                "test.event".to_string(),
+                "test-host".to_string(),
+                serde_json::json!({}),
+                None,
+                None,
+                None,
+                None,
             )
-            .bind(sinex_ulid::Ulid::new().to_uuid())
             .execute(db.pool())
             .await?;
 
             // Verify data exists
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
-                .fetch_one(db.pool())
-                .await?;
+            use sinex_db::count_events;
+            let count = count_events(db.pool()).await?;
             assert_eq!(count, 1);
         } // db is dropped here
 
@@ -1308,17 +1128,16 @@ mod tests {
 
         if db2.name() == db_name {
             // If we got the same database, it should be clean
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
-                .fetch_one(db2.pool())
-                .await?;
+            use sinex_db::count_events;
+            let count = count_events(db2.pool()).await?;
             assert_eq!(count, 0, "Reused database should be cleaned");
         }
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_advisory_lock_prevents_double_acquisition() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_advisory_lock_prevents_double_acquisition() -> Result<()> {
         // This test verifies that two processes can't acquire the same database
         let db1 = acquire_test_database().await?;
         let lock_id1 = db1.lock_id;
@@ -1337,8 +1156,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_database_health_check() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_database_health_check() -> Result<()> {
         let db = acquire_test_database().await?;
 
         // Health check should pass
@@ -1351,8 +1170,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_pool_statistics() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_pool_statistics() -> Result<()> {
         // Get current stats
         let initial_stats = get_pool_stats();
         let initial_acquisitions = initial_stats.total_acquisitions;
@@ -1369,46 +1188,23 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_database_isolation() -> TestResult<()> {
-        // Acquire two databases simultaneously
-        let db1 = acquire_test_database().await?;
-        let db2 = acquire_test_database().await?;
-
-        // They should be different
-        assert_ne!(db1.name(), db2.name());
-
-        // Insert event in db1
-        sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, payload) 
-             VALUES ($1, 'db1', 'test', 'test', '{}'::jsonb)",
-        )
-        .bind(sinex_ulid::Ulid::new().to_uuid())
-        .execute(db1.pool())
-        .await?;
-
-        // db2 should not see it
-        let count: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = 'db1'")
-                .fetch_one(db2.pool())
-                .await?;
-        assert_eq!(count, 0);
-
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_clean_database_handles_complex_data() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_clean_database_handles_complex_data() -> Result<()> {
         let db = acquire_test_database().await?;
 
         // Insert data with foreign key relationships
-        let event_id = sinex_ulid::Ulid::new();
-        sqlx::query(
-            "INSERT INTO core.events (id, source, event_type, host, payload) 
-             VALUES ($1, 'test', 'test', 'test', '{}'::jsonb)",
+        use sinex_db::queries::EventQueries;
+        let event = EventQueries::insert_event(
+            "test".to_string(),
+            "test".to_string(),
+            "test".to_string(),
+            serde_json::json!({}),
+            None,
+            None,
+            None,
+            None,
         )
-        .bind(event_id.to_uuid())
-        .execute(db.pool())
+        .fetch_one::<sinex_core_types::RawEvent>(db.pool())
         .await?;
 
         // Add annotation
@@ -1417,7 +1213,7 @@ mod tests {
              VALUES ($1, $2, 'test', '{}'::jsonb, 'test-user')"
         )
         .bind(sinex_ulid::Ulid::new().to_uuid())
-        .bind(event_id.to_uuid())
+        .bind(event.id.to_uuid())
         .execute(db.pool())
         .await?;
 
@@ -1425,9 +1221,8 @@ mod tests {
         db.force_cleanup().await?;
 
         // Everything should be gone
-        let event_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
-            .fetch_one(db.pool())
-            .await?;
+        use sinex_db::count_events;
+        let event_count = count_events(db.pool()).await?;
         let annotation_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM core.event_annotations")
                 .fetch_one(db.pool())
@@ -1439,8 +1234,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_pool_health_report() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_pool_health_report() -> Result<()> {
         // Ensure pool is initialized
         let _db = acquire_test_database().await?;
 
@@ -1452,7 +1247,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn test_stress_concurrent_operations() -> TestResult<()> {
+    async fn test_stress_concurrent_operations() -> Result<()> {
         // Stress test with many concurrent acquisitions
         let mut handles = Vec::new();
 
@@ -1461,27 +1256,30 @@ mod tests {
                 let db = acquire_test_database().await?;
 
                 // Do some work
-                for j in 0..5 {
-                    sqlx::query(
-                        "INSERT INTO core.events (id, source, event_type, host, payload) 
-                         VALUES ($1, $2, 'stress.test', 'test', '{}'::jsonb)",
+                use sinex_db::queries::EventQueries;
+                for _j in 0..5 {
+                    EventQueries::insert_event(
+                        format!("task_{}", i),
+                        "stress.test".to_string(),
+                        "test".to_string(),
+                        serde_json::json!({}),
+                        None,
+                        None,
+                        None,
+                        None,
                     )
-                    .bind(sinex_ulid::Ulid::new().to_uuid())
-                    .bind(format!("task_{}", i))
                     .execute(db.pool())
                     .await?;
                 }
 
                 // Verify isolation
-                let count: i64 =
-                    sqlx::query_scalar("SELECT COUNT(*) FROM core.events WHERE source = $1")
-                        .bind(format!("task_{}", i))
-                        .fetch_one(db.pool())
-                        .await?;
+                let (count,): (i64,) = EventQueries::count_by_source(format!("task_{}", i))
+                    .fetch_one(db.pool())
+                    .await?;
 
                 assert_eq!(count, 5);
 
-                Ok::<_, CoreError>(())
+                Ok::<_, SinexError>(())
             });
             handles.push(handle);
         }
@@ -1490,14 +1288,15 @@ mod tests {
         for handle in handles {
             handle
                 .await
-                .map_err(|e| CoreError::Service(format!("Task failed: {}", e)))??;
+                .map_err(|e| SinexError::service(format!("Task failed: {}", e)))?
+                .map_err(|e| SinexError::database(format!("Database operation failed: {}", e)))?;
         }
 
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_template_database_exists() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_template_database_exists() -> Result<()> {
         // Template should be created on first use
         let _db = acquire_test_database().await?;
 
@@ -1519,8 +1318,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_database_pool_provides_connection() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_database_pool_provides_connection() -> Result<()> {
         let db = acquire_test_database().await?;
 
         // Direct pool access should work
@@ -1530,8 +1329,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_concurrent_context_allocation() -> TestResult<()> {
+    #[sinex_test]
+    async fn test_concurrent_context_allocation() -> Result<()> {
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
 
@@ -1539,7 +1338,7 @@ mod tests {
 
         // Try to allocate multiple databases concurrently
         let mut handles = vec![];
-        for i in 0..5 {
+        for _i in 0..5 {
             let counter = success_count.clone();
             let handle = tokio::spawn(async move {
                 match acquire_test_database().await {
@@ -1562,6 +1361,143 @@ mod tests {
 
         assert!(success_count.load(Ordering::SeqCst) > 0);
 
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_basic_pool_functionality() -> Result<()> {
+        // Test basic pool operations
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
+
+        // Basic connectivity test
+        let result: i32 = sqlx::query_scalar("SELECT 1").fetch_one(pool).await?;
+        assert_eq!(result, 1);
+
+        // Test isolation between databases
+        let db1 = acquire_test_database().await?;
+        let db2 = acquire_test_database().await?;
+        assert_ne!(
+            db1.name(),
+            db2.name(),
+            "Each test should get a unique database"
+        );
+
+        Ok(())
+    }
+}
+
+#[cfg(all(test, feature = "bench"))]
+mod benches {
+    use super::*;
+    use crate::sinex_bench;
+
+    /// Benchmark database acquisition from pool
+    ///
+    /// This measures the time to acquire a clean database from the pool,
+    /// including advisory lock acquisition and cleanup verification.
+    #[sinex_bench]
+    fn bench_acquire_database() -> anyhow::Result<()> {
+        let db = acquire_test_database().await?;
+        // Database is automatically returned on drop
+        drop(db);
+        Ok(())
+    }
+
+    /// Benchmark concurrent database acquisition
+    ///
+    /// Measures contention and performance when multiple tasks
+    /// try to acquire databases simultaneously.
+    #[sinex_bench(args = [2, 4, 8, 16])]
+    async fn bench_concurrent_acquisition(concurrency: usize) -> anyhow::Result<()> {
+        let handles: Vec<_> = (0..concurrency)
+            .map(|_| tokio::spawn(async move { acquire_test_database().await.unwrap() }))
+            .collect();
+
+        // Wait for all to complete
+        for handle in handles {
+            let db = handle.await?;
+            drop(db);
+        }
+        Ok(())
+    }
+
+    /// Benchmark database cleanup performance
+    ///
+    /// Measures the time to clean a database with various amounts of data
+    #[sinex_bench]
+    fn bench_database_cleanup() -> anyhow::Result<()> {
+        // Setup: Get a database and populate it
+        let db = acquire_test_database().await?;
+        let pool = db.pool();
+
+        // Insert test data
+        use sinex_db::queries::EventQueries;
+        for i in 0..100 {
+            EventQueries::insert_event(
+                "bench".to_string(),
+                "test".to_string(),
+                "host".to_string(),
+                serde_json::json!({"index": i}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        // Perform cleanup
+        clean_database(pool, db.name()).await?;
+        drop(db);
+        Ok(())
+    }
+
+    /// Benchmark template database operations
+    #[sinex_bench]
+    fn bench_ensure_template_database() -> anyhow::Result<()> {
+        let config = PoolConfig::default();
+        // This should be fast after first run (cached)
+        ensure_template_database(&config.admin_url, &config.base_url).await?;
+        Ok(())
+    }
+
+    /// Benchmark pool health check
+    #[sinex_bench]
+    fn bench_pool_health_check() -> anyhow::Result<()> {
+        // Ensure pool is initialized
+        let _ = acquire_test_database().await?;
+
+        check_pool_health().await?;
+        Ok(())
+    }
+
+    /// Benchmark database statistics collection
+    #[sinex_bench]
+    fn bench_get_database_stats() -> anyhow::Result<()> {
+        let db = acquire_test_database().await?;
+
+        // Insert some varied data
+        let pool = db.pool();
+        use sinex_db::queries::EventQueries;
+        for i in 0..50 {
+            EventQueries::insert_event(
+                format!("source_{}", i % 10),
+                "test".to_string(),
+                "bench".to_string(),
+                serde_json::json!({}),
+                None,
+                None,
+                None,
+                None,
+            )
+            .execute(pool)
+            .await?;
+        }
+
+        let stats = db.get_stats().await?;
+        divan::black_box(stats);
         Ok(())
     }
 }

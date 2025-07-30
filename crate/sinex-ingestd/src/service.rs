@@ -13,6 +13,7 @@ use crate::{
 use redis::{AsyncCommands, Client as RedisClient};
 use sinex_db::{events::EventRecord, queries::EventQueries};
 use sinex_events::RawEvent;
+use sinex_telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_ulid::Ulid;
 use sqlx::PgPool;
 use std::{
@@ -25,7 +26,7 @@ use std::{
 };
 use tokio::{
     net::UnixListener,
-    sync::Mutex,
+    sync::{mpsc, Mutex},
     time::{interval, Duration},
 };
 use tonic::{transport::Server, Request, Response, Status};
@@ -41,6 +42,7 @@ pub struct IngestService {
     shutdown_flag: Arc<AtomicBool>,
     event_buffer: Arc<Mutex<Vec<RawEvent>>>,
     last_flush: Arc<Mutex<SystemTime>>,
+    telemetry: Option<Arc<TelemetryAccumulator>>,
 }
 
 impl IngestService {
@@ -74,6 +76,9 @@ impl IngestService {
             EventValidator::new(false)
         };
 
+        // Initialize telemetry (we'll set up the channel after service is created)
+        let telemetry = None;
+
         let service = Self {
             config,
             db_pool,
@@ -83,15 +88,58 @@ impl IngestService {
             shutdown_flag: Arc::new(AtomicBool::new(false)),
             event_buffer: Arc::new(Mutex::new(Vec::new())),
             last_flush: Arc::new(Mutex::new(SystemTime::now())),
+            telemetry,
         };
 
         info!("Ingestion service initialized");
         Ok(service)
     }
 
+    /// Initialize telemetry system
+    async fn initialize_telemetry(&mut self) {
+        if self.config.dry_run || self.telemetry.is_some() {
+            return;
+        }
+
+        // Create a channel for telemetry events
+        let (tx, mut rx) = mpsc::channel(100);
+
+        // Clone event buffer for telemetry injection
+        let event_buffer = self.event_buffer.clone();
+
+        // Spawn task to inject telemetry events into the main event stream
+        tokio::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                let mut buffer = event_buffer.lock().await;
+                buffer.push(event);
+            }
+        });
+
+        let accumulator = TelemetryAccumulator::new("sinex-ingestd")
+            .with_event_sender(tx.clone())
+            .with_interval(Duration::from_secs(300)); // 5 minutes
+
+        // Set global telemetry
+        sinex_telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+
+        // Spawn telemetry emitter
+        accumulator.clone().spawn_emitter();
+
+        // Also spawn system telemetry emitter
+        let system_emitter = SystemTelemetryEmitter::new(tx);
+        system_emitter.spawn_emitter();
+
+        self.telemetry = Some(Arc::new(accumulator));
+
+        info!("Telemetry system initialized");
+    }
+
     /// Run the ingestion service
     pub async fn run(&mut self) -> IngestdResult<()> {
         info!("Starting ingestion service");
+
+        // Initialize telemetry
+        self.initialize_telemetry().await;
 
         // Ensure socket directory exists
         if let Some(parent) = std::path::Path::new(&self.config.socket_path).parent() {
@@ -390,8 +438,17 @@ impl IngestService {
 
     /// Add event to buffer
     async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
+        let event_type = event.event_type.clone();
+        let start = std::time::Instant::now();
+
         let mut buffer = self.event_buffer.lock().await;
         buffer.push(event);
+
+        // Record telemetry
+        if let Some(ref telemetry) = self.telemetry {
+            let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+            telemetry.record_event_processed(&event_type, duration_ms);
+        }
 
         // Check if we should flush immediately
         if buffer.len() >= self.config.batch_size {
@@ -456,6 +513,7 @@ impl Clone for IngestService {
             shutdown_flag: self.shutdown_flag.clone(),
             event_buffer: self.event_buffer.clone(),
             last_flush: self.last_flush.clone(),
+            telemetry: self.telemetry.clone(),
         }
     }
 }

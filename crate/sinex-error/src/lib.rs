@@ -1,432 +1,800 @@
+//! # sinex-error
+//!
+//! Comprehensive error handling for the Sinex ecosystem.
+//!
+//! This crate provides a unified error type ([`SinexError`]) that is used throughout
+//! the Sinex system. It offers rich error context, categorization, serialization,
+//! and seamless integration with both standard Rust error handling and the `anyhow` crate.
+//!
+//! ## Features
+//!
+//! - **Rich Context**: Attach key-value pairs and source errors to provide detailed diagnostics
+//! - **Categorization**: Errors are categorized by type (database, validation, network, etc.)
+//! - **Serialization**: Full serde support for API responses and logging
+//! - **Status Codes**: Automatic HTTP status code mapping for web services
+//! - **Retryability**: Built-in classification of retryable vs permanent errors
+//! - **Performance**: Zero-allocation error creation for common cases
+//! - **Integration**: Seamless conversion from common error types (io, serde, sqlx, etc.)
+//!
+//! ## Examples
+//!
+//! ### Basic Usage
+//!
+//! ```rust
+//! use sinex_error::{SinexError, Result};
+//!
+//! fn validate_email(email: &str) -> Result<()> {
+//!     if !email.contains('@') {
+//!         return Err(SinexError::validation("Invalid email format")
+//!             .with_context("email", email)
+//!             .with_context("reason", "missing @ symbol"));
+//!     }
+//!     Ok(())
+//! }
+//! ```
+//!
+//! ### With Source Chain
+//!
+//! ```rust
+//! use sinex_error::SinexError;
+//!
+//! let error = SinexError::service("Request processing failed")
+//!     .with_source("Database connection lost")
+//!     .with_source("Network timeout after 30s")
+//!     .with_context("request_id", "abc-123")
+//!     .with_context("retry_count", 3);
+//!
+//! // Error display includes full context and source chain
+//! println!("{}", error);
+//! ```
+//!
+//! ### Error Categorization
+//!
+//! ```rust
+//! use sinex_error::SinexError;
+//!
+//! let network_error = SinexError::network("Connection refused");
+//! assert!(network_error.is_retryable());
+//! assert_eq!(network_error.status_code(), 500);
+//!
+//! let validation_error = SinexError::validation("Invalid input");
+//! assert!(validation_error.is_client_error());
+//! assert_eq!(validation_error.status_code(), 400);
+//! ```
+//!
+//! ### Integration with anyhow
+//!
+//! ```rust
+//! use sinex_error::SinexError;
+//! use anyhow::Result;
+//!
+//! fn process_data() -> Result<String> {
+//!     // SinexError automatically converts to anyhow::Error
+//!     Err(SinexError::not_found("Data not found"))?
+//! }
+//! ```
+
+use displaydoc::Display;
+use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use sinex_ulid::Ulid;
-use std::collections::HashMap;
-use std::fmt::Display;
-use std::path::Path;
+use std::fmt;
 use thiserror::Error;
 
-/// Core error types used throughout the system
-#[derive(Error, Debug)]
-pub enum CoreError {
-    #[error("Database error: {0}")]
-    Database(String),
+/// Core error type for the Sinex system.
+///
+/// This enum represents all possible error conditions in the Sinex ecosystem.
+/// Each variant contains an [`ErrorDetails`] struct that holds the error message,
+/// optional context as key-value pairs, and optional source errors.
+///
+/// # Serialization
+///
+/// Errors are serialized with a `type` field containing the variant name and
+/// a `details` field containing the error details. This format is suitable for
+/// API responses and structured logging.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_error::SinexError;
+///
+/// // Simple error
+/// let err = SinexError::database("Connection failed");
+///
+/// // Error with context
+/// let err = SinexError::database("Query failed")
+///     .with_context("table", "users")
+///     .with_context("query_time_ms", 1500);
+///
+/// // Error with source chain
+/// let err = SinexError::service("Processing failed")
+///     .with_source("Database unavailable")
+///     .with_source("Connection timeout");
+/// ```
+#[derive(Error, Display, Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", content = "details")]
+pub enum SinexError {
+    /// Database error: {0}
+    Database(ErrorDetails),
 
-    #[error("Serialization error: {0}")]
-    Serialization(String),
+    /// Validation error: {0}
+    Validation(ErrorDetails),
 
-    #[error("Validation error: {0}")]
-    Validation(String),
+    /// Service error: {0}
+    Service(ErrorDetails),
 
-    #[error("Configuration error: {0}")]
-    Configuration(String),
+    /// IO error: {0}
+    Io(ErrorDetails),
 
-    #[error("IO error: {0}")]
-    Io(String),
+    /// Configuration error: {0}
+    Configuration(ErrorDetails),
 
-    #[error("Service error: {0}")]
-    Service(String),
+    /// Serialization error: {0}
+    Serialization(ErrorDetails),
 
-    #[error("Channel send error: {0}")]
-    ChannelSend(String),
+    /// Parse error: {0}
+    Parse(ErrorDetails),
 
-    #[error("Channel receive error: {0}")]
-    ChannelReceive(String),
+    /// Not found: {0}
+    NotFound(ErrorDetails),
 
-    #[error("Timeout error: {0}")]
-    Timeout(String),
+    /// Already exists: {0}
+    AlreadyExists(ErrorDetails),
 
-    #[error("Resource exhausted: {0}")]
-    ResourceExhausted(String),
+    /// Invalid state: {0}
+    InvalidState(ErrorDetails),
 
-    #[error("Invalid state: {0}")]
-    InvalidState(String),
+    /// Permission denied: {0}
+    PermissionDenied(ErrorDetails),
 
-    #[error("Not found: {0}")]
-    NotFound(String),
+    /// Network error: {0}
+    Network(ErrorDetails),
 
-    #[error("Already exists: {0}")]
-    AlreadyExists(String),
+    /// Channel send error: {0}
+    ChannelSend(ErrorDetails),
 
-    #[error("Permission denied: {0}")]
-    PermissionDenied(String),
+    /// Channel receive error: {0}
+    ChannelReceive(ErrorDetails),
 
-    #[error("Cancelled: {0}")]
-    Cancelled(String),
+    /// Timeout: {0}
+    Timeout(ErrorDetails),
 
-    #[error("Max retries exceeded: {0}")]
-    MaxRetriesExceeded(String),
+    /// Operation cancelled: {0}
+    Cancelled(ErrorDetails),
 
-    #[error("Parse error: {0}")]
-    Parse(String),
+    /// Max retries exceeded: {0}
+    MaxRetriesExceeded(ErrorDetails),
 
-    #[error("Network error: {0}")]
-    Network(String),
+    /// Resource exhausted: {0}
+    ResourceExhausted(ErrorDetails),
 
-    #[error("Other error: {0}")]
-    Other(String),
-
-    #[error("Unknown error: {0}")]
-    Unknown(String),
-
-    #[error("General error: {0}")]
-    General(String),
+    /// Unknown error: {0}
+    Unknown(ErrorDetails),
 }
 
-/// Validation error type
-#[derive(Error, Debug)]
-pub enum ValidationError {
-    #[error("Field validation failed: {field} - {message}")]
-    Field { field: String, message: String },
-
-    #[error("Schema validation failed: {0}")]
-    Schema(String),
-
-    #[error("Business rule validation failed: {0}")]
-    BusinessRule(String),
-
-    #[error("Invalid value for field {field}: {message}")]
-    InvalidValue { field: String, message: String },
-
-    #[error("Invalid type for field {field}: expected {expected}, got {actual}")]
-    InvalidType {
-        field: String,
-        expected: String,
-        actual: String,
-    },
-
-    #[error("Schema validation error: {0}")]
-    SchemaValidation(String),
-
-    #[error("Missing required field: {field}")]
-    MissingField { field: String },
-}
-
-impl From<std::io::Error> for CoreError {
-    fn from(e: std::io::Error) -> Self {
-        CoreError::Io(e.to_string())
-    }
-}
-
-impl From<serde_json::Error> for CoreError {
-    fn from(e: serde_json::Error) -> Self {
-        CoreError::Serialization(e.to_string())
-    }
-}
-
-impl From<sqlx::Error> for CoreError {
-    fn from(e: sqlx::Error) -> Self {
-        CoreError::Database(e.to_string())
-    }
-}
-
-impl<T> From<tokio::sync::mpsc::error::SendError<T>> for CoreError {
-    fn from(err: tokio::sync::mpsc::error::SendError<T>) -> Self {
-        CoreError::ChannelSend(err.to_string())
-    }
-}
-
-impl From<tokio::sync::oneshot::error::RecvError> for CoreError {
-    fn from(err: tokio::sync::oneshot::error::RecvError) -> Self {
-        CoreError::ChannelReceive(err.to_string())
-    }
-}
-
-pub type Result<T> = std::result::Result<T, CoreError>;
-
-/// Common type aliases for time handling
-pub type Timestamp = chrono::DateTime<chrono::Utc>;
-
-/// Builder for creating rich error contexts
-#[derive(Debug)]
-pub struct ErrorContext {
-    error_type: ErrorType,
+/// Detailed error information including message, context, and sources.
+///
+/// This struct holds the actual error details for each [`SinexError`] variant.
+/// It supports:
+/// - A primary error message
+/// - Key-value context pairs for debugging (preserved in insertion order)
+/// - A chain of source errors that led to this error
+///
+/// # Serialization
+///
+/// Empty context and sources are omitted from serialization to reduce payload size.
+/// The `default` attribute ensures deserialization works correctly when these fields
+/// are missing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ErrorDetails {
+    /// The primary error message
     message: String,
-    context: HashMap<String, String>,
-    source_chain: Vec<String>,
-    stack_trace: Option<String>,
+    /// Additional context as key-value pairs (insertion order preserved)
+    #[serde(skip_serializing_if = "IndexMap::is_empty", default)]
+    context: IndexMap<String, String>,
+    /// Chain of source errors that led to this error
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    sources: Vec<String>,
 }
 
-#[derive(Debug)]
-enum ErrorType {
-    Database,
-    Serialization,
-    Validation,
-    Configuration,
-    Io,
-    Other,
-}
-
-impl ErrorContext {
-    /// Create a new error context
-    pub fn new(error_type: CoreError) -> Self {
-        let (err_type, message) = match error_type {
-            CoreError::Database(msg) => (ErrorType::Database, msg),
-            CoreError::Serialization(msg) => (ErrorType::Serialization, msg),
-            CoreError::Validation(msg) => (ErrorType::Validation, msg),
-            CoreError::Configuration(msg) => (ErrorType::Configuration, msg),
-            CoreError::Io(msg) => (ErrorType::Io, msg),
-            CoreError::Service(msg) => (ErrorType::Other, msg),
-            CoreError::ChannelSend(msg) => (ErrorType::Other, msg),
-            CoreError::ChannelReceive(msg) => (ErrorType::Other, msg),
-            CoreError::Timeout(msg) => (ErrorType::Other, msg),
-            CoreError::ResourceExhausted(msg) => (ErrorType::Other, msg),
-            CoreError::InvalidState(msg) => (ErrorType::Other, msg),
-            CoreError::NotFound(msg) => (ErrorType::Other, msg),
-            CoreError::AlreadyExists(msg) => (ErrorType::Other, msg),
-            CoreError::PermissionDenied(msg) => (ErrorType::Other, msg),
-            CoreError::Cancelled(msg) => (ErrorType::Other, msg),
-            CoreError::MaxRetriesExceeded(msg) => (ErrorType::Other, msg),
-            CoreError::Parse(msg) => (ErrorType::Other, msg),
-            CoreError::Network(msg) => (ErrorType::Other, msg),
-            CoreError::Other(msg) => (ErrorType::Other, msg),
-            CoreError::Unknown(msg) => (ErrorType::Other, msg),
-            CoreError::General(msg) => (ErrorType::Other, msg),
-        };
-
+impl ErrorDetails {
+    /// Creates a new `ErrorDetails` with the given message.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use sinex_error::ErrorDetails;
+    /// let details = ErrorDetails::new("Connection failed");
+    /// ```
+    pub fn new(message: impl Into<String>) -> Self {
         Self {
-            error_type: err_type,
-            message,
-            context: HashMap::new(),
-            source_chain: Vec::new(),
-            stack_trace: capture_stack_trace(),
+            message: message.into(),
+            context: IndexMap::new(),
+            sources: Vec::new(),
         }
     }
 
-    /// Add contextual information
-    pub fn with_context(mut self, key: &str, value: impl Display) -> Self {
-        self.context.insert(key.to_string(), value.to_string());
+    /// Adds a context key-value pair to the error details.
+    ///
+    /// Context is preserved in insertion order and displayed when the error
+    /// is formatted. This method consumes and returns `self` for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use sinex_error::ErrorDetails;
+    /// let details = ErrorDetails::new("Query failed")
+    ///     .with_context("table", "users")
+    ///     .with_context("rows_affected", 0);
+    /// ```
+    pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        self.context.insert(key.into(), value.to_string());
         self
     }
 
-    /// Add source error information
-    pub fn with_source(mut self, source: impl Display) -> Self {
-        self.source_chain.push(source.to_string());
+    /// Adds a source error to the error chain.
+    ///
+    /// Sources are displayed in order when the error is formatted, showing
+    /// the chain of errors that led to this one. This method consumes and
+    /// returns `self` for chaining.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use sinex_error::ErrorDetails;
+    /// let details = ErrorDetails::new("Service unavailable")
+    ///     .with_source("Database connection failed")
+    ///     .with_source("Network timeout");
+    /// ```
+    pub fn with_source(mut self, source: impl ToString) -> Self {
+        self.sources.push(source.to_string());
+        self
+    }
+}
+
+impl fmt::Display for ErrorDetails {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)?;
+
+        if !self.context.is_empty() {
+            write!(f, " (")?;
+            for (i, (k, v)) in self.context.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}: {}", k, v)?;
+            }
+            write!(f, ")")?;
+        }
+
+        if !self.sources.is_empty() {
+            write!(f, "\nCaused by:")?;
+            for (i, source) in self.sources.iter().enumerate() {
+                write!(f, "\n  {}: {}", i + 1, source)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl SinexError {
+    // Direct constructors that return SinexError
+
+    /// Creates a new database error.
+    ///
+    /// Use this for errors related to database operations, connections,
+    /// queries, or schema issues.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sinex_error::SinexError;
+    ///
+    /// let err = SinexError::database("Connection pool exhausted");
+    /// let err = SinexError::database("Query timeout after 30s")
+    ///     .with_context("query", "SELECT * FROM users")
+    ///     .with_context("timeout_ms", 30000);
+    /// ```
+    pub fn database(msg: impl Into<String>) -> Self {
+        SinexError::Database(ErrorDetails::new(msg))
+    }
+
+    /// Creates a new validation error.
+    ///
+    /// Use this for input validation failures, schema validation errors,
+    /// or business rule violations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sinex_error::SinexError;
+    ///
+    /// let err = SinexError::validation("Email format invalid")
+    ///     .with_context("field", "email")
+    ///     .with_context("value", "not-an-email");
+    /// ```
+    pub fn validation(msg: impl Into<String>) -> Self {
+        SinexError::Validation(ErrorDetails::new(msg))
+    }
+
+    pub fn service(msg: impl Into<String>) -> Self {
+        SinexError::Service(ErrorDetails::new(msg))
+    }
+
+    pub fn io(msg: impl Into<String>) -> Self {
+        SinexError::Io(ErrorDetails::new(msg))
+    }
+
+    pub fn configuration(msg: impl Into<String>) -> Self {
+        SinexError::Configuration(ErrorDetails::new(msg))
+    }
+
+    pub fn serialization(msg: impl Into<String>) -> Self {
+        SinexError::Serialization(ErrorDetails::new(msg))
+    }
+
+    pub fn parse(msg: impl Into<String>) -> Self {
+        SinexError::Parse(ErrorDetails::new(msg))
+    }
+
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        SinexError::NotFound(ErrorDetails::new(msg))
+    }
+
+    pub fn already_exists(msg: impl Into<String>) -> Self {
+        SinexError::AlreadyExists(ErrorDetails::new(msg))
+    }
+
+    pub fn invalid_state(msg: impl Into<String>) -> Self {
+        SinexError::InvalidState(ErrorDetails::new(msg))
+    }
+
+    pub fn permission_denied(msg: impl Into<String>) -> Self {
+        SinexError::PermissionDenied(ErrorDetails::new(msg))
+    }
+
+    pub fn network(msg: impl Into<String>) -> Self {
+        SinexError::Network(ErrorDetails::new(msg))
+    }
+
+    pub fn channel_send(msg: impl Into<String>) -> Self {
+        SinexError::ChannelSend(ErrorDetails::new(msg))
+    }
+
+    pub fn channel_receive(msg: impl Into<String>) -> Self {
+        SinexError::ChannelReceive(ErrorDetails::new(msg))
+    }
+
+    pub fn timeout(msg: impl Into<String>) -> Self {
+        SinexError::Timeout(ErrorDetails::new(msg))
+    }
+
+    pub fn cancelled(msg: impl Into<String>) -> Self {
+        SinexError::Cancelled(ErrorDetails::new(msg))
+    }
+
+    pub fn max_retries_exceeded(msg: impl Into<String>) -> Self {
+        SinexError::MaxRetriesExceeded(ErrorDetails::new(msg))
+    }
+
+    pub fn resource_exhausted(msg: impl Into<String>) -> Self {
+        SinexError::ResourceExhausted(ErrorDetails::new(msg))
+    }
+
+    pub fn unknown(msg: impl Into<String>) -> Self {
+        SinexError::Unknown(ErrorDetails::new(msg))
+    }
+
+    // Builder-style context methods
+    pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        use SinexError::*;
+        let details = match &mut self {
+            Database(d)
+            | Validation(d)
+            | Service(d)
+            | Io(d)
+            | Configuration(d)
+            | Serialization(d)
+            | Parse(d)
+            | NotFound(d)
+            | AlreadyExists(d)
+            | InvalidState(d)
+            | PermissionDenied(d)
+            | Network(d)
+            | ChannelSend(d)
+            | ChannelReceive(d)
+            | Timeout(d)
+            | Cancelled(d)
+            | MaxRetriesExceeded(d)
+            | ResourceExhausted(d)
+            | Unknown(d) => d,
+        };
+        details.context.insert(key.into(), value.to_string());
         self
     }
 
-    /// Add event ID context
-    pub fn with_event_id(self, id: Ulid) -> Self {
-        self.with_context("event_id", id)
+    pub fn with_source(mut self, source: impl ToString) -> Self {
+        use SinexError::*;
+        let details = match &mut self {
+            Database(d)
+            | Validation(d)
+            | Service(d)
+            | Io(d)
+            | Configuration(d)
+            | Serialization(d)
+            | Parse(d)
+            | NotFound(d)
+            | AlreadyExists(d)
+            | InvalidState(d)
+            | PermissionDenied(d)
+            | Network(d)
+            | ChannelSend(d)
+            | ChannelReceive(d)
+            | Timeout(d)
+            | Cancelled(d)
+            | MaxRetriesExceeded(d)
+            | ResourceExhausted(d)
+            | Unknown(d) => d,
+        };
+        details.sources.push(source.to_string());
+        self
     }
 
-    /// Add timestamp context
-    pub fn with_timestamp(self, ts: Timestamp) -> Self {
-        self.with_context("timestamp", ts.to_rfc3339())
-    }
-
-    /// Add file path context
-    pub fn with_path(self, path: impl AsRef<Path>) -> Self {
-        self.with_context("path", path.as_ref().display())
-    }
-
-    /// Add operation context
-    pub fn with_operation(self, operation: &str) -> Self {
+    pub fn with_operation(self, operation: impl ToString) -> Self {
         self.with_context("operation", operation)
     }
 
-    /// Add field context
-    pub fn with_field(self, field: &str, value: impl Display) -> Self {
-        self.with_context(&format!("field_{}", field), value)
+    // Common context helpers
+    pub fn with_path(self, path: impl AsRef<std::path::Path>) -> Self {
+        self.with_context("path", path.as_ref().display().to_string())
     }
 
-    /// Build the final CoreError with all context
-    pub fn build(self) -> CoreError {
-        let mut final_message = self.message.clone();
+    pub fn with_duration(self, duration: std::time::Duration) -> Self {
+        self.with_context("duration_ms", duration.as_millis())
+    }
 
-        // Add context if any
-        if !self.context.is_empty() {
-            final_message.push_str(" (");
-            let mut parts = Vec::new();
-            for (key, value) in &self.context {
-                parts.push(format!("{}: {}", key, value));
-            }
-            final_message.push_str(&parts.join(", "));
-            final_message.push(')');
-        }
+    pub fn with_count(self, name: &str, count: usize) -> Self {
+        self.with_context(name, count)
+    }
 
-        // Add source chain if any
-        if !self.source_chain.is_empty() {
-            final_message.push_str("\nCaused by:");
-            for (i, source) in self.source_chain.iter().enumerate() {
-                final_message.push_str(&format!("\n  {}: {}", i + 1, source));
-            }
-        }
+    pub fn with_id(self, id_type: &str, id: impl ToString) -> Self {
+        self.with_context(id_type, id)
+    }
 
-        match self.error_type {
-            ErrorType::Database => CoreError::Database(final_message),
-            ErrorType::Serialization => CoreError::Serialization(final_message),
-            ErrorType::Validation => CoreError::Validation(final_message),
-            ErrorType::Configuration => CoreError::Configuration(final_message),
-            ErrorType::Io => CoreError::Io(final_message),
-            ErrorType::Other => CoreError::Unknown(final_message),
+    // Helper methods for error categorization
+
+    /// Determines if this error is retryable.
+    ///
+    /// Retryable errors are typically transient failures that may succeed
+    /// if retried. This includes network issues, timeouts, and temporary
+    /// service or database unavailability.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sinex_error::SinexError;
+    ///
+    /// assert!(SinexError::timeout("Request timed out").is_retryable());
+    /// assert!(SinexError::network("Connection refused").is_retryable());
+    /// assert!(!SinexError::validation("Invalid input").is_retryable());
+    /// ```
+    pub fn is_retryable(&self) -> bool {
+        matches!(
+            self,
+            SinexError::Timeout(_)
+                | SinexError::Network(_)
+                | SinexError::Database(_)
+                | SinexError::Service(_)
+        )
+    }
+
+    /// Determines if this error is caused by client behavior.
+    ///
+    /// Client errors are caused by invalid input, missing resources,
+    /// or insufficient permissions. These errors should not be retried
+    /// without changing the request.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sinex_error::SinexError;
+    ///
+    /// assert!(SinexError::validation("Invalid email").is_client_error());
+    /// assert!(SinexError::not_found("User not found").is_client_error());
+    /// assert!(!SinexError::database("Connection failed").is_client_error());
+    /// ```
+    pub fn is_client_error(&self) -> bool {
+        matches!(
+            self,
+            SinexError::Validation(_)
+                | SinexError::NotFound(_)
+                | SinexError::AlreadyExists(_)
+                | SinexError::Parse(_)
+                | SinexError::PermissionDenied(_)
+        )
+    }
+
+    /// Determines if this error represents a permanent failure.
+    ///
+    /// Permanent errors indicate conditions that won't be resolved by
+    /// retrying, such as configuration issues, permission denials, or
+    /// exhausted retry attempts.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sinex_error::SinexError;
+    ///
+    /// assert!(SinexError::permission_denied("Access denied").is_permanent());
+    /// assert!(SinexError::configuration("Invalid config").is_permanent());
+    /// assert!(!SinexError::timeout("Request timed out").is_permanent());
+    /// ```
+    pub fn is_permanent(&self) -> bool {
+        matches!(
+            self,
+            SinexError::MaxRetriesExceeded(_)
+                | SinexError::PermissionDenied(_)
+                | SinexError::Configuration(_)
+                | SinexError::InvalidState(_)
+        )
+    }
+
+    /// Returns the appropriate HTTP status code for this error.
+    ///
+    /// This mapping follows standard HTTP conventions:
+    /// - 400: Bad Request (validation, parse errors)
+    /// - 403: Forbidden (permission denied)
+    /// - 404: Not Found
+    /// - 408: Request Timeout
+    /// - 409: Conflict (already exists)
+    /// - 429: Too Many Requests (resource exhausted)
+    /// - 500: Internal Server Error (all others)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use sinex_error::SinexError;
+    ///
+    /// assert_eq!(SinexError::validation("Bad input").status_code(), 400);
+    /// assert_eq!(SinexError::not_found("Missing").status_code(), 404);
+    /// assert_eq!(SinexError::database("Failed").status_code(), 500);
+    /// ```
+    pub fn status_code(&self) -> u16 {
+        match self {
+            SinexError::Validation(_) | SinexError::Parse(_) => 400,
+            SinexError::PermissionDenied(_) => 403,
+            SinexError::NotFound(_) => 404,
+            SinexError::Timeout(_) => 408,
+            SinexError::AlreadyExists(_) => 409,
+            SinexError::ResourceExhausted(_) => 429,
+            _ => 500,
         }
     }
 
-    /// Convert to structured error info for logging
-    pub fn to_error_info(&self) -> ErrorInfo {
-        ErrorInfo {
-            error_type: format!("{:?}", self.error_type),
-            message: self.message.clone(),
-            context: self.context.clone(),
-            source_chain: self.source_chain.clone(),
-            stack_trace: self.stack_trace.clone(),
+    // Get structured context for telemetry
+    pub fn context_map(&self) -> &IndexMap<String, String> {
+        use SinexError::*;
+        let details = match self {
+            Database(d)
+            | Validation(d)
+            | Service(d)
+            | Io(d)
+            | Configuration(d)
+            | Serialization(d)
+            | Parse(d)
+            | NotFound(d)
+            | AlreadyExists(d)
+            | InvalidState(d)
+            | PermissionDenied(d)
+            | Network(d)
+            | ChannelSend(d)
+            | ChannelReceive(d)
+            | Timeout(d)
+            | Cancelled(d)
+            | MaxRetriesExceeded(d)
+            | ResourceExhausted(d)
+            | Unknown(d) => d,
+        };
+        &details.context
+    }
+
+    // Get the error message without context
+    pub fn message(&self) -> &str {
+        use SinexError::*;
+        let details = match self {
+            Database(d)
+            | Validation(d)
+            | Service(d)
+            | Io(d)
+            | Configuration(d)
+            | Serialization(d)
+            | Parse(d)
+            | NotFound(d)
+            | AlreadyExists(d)
+            | InvalidState(d)
+            | PermissionDenied(d)
+            | Network(d)
+            | ChannelSend(d)
+            | ChannelReceive(d)
+            | Timeout(d)
+            | Cancelled(d)
+            | MaxRetriesExceeded(d)
+            | ResourceExhausted(d)
+            | Unknown(d) => d,
+        };
+        &details.message
+    }
+
+    // Get the error sources
+    pub fn sources(&self) -> &[String] {
+        use SinexError::*;
+        let details = match self {
+            Database(d)
+            | Validation(d)
+            | Service(d)
+            | Io(d)
+            | Configuration(d)
+            | Serialization(d)
+            | Parse(d)
+            | NotFound(d)
+            | AlreadyExists(d)
+            | InvalidState(d)
+            | PermissionDenied(d)
+            | Network(d)
+            | ChannelSend(d)
+            | ChannelReceive(d)
+            | Timeout(d)
+            | Cancelled(d)
+            | MaxRetriesExceeded(d)
+            | ResourceExhausted(d)
+            | Unknown(d) => d,
+        };
+        &details.sources
+    }
+
+    // Get error variant as string for telemetry
+    pub fn variant_name(&self) -> &'static str {
+        match self {
+            SinexError::Database(_) => "Database",
+            SinexError::Validation(_) => "Validation",
+            SinexError::Service(_) => "Service",
+            SinexError::Io(_) => "Io",
+            SinexError::Configuration(_) => "Configuration",
+            SinexError::Serialization(_) => "Serialization",
+            SinexError::Parse(_) => "Parse",
+            SinexError::NotFound(_) => "NotFound",
+            SinexError::AlreadyExists(_) => "AlreadyExists",
+            SinexError::InvalidState(_) => "InvalidState",
+            SinexError::PermissionDenied(_) => "PermissionDenied",
+            SinexError::Network(_) => "Network",
+            SinexError::ChannelSend(_) => "ChannelSend",
+            SinexError::ChannelReceive(_) => "ChannelReceive",
+            SinexError::Timeout(_) => "Timeout",
+            SinexError::Cancelled(_) => "Cancelled",
+            SinexError::MaxRetriesExceeded(_) => "MaxRetriesExceeded",
+            SinexError::ResourceExhausted(_) => "ResourceExhausted",
+            SinexError::Unknown(_) => "Unknown",
         }
     }
 }
 
-/// Structured error information for logging/serialization
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ErrorInfo {
-    pub error_type: String,
-    pub message: String,
-    pub context: HashMap<String, String>,
-    pub source_chain: Vec<String>,
-    pub stack_trace: Option<String>,
-}
-
-impl CoreError {
-    /// Create a database error with context builder
-    pub fn database(msg: impl Display) -> ErrorContext {
-        ErrorContext::new(CoreError::Database(msg.to_string()))
-    }
-
-    /// Create a validation error with context builder
-    pub fn validation(msg: impl Display) -> ErrorContext {
-        ErrorContext::new(CoreError::Validation(msg.to_string()))
-    }
-
-    /// Create a configuration error with context builder
-    pub fn configuration(msg: impl Display) -> ErrorContext {
-        ErrorContext::new(CoreError::Configuration(msg.to_string()))
-    }
-
-    /// Create a serialization error with context builder
-    pub fn serialization(msg: impl Display) -> ErrorContext {
-        ErrorContext::new(CoreError::Serialization(msg.to_string()))
-    }
-
-    /// Create an IO error with context builder
-    pub fn io_error(path: impl AsRef<Path>) -> ErrorContext {
-        ErrorContext::new(CoreError::Io(format!(
-            "IO error for path: {}",
-            path.as_ref().display()
-        )))
-        .with_path(path)
-    }
-
-    /// Create a generic processing failed error
-    pub fn processing_failed() -> ErrorContext {
-        ErrorContext::new(CoreError::Unknown("Processing failed".to_string()))
-    }
-
-    /// Extract context from an existing error (for chaining)
-    pub fn context(&self) -> ErrorContext {
-        ErrorContext::new(self.clone())
-    }
-
-    /// Check if error has specific context key
-    pub fn has_context_key(&self, key: &str) -> bool {
-        self.to_string().contains(&format!("{}: ", key))
-    }
-
-    /// Quick error creation for missing required items
-    pub fn missing(item_type: &str, item_name: &str) -> Self {
-        Self::Validation(format!("Missing {}: {}", item_type, item_name))
-    }
-
-    /// Quick error creation for invalid values
-    pub fn invalid(field: &str, value: impl Display, reason: &str) -> Self {
-        Self::Validation(format!("Invalid {} '{}': {}", field, value, reason))
-    }
-
-    /// Quick error creation for not found items
-    pub fn not_found(item_type: &str, identifier: impl Display) -> Self {
-        Self::Validation(format!("{} not found: {}", item_type, identifier))
-    }
-
-    /// Quick error creation for timeout
-    pub fn timeout(operation: &str, duration: std::time::Duration) -> Self {
-        Self::Other(format!("{} timed out after {:?}", operation, duration))
+// Conversions from common error types
+impl From<std::io::Error> for SinexError {
+    fn from(e: std::io::Error) -> Self {
+        SinexError::Io(ErrorDetails::new(e.to_string()))
     }
 }
 
-// Helper for capturing stack traces
-fn capture_stack_trace() -> Option<String> {
-    // Stack trace capture could be implemented here if needed
-    // For now, return None to avoid overhead
-    None
+impl From<serde_json::Error> for SinexError {
+    fn from(e: serde_json::Error) -> Self {
+        SinexError::Serialization(ErrorDetails::new(e.to_string()))
+    }
 }
 
-/// Extension trait for Result types to add context
+impl From<sqlx::Error> for SinexError {
+    fn from(e: sqlx::Error) -> Self {
+        SinexError::Database(ErrorDetails::new(e.to_string()))
+    }
+}
+
+impl<T> From<tokio::sync::mpsc::error::SendError<T>> for SinexError {
+    fn from(err: tokio::sync::mpsc::error::SendError<T>) -> Self {
+        SinexError::ChannelSend(ErrorDetails::new(err.to_string()))
+    }
+}
+
+impl From<tokio::sync::oneshot::error::RecvError> for SinexError {
+    fn from(err: tokio::sync::oneshot::error::RecvError) -> Self {
+        SinexError::ChannelReceive(ErrorDetails::new(err.to_string()))
+    }
+}
+
+// Note: SinexError automatically converts to anyhow::Error via std::error::Error trait
+
+// Re-export anyhow utilities
+pub use anyhow::{bail, ensure, Context as AnyhowContext};
+
+pub type Result<T> = std::result::Result<T, SinexError>;
+
+/// Extension trait for enriching `Result` types with context.
+///
+/// This trait provides methods similar to `anyhow::Context` but for `SinexError`.
+/// It allows adding context to errors in a chain of operations.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_error::{Result, ResultExt, SinexError};
+/// use std::fs;
+///
+/// fn read_config() -> Result<String> {
+///     fs::read_to_string("/etc/config.toml")
+///         .context("Failed to read config file")?;
+///     Ok("config".to_string())
+/// }
+///
+/// fn process_data() -> Result<()> {
+///     let data = fetch_data()
+///         .with_context(|| SinexError::service("Data processing failed")
+///             .with_context("service", "data-processor")
+///             .with_context("retry_count", 3))?;
+///     Ok(())
+/// }
+/// # fn fetch_data() -> Result<String> { Ok("data".to_string()) }
+/// ```
 pub trait ResultExt<T> {
-    /// Add context to an error
+    /// Adds a simple text context to the error.
+    ///
+    /// The context is added as a "context" key in the error's context map.
     fn context(self, msg: &str) -> Result<T>;
 
-    /// Add context with a key-value pair
+    /// Adds a custom error with full context.
+    ///
+    /// The closure is only called if the result is an error, allowing
+    /// lazy construction of complex error context.
     fn with_context<F>(self, f: F) -> Result<T>
     where
-        F: FnOnce() -> ErrorContext;
+        F: FnOnce() -> SinexError;
 }
 
 impl<T, E> ResultExt<T> for std::result::Result<T, E>
 where
-    E: Into<CoreError>,
+    E: Into<SinexError>,
 {
     fn context(self, msg: &str) -> Result<T> {
         self.map_err(|e| {
-            let core_err: CoreError = e.into();
-            core_err.context().with_context("context", msg).build()
+            let err: SinexError = e.into();
+            err.with_context("context", msg)
         })
     }
 
     fn with_context<F>(self, f: F) -> Result<T>
     where
-        F: FnOnce() -> ErrorContext,
+        F: FnOnce() -> SinexError,
     {
-        self.map_err(|_| f().build())
-    }
-}
-
-// Implement Clone for CoreError to support error chaining
-impl Clone for CoreError {
-    fn clone(&self) -> Self {
-        match self {
-            CoreError::Database(msg) => CoreError::Database(msg.clone()),
-            CoreError::Serialization(msg) => CoreError::Serialization(msg.clone()),
-            CoreError::Validation(msg) => CoreError::Validation(msg.clone()),
-            CoreError::Configuration(msg) => CoreError::Configuration(msg.clone()),
-            CoreError::Io(msg) => CoreError::Io(msg.clone()),
-            CoreError::Service(msg) => CoreError::Service(msg.clone()),
-            CoreError::ChannelSend(msg) => CoreError::ChannelSend(msg.clone()),
-            CoreError::ChannelReceive(msg) => CoreError::ChannelReceive(msg.clone()),
-            CoreError::Timeout(msg) => CoreError::Timeout(msg.clone()),
-            CoreError::ResourceExhausted(msg) => CoreError::ResourceExhausted(msg.clone()),
-            CoreError::InvalidState(msg) => CoreError::InvalidState(msg.clone()),
-            CoreError::NotFound(msg) => CoreError::NotFound(msg.clone()),
-            CoreError::AlreadyExists(msg) => CoreError::AlreadyExists(msg.clone()),
-            CoreError::PermissionDenied(msg) => CoreError::PermissionDenied(msg.clone()),
-            CoreError::Cancelled(msg) => CoreError::Cancelled(msg.clone()),
-            CoreError::MaxRetriesExceeded(msg) => CoreError::MaxRetriesExceeded(msg.clone()),
-            CoreError::Parse(msg) => CoreError::Parse(msg.clone()),
-            CoreError::Network(msg) => CoreError::Network(msg.clone()),
-            CoreError::Other(msg) => CoreError::Other(msg.clone()),
-            CoreError::Unknown(msg) => CoreError::Unknown(msg.clone()),
-            CoreError::General(msg) => CoreError::General(msg.clone()),
-        }
+        self.map_err(|_| f())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use chrono::Utc;
+    use super::SinexError;
+    use sinex_test_utils::prelude::*;
+
+    #[sinex_test]
+    fn test_error_display_with_displaydoc() -> Result<()> {
+        let error = SinexError::database("Connection failed");
+        assert_eq!(error.to_string(), "Database error: Connection failed");
+
+        let error = SinexError::validation("Invalid input");
+        assert_eq!(error.to_string(), "Validation error: Invalid input");
+    }
 
     #[test]
-    fn test_error_context_builder() {
-        let error = CoreError::database("Connection failed")
+    fn test_error_with_context() {
+        let error = SinexError::database("Connection failed")
             .with_context("host", "localhost")
-            .with_context("port", 5432)
-            .build();
+            .with_context("port", 5432);
 
         let error_str = error.to_string();
         assert!(error_str.contains("Connection failed"));
@@ -436,10 +804,9 @@ mod tests {
 
     #[test]
     fn test_error_with_source_chain() {
-        let error = CoreError::processing_failed()
+        let error = SinexError::service("Processing failed")
             .with_source("Database connection timed out")
-            .with_source("Network unreachable")
-            .build();
+            .with_source("Network unreachable");
 
         let error_str = error.to_string();
         assert!(error_str.contains("Processing failed"));
@@ -448,114 +815,368 @@ mod tests {
     }
 
     #[test]
-    fn test_error_with_event_context() {
-        let event_id = Ulid::new();
-        let timestamp = Utc::now();
+    fn test_error_categorization() {
+        assert!(SinexError::timeout("test").is_retryable());
+        assert!(SinexError::network("test").is_retryable());
+        assert!(!SinexError::validation("test").is_retryable());
 
-        let error = CoreError::validation("Invalid event payload")
-            .with_event_id(event_id)
-            .with_timestamp(timestamp)
-            .build();
+        assert!(SinexError::validation("test").is_client_error());
+        assert!(SinexError::not_found("test").is_client_error());
+        assert!(!SinexError::database("test").is_client_error());
 
-        let error_str = error.to_string();
-        assert!(error_str.contains("Invalid event payload"));
-        assert!(error_str.contains(&event_id.to_string()));
+        assert!(SinexError::max_retries_exceeded("test").is_permanent());
+        assert!(SinexError::permission_denied("test").is_permanent());
+        assert!(!SinexError::timeout("test").is_permanent());
     }
 
     #[test]
-    fn test_io_error_with_path() {
-        let error = CoreError::io_error("/var/log/sinex.log")
-            .with_operation("write")
-            .build();
-
-        let error_str = error.to_string();
-        assert!(error_str.contains("/var/log/sinex.log"));
-        assert!(error_str.contains("operation: write"));
+    fn test_status_codes() {
+        assert_eq!(SinexError::validation("test").status_code(), 400);
+        assert_eq!(SinexError::not_found("test").status_code(), 404);
+        assert_eq!(SinexError::permission_denied("test").status_code(), 403);
+        assert_eq!(SinexError::timeout("test").status_code(), 408);
+        assert_eq!(SinexError::already_exists("test").status_code(), 409);
+        assert_eq!(SinexError::resource_exhausted("test").status_code(), 429);
+        assert_eq!(SinexError::database("test").status_code(), 500);
     }
 
     #[test]
-    fn test_error_info_serialization() {
-        let error_context = CoreError::configuration("Missing required field")
-            .with_field("database_url", "not set")
-            .with_context("config_file", "/etc/sinex/config.toml");
+    fn test_error_serialization() {
+        let error = SinexError::database("Connection failed")
+            .with_context("host", "localhost")
+            .with_context("port", 5432);
 
-        let error_info = error_context.to_error_info();
+        let json = serde_json::to_string(&error).unwrap();
+        assert!(json.contains("Database"));
+        assert!(json.contains("Connection failed"));
 
-        assert_eq!(error_info.message, "Missing required field");
-        assert_eq!(
-            error_info.context.get("field_database_url"),
-            Some(&"not set".to_string())
-        );
-        assert_eq!(
-            error_info.context.get("config_file"),
-            Some(&"/etc/sinex/config.toml".to_string())
-        );
+        let deserialized: SinexError = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.to_string(), error.to_string());
     }
 
     #[test]
-    fn test_result_extension() {
-        fn failing_operation() -> std::result::Result<(), std::io::Error> {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "File not found",
-            ))
+    fn test_anyhow_integration() {
+        fn returns_anyhow() -> anyhow::Result<()> {
+            Err(SinexError::database("test"))?
         }
 
-        let result: Result<()> = failing_operation().context("Failed to read configuration file");
+        let result = returns_anyhow();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Database error"));
+    }
+
+    #[test]
+    fn test_from_implementations() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
+        let sinex_err: SinexError = io_err.into();
+        assert!(matches!(sinex_err, SinexError::Io(_)));
+
+        let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
+        let sinex_err: SinexError = json_err.into();
+        assert!(matches!(sinex_err, SinexError::Serialization(_)));
+    }
+
+    #[test]
+    fn test_context_preservation() {
+        let error = SinexError::database("Connection failed")
+            .with_context("attempt", 3)
+            .with_context("retry_after", "5s");
+
+        let context = error.context_map();
+        assert_eq!(context.get("attempt"), Some(&"3".to_string()));
+        assert_eq!(context.get("retry_after"), Some(&"5s".to_string()));
+    }
+
+    #[test]
+    fn test_ordered_context() {
+        let error = SinexError::validation("Invalid input")
+            .with_context("field", "email")
+            .with_context("value", "not-an-email")
+            .with_context("reason", "missing @ symbol");
+
+        let error_str = error.to_string();
+        // IndexMap preserves insertion order
+        assert!(error_str.contains("field: email, value: not-an-email, reason: missing @ symbol"));
+    }
+
+    #[test]
+    fn test_convenience_methods() {
+        use std::path::Path;
+        use std::time::Duration;
+
+        let error = SinexError::io("File operation failed")
+            .with_path(Path::new("/tmp/test.txt"))
+            .with_duration(Duration::from_millis(1500))
+            .with_count("retry_count", 3)
+            .with_id("request_id", "abc123");
+
+        let context = error.context_map();
+        assert_eq!(context.get("path"), Some(&"/tmp/test.txt".to_string()));
+        assert_eq!(context.get("duration_ms"), Some(&"1500".to_string()));
+        assert_eq!(context.get("retry_count"), Some(&"3".to_string()));
+        assert_eq!(context.get("request_id"), Some(&"abc123".to_string()));
+    }
+
+    #[test]
+    fn test_accessor_methods() {
+        let error = SinexError::database("Query failed")
+            .with_context("table", "users")
+            .with_source("Connection timeout");
+
+        assert_eq!(error.message(), "Query failed");
+        assert_eq!(error.variant_name(), "Database");
+        assert_eq!(error.sources(), &["Connection timeout"]);
+        assert_eq!(error.context_map().get("table"), Some(&"users".to_string()));
+    }
+
+    #[test]
+    fn test_all_error_variants() {
+        // Test each error variant constructor
+        let errors = vec![
+            (SinexError::database("db"), "Database"),
+            (SinexError::validation("val"), "Validation"),
+            (SinexError::service("svc"), "Service"),
+            (SinexError::io("io"), "Io"),
+            (SinexError::configuration("cfg"), "Configuration"),
+            (SinexError::serialization("ser"), "Serialization"),
+            (SinexError::parse("parse"), "Parse"),
+            (SinexError::not_found("nf"), "NotFound"),
+            (SinexError::already_exists("ae"), "AlreadyExists"),
+            (SinexError::invalid_state("is"), "InvalidState"),
+            (SinexError::permission_denied("pd"), "PermissionDenied"),
+            (SinexError::network("net"), "Network"),
+            (SinexError::channel_send("cs"), "ChannelSend"),
+            (SinexError::channel_receive("cr"), "ChannelReceive"),
+            (SinexError::timeout("to"), "Timeout"),
+            (SinexError::cancelled("can"), "Cancelled"),
+            (
+                SinexError::max_retries_exceeded("mre"),
+                "MaxRetriesExceeded",
+            ),
+            (SinexError::resource_exhausted("re"), "ResourceExhausted"),
+            (SinexError::unknown("unk"), "Unknown"),
+        ];
+
+        for (error, expected_variant) in errors {
+            assert_eq!(error.variant_name(), expected_variant);
+        }
+    }
+
+    #[test]
+    fn test_error_details_display() {
+        let details = crate::ErrorDetails::new("Base error")
+            .with_context("key1", "value1")
+            .with_context("key2", "value2")
+            .with_source("Source 1")
+            .with_source("Source 2");
+
+        let display = format!("{}", details);
+        assert!(display.contains("Base error"));
+        assert!(display.contains("key1: value1"));
+        assert!(display.contains("key2: value2"));
+        assert!(display.contains("Caused by:"));
+        assert!(display.contains("1: Source 1"));
+        assert!(display.contains("2: Source 2"));
+    }
+
+    #[test]
+    fn test_error_chain_building() {
+        let error = SinexError::service("Service unavailable")
+            .with_source("Database connection failed")
+            .with_source("Network unreachable")
+            .with_source("DNS resolution failed");
+
+        assert_eq!(error.sources().len(), 3);
+        assert_eq!(error.sources()[0], "Database connection failed");
+        assert_eq!(error.sources()[1], "Network unreachable");
+        assert_eq!(error.sources()[2], "DNS resolution failed");
+    }
+
+    #[test]
+    fn test_result_ext_trait() {
+        fn failing_operation() -> std::result::Result<(), std::io::Error> {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))
+        }
+
+        use crate::ResultExt;
+        let result: Result<()> = failing_operation().context("Operation failed");
 
         assert!(result.is_err());
-        let error_str = result.unwrap_err().to_string();
-        assert!(error_str.contains("Failed to read configuration file"));
+        let err = result.unwrap_err();
+        assert!(matches!(err, SinexError::Io(_)));
+        assert_eq!(
+            err.details.context.get("context"),
+            Some(&"Operation failed".to_string())
+        );
     }
 
     #[test]
-    fn test_error_context_chaining() {
-        // Create an initial error
-        let initial_error = CoreError::Database("Primary key violation".to_string());
+    fn test_result_ext_with_context() {
+        fn failing_operation() -> std::result::Result<(), std::io::Error> {
+            Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))
+        }
 
-        // Chain additional context
-        let chained_error = initial_error
-            .context()
-            .with_context("table", "raw_events")
-            .with_context("operation", "INSERT")
-            .with_source("UNIQUE constraint failed")
-            .with_source("Transaction aborted")
-            .build();
+        use crate::ResultExt;
+        let result: Result<()> = failing_operation().with_context(|| {
+            SinexError::service("Custom error").with_context("component", "test-component")
+        });
 
-        let error_str = chained_error.to_string();
-        assert!(error_str.contains("Primary key violation"));
-        assert!(error_str.contains("table: raw_events"));
-        assert!(error_str.contains("operation: INSERT"));
-        assert!(error_str.contains("UNIQUE constraint failed"));
-        assert!(error_str.contains("Transaction aborted"));
-        assert!(error_str.contains("Caused by:"));
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(matches!(err, SinexError::Service(_)));
+        // SinexError doesn't have a message() method, use to_string()
+        assert!(err.to_string().contains("Custom error"));
+        assert_eq!(
+            err.details.context.get("component"),
+            Some(&"test-component".to_string())
+        );
     }
 
     #[test]
-    fn test_all_error_types_creation() {
-        // Test each error type factory method
-        let db_error = CoreError::database("DB connection lost").build();
-        assert!(db_error.to_string().contains("DB connection lost"));
-        assert!(matches!(db_error, CoreError::Database(_)));
+    fn test_serialization_roundtrip() {
+        let original = SinexError::database("Connection failed")
+            .with_context("host", "localhost")
+            .with_context("port", 5432)
+            .with_source("Network timeout")
+            .with_source("DNS failed");
 
-        let validation_error = CoreError::validation("Invalid format").build();
-        assert!(validation_error.to_string().contains("Invalid format"));
-        assert!(matches!(validation_error, CoreError::Validation(_)));
+        let json = serde_json::to_string(&original).unwrap();
+        let deserialized: SinexError = serde_json::from_str(&json).unwrap();
 
-        let config_error = CoreError::configuration("Missing config").build();
-        assert!(config_error.to_string().contains("Missing config"));
-        assert!(matches!(config_error, CoreError::Configuration(_)));
+        assert_eq!(original.message(), deserialized.message());
+        assert_eq!(original.variant_name(), deserialized.variant_name());
+        assert_eq!(original.sources(), deserialized.sources());
+        assert_eq!(original.context_map(), deserialized.context_map());
+    }
 
-        let serial_error = CoreError::serialization("JSON parse error").build();
-        assert!(serial_error.to_string().contains("JSON parse error"));
-        assert!(matches!(serial_error, CoreError::Serialization(_)));
+    #[test]
+    fn test_empty_context_serialization() {
+        let error = SinexError::validation("Simple error");
+        let json = serde_json::to_string(&error).unwrap();
 
-        let io_error = CoreError::io_error("/tmp/test.txt").build();
-        assert!(io_error.to_string().contains("/tmp/test.txt"));
-        assert!(matches!(io_error, CoreError::Io(_)));
+        // Ensure empty context and sources are not serialized
+        assert!(!json.contains("context"));
+        assert!(!json.contains("sources"));
 
-        let process_error = CoreError::processing_failed().build();
-        assert!(process_error.to_string().contains("Processing failed"));
-        assert!(matches!(process_error, CoreError::Unknown(_)));
+        // Ensure it deserializes correctly
+        let deserialized: SinexError = serde_json::from_str(&json).unwrap();
+        assert!(deserialized.context_map().is_empty());
+        assert!(deserialized.sources().is_empty());
+    }
+
+    #[test]
+    fn test_with_operation_helper() {
+        let error = SinexError::database("Query failed").with_operation("user.find_by_id");
+
+        assert_eq!(
+            error.context_map().get("operation"),
+            Some(&"user.find_by_id".to_string())
+        );
+    }
+
+    #[test]
+    fn test_error_conversion_chain() {
+        // Test that errors can be converted and preserve information
+        let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Access denied");
+        let sinex_error: SinexError = io_error.into();
+
+        assert!(matches!(sinex_error, SinexError::Io(_)));
+        assert!(sinex_error.message().contains("Access denied"));
+    }
+
+    #[tokio::test]
+    async fn test_channel_error_conversions() {
+        use tokio::sync::mpsc;
+        use tokio::sync::oneshot;
+
+        // Test mpsc SendError conversion
+        let (tx, rx) = mpsc::channel::<i32>(1);
+        drop(rx); // Close the receiver
+        let send_result = tx.send(42).await;
+        if let Err(e) = send_result {
+            let sinex_err: SinexError = e.into();
+            assert!(matches!(sinex_err, SinexError::ChannelSend(_)));
+        }
+
+        // Test oneshot RecvError conversion
+        let (tx, rx) = oneshot::channel::<i32>();
+        drop(tx); // Drop the sender
+                  // We can't easily test the actual error without async context,
+                  // but we can test the type conversion compiles
+        fn test_conversion(err: oneshot::error::RecvError) -> SinexError {
+            err.into()
+        }
+    }
+
+    #[test]
+    fn test_error_equality_after_cloning() {
+        let error = SinexError::validation("Test error")
+            .with_context("field", "email")
+            .with_source("Invalid format");
+
+        let cloned = error.clone();
+
+        assert_eq!(error.message(), cloned.message());
+        assert_eq!(error.variant_name(), cloned.variant_name());
+        assert_eq!(error.context_map(), cloned.context_map());
+        assert_eq!(error.sources(), cloned.sources());
+    }
+
+    #[test]
+    fn test_complex_context_values() {
+        use std::collections::HashMap;
+
+        let mut map = HashMap::new();
+        map.insert("key", "value");
+
+        let error = SinexError::service("Processing failed")
+            .with_context("json", serde_json::json!({"nested": {"value": 42}}))
+            .with_context("array", format!("{:?}", vec![1, 2, 3]))
+            .with_context("map", format!("{:?}", map));
+
+        let context = error.context_map();
+        assert!(context.get("json").unwrap().contains("nested"));
+        assert_eq!(context.get("array").unwrap(), "[1, 2, 3]");
+        assert!(context.get("map").unwrap().contains("key"));
+    }
+
+    #[test]
+    fn test_indexmap_preserves_order() {
+        let error = SinexError::validation("Test")
+            .with_context("a", "1")
+            .with_context("b", "2")
+            .with_context("c", "3")
+            .with_context("d", "4");
+
+        let keys: Vec<_> = error.context_map().keys().collect();
+        assert_eq!(keys, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn test_edge_cases() {
+        // Empty message
+        let error = SinexError::unknown("");
+        assert_eq!(error.message(), "");
+
+        // Very long message
+        let long_msg = "x".repeat(10000);
+        let error = SinexError::unknown(&long_msg);
+        assert_eq!(error.message().len(), 10000);
+
+        // Unicode in context
+        let error = SinexError::parse("Failed")
+            .with_context("emoji", "🦀")
+            .with_context("chinese", "你好")
+            .with_context("arabic", "مرحبا");
+
+        assert_eq!(error.context_map().get("emoji"), Some(&"🦀".to_string()));
+        assert_eq!(
+            error.context_map().get("chinese"),
+            Some(&"你好".to_string())
+        );
+        assert_eq!(
+            error.context_map().get("arabic"),
+            Some(&"مرحبا".to_string())
+        );
     }
 }

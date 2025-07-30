@@ -6,7 +6,7 @@
 //! - Multi-participant barriers (like TestBarrier)
 //! - Progress tracking (like ProgressTracker)
 
-use sinex_core_types::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -106,7 +106,7 @@ impl CoordinationPrimitive {
             }
 
             if start.elapsed() >= timeout_duration {
-                return Err(CoreError::Timeout(format!(
+                return Err(SinexError::timeout(format!(
                     "CoordinationPrimitive '{}' did not reach threshold {} within {:?} (current: {})",
                     self.name, self.threshold, timeout_duration, current
                 )));
@@ -120,7 +120,7 @@ impl CoordinationPrimitive {
             tokio::time::timeout(remaining, self.notify.notified())
                 .await
                 .map_err(|_| {
-                    CoreError::Timeout(format!(
+                    SinexError::timeout(format!(
                         "CoordinationPrimitive '{}' timeout waiting for threshold {}",
                         self.name, self.threshold
                     ))
@@ -128,7 +128,7 @@ impl CoordinationPrimitive {
         }
 
         let final_state = self.state.load(Ordering::Acquire);
-        Err(CoreError::Timeout(format!(
+        Err(SinexError::timeout(format!(
             "CoordinationPrimitive '{}' did not reach threshold {} (final: {})",
             self.name, self.threshold, final_state
         )))
@@ -162,7 +162,7 @@ impl CoordinationPrimitive {
                     tokio::time::timeout(timeout_duration / 10, self.notify.notified())
                         .await
                         .map_err(|_| {
-                            CoreError::Timeout(format!(
+                            SinexError::timeout(format!(
                                 "Barrier '{}' timeout waiting for participants",
                                 self.name
                             ))
@@ -268,12 +268,6 @@ impl Clone for CoordinationPrimitive {
         }
     }
 }
-
-// Backwards compatibility type aliases
-pub type EventCounter = CoordinationPrimitive;
-pub type ProgressTracker = CoordinationPrimitive;
-pub type Synchronizer = CoordinationPrimitive;
-pub type Barrier = CoordinationPrimitive;
 
 #[cfg(test)]
 mod tests {

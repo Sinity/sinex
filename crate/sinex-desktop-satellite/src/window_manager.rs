@@ -90,7 +90,6 @@
 
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};

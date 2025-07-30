@@ -42,7 +42,7 @@ use tokio::sync::{Mutex, RwLock};
 
 /// Test complete event ingestion workflow from satellite to database
 #[sinex_test]
-async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult {
+async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Simulate satellite event generation
@@ -61,7 +61,9 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
             }
             Err(e) => {
                 println!("Failed to ingest event {}: {}", event.id, e);
-                return Err(CoreError::Database(format!("Ingestion failed: {}", e)).into());
+                return Err(CoreError::database(format!("Ingestion failed: {}", e))
+                    .build()
+                    .into());
             }
         }
     }
@@ -111,7 +113,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> TestResult 
 
 /// Test event ingestion with concurrent satellites
 #[sinex_test]
-async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestResult {
+async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Simulate multiple satellites ingesting events concurrently
@@ -230,17 +232,17 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> TestR
 
 /// Test complete stream processing workflow from Redis to automaton
 #[sinex_test]
-async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
+async fn test_stream_processing_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton for stream processing
-    let automaton_name = "test-stream-processor";
-    let consumer_group = format!("{}-group", automaton_name);
+    let processor_name = "test-stream-processor";
+    let consumer_group = format!("{}-group", processor_name);
 
     // Initialize checkpoint manager
     let checkpoint_manager = CheckpointManager::new(
         pool.clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "test-consumer-group".to_string(),
         "test-consumer-name".to_string(),
     );
@@ -278,7 +280,9 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
                 println!("Added event {} to stream", event.id);
             }
             Err(e) => {
-                return Err(CoreError::Service(format!("Redis XADD failed: {}", e)).into());
+                return Err(CoreError::service(format!("Redis XADD failed: {}", e))
+                    .build()
+                    .into());
             }
         }
     }
@@ -413,14 +417,14 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> TestResult {
 
 /// Test checkpoint persistence and recovery workflow
 #[sinex_test]
-async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> TestResult {
+async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
-    let automaton_name = "checkpoint-test-automaton";
+    let processor_name = "checkpoint-test-automaton";
 
     // Phase 1: Initialize checkpoint manager
     let checkpoint_manager = CheckpointManager::new(
         pool.clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "test-consumer-group".to_string(),
         "test-consumer-name".to_string(),
     );
@@ -470,7 +474,11 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
                 );
             }
             Err(e) => {
-                return Err(CoreError::Database(format!("Checkpoint save failed: {}", e)).into());
+                return Err(
+                    CoreError::database(format!("Checkpoint save failed: {}", e))
+                        .build()
+                        .into(),
+                );
             }
         }
 
@@ -495,7 +503,7 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
     // Phase 4: Simulate automaton restart and recovery
     let recovery_manager = CheckpointManager::new(
         pool.clone(),
-        automaton_name.to_string(),
+        processor_name.to_string(),
         "test-consumer-group".to_string(),
         "test-consumer-name".to_string(),
     );
@@ -546,7 +554,7 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> Test
 
 /// Test coordination between multiple system components
 #[sinex_test]
-async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestResult {
+async fn test_multi_component_coordination_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Set up multiple components
@@ -666,7 +674,7 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> TestRes
 
 /// Test error detection and recovery workflow
 #[sinex_test]
-async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
+async fn test_error_recovery_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Simulate system with intermittent errors
@@ -826,7 +834,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> TestResult {
 
 /// Test system performance under concurrent load
 #[sinex_test]
-async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
+async fn test_performance_under_load_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Configure load test parameters
@@ -954,7 +962,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> TestResult {
 
 /// Test data consistency across component boundaries
 #[sinex_test]
-async fn test_data_consistency_workflow(ctx: TestContext) -> TestResult {
+async fn test_data_consistency_workflow(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Set up consistency test scenario

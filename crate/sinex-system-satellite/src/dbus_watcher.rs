@@ -3,7 +3,6 @@
 //! Monitors D-Bus signals using external dbus-monitor command
 
 use serde_json::json;
-use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;

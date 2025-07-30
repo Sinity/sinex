@@ -42,6 +42,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_db::SqlxPgPool as PgPool;
 use sinex_events::RawEvent;
+use sinex_telemetry::telemetry::TelemetryAccumulator;
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
@@ -349,7 +350,6 @@ pub struct ScanReport {
 }
 
 /// Context provided to stream processors during operations
-#[derive(Debug)]
 pub struct StreamProcessorContext {
     /// Service/processor name
     pub service_name: String,
@@ -377,26 +377,55 @@ pub struct StreamProcessorContext {
 
     /// Event sender channel for scan operations
     pub event_sender: EventSender,
+
+    /// Telemetry accumulator for metrics
+    pub telemetry: Option<TelemetryAccumulator>,
+}
+
+impl std::fmt::Debug for StreamProcessorContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StreamProcessorContext")
+            .field("service_name", &self.service_name)
+            .field("host", &self.host)
+            .field("work_dir", &self.work_dir)
+            .field("dry_run", &self.dry_run)
+            .field("telemetry", &self.telemetry.is_some())
+            .finish()
+    }
 }
 
 impl StreamProcessorContext {
     /// Send an event through the event channel
     #[sinex_macros::auto_event_metrics(event_type = "emit")]
     pub async fn emit_event(&self, event: RawEvent) -> SatelliteResult<()> {
+        let start = std::time::Instant::now();
+        let event_type = event.event_type.clone();
+
         if self.dry_run {
             info!(
                 source = %event.source,
-                event_type = %event.event_type,
+                event_type = %event_type,
                 "DRY RUN: Would emit event"
             );
             return Ok(());
         }
 
-        self.event_sender
+        let result = self
+            .event_sender
             .send(event)
-            .map_err(|_| SatelliteError::General(anyhow::anyhow!("Event channel closed")))?;
+            .map_err(|_| SatelliteError::General(anyhow::anyhow!("Event channel closed")));
 
-        Ok(())
+        // Record in telemetry
+        if let Some(ref telemetry) = self.telemetry {
+            let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
+            telemetry.record_event_processed(&event_type, duration_ms);
+
+            if result.is_err() {
+                telemetry.record_error("event_send_failed");
+            }
+        }
+
+        result
     }
 
     /// Send multiple events through the event channel
@@ -655,6 +684,36 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             format!("{}-{}", host, std::process::id()), // Unique consumer name
         );
 
+        // Create telemetry accumulator
+        let telemetry = if !dry_run {
+            // Create event sender for telemetry (bounded channel as expected by telemetry)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(100);
+
+            // Spawn task to forward telemetry events to main event channel
+            let main_event_sender = event_sender.clone();
+            tokio::spawn(async move {
+                while let Some(event) = telemetry_rx.recv().await {
+                    if let Err(e) = main_event_sender.send(event) {
+                        warn!("Failed to forward telemetry event: {}", e);
+                    }
+                }
+            });
+
+            let accumulator = TelemetryAccumulator::new(&service_name)
+                .with_event_sender(telemetry_tx)
+                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
+
+            // Set global telemetry
+            sinex_telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+
+            // Spawn telemetry emitter
+            accumulator.clone().spawn_emitter();
+
+            Some(accumulator)
+        } else {
+            None
+        };
+
         // Create context
         let context = StreamProcessorContext {
             service_name: service_name.clone(),
@@ -666,6 +725,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             checkpoint_manager,
             config,
             event_sender,
+            telemetry,
         };
 
         // Initialize the processor

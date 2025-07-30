@@ -9,7 +9,7 @@
 //! - Batch operations for efficiency
 
 use async_trait::async_trait;
-use sinex_error::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
@@ -118,7 +118,7 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
             Ok(()) => Ok(()),
             Err(e) => {
                 tracing::error!("Failed to send on channel ({}): {}", context, e);
-                Err(CoreError::Unknown(format!(
+                Err(SinexError::unknown(format!(
                     "Channel send failed ({}): {}",
                     context, e
                 )))
@@ -129,8 +129,8 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
     async fn send_timeout(&self, value: T, timeout_duration: Duration) -> Result<()> {
         match timeout(timeout_duration, self.send(value)).await {
             Ok(Ok(())) => Ok(()),
-            Ok(Err(e)) => Err(CoreError::Unknown(format!("Channel send failed: {}", e))),
-            Err(_) => Err(CoreError::Unknown("Channel send timed out".to_string())),
+            Ok(Err(e)) => Err(SinexError::unknown(format!("Channel send failed: {}", e))),
+            Err(_) => Err(SinexError::unknown("Channel send timed out".to_string())),
         }
     }
 
@@ -148,7 +148,7 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
                     break; // Channel still full, keep items in queue
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
-                    return Err(CoreError::Unknown("Channel closed".to_string()));
+                    return Err(SinexError::unknown("Channel closed".to_string()));
                 }
             }
         }
@@ -161,14 +161,14 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
                     queue.push(value);
                     Ok(())
                 } else {
-                    Err(CoreError::Unknown(format!(
+                    Err(SinexError::unknown(format!(
                         "Channel full and queue at limit ({})",
                         max_queue
                     )))
                 }
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
-                Err(CoreError::Unknown("Channel closed".to_string()))
+                Err(SinexError::unknown("Channel closed".to_string()))
             }
         }
     }

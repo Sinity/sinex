@@ -85,58 +85,15 @@ test FILE="" *ARGS:
         cargo nextest run -- {{ARGS}}; \
     fi
 
-# 📁 Test a specific file (finds tests in the file)
-test-file FILE *ARGS:
-    @echo "📁 Running tests in file: {{FILE}}"
-    @# Convert file path to test pattern
-    @if [[ "{{FILE}}" == *".rs" ]]; then \
-        # Extract crate name and module path \
-        if [[ "{{FILE}}" == crate/* ]]; then \
-            crate=$$(echo "{{FILE}}" | cut -d/ -f2); \
-            echo "Testing in crate: $$crate"; \
-            cd "crate/$$crate" && cargo nextest run -- {{ARGS}}; \
-        else \
-            echo "Testing file: {{FILE}}"; \
-            cargo nextest run -- {{ARGS}}; \
-        fi; \
-    else \
-        echo "⚠️  Not a Rust file: {{FILE}}"; \
-    fi
 
 
 
 
 
-# 🚦 Pre-edit status check (call before making changes)
-pre-edit:
-    @echo "📸 Capturing pre-edit state..."
-    @echo ""
-    @echo "📝 Recent changes:"
-    @git status --short | head -10 || true
 
-# 🎯 Post-edit check (call after changes to see impact)
-post-edit:
-    @echo "🔍 Checking impact of changes..."
-    @just check
-
-# 📋 Check continuously and save to log (better for AI/scripts)
-check-continuous:
-    @echo "📋 Starting continuous compilation check..."
-    @echo "Output will be saved to compilation-watch.log"
-    cargo watch -x "check --workspace --all-targets --message-format short" 2>&1 | tee compilation-watch.log
-
-# 🔄 Watch and report errors/warnings
-watch-errors:
-    @echo "🔄 Watching for compilation errors..."
-    cargo watch -s 'just check-all && just errors || just errors'
-
-# 👀 Watch and compile only (no tests)
-watch-check:
-    @echo "👀 Watching for compilation..."
-    cargo watch -x check
 
 # 👀 Watch and run specific command
-watch-cmd CMD:
+watch CMD="check":
     @echo "👀 Watching and running: {{CMD}}"
     cargo watch -x "{{CMD}}"
 
@@ -146,20 +103,11 @@ watch-cmd CMD:
 
 
 
-# 📊 Run tests and show parallelism statistics
-test-parallel-stats *ARGS:
-    @echo "📊 Running tests with parallelism statistics..."
-    NEXTEST_EXPERIMENTAL_LIBTEST_JSON=1 cargo nextest run --profile parallel --reporter libtest-json -- {{ARGS}} | jq -r 'select(.type == "suite") | "\(.event): \(.exec_time // 0)s' || cargo nextest run --profile parallel -- {{ARGS}}
 
-# 🛡️ Run tests with reliable profile (180s timeout, 2 threads, 3 retries)
-test-reliable-profile *ARGS:
-    @echo "🛡️ Running tests with reliable profile (180s timeout, 2 threads, 3 retries)..."
-    cargo nextest run -P reliable -- {{ARGS}}
-
-# 🐛 Run tests with debug profile (300s timeout, 1 thread, full output)
-test-debug-profile *ARGS:
-    @echo "🐛 Running tests with debug profile (300s timeout, 1 thread, full output)..."
-    cargo nextest run -P debug -- {{ARGS}}
+# 🛡️ Run tests with limited parallelism (for flaky tests)
+test-reliable *ARGS:
+    @echo "🛡️ Running tests with limited parallelism..."
+    cargo nextest run -j 2 -- {{ARGS}}
 
 # === VM Tests ===
 
@@ -211,20 +159,20 @@ sqlx-check:
 # 🔄 Reset test database (for integration tests)
 db-reset:
     @echo "🔄 Resetting test database..."
-    dropdb --if-exists sinex_test
-    createdb sinex_test
-    DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql" sqlx migrate run
+    dropdb --if-exists --force sinex_dev
+    createdb sinex_dev
+    DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" sqlx migrate run
 
 # 🧪 Setup test database (create if not exists)
 db-setup:
     @echo "🧪 Setting up test database..."
-    createdb sinex_test 2>/dev/null || true
-    DATABASE_URL="postgresql:///sinex_test?host=/run/postgresql" sqlx migrate run
+    createdb sinex_dev 2>/dev/null || true
+    DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" sqlx migrate run
 
 # 🧹 Clean test database
 db-clean:
     @echo "🧹 Cleaning test database..."
-    dropdb --if-exists sinex_test
+    dropdb --if-exists --force sinex_dev
 
 # === Schema Management ===
 
@@ -254,14 +202,7 @@ schema-diff:
     @echo "📊 Schema changes:"
     ./scripts/schema-dev.sh diff
 
-# 📈 Show schema statistics
-schema-stats:
-    @echo "📈 Schema statistics:"
-    ./scripts/schema-dev.sh stats
 
-# 🔄 Full schema workflow: generate, validate, check compatibility
-schema-workflow: schema-generate schema-validate schema-check
-    @echo "✅ Schema workflow complete"
 
 # === Running Services ===
 
@@ -270,8 +211,6 @@ host *ARGS:
     @echo "🖥️ Starting sinex-gateway RPC server..."
     cargo run --bin sinex-gateway rpc-server {{ARGS}}
 
-# Alias for host command
-gateway *ARGS: (host ARGS)
 
 # 📥 Run sinex-ingestd gRPC server (satellite coordinator)
 ingestd *ARGS:
@@ -338,26 +277,16 @@ release:
 
 # 📊 Show recent compilation errors
 errors:
-    @just ai-errors
+    @cargo check --workspace --all-targets 2>&1 | grep -E "^error\[E[0-9]+\]:|^error:" -A 3 | head -20 || echo "✅ No errors"
 
 # 🔍 Show compilation warnings
 warnings:
-    @echo "🔍 Showing compilation warnings..."
-    @if [ -f "$HOME/.sinex-compile-logs/last-result.json" ]; then \
-        log=$(jq -r '.log' "$HOME/.sinex-compile-logs/last-result.json" 2>/dev/null); \
-        if [ -n "$log" ] && [ -f "$log" ]; then \
-            echo "Warnings: $(jq -r '.warnings // 0' "$HOME/.sinex-compile-logs/last-result.json")"; \
-            jq -r 'select(.message.level == "warning") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' "$log" 2>/dev/null | head -10 || echo "No warnings"; \
-        fi; \
-    else \
-        echo "No compilation results. Run 'just compile-start' first"; \
-    fi
+    @cargo check --workspace --all-targets 2>&1 | grep "^warning:" -A 2 | head -20 || echo "✅ No warnings"
 
 
 
 # 🎨 Format all code with rustfmt
 fmt:
-    @echo "🎨 Formatting code..."
     cargo fmt --all
 
 # 📋 Lint code with clippy (enforce warnings as errors)
@@ -394,8 +323,6 @@ monitor:
     @echo "Press 'q' to detach, Ctrl+q to quit mprocs"
     @tmux attach-session -t sinex-mprocs || echo "⚠️  No session found. Is sinex-devtools running?"
 
-# 🖥️ Alias for monitor
-mprocs: monitor
 
 # 🧹 Clean all build artifacts, caches, and logs
 clean:
@@ -416,23 +343,10 @@ docs:
 
 
 
-# 📦 Update all dependencies to latest compatible versions
-update:
-    @echo "📦 Updating dependencies..."
-    cargo update
-
-# 🚀 Show sccache statistics
-cache-stats:
-    @echo "🚀 sccache statistics:"
-    @sccache --show-stats || echo "sccache not available"
 
 
 # === Common Workflows ===
 
-# 🎯 Run command in specific crate directory
-in CRATE CMD *ARGS:
-    @echo "🎯 Running '{{CMD}} {{ARGS}}' in {{CRATE}}..."
-    @cd crate/{{CRATE}} && {{CMD}} {{ARGS}}
 
 # ⚡ Quick development cycle - Format, check, and run fast tests
 dev: fmt qc test-fast
@@ -455,8 +369,6 @@ pr-check:
     @echo "✅ PR validation passed! Safe to push."
 
 
-
-
 # 🧹 Clean test artifacts and reset environment
 test-clean:
     @echo "🧹 Cleaning test artifacts..."
@@ -470,10 +382,6 @@ test-results:
     @if [ -f target/nextest/default/junit.xml ]; then echo "📄 JUnit results: target/nextest/default/junit.xml"; else echo "⚠️  No JUnit results found"; fi
     @if [ -d target/llvm-cov/html ]; then echo "📊 Coverage report: target/llvm-cov/html/index.html"; else echo "⚠️  No coverage report found"; fi
 
-# 🧪 Run tests with strict 2-minute timeout (for user constraint)
-test-strict:
-    @echo "🧪 Running tests with strict 2-minute timeout..."
-    timeout 120 just test-fast-profile || echo "⚠️  Tests exceeded 2-minute limit"
 
 # 🔄 Quick development test cycle (under 2 minutes)
 test-dev: 
@@ -483,39 +391,35 @@ test-dev:
 
 # === Development Helpers ===
 
-# 🏃 Quick compilation check - show daemon status
+# 🏃 Quick compilation check
 qc:
-    @./scripts/compile-daemon.sh status
+    @cargo check --workspace --all-targets
 
-# 🤖 AI Agent: Get compilation status as JSON (blocks until current sources compiled)
-ai-status:
-    @./scripts/compile-daemon.sh await-current
+# 🎯 Quick check specific crate (much faster for single-crate work)
+qcc CRATE:
+    @cargo check -p {{CRATE}}
 
-# 🤖 AI Agent: Get errors and warnings as JSON
-ai-errors-json:
-    @if [ -f ~/.sinex-compile-state/live-output.jsonl ]; then \
-        echo '{"errors": ['; \
-        jq -c 'select(.message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}' \
-            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 | sed '$ ! s/$/,/' || echo ''; \
-        echo '], "warnings": ['; \
-        jq -c 'select(.message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}' \
-            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 | sed '$ ! s/$/,/' || echo ''; \
-        echo ']}'; \
-    else \
-        echo '{"error": "No compilation data available"}'; \
-    fi
+# 🧠 Smart check - only checks crates with changes
+qcs:
+    @./scripts/smart-check.sh
 
-# 🔍 Show compilation errors from last build (human readable)
-ai-errors:
-    @if [ -f ~/.sinex-compile-state/live-output.jsonl ]; then \
-        jq -r 'select(.message.level == "error") | "\(.message.spans[0].file_name // "unknown"):\(.message.spans[0].line_start // 0): \(.message.message)"' \
-            ~/.sinex-compile-state/live-output.jsonl 2>/dev/null | head -10 || echo "✅ No errors"; \
-    else \
-        echo "No compilation data. Background compilation daemon should be running."; \
-    fi
+# 🥓 Run bacon for continuous checking
+bacon:
+    bacon
+
+
+# 🤖 Get compilation status as JSON (for AI agents)
+status-json:
+    @cargo check --workspace --all-targets --message-format json 2>&1 | jq -s '{status: "completed", errors: [.[] | select(.reason == "compiler-message" and .message.level == "error")], warnings: [.[] | select(.reason == "compiler-message" and .message.level == "warning")]}'
+
+# 🤖 Get errors and warnings as JSON (for AI agents)
+errors-json:
+    @cargo check --workspace --all-targets --message-format json 2>&1 | \
+        jq -s '{errors: [.[] | select(.reason == "compiler-message" and .message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}], warnings: [.[] | select(.reason == "compiler-message" and .message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}]}'
 
 # 🔍 Check and show errors immediately
-ce: qc ai-errors
+ce: qc errors
+
 
 
 
@@ -534,11 +438,10 @@ todos:
 
 # 📊 Show crate dependencies
 deps PKG="":
+    @echo "📊 Dependencies{{PKG}}:"
     @if [ -z "{{PKG}}" ]; then \
-        echo "📊 Workspace dependencies:"; \
         cargo tree --workspace; \
     else \
-        echo "📊 Dependencies for {{PKG}}:"; \
         cargo tree -p {{PKG}}; \
     fi
 
@@ -557,15 +460,6 @@ list-tests:
 
 
 
-# === Environment Management ===
-
-# 🧹 Clean sccache
-cache-clean:
-    @echo "🧹 Cleaning sccache..."
-    @sccache --stop-server 2>/dev/null || true
-    @rm -rf ~/.cache/sccache
-    @echo "✅ sccache cleaned"
-
 # === Aliases ===
 alias t := test
 alias b := build
@@ -576,47 +470,5 @@ alias tp := test-pkg
 alias e := errors
 alias w := warnings
 
-# === Analytics Commands ===
 
-# 📊 What changed since last build?
-changes-since-build:
-    @echo "📊 Changes since last successful build:"
-    @if [ -f ~/.sinex-compile-state/last-build-snapshot.txt ]; then \
-        echo "Files from last build vs now:"; \
-        echo ""; \
-        diff -u ~/.sinex-compile-state/last-build-snapshot.txt <(git status --porcelain) | grep -E "^[+-]" | head -20 || echo "No changes"; \
-    else \
-        echo "No build snapshot yet"; \
-    fi
 
-# 📊 Show recent compilations
-analytics-recent:
-    @echo "📊 Recent compilations:"
-    @tail -20 ~/.sinex-analytics/compilations/index.csv 2>/dev/null | column -t -s'|' || echo "No compilation data yet"
-
-# 📈 Show compilation statistics
-analytics-stats:
-    @echo "📈 Compilation statistics:"
-    @if [ -f ~/.sinex-analytics/compilations/index.csv ]; then \
-        total=$(wc -l < ~/.sinex-analytics/compilations/index.csv); \
-        success=$(awk -F'|' '$4==0' ~/.sinex-analytics/compilations/index.csv | wc -l); \
-        avg_time=$(awk -F'|' '{sum+=$3; count++} END {if(count>0) print int(sum/count) "ms"}' ~/.sinex-analytics/compilations/index.csv); \
-        echo "  Total builds: $total"; \
-        echo "  Successful: $success ($(( success * 100 / total ))%)"; \
-        echo "  Average time: $avg_time"; \
-    else \
-        echo "No compilation data yet"; \
-    fi
-
-# 📸 Show git state snapshots
-git-snapshots:
-    @echo "📸 Recent git snapshots:"
-    @git stash list | grep "auto-snapshot" | head -10 || echo "No snapshots yet"
-
-# 🛑 Stop git state tracker
-git-tracker-stop:
-    @./scripts/git-state-tracker.sh stop
-
-# 📊 Git tracker status
-git-tracker-status:
-    @./scripts/git-state-tracker.sh status

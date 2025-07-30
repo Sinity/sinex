@@ -110,7 +110,7 @@ macro_rules! skip_if_no_git_annex {
 }
 
 #[sinex_test]
-async fn test_store_content_from_bytes(ctx: TestContext) -> TestResult {
+async fn test_store_content_from_bytes(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -150,7 +150,7 @@ async fn test_store_content_from_bytes(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_store_content_from_file(ctx: TestContext) -> TestResult {
+async fn test_store_content_from_file(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -185,7 +185,7 @@ async fn test_store_content_from_file(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_retrieve_content(ctx: TestContext) -> TestResult {
+async fn test_retrieve_content(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -210,7 +210,7 @@ async fn test_retrieve_content(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_content_deduplication(ctx: TestContext) -> TestResult {
+async fn test_content_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -248,7 +248,7 @@ async fn test_content_deduplication(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_empty_content_handling(ctx: TestContext) -> TestResult {
+async fn test_empty_content_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -279,7 +279,7 @@ async fn test_empty_content_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_large_content_handling(ctx: TestContext) -> TestResult {
+async fn test_large_content_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -312,7 +312,7 @@ async fn test_large_content_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_various_content_types(ctx: TestContext) -> TestResult {
+async fn test_various_content_types(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -352,7 +352,7 @@ async fn test_various_content_types(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_error_handling_invalid_annex_key(ctx: TestContext) -> TestResult {
+async fn test_error_handling_invalid_annex_key(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -375,7 +375,7 @@ async fn test_error_handling_invalid_annex_key(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_unicode_content_handling(ctx: TestContext) -> TestResult {
+async fn test_unicode_content_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -411,7 +411,7 @@ async fn test_unicode_content_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_binary_content_handling(ctx: TestContext) -> TestResult {
+async fn test_binary_content_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -446,7 +446,7 @@ async fn test_binary_content_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_content_metadata_accuracy(ctx: TestContext) -> TestResult {
+async fn test_content_metadata_accuracy(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -487,7 +487,7 @@ async fn test_content_metadata_accuracy(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_concurrent_content_storage(ctx: TestContext) -> TestResult {
+async fn test_concurrent_content_storage(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -536,7 +536,7 @@ async fn test_concurrent_content_storage(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_content_service_without_git_annex() -> TestResult {
+async fn test_content_service_without_git_annex() -> anyhow::Result<()> {
     // This test runs when git-annex is NOT available
     if ContentServiceTest::is_git_annex_available().await {
         eprintln!("Skipping test: git-annex is available");
@@ -563,7 +563,7 @@ async fn test_content_service_without_git_annex() -> TestResult {
 }
 
 #[sinex_test]
-async fn test_get_content_metadata(ctx: TestContext) -> TestResult {
+async fn test_get_content_metadata(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -599,7 +599,7 @@ async fn test_get_content_metadata(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_verify_content_integrity(ctx: TestContext) -> TestResult {
+async fn test_verify_content_integrity(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -629,7 +629,7 @@ async fn test_verify_content_integrity(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_get_metadata_invalid_blob_id(ctx: TestContext) -> TestResult {
+async fn test_get_metadata_invalid_blob_id(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -652,7 +652,7 @@ async fn test_get_metadata_invalid_blob_id(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_verify_invalid_blob_id(ctx: TestContext) -> TestResult {
+async fn test_verify_invalid_blob_id(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;
@@ -675,7 +675,7 @@ async fn test_verify_invalid_blob_id(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_content_storage_and_metadata_consistency(ctx: TestContext) -> TestResult {
+async fn test_content_storage_and_metadata_consistency(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = ContentServiceTest::new(ctx.pool()).await?;

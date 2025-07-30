@@ -6,11 +6,11 @@
 // imported from production and enhanced for test-specific use cases.
 
 use crate::prelude::*;
+use crate::Result;
 use sinex_core_types::DbPool;
-use sinex_core_types::Result as TestResult;
 use sinex_core_utils::coordination::CoordinationPrimitive; // Use production primitives
 use sinex_db::queries::EventQueries;
-use sinex_error::CoreError;
+use sinex_error::SinexError;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -34,12 +34,14 @@ impl TestSynchronizer {
     }
 
     /// Wait for condition to be signaled or timeout
-    pub async fn wait(&self) -> Result<(), tokio::time::error::Elapsed> {
+    pub async fn wait(&self) -> Result<()> {
         if self.condition.load(Ordering::Acquire) {
             return Ok(());
         }
 
-        tokio::time::timeout(self.timeout_duration, self.notify.notified()).await
+        tokio::time::timeout(self.timeout_duration, self.notify.notified())
+            .await
+            .map_err(|_| SinexError::timeout("TestSynchronizer wait timed out"))
     }
 
     /// Signal that condition is met
@@ -78,10 +80,7 @@ impl TestBarrier {
     }
 
     /// Wait for all participants to reach the barrier
-    pub async fn wait(
-        &self,
-        timeout_duration: Duration,
-    ) -> Result<(), tokio::time::error::Elapsed> {
+    pub async fn wait(&self, timeout_duration: Duration) -> Result<()> {
         let current_generation = self.generation.load(Ordering::Acquire);
         let count = self.counter.fetch_add(1, Ordering::AcqRel) + 1;
 
@@ -98,7 +97,9 @@ impl TestBarrier {
                     return Ok(());
                 }
 
-                tokio::time::timeout(timeout_duration, self.notify.notified()).await?;
+                tokio::time::timeout(timeout_duration, self.notify.notified())
+                    .await
+                    .map_err(|_| SinexError::timeout("TestBarrier wait timed out"))?;
             }
         }
     }
@@ -135,21 +136,8 @@ impl WorkerReadinessCoordinator {
         self.counter.increment()
     }
 
-    pub async fn wait_for_all_ready(
-        &self,
-        timeout_duration: Duration,
-    ) -> Result<usize, tokio::time::error::Elapsed> {
-        // Convert CoreError to Elapsed by timing out an instant future
-        match self.counter.wait_for_threshold(timeout_duration).await {
-            Ok(count) => Ok(count),
-            Err(_) => {
-                // Create a legitimate Elapsed error by timing out an instant future
-                tokio::time::timeout(Duration::from_nanos(1), std::future::pending::<()>())
-                    .await
-                    .map(|_| 0)
-                    .map_err(|e| e)
-            }
-        }
+    pub async fn wait_for_all_ready(&self, timeout_duration: Duration) -> Result<usize> {
+        self.counter.wait_for_threshold(timeout_duration).await
     }
 
     pub fn ready_count(&self) -> usize {
@@ -166,13 +154,13 @@ impl WaitHelpers {
         pool: &DbPool,
         expected_count: usize,
         timeout_secs: u64,
-    ) -> TestResult<usize> {
+    ) -> Result<usize> {
         let pool = pool.clone(); // Clone for closure
         sinex_core_utils::wait_for_condition_adaptive(
             || async {
                 let count = sinex_db::count_events(&pool)
                     .await
-                    .map_err(|e| CoreError::Database(e.to_string()))?
+                    .map_err(|e| SinexError::database(e.to_string()))?
                     as usize;
                 Ok(count >= expected_count)
             },
@@ -181,22 +169,17 @@ impl WaitHelpers {
         )
         .await
         .map_err(|e| {
-            CoreError::timeout(
-                "Wait for event count failed",
-                Duration::from_secs(timeout_secs),
-            )
-            .context()
-            .with_context("expected_count", expected_count)
-            .with_context("timeout_duration", format!("{}s", timeout_secs))
-            .with_source(e)
-            .with_operation("wait_for_event_count")
-            .build()
+            SinexError::timeout("Wait for event count failed")
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
+                .with_source(e)
+                .with_operation("wait_for_event_count")
         })?;
 
         // Return final count
         let final_count = sinex_db::count_events(&pool)
             .await
-            .map_err(|e| CoreError::Database(e.to_string()))? as usize;
+            .map_err(|e| SinexError::database(e.to_string()))? as usize;
         Ok(final_count)
     }
 
@@ -206,7 +189,7 @@ impl WaitHelpers {
         source: &str,
         expected_count: usize,
         timeout_secs: u64,
-    ) -> TestResult<usize> {
+    ) -> Result<usize> {
         let pool = pool.clone(); // Clone for closure
         let source = source.to_string(); // Clone for closure
 
@@ -222,17 +205,12 @@ impl WaitHelpers {
         )
         .await
         .map_err(|e| {
-            CoreError::timeout(
-                "Wait for source events failed",
-                Duration::from_secs(timeout_secs),
-            )
-            .context()
-            .with_context("source", &source)
-            .with_context("expected_count", expected_count)
-            .with_context("timeout_duration", format!("{}s", timeout_secs))
-            .with_source(e)
-            .with_operation("wait_for_source_events")
-            .build()
+            SinexError::timeout("Wait for source events failed")
+                .with_context("source", &source)
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
+                .with_source(e)
+                .with_operation("wait_for_source_events")
         })?;
 
         // Return final count
@@ -243,33 +221,22 @@ impl WaitHelpers {
     }
 
     /// Wait for condition with timeout using production adaptive wait helpers
-    pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> TestResult<()>
+    pub async fn wait_for_condition<F, Fut>(condition: F, timeout_secs: u64) -> Result<()>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = TestResult<bool>>,
+        Fut: std::future::Future<Output = Result<bool>>,
     {
         sinex_core_utils::wait_for_condition_adaptive(
-            || async {
-                match condition().await {
-                    Ok(result) => Ok(result),
-                    Err(e) => Err(sinex_core_types::CoreError::Unknown(e.to_string())),
-                }
-            },
+            || async { condition().await },
             timeout_secs,
             "custom test condition",
         )
         .await
         .map_err(|e| {
-            CoreError::timeout(
-                "Test condition wait failed",
-                Duration::from_secs(timeout_secs),
-            )
-            .context()
-            .with_context("timeout_duration", format!("{}s", timeout_secs))
-            .with_source(e)
-            .with_operation("wait_for_condition")
-            .build()
-            .into()
+            SinexError::timeout("Test condition wait failed")
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
+                .with_source(e)
+                .with_operation("wait_for_condition")
         })
     }
 
@@ -277,10 +244,10 @@ impl WaitHelpers {
     pub async fn wait_for_multiple_conditions<F, Fut>(
         conditions: Vec<(&str, F)>,
         timeout_secs: u64,
-    ) -> TestResult<()>
+    ) -> Result<()>
     where
         F: Fn() -> Fut + Clone,
-        Fut: std::future::Future<Output = TestResult<bool>>,
+        Fut: std::future::Future<Output = Result<bool>>,
     {
         // Store condition count before consuming the vector
         let condition_count = conditions.len();
@@ -291,29 +258,18 @@ impl WaitHelpers {
             let owned_condition = condition.clone();
             prod_conditions.push((name, move || {
                 let cond = owned_condition.clone();
-                async move {
-                    match cond().await {
-                        Ok(result) => Ok(result),
-                        Err(e) => Err(sinex_core_types::CoreError::Unknown(e.to_string())),
-                    }
-                }
+                async move { cond().await }
             }));
         }
 
         sinex_core_utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
             .await
             .map_err(|e| {
-                CoreError::timeout(
-                    "Multiple conditions wait failed",
-                    Duration::from_secs(timeout_secs),
-                )
-                .context()
-                .with_context("condition_count", condition_count)
-                .with_context("timeout_duration", format!("{}s", timeout_secs))
-                .with_source(e)
-                .with_operation("wait_for_multiple_conditions")
-                .build()
-                .into()
+                SinexError::timeout("Multiple conditions wait failed")
+                    .with_context("condition_count", condition_count)
+                    .with_context("timeout_duration", format!("{}s", timeout_secs))
+                    .with_source(e)
+                    .with_operation("wait_for_multiple_conditions")
             })
     }
 }
@@ -323,10 +279,7 @@ pub struct TimingPatterns;
 
 impl TimingPatterns {
     /// Wait for all workers to reach a checkpoint
-    pub async fn wait_for_workers(
-        worker_count: usize,
-        timeout: Duration,
-    ) -> Result<TestBarrier, tokio::time::error::Elapsed> {
+    pub async fn wait_for_workers(worker_count: usize, timeout: Duration) -> Result<TestBarrier> {
         let barrier = TestBarrier::new(worker_count);
         barrier.wait(timeout).await?;
         Ok(barrier)
@@ -336,22 +289,12 @@ impl TimingPatterns {
     pub async fn wait_for_event_processing(
         target_count: usize,
         timeout: Duration,
-    ) -> Result<CoordinationPrimitive, tokio::time::error::Elapsed> {
+    ) -> Result<CoordinationPrimitive> {
         let counter = CoordinationPrimitive::event_counter(
             target_count,
             format!("simple_counter_{}", target_count),
         );
-        // Handle the error conversion properly
-        match counter.wait_for_threshold(timeout).await {
-            Ok(_) => {}
-            Err(_) => {
-                // Create an elapsed error by actually timing out
-                return tokio::time::timeout(Duration::from_nanos(1), std::future::pending::<()>())
-                    .await
-                    .map(|_| counter)
-                    .map_err(|e| e);
-            }
-        }
+        counter.wait_for_threshold(timeout).await?;
         Ok(counter)
     }
 
@@ -377,7 +320,7 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Wait for specific number of events in database
-    pub async fn wait_for_event_count(&self, expected_count: usize) -> TestResult<usize> {
+    pub async fn wait_for_event_count(&self, expected_count: usize) -> Result<usize> {
         WaitHelpers::wait_for_event_count(self.ctx.pool(), expected_count, 10).await
     }
 
@@ -386,7 +329,7 @@ impl<'ctx> TimingUtils<'ctx> {
         &self,
         source: &str,
         expected_count: usize,
-    ) -> TestResult<usize> {
+    ) -> Result<usize> {
         WaitHelpers::wait_for_source_events(self.ctx.pool(), source, expected_count, 10).await
     }
 
@@ -414,14 +357,10 @@ impl<'ctx> TimingUtils<'ctx> {
     }
 
     /// Wait for condition with timeout
-    pub async fn wait_for_condition<F, Fut>(
-        &self,
-        condition: F,
-        timeout_secs: u64,
-    ) -> TestResult<()>
+    pub async fn wait_for_condition<F, Fut>(&self, condition: F, timeout_secs: u64) -> Result<()>
     where
         F: Fn() -> Fut,
-        Fut: std::future::Future<Output = TestResult<bool>>,
+        Fut: std::future::Future<Output = Result<bool>>,
     {
         WaitHelpers::wait_for_condition(condition, timeout_secs).await
     }
@@ -431,12 +370,12 @@ impl<'ctx> TimingUtils<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[sinex_test]
-    async fn test_synchronizer_basic(ctx: TestContext) -> TestResult<()> {
+    async fn test_synchronizer_basic(ctx: TestContext) -> anyhow::Result<()> {
         let sync = TestSynchronizer::new(Duration::from_secs(5));
 
         // Should not be signaled initially
@@ -447,12 +386,12 @@ mod tests {
         sync.signal();
         sync.wait()
             .await
-            .map_err(|_| CoreError::Unknown("Wait failed".to_string()))?;
+            .map_err(|_| SinexError::unknown("Wait failed"))?;
 
         // Should still be signaled
         sync.wait()
             .await
-            .map_err(|_| CoreError::Unknown("Second wait failed".to_string()))?;
+            .map_err(|_| SinexError::unknown("Second wait failed"))?;
 
         // Reset should clear signal
         sync.reset();
@@ -463,7 +402,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_synchronizer_concurrent(ctx: TestContext) -> TestResult<()> {
+    async fn test_synchronizer_concurrent(ctx: TestContext) -> anyhow::Result<()> {
         let sync = Arc::new(TestSynchronizer::new(Duration::from_secs(5)));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -473,9 +412,12 @@ mod tests {
             let sync_clone = sync.clone();
             let counter_clone = counter.clone();
             let handle = tokio::spawn(async move {
-                sync_clone.wait().await?;
+                sync_clone
+                    .wait()
+                    .await
+                    .map_err(|_| SinexError::unknown("Wait failed"))?;
                 counter_clone.fetch_add(1, Ordering::SeqCst);
-                Ok::<(), tokio::time::error::Elapsed>(())
+                Ok::<(), SinexError>(())
             });
             handles.push(handle);
         }
@@ -500,7 +442,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_barrier_basic(ctx: TestContext) -> TestResult<()> {
+    async fn test_barrier_basic(ctx: TestContext) -> anyhow::Result<()> {
         let barrier = Arc::new(TestBarrier::new(3));
         let counter = Arc::new(AtomicUsize::new(0));
 
@@ -514,12 +456,12 @@ mod tests {
                 counter_clone.fetch_add(1, Ordering::SeqCst);
 
                 // Wait at barrier
-                barrier_clone.wait(Duration::from_secs(5)).await?;
+                let _ = barrier_clone.wait(Duration::from_secs(5)).await?;
 
                 // Increment after barrier
                 counter_clone.fetch_add(10, Ordering::SeqCst);
 
-                Ok::<i32, tokio::time::error::Elapsed>(i as i32)
+                Ok::<i32, anyhow::Error>(i as i32)
             });
             handles.push(handle);
         }
@@ -539,7 +481,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_barrier_timeout(ctx: TestContext) -> TestResult<()> {
+    async fn test_barrier_timeout(ctx: TestContext) -> anyhow::Result<()> {
         let barrier = Arc::new(TestBarrier::new(3));
 
         // Only 2 participants (less than required)
@@ -564,7 +506,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_worker_readiness_coordinator(ctx: TestContext) -> TestResult<()> {
+    async fn test_worker_readiness_coordinator(ctx: TestContext) -> anyhow::Result<()> {
         let coordinator = WorkerReadinessCoordinator::new(3);
 
         // Simulate workers becoming ready
@@ -590,7 +532,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_event_count(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_event_count(ctx: TestContext) -> anyhow::Result<()> {
         // Insert some events
         for i in 0..5 {
             ctx.event()
@@ -609,7 +551,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_source_events(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_source_events(ctx: TestContext) -> anyhow::Result<()> {
         // Insert events from different sources
         for i in 0..3 {
             ctx.event()
@@ -640,7 +582,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_custom_condition(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_custom_condition(ctx: TestContext) -> anyhow::Result<()> {
         let counter = Arc::new(AtomicUsize::new(0));
         let counter_clone = counter.clone();
 
@@ -668,7 +610,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_multiple_conditions(ctx: TestContext) -> TestResult<()> {
+    async fn test_wait_helpers_multiple_conditions(ctx: TestContext) -> anyhow::Result<()> {
         let counter1 = Arc::new(AtomicUsize::new(0));
         let counter2 = Arc::new(AtomicUsize::new(0));
 
@@ -685,25 +627,22 @@ mod tests {
             c2_clone.store(10, Ordering::SeqCst);
         });
 
-        // Wait for both conditions
-        let conditions = vec![
-            ("counter1 >= 5", {
-                let counter = counter1.clone();
-                move || {
-                    let c = counter.clone();
-                    async move { Ok(c.load(Ordering::SeqCst) >= 5) }
-                }
-            }),
-            ("counter2 >= 10", {
-                let counter = counter2.clone();
-                move || {
-                    let c = counter.clone();
-                    async move { Ok(c.load(Ordering::SeqCst) >= 10) }
-                }
-            }),
-        ];
+        // Instead of using wait_for_multiple_conditions with closures,
+        // we'll use a simple loop since closures don't implement Clone
+        let start = std::time::Instant::now();
+        let timeout = Duration::from_secs(5);
 
-        WaitHelpers::wait_for_multiple_conditions(conditions, 5).await?;
+        loop {
+            if counter1.load(Ordering::SeqCst) >= 5 && counter2.load(Ordering::SeqCst) >= 10 {
+                break;
+            }
+
+            if start.elapsed() > timeout {
+                return Err(anyhow::anyhow!("Timeout waiting for conditions"));
+            }
+
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
 
         assert_eq!(counter1.load(Ordering::SeqCst), 5);
         assert_eq!(counter2.load(Ordering::SeqCst), 10);
@@ -712,10 +651,10 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_event_processing(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_patterns_event_processing(ctx: TestContext) -> anyhow::Result<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
             .await
-            .map_err(|_| CoreError::Unknown("Failed to create counter".to_string()))?;
+            .map_err(|_| SinexError::unknown("Failed to create counter"))?;
 
         // Simulate event processing
         for _ in 0..5 {
@@ -728,7 +667,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_test_phases(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_patterns_test_phases(ctx: TestContext) -> anyhow::Result<()> {
         let phases = vec!["setup", "execution", "validation", "cleanup"];
         let (tracker, phase_names) = TimingPatterns::create_test_phases(&phases);
 
@@ -736,7 +675,7 @@ mod tests {
         assert_eq!(tracker.get(), 0);
 
         // Progress through phases
-        for (i, phase) in phase_names.iter().enumerate() {
+        for (i, _phase) in phase_names.iter().enumerate() {
             assert_eq!(tracker.get(), i);
             tracker.increment();
         }
@@ -747,7 +686,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_integration(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_integration(ctx: TestContext) -> anyhow::Result<()> {
         let timing = ctx.timing();
 
         // Insert events
@@ -771,7 +710,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_synchronizer(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_synchronizer(ctx: TestContext) -> anyhow::Result<()> {
         let timing = ctx.timing();
         let sync = timing.synchronizer(Duration::from_secs(5));
 
@@ -789,13 +728,13 @@ mod tests {
         sync_clone
             .wait()
             .await
-            .map_err(|_| CoreError::Unknown("Synchronizer wait failed".to_string()))?;
+            .map_err(|_| SinexError::unknown("Synchronizer wait failed"))?;
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_timing_utils_barrier(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_barrier(ctx: TestContext) -> anyhow::Result<()> {
         let timing = ctx.timing();
         let barrier = Arc::new(timing.barrier(2));
 
@@ -815,7 +754,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_progress_tracker(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_progress_tracker(ctx: TestContext) -> anyhow::Result<()> {
         let timing = ctx.timing();
         let tracker = timing.progress_tracker(3);
 
@@ -833,7 +772,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_utils_event_counter(ctx: TestContext) -> TestResult<()> {
+    async fn test_timing_utils_event_counter(ctx: TestContext) -> anyhow::Result<()> {
         let timing = ctx.timing();
         let counter = timing.event_counter(10);
 

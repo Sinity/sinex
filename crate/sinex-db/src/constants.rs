@@ -14,7 +14,7 @@ pub mod schemas {
 pub mod tables {
     // Core schema tables
     pub const EVENTS: &str = "core.events";
-    pub const AUTOMATON_CHECKPOINTS: &str = "core.automaton_checkpoints";
+    pub const PROCESSOR_CHECKPOINTS: &str = "core.processor_checkpoints";
     pub const SOURCE_MATERIAL_REGISTRY: &str = "raw.source_material_registry";
     pub const ANNOTATIONS: &str = "core.annotations";
     pub const EVENT_BLOBS: &str = "core.event_blobs";

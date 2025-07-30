@@ -530,7 +530,7 @@ async fn generate_verification_report(
         id: sinex_ulid::Ulid,
         timestamp: chrono::DateTime<chrono::Utc>,
         payload: serde_json::Value,
-        host: String,
+        _host: String,
     }
 
     let recent_verifications: Vec<HeartbeatRow> =

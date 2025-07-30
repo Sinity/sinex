@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 proptest! {
     #[test]
     fn checkpoint_updates_are_idempotent(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         processed_count in 0u64..10000u64,
         last_processed_id in prop::option::of("[0-9A-HJKMNP-TV-Z]{26}"),
         checkpoint_data in checkpoint_data(),
@@ -28,9 +28,9 @@ proptest! {
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
-                automaton_name.clone(),
-                format!("{}-group", automaton_name),
-                format!("{}-consumer", automaton_name),
+                processor_name.clone(),
+                format!("{}-group", processor_name),
+                format!("{}-consumer", processor_name),
             );
 
             // Create initial checkpoint state
@@ -67,7 +67,7 @@ proptest! {
 proptest! {
     #[test]
     fn checkpoint_recovery_is_robust(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         checkpoints in proptest::collection::vec(
             (0u64..1000u64, checkpoint_data()),
             1..=10
@@ -80,9 +80,9 @@ proptest! {
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
-                automaton_name.clone(),
-                format!("{}-group", automaton_name),
-                format!("{}-consumer", automaton_name),
+                processor_name.clone(),
+                format!("{}-group", processor_name),
+                format!("{}-consumer", processor_name),
             );
 
             // Save multiple checkpoints with increasing counts
@@ -115,7 +115,7 @@ proptest! {
 proptest! {
     #[test]
     fn concurrent_checkpoint_access_is_safe(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         concurrent_updates in proptest::collection::vec(0u64..1000u64, 1..=20),
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -125,9 +125,9 @@ proptest! {
 
             let checkpoint_manager = Arc::new(CheckpointManager::new(
                 pool.clone(),
-                automaton_name.clone(),
-                format!("{}-group", automaton_name),
-                format!("{}-consumer", automaton_name),
+                processor_name.clone(),
+                format!("{}-group", processor_name),
+                format!("{}-consumer", processor_name),
             ));
 
             // Launch concurrent update tasks
@@ -173,7 +173,7 @@ proptest! {
 proptest! {
     #[test]
     fn checkpoint_state_transitions_are_valid(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         initial_count in 0u64..100u64,
         increments in proptest::collection::vec(1u64..100u64, 1..=10),
     ) {
@@ -184,9 +184,9 @@ proptest! {
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
-                automaton_name.clone(),
-                format!("{}-group", automaton_name),
-                format!("{}-consumer", automaton_name),
+                processor_name.clone(),
+                format!("{}-group", processor_name),
+                format!("{}-consumer", processor_name),
             );
 
             // Initialize with starting count
@@ -227,7 +227,7 @@ proptest! {
 proptest! {
     #[test]
     fn checkpoint_data_integrity_is_preserved(
-        automaton_name in automaton_names(),
+        processor_name in processor_names(),
         test_data in checkpoint_data(),
         operations in proptest::collection::vec(
             prop_oneof![
@@ -245,9 +245,9 @@ proptest! {
 
             let checkpoint_manager = CheckpointManager::new(
                 pool.clone(),
-                automaton_name.clone(),
-                format!("{}-group", automaton_name),
-                format!("{}-consumer", automaton_name),
+                processor_name.clone(),
+                format!("{}-group", processor_name),
+                format!("{}-consumer", processor_name),
             );
 
             let mut expected_data = test_data.clone();
@@ -308,7 +308,7 @@ proptest! {
 proptest! {
     #[test]
     fn checkpoint_cleanup_maintains_consistency(
-        automaton_names in proptest::collection::vec(automaton_names(), 1..=10),
+        processor_names in proptest::collection::vec(processor_names(), 1..=10),
         cleanup_threshold in 1u64..100u64,
     ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
@@ -318,23 +318,23 @@ proptest! {
 
             // Create multiple automata with checkpoints
             let mut managers = Vec::new();
-            for automaton_name in automaton_names.iter() {
+            for processor_name in processor_names.iter() {
                 let manager = CheckpointManager::new(
                     pool.clone(),
-                    automaton_name.clone(),
-                    format!("{}-group", automaton_name),
-                    format!("{}-consumer", automaton_name),
+                    processor_name.clone(),
+                    format!("{}-group", processor_name),
+                    format!("{}-consumer", processor_name),
                 );
 
                 // Create checkpoint
                 let state = CheckpointState {
                     checkpoint: Checkpoint::Stream {
-                        message_id: format!("checkpoint-{}", automaton_name),
+                        message_id: format!("checkpoint-{}", processor_name),
                         event_id: None,
                     },
                     processed_count: cleanup_threshold,
                     last_activity: chrono::Utc::now(),
-                    data: Some(serde_json::json!({"automaton": automaton_name})),
+                    data: Some(serde_json::json!({"automaton": processor_name})),
                     version: 2,
                 };
 
@@ -350,7 +350,7 @@ proptest! {
             }
 
             // Test cleanup doesn't affect other automata
-            let first_automaton = &automaton_names[0];
+            let first_automaton = &processor_names[0];
             let cleaned_manager = CheckpointManager::new(
                 pool.clone(),
                 first_automaton.clone(),

@@ -195,8 +195,6 @@
               just
               sqlx-cli
               mold # Fast linker for compilation speed
-              sccache # Compilation cache for dependencies
-              python3Packages.rich-cli # Rich CLI formatting
 
               # Python and testing
               python3
@@ -227,47 +225,9 @@
               export DATABASE_NAME="sinex_dev"
               export DATABASE_URL="postgresql:///$DATABASE_NAME?host=/run/postgresql"
               export SINEX_TEST_OPTIMIZATIONS="true"
-              export SINEX_ANALYTICS_DIR="$HOME/.sinex-analytics"
-              mkdir -p "$SINEX_ANALYTICS_DIR"
-
-              # Setup sccache for faster builds
-              export RUSTC_WRAPPER="sccache"
-              export SCCACHE_DIR="$HOME/.cache/sccache"
-              export SCCACHE_CACHE_SIZE="10G"
-
-              # Create cargo wrapper for analytics
-              mkdir -p .nix-shell-bin
-              cat > .nix-shell-bin/cargo << 'CARGO_WRAPPER'
-              #!/usr/bin/env bash
-              # Wrapper to add analytics to cargo commands
-
-              # Commands that should have analytics
-              case "$1" in
-                  build|check|test|bench|run|clippy)
-                      if [ -x "scripts/compile-analytics.sh" ]; then
-                          exec scripts/compile-analytics.sh $(which cargo) "$@"
-                      else
-                          exec $(which cargo) "$@"
-                      fi
-                      ;;
-                  *)
-                      # Other commands run normally
-                      exec $(which cargo) "$@"
-                      ;;
-              esac
-              CARGO_WRAPPER
-              chmod +x .nix-shell-bin/cargo
-              export PATH="$PWD/.nix-shell-bin:$PATH"
-
 
               # Clear screen for clean start
               clear
-
-              # Header
-              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-              echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
-              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-              echo
 
               # Database setup
               if command -v pg_isready >/dev/null 2>&1 && pg_isready -h /run/postgresql >/dev/null 2>&1; then
@@ -291,55 +251,32 @@
                 MIGRATION_INFO="PostgreSQL not running"
               fi
 
-              # Build cache status
-              if [ -d "$SCCACHE_DIR" ]; then
-                CACHE_SIZE=$(du -sh "$SCCACHE_DIR" 2>/dev/null | cut -f1 || echo "0")
-                CACHE_INFO="🟢 $CACHE_SIZE"
-              else
-                CACHE_INFO="🟢 initializing"
-              fi
-
-              # Auto-start daemons silently (capture output for MOTD)
-              GIT_DAEMON_MSG=""
-              COMPILE_DAEMON_MSG=""
+              # Display MOTD
+              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+              echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
+              echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+              echo
               
-              if [ -f "scripts/git-state-tracker.sh" ]; then
-                TRACKER_STATUS=$(timeout 2s ./scripts/git-state-tracker.sh status 2>/dev/null || echo '{"status":"not_running"}')
-                if ! echo "$TRACKER_STATUS" | jq -e '.status == "running"' >/dev/null 2>&1; then
-                  if timeout 5s ./scripts/git-state-tracker.sh start >/dev/null 2>&1; then
-                    GIT_DAEMON_MSG="started"
-                  else
-                    GIT_DAEMON_MSG="failed to start"
-                  fi
-                fi
-              fi
-
-              if [ -f "scripts/compile-daemon.sh" ]; then
-                DAEMON_STATUS=$(timeout 2s ./scripts/compile-daemon.sh status 2>/dev/null || echo '{"status":"not_running"}')
-                if ! echo "$DAEMON_STATUS" | jq -e '.status != "no_data"' >/dev/null 2>&1; then
-                  if timeout 5s ./scripts/compile-daemon.sh start >/dev/null 2>&1; then
-                    COMPILE_DAEMON_MSG="started"
-                  else
-                    COMPILE_DAEMON_MSG="failed to start"
-                  fi
-                fi
-              fi
-
-              # Export daemon messages for MOTD
-              export GIT_DAEMON_MSG
-              export COMPILE_DAEMON_MSG
-
-              # Show MOTD using rich
-              MOTD_SCRIPT="$PWD/scripts/motd-rich.sh"
-              if [ -x "$MOTD_SCRIPT" ]; then
-                "$MOTD_SCRIPT"
+              # Database status
+              if [ "$DB_STATUS" = "🟢" ]; then
+                echo -e "Database:    \033[32m✓\033[0m $DATABASE_NAME"
+              elif [ "$DB_STATUS" = "🟡" ]; then
+                echo -e "Database:    \033[33m⚠\033[0m $DATABASE_NAME ($MIGRATION_INFO)"
               else
-                echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-                echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
-                echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-                echo
-                echo "Run 'just' to see available commands"
+                echo -e "Database:    \033[31m✗\033[0m $MIGRATION_INFO"
               fi
+              
+              # Build system status
+              echo -e "Build:       \033[32m✓\033[0m Incremental compilation enabled"
+              echo -e "Cores:       \033[32m✓\033[0m 24 parallel jobs"
+              
+              echo -e "\033[90m────────────────────────────────────────\033[0m"
+              echo -e "\033[90mQuick commands:\033[0m"
+              echo -e "  \033[1mjust\033[0m         → Show all commands"
+              echo -e "  \033[1mjust qc\033[0m      → Check workspace (2-3s)"
+              echo -e "  \033[1mjust qcs\033[0m     → Smart check changes only (0.2-0.7s)"
+              echo -e "  \033[1mjust dev\033[0m     → Format, check & test"
+              echo ""
             '';
           };
 

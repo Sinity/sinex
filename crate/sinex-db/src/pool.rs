@@ -77,5 +77,3 @@ pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static
     POOL.get()
         .ok_or_else(|| anyhow::anyhow!("Pool not initialized"))
 }
-
-// Deprecated function removed

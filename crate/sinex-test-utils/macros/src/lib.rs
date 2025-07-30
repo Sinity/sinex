@@ -98,32 +98,24 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = parse_macro_input!(item as ItemFn);
     let fn_name = &input.sig.ident;
 
-    // Parse timeout attribute with smarter defaults
+    // Check if function is async or sync
+    let is_async = input.sig.asyncness.is_some();
+
+    // Default timeout constants
+    const DEFAULT_SYNC_TIMEOUT: u64 = 10; // 10 seconds for sync tests
+    const DEFAULT_ASYNC_TIMEOUT: u64 = 30; // 30 seconds for async tests
+
+    // Parse timeout attribute or use defaults
     let timeout_secs = parse_timeout_attr(attr).unwrap_or_else(|| {
-        // Smart default based on function name patterns - increased for database operations
-        let fn_name_str = fn_name.to_string();
-        if fn_name_str.contains("system") || fn_name_str.contains("end_to_end") {
-            60 // System tests need more time, especially for template creation
-        } else if fn_name_str.contains("adversarial") || fn_name_str.contains("stress") {
-            45 // Adversarial tests need moderate time
-        } else if fn_name_str.contains("database") || fn_name_str.contains("integration") {
-            40 // Database operations need extra time for connection pool
-        } else if fn_name_str.contains("property") || fn_name_str.contains("proptest") {
-            50 // Property tests with proptest need extra time
+        if is_async {
+            DEFAULT_ASYNC_TIMEOUT
         } else {
-            30 // Default timeout for unit tests, increased for safety
+            DEFAULT_SYNC_TIMEOUT
         }
     });
 
     // Detect proptest usage
     let has_proptest = has_proptest_usage(&input.block);
-
-    // Validate it's async
-    if input.sig.asyncness.is_none() {
-        return syn::Error::new_spanned(input.sig.fn_token, "sinex_test functions must be async")
-            .to_compile_error()
-            .into();
-    }
 
     // Process function body based on proptest usage
     let fn_body = if has_proptest {
@@ -134,6 +126,31 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     let fn_vis = &input.vis;
+
+    // Check return type - must be Result<()> or Result<T>
+    let has_result_return = if let syn::ReturnType::Type(_, ref ty) = input.sig.output {
+        if let syn::Type::Path(type_path) = ty.as_ref() {
+            type_path
+                .path
+                .segments
+                .last()
+                .map(|seg| seg.ident == "Result")
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if !has_result_return {
+        return syn::Error::new_spanned(
+            &input.sig.output,
+            "sinex_test functions must return Result<()> or Result<T>",
+        )
+        .to_compile_error()
+        .into();
+    }
 
     // Check if function takes TestContext parameter
     let takes_context = input.sig.inputs.iter().any(|arg| {
@@ -147,12 +164,78 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         false
     });
 
-    let output = if takes_context {
+    // Sync tests can't use TestContext (it requires async)
+    if takes_context && !is_async {
+        return syn::Error::new_spanned(input.sig.fn_token, "TestContext requires async functions")
+            .to_compile_error()
+            .into();
+    }
+
+    let output = if !is_async {
+        // Sync test handling
+        quote! {
+            #[test]
+            #fn_vis fn #fn_name() -> anyhow::Result<()> {
+                use std::thread;
+                use std::time::{Duration, Instant};
+
+                let test_name = stringify!(#fn_name);
+                let start = Instant::now();
+                eprintln!("🔄 {} [sync, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
+
+                // Start progress thread for longer tests
+                let progress_handle = if #timeout_secs > 5 {
+                    let test_name_clone = test_name.to_string();
+                    let timeout = #timeout_secs;
+                    Some(thread::spawn(move || {
+                        let mut elapsed = 5;
+                        loop {
+                            thread::sleep(Duration::from_secs(5));
+                            eprintln!("  ⏳ {} still running... ({}s elapsed)",
+                                     test_name_clone.replace('_', " "), elapsed);
+                            elapsed += 5;
+                            if elapsed >= timeout - 5 {
+                                break;
+                            }
+                        }
+                    }))
+                } else {
+                    None
+                };
+
+                // Run the test
+                let result: anyhow::Result<()> = (|| {
+                    #fn_body
+                })();
+
+                // Clean up progress thread
+                if let Some(handle) = progress_handle {
+                    // Thread will exit on its own, just don't wait for it
+                    drop(handle);
+                }
+
+                let elapsed = start.elapsed();
+                if result.is_ok() {
+                    eprintln!("✅ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                } else {
+                    eprintln!("❌ {} ({:.1?})", test_name.replace('_', " "), elapsed);
+                }
+
+                // Check if we exceeded timeout (soft warning only)
+                if elapsed.as_secs() > #timeout_secs {
+                    eprintln!("⚠️  {} exceeded timeout of {}s",
+                             test_name.replace('_', " "), #timeout_secs);
+                }
+
+                result
+            }
+        }
+    } else if takes_context {
         if has_proptest {
             // Database test with proptest support
             quote! {
                 #[tokio::test]
-                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                #fn_vis async fn #fn_name() -> anyhow::Result<()> {
                     // Note: TestContext must be in scope
 
                     // Wrap the entire test in a timeout
@@ -166,7 +249,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let ctx = TestContext::with_name(test_name).await?;
 
                         // Run the proptest with progress tracking
-                        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = {
+                        let result: anyhow::Result<()> = {
                             // For proptest, spawn a progress indicator
                             let progress_task = tokio::spawn(async {
                                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(10));
@@ -202,11 +285,11 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                                 Ok(result) => match result {
                                     Ok(()) => Ok(()),
                                     Err(e) => {
-                                        // Convert the non-Send error to a Send-able String error
-                                        Err(format!("Proptest failed: {}", e).into())
+                                        // Convert the non-Send error to anyhow error
+                                        Err(anyhow::anyhow!("Proptest failed: {}", e))
                                     }
                                 },
-                                Err(e) => Err(Box::new(e) as Box<dyn std::error::Error + Send + Sync>),
+                                Err(e) => Err(anyhow::anyhow!(e)),
                             }?
                         };
 
@@ -226,14 +309,14 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         std::time::Duration::from_secs(#timeout_secs),
                         test_future
                     ).await
-                    .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?
+                    .map_err(|_| anyhow::anyhow!("Test timed out after {} seconds", #timeout_secs))?
                 }
             }
         } else {
             // Regular database test using universal pool system with proper cleanup
             quote! {
                 #[tokio::test]
-                #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+                #fn_vis async fn #fn_name() -> anyhow::Result<()> {
                     // Note: TestContext must be in scope
 
                     // Wrap the entire test in a timeout
@@ -247,7 +330,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         let ctx = TestContext::with_name(test_name).await?;
 
                         // Run the test with progress tracking for long tests
-                        let result: Result<(), Box<dyn std::error::Error + Send + Sync>> = if #timeout_secs > 10 {
+                        let result: anyhow::Result<()> = if #timeout_secs > 10 {
                             // For long tests, spawn a progress indicator
                             let progress_task = tokio::spawn(async {
                                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
@@ -291,7 +374,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         std::time::Duration::from_secs(#timeout_secs),
                         test_future
                     ).await
-                    .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?
+                    .map_err(|_| anyhow::anyhow!("Test timed out after {} seconds", #timeout_secs))?
                 }
             }
         }
@@ -299,7 +382,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         // Simple test - just timeout wrapper
         quote! {
             #[tokio::test]
-            #fn_vis async fn #fn_name() -> std::result::Result<(), Box<dyn std::error::Error + Send + Sync>> {
+            #fn_vis async fn #fn_name() -> anyhow::Result<()> {
                 let test_name = stringify!(#fn_name);
                 let start = std::time::Instant::now();
                 eprintln!("🔄 {} [simple, timeout: {}s]", test_name.replace('_', " "), #timeout_secs);
@@ -308,7 +391,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     std::time::Duration::from_secs(#timeout_secs),
                     async { #fn_body }
                 ).await
-                .map_err(|_| format!("Test timed out after {} seconds", #timeout_secs))?;
+                .map_err(|_| anyhow::anyhow!("Test timed out after {} seconds", #timeout_secs))?;
 
                 let elapsed = start.elapsed();
                 if result.is_ok() {
@@ -318,6 +401,149 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                 }
 
                 result
+            }
+        }
+    };
+
+    output.into()
+}
+
+#[proc_macro_attribute]
+pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(item as ItemFn);
+    let fn_name = &input.sig.ident;
+
+    // Parse optional args parameter
+    let args = if !attr.is_empty() {
+        // Parse args = [values...] syntax
+        let attr_str = attr.to_string();
+        if attr_str.starts_with("args") && attr_str.contains('[') {
+            Some(proc_macro2::TokenStream::from(attr))
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    // Remove async validation - benchmarks should be synchronous since the macro handles async internally
+
+    // Check function parameters
+    let mut takes_context = false;
+    let mut takes_args = false;
+    let mut arg_type = None;
+
+    for (i, arg) in input.sig.inputs.iter().enumerate() {
+        if let syn::FnArg::Typed(pat_type) = arg {
+            if let syn::Type::Path(type_path) = pat_type.ty.as_ref() {
+                if let Some(last_segment) = type_path.path.segments.last() {
+                    if last_segment.ident == "BenchContext" && i == 0 {
+                        takes_context = true;
+                    } else if i == 1 || (i == 0 && !takes_context) {
+                        // This is the args parameter
+                        takes_args = true;
+                        arg_type = Some(pat_type.ty.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    let fn_vis = &input.vis;
+    let fn_body = &input.block;
+
+    let output = if takes_context && takes_args {
+        // Database benchmark with context and args
+        if let Some(args_tokens) = args {
+            quote! {
+                #[divan::bench(#args_tokens)]
+                #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
+                    use sinex_test_utils::bench::BENCH_CONTEXT;
+                    let ctx = &*BENCH_CONTEXT;
+
+                    bencher.bench_local(|| {
+                        ctx.runtime.block_on(async {
+                            // The function body contains .await calls, so we wrap it in an async block
+                            let result: anyhow::Result<()> = async {
+                                let ctx = ctx;
+                                let arg = arg;
+                                #fn_body
+                            }.await;
+                            result.unwrap()
+                        })
+                    });
+                }
+            }
+        } else {
+            return syn::Error::new_spanned(
+                fn_name,
+                "Parameterized benchmarks require args attribute",
+            )
+            .to_compile_error()
+            .into();
+        }
+    } else if takes_context {
+        // Database benchmark with only context
+        quote! {
+            #[divan::bench]
+            #fn_vis fn #fn_name(bencher: divan::Bencher) {
+                use sinex_test_utils::bench::BENCH_CONTEXT;
+                let ctx = &*BENCH_CONTEXT;
+
+                bencher.bench_local(|| {
+                    ctx.runtime.block_on(async {
+                        // The function body contains .await calls, so we wrap it in an async block
+                        let result: anyhow::Result<()> = async {
+                            let ctx = ctx;
+                            #fn_body
+                        }.await;
+                        result.unwrap()
+                    })
+                });
+            }
+        }
+    } else if takes_args {
+        // Simple benchmark with args
+        if let Some(args_tokens) = args {
+            quote! {
+                #[divan::bench(#args_tokens)]
+                #fn_vis fn #fn_name(bencher: divan::Bencher, arg: #arg_type) {
+                    let runtime = tokio::runtime::Runtime::new().unwrap();
+
+                    bencher.bench_local(|| {
+                        runtime.block_on(async {
+                            let result: anyhow::Result<()> = async {
+                                let arg = arg;
+                                #fn_body
+                            }.await;
+                            result.unwrap()
+                        })
+                    });
+                }
+            }
+        } else {
+            return syn::Error::new_spanned(
+                fn_name,
+                "Parameterized benchmarks require args attribute",
+            )
+            .to_compile_error()
+            .into();
+        }
+    } else {
+        // Simple benchmark without context or args
+        quote! {
+            #[divan::bench]
+            #fn_vis fn #fn_name(bencher: divan::Bencher) {
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+
+                bencher.bench_local(|| {
+                    runtime.block_on(async {
+                        let result: anyhow::Result<()> = async {
+                            #fn_body
+                        }.await;
+                        result.unwrap()
+                    })
+                });
             }
         }
     };

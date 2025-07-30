@@ -28,7 +28,7 @@ use tracing::info;
 // =============================================================================
 
 #[sinex_test]
-async fn test_git_annex_hash_deduplication(ctx: TestContext) -> TestResult {
+async fn test_git_annex_hash_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let annex_dir = temp_dir.path().join("git-annex");
 
@@ -75,7 +75,7 @@ async fn test_git_annex_hash_deduplication(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_atuin_import_overlap_detection(ctx: TestContext) -> TestResult {
+async fn test_atuin_import_overlap_detection(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let db_path = temp_dir.path().join("test_atuin.db");
 
@@ -173,7 +173,7 @@ async fn test_atuin_import_overlap_detection(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_shell_history_time_range_overlap(ctx: TestContext) -> TestResult {
+async fn test_shell_history_time_range_overlap(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".bash_history");
 
@@ -272,7 +272,7 @@ echo "recent command"
 // =============================================================================
 
 #[sinex_test]
-async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
+async fn test_overlap_analysis_statistics(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".zsh_history");
 
@@ -384,7 +384,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_cross_scanner_deduplication(ctx: TestContext) -> TestResult {
+async fn test_cross_scanner_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
 
     // Create the same command in both Atuin and shell history

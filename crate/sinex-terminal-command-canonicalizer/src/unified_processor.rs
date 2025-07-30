@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
-use sinex_core_types::CoreError;
+use sinex_error::SinexError;
 use sinex_db::queries::EventQueries;
 use sinex_events::{EventFactory, RawEvent, event_types, sources};
 use sinex_satellite_sdk::{
@@ -61,7 +61,7 @@ impl TerminalCommandCanonicalizer {
         command_text: &str,
         timestamp: DateTime<Utc>,
         window_secs: i64,
-    ) -> Result<Option<String>, CoreError> {
+    ) -> Result<Option<String>, SinexError> {
         let start_time = timestamp - Duration::seconds(window_secs);
         let end_time = timestamp + Duration::seconds(window_secs);
 

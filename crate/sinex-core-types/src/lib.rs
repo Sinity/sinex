@@ -268,11 +268,11 @@ pub mod redis {
     pub const BLOCK_TIMEOUT_MS: u64 = 1000;
 }
 
-// Re-export the canonical CoreError from sinex-error
-pub use sinex_error::CoreError;
+// Re-export the canonical error type from sinex-error
+pub use sinex_error::SinexError;
 
-/// Result type alias for CoreError
-pub type Result<T> = std::result::Result<T, CoreError>;
+/// Result type alias for SinexError
+pub type Result<T> = std::result::Result<T, SinexError>;
 
 /// Status indicators for health checks
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -465,7 +465,7 @@ pub mod test_utils {
 
         sqlx::PgPool::connect(&database_url)
             .await
-            .map_err(|e| CoreError::Database(e.to_string()))
+            .map_err(|e| SinexError::database(e.to_string()))
     }
 
     /// Generate a unique test identifier

@@ -5,7 +5,7 @@
 
 use serde::de::DeserializeOwned;
 use serde_json::Value;
-use sinex_error::{CoreError, Result};
+use sinex_error::{Result, SinexError};
 
 /// Parse JSON from a string with error context
 pub fn parse_json<T: DeserializeOwned>(
@@ -14,11 +14,10 @@ pub fn parse_json<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     serde_json::from_str(json_str).map_err(|e| {
-        CoreError::serialization(format!("Failed to parse {}", context_type))
+        SinexError::serialization(format!("Failed to parse {}", context_type))
             .with_operation(operation)
             .with_context("json_length", json_str.len().to_string())
             .with_context("error", e.to_string())
-            .build()
     })
 }
 
@@ -29,26 +28,24 @@ pub fn parse_json_file<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     serde_json::from_str(json_str).map_err(|e| {
-        CoreError::serialization("Failed to parse JSON file")
+        SinexError::serialization("Failed to parse JSON file")
             .with_operation(operation)
             .with_context("file_path", file_path.as_ref().display().to_string())
             .with_context("json_length", json_str.len().to_string())
             .with_context("error", e.to_string())
-            .build()
     })
 }
 
 /// Parse JSON Value from a string with error context
 pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> Result<Value> {
     serde_json::from_str(json_str).map_err(|e| {
-        CoreError::serialization(format!("Failed to parse {} as JSON", context_type))
+        SinexError::serialization(format!("Failed to parse {} as JSON", context_type))
             .with_operation(operation)
             .with_context(
                 "json_preview",
                 json_str.chars().take(100).collect::<String>(),
             )
             .with_context("error", e.to_string())
-            .build()
     })
 }
 
@@ -59,7 +56,7 @@ pub fn extract_field<T: DeserializeOwned>(
     operation: &str,
 ) -> Result<T> {
     let field_value = value.get(field_name).ok_or_else(|| {
-        CoreError::validation(format!("Missing field: {}", field_name))
+        SinexError::validation(format!("Missing field: {}", field_name))
             .with_operation(operation)
             .with_context(
                 "available_fields",
@@ -71,14 +68,12 @@ pub fn extract_field<T: DeserializeOwned>(
                         .unwrap_or_default()
                 ),
             )
-            .build()
     })?;
 
     serde_json::from_value(field_value.clone()).map_err(|e| {
-        CoreError::serialization(format!("Failed to deserialize field: {}", field_name))
+        SinexError::serialization(format!("Failed to deserialize field: {}", field_name))
             .with_operation(operation)
             .with_context("error", e.to_string())
-            .build()
     })
 }
 
@@ -89,10 +84,9 @@ pub fn to_json_value<T: serde::Serialize>(
     operation: &str,
 ) -> Result<Value> {
     serde_json::to_value(value).map_err(|e| {
-        CoreError::serialization(format!("Failed to serialize {}", context_type))
+        SinexError::serialization(format!("Failed to serialize {}", context_type))
             .with_operation(operation)
             .with_context("error", e.to_string())
-            .build()
     })
 }
 
