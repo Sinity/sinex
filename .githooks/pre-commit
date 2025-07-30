@@ -15,7 +15,7 @@ echo -e "${YELLOW}Running pre-commit checks...${NC}"
 echo "🎨 Checking code formatting..."
 
 # Get list of staged Rust files
-STAGED_RUST_FILES=$(git diff --cached --name-only --diff-filter=d | grep -E '\.(rs|toml)$' || true)
+STAGED_RUST_FILES=$(git diff --cached --name-only --diff-filter=d | grep -E '\.rs$' || true)
 
 if [ -n "$STAGED_RUST_FILES" ]; then
     # Check if staged files are formatted
@@ -23,16 +23,18 @@ if [ -n "$STAGED_RUST_FILES" ]; then
     
     for file in $STAGED_RUST_FILES; do
         if [ -f "$file" ]; then
-            # Check formatting for individual file
-            if [ -z "$IN_NIX_SHELL" ]; then
-                # Not in nix shell, use nix develop wrapper
-                if ! nix develop --command rustfmt --check "$file" >/dev/null 2>&1; then
-                    FORMATTING_ISSUES="${FORMATTING_ISSUES}${file}\n"
-                fi
-            else
-                # In nix shell, run directly
-                if ! rustfmt --check "$file" >/dev/null 2>&1; then
-                    FORMATTING_ISSUES="${FORMATTING_ISSUES}${file}\n"
+            # Check formatting for individual file (only .rs files)
+            if [[ "$file" == *.rs ]]; then
+                if [ -z "$IN_NIX_SHELL" ]; then
+                    # Not in nix shell, use nix develop wrapper
+                    if ! nix develop --command rustfmt --check "$file" >/dev/null 2>&1; then
+                        FORMATTING_ISSUES="${FORMATTING_ISSUES}${file}\n"
+                    fi
+                else
+                    # In nix shell, run directly
+                    if ! rustfmt --check "$file" >/dev/null 2>&1; then
+                        FORMATTING_ISSUES="${FORMATTING_ISSUES}${file}\n"
+                    fi
                 fi
             fi
         fi

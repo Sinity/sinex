@@ -3,7 +3,7 @@
 //! This module provides specialized validation for:
 //! - Schema validation testing with malformed event detection
 //! - ULID ordering verification and corruption detection  
-//! - Checkpoint consistency checks across automatons
+//! - Checkpoint consistency checks across processors
 //! - Data corruption detection and recovery guidance
 
 use anyhow::Result;
@@ -68,7 +68,7 @@ pub struct IntegrityTestMetadata {
     pub test_start_time: DateTime<Utc>,
     pub test_duration: Duration,
     pub events_sampled: u64,
-    pub automatons_checked: u32,
+    pub processors_checked: u32,
     pub schemas_validated: u32,
     pub performance_metrics: PerformanceMetrics,
 }
@@ -151,7 +151,7 @@ impl<'a> IntegrityTester<'a> {
             test_start_time,
             test_duration,
             events_sampled: check_report.total_events_checked,
-            automatons_checked: check_report.checkpoint_inconsistencies.len() as u32,
+            processors_checked: check_report.checkpoint_inconsistencies.len() as u32,
             schemas_validated: check_report.schema_violations.len() as u32,
             performance_metrics,
         };
@@ -343,20 +343,20 @@ impl<'a> IntegrityTester<'a> {
             r#"
             WITH checkpoint_analysis AS (
                 SELECT 
-                    ac.automaton_name,
-                    ac.last_processed_id::uuid as last_processed_id,
-                    ac.processed_count,
-                    ac.last_activity,
+                    pc.processor_name,
+                    pc.last_processed_id::uuid as last_processed_id,
+                    pc.processed_count,
+                    pc.last_activity,
                     COUNT(e.event_id) as events_after_checkpoint,
                     MIN(e.ts_ingest) as first_unprocessed_event_time,
                     MAX(e.ts_ingest) as last_unprocessed_event_time
-                FROM core.automaton_checkpoints ac
-                LEFT JOIN core.events e ON e.event_id > COALESCE(ac.last_processed_id, '00000000000000000000000000'::ulid)
-                    AND e.ts_ingest > COALESCE(ac.last_activity, NOW() - INTERVAL '1 hour')
-                GROUP BY ac.automaton_name, ac.last_processed_id, ac.processed_count, ac.last_activity
+                FROM core.processor_checkpoints pc
+                LEFT JOIN core.events e ON e.event_id > COALESCE(pc.last_processed_id, '00000000000000000000000000'::ulid)
+                    AND e.ts_ingest > COALESCE(pc.last_activity, NOW() - INTERVAL '1 hour')
+                GROUP BY pc.processor_name, pc.last_processed_id, pc.processed_count, pc.last_activity
             )
             SELECT 
-                automaton_name,
+                processor_name,
                 last_processed_id,
                 processed_count,
                 last_activity,
@@ -381,7 +381,7 @@ impl<'a> IntegrityTester<'a> {
             };
 
             inconsistencies.push(CheckpointInconsistency {
-                automaton_name: gap.automaton_name,
+                processor_name: gap.processor_name,
                 checkpoint_ulid: gap
                     .last_processed_id
                     .map(crate::query_helpers::uuid_to_ulid),
@@ -462,13 +462,13 @@ impl<'a> IntegrityTester<'a> {
                     report.checkpoint_inconsistencies.len()
                 ),
                 action_steps: vec![
-                    "Review automaton checkpoint update logic".to_string(),
-                    "Check for automaton processing delays".to_string(),
+                    "Review processor checkpoint update logic".to_string(),
+                    "Check for processor processing delays".to_string(),
                     "Verify checkpoint persistence mechanisms".to_string(),
                     "Consider implementing checkpoint verification".to_string(),
                 ],
                 affected_components: vec![
-                    "automaton checkpoints".to_string(),
+                    "processor checkpoints".to_string(),
                     "event processing".to_string(),
                 ],
             });
@@ -732,10 +732,10 @@ pub mod ulid_verification {
 pub mod checkpoint_verification {
     use super::*;
 
-    /// Verify checkpoint consistency for an automaton
-    pub async fn verify_automaton_checkpoint_consistency(
+    /// Verify checkpoint consistency for a processor
+    pub async fn verify_processor_checkpoint_consistency(
         pool: &sqlx::PgPool,
-        automaton_name: &str,
+        processor_name: &str,
     ) -> Result<Vec<String>> {
         let mut issues = Vec::new();
 
@@ -748,7 +748,7 @@ pub mod checkpoint_verification {
             last_activity: Option<DateTime<Utc>>,
         }
 
-        let checkpoint = IntegrityQueries::get_checkpoint(automaton_name.to_string())
+        let checkpoint = IntegrityQueries::get_checkpoint(processor_name.to_string())
             .fetch_optional::<CheckpointDetail>(pool)
             .await?;
 
@@ -783,8 +783,8 @@ pub mod checkpoint_verification {
             }
             None => {
                 issues.push(format!(
-                    "No checkpoint found for automaton: {}",
-                    automaton_name
+                    "No checkpoint found for processor: {}",
+                    processor_name
                 ));
             }
         }
@@ -792,15 +792,15 @@ pub mod checkpoint_verification {
         Ok(issues)
     }
 
-    /// Get all automatons that should have checkpoints
-    pub async fn get_expected_automatons(pool: &sqlx::PgPool) -> Result<Vec<String>> {
-        let automatons = IntegrityQueries::get_expected_automatons()
+    /// Get all processors (including automata) that should have checkpoints
+    pub async fn get_expected_processors(pool: &sqlx::PgPool) -> Result<Vec<String>> {
+        let processors = IntegrityQueries::get_expected_automatons()
             .fetch_all::<(String,)>(pool)
             .await?
             .into_iter()
             .map(|(name,)| name)
             .collect::<Vec<String>>();
 
-        Ok(automatons)
+        Ok(processors)
     }
 }

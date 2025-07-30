@@ -132,7 +132,7 @@ macro_rules! skip_if_no_git_annex {
 // ============================================================================
 
 #[sinex_test]
-async fn test_blake3_content_deduplication(ctx: TestContext) -> TestResult {
+async fn test_blake3_content_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -178,7 +178,7 @@ async fn test_blake3_content_deduplication(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_different_content_separate_blobs(ctx: TestContext) -> TestResult {
+async fn test_different_content_separate_blobs(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -217,7 +217,7 @@ async fn test_different_content_separate_blobs(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_file_vs_bytes_deduplication(ctx: TestContext) -> TestResult {
+async fn test_file_vs_bytes_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -260,7 +260,7 @@ async fn test_file_vs_bytes_deduplication(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_large_content_deduplication(ctx: TestContext) -> TestResult {
+async fn test_large_content_deduplication(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -292,7 +292,7 @@ async fn test_large_content_deduplication(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_git_annex_add_and_lookup(ctx: TestContext) -> TestResult {
+async fn test_git_annex_add_and_lookup(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -320,7 +320,7 @@ async fn test_git_annex_add_and_lookup(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_git_annex_get_content(ctx: TestContext) -> TestResult {
+async fn test_git_annex_get_content(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -352,7 +352,7 @@ async fn test_git_annex_get_content(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_git_annex_verification(ctx: TestContext) -> TestResult {
+async fn test_git_annex_verification(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -379,7 +379,7 @@ async fn test_git_annex_verification(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_annex_key_parsing(ctx: TestContext) -> TestResult {
+async fn test_annex_key_parsing(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -405,7 +405,7 @@ async fn test_annex_key_parsing(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_blob_manager_creation_without_git_annex() -> TestResult {
+async fn test_blob_manager_creation_without_git_annex() -> anyhow::Result<()> {
     // This test runs when git-annex is NOT available
     if BlobManagerTest::is_git_annex_available().await {
         eprintln!("Skipping test: git-annex is available");
@@ -433,7 +433,7 @@ async fn test_blob_manager_creation_without_git_annex() -> TestResult {
 }
 
 #[sinex_test]
-async fn test_invalid_repository_path(ctx: TestContext) -> TestResult {
+async fn test_invalid_repository_path(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let annex_config = AnnexConfig {
@@ -457,7 +457,7 @@ async fn test_invalid_repository_path(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_large_blob_handling(ctx: TestContext) -> TestResult {
+async fn test_large_blob_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -504,7 +504,7 @@ async fn test_large_blob_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_multiple_blob_sizes(ctx: TestContext) -> TestResult {
+async fn test_multiple_blob_sizes(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -546,7 +546,7 @@ async fn test_multiple_blob_sizes(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_concurrent_blob_operations(ctx: TestContext) -> TestResult {
+async fn test_concurrent_blob_operations(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = Arc::new(BlobManagerTest::new(ctx.pool()).await?);
@@ -589,7 +589,7 @@ async fn test_concurrent_blob_operations(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_retrieve_nonexistent_content(ctx: TestContext) -> TestResult {
+async fn test_retrieve_nonexistent_content(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -609,7 +609,7 @@ async fn test_retrieve_nonexistent_content(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_get_metadata_nonexistent_blob(ctx: TestContext) -> TestResult {
+async fn test_get_metadata_nonexistent_blob(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -623,7 +623,7 @@ async fn test_get_metadata_nonexistent_blob(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_verify_nonexistent_blob(ctx: TestContext) -> TestResult {
+async fn test_verify_nonexistent_blob(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -637,7 +637,7 @@ async fn test_verify_nonexistent_blob(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_empty_content_handling(ctx: TestContext) -> TestResult {
+async fn test_empty_content_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -667,7 +667,7 @@ async fn test_empty_content_handling(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_binary_content_integrity(ctx: TestContext) -> TestResult {
+async fn test_binary_content_integrity(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -708,7 +708,7 @@ async fn test_binary_content_integrity(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_unicode_filename_handling(ctx: TestContext) -> TestResult {
+async fn test_unicode_filename_handling(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -748,7 +748,7 @@ async fn test_unicode_filename_handling(ctx: TestContext) -> TestResult {
 // ============================================================================
 
 #[sinex_test]
-async fn test_blob_metadata_completeness(ctx: TestContext) -> TestResult {
+async fn test_blob_metadata_completeness(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -786,7 +786,7 @@ async fn test_blob_metadata_completeness(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_storage_statistics_emission(ctx: TestContext) -> TestResult {
+async fn test_storage_statistics_emission(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -833,7 +833,7 @@ async fn test_storage_statistics_emission(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult {
+async fn test_metrics_emission_during_operations(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
@@ -893,7 +893,7 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> TestResult
 // ============================================================================
 
 #[sinex_test]
-async fn test_blob_manager_content_service_integration(ctx: TestContext) -> TestResult {
+async fn test_blob_manager_content_service_integration(ctx: TestContext) -> anyhow::Result<()> {
     skip_if_no_git_annex!();
 
     let fixture = BlobManagerTest::new(ctx.pool()).await?;

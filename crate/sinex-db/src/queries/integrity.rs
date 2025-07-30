@@ -11,18 +11,18 @@ use chrono::{DateTime, Utc};
 pub struct IntegrityQueries;
 
 impl IntegrityQueries {
-    /// Get checkpoint details for an automaton
+    /// Get checkpoint details for a processor
     ///
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_optional::<CheckpointDetail>(pool)`
-    pub fn get_checkpoint(automaton_name: String) -> QueryBuilder {
-        QueryBuilder::select(tables::AUTOMATON_CHECKPOINTS)
+    pub fn get_checkpoint(processor_name: String) -> QueryBuilder {
+        QueryBuilder::select(tables::PROCESSOR_CHECKPOINTS)
             .columns(&[
                 "last_processed_id::uuid",
                 "processed_count",
                 "last_activity",
             ])
-            .where_eq("automaton_name", QueryParam::String(automaton_name))
+            .where_eq("processor_name", QueryParam::String(processor_name))
     }
 
     /// Check if an event exists
@@ -36,7 +36,7 @@ impl IntegrityQueries {
             .limit(1)
     }
 
-    /// Get expected automatons from processor manifests
+    /// Get expected processors (automata) from processor manifests
     ///
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<(String,)>(pool)`
@@ -162,7 +162,7 @@ pub async fn find_suspicious_events(
 
 #[derive(sqlx::FromRow)]
 pub struct CheckpointGapRecord {
-    pub automaton_name: String,
+    pub processor_name: String,
     pub last_processed_id: Option<sqlx::types::Uuid>,
     pub processed_count: Option<i64>,
     pub last_activity: Option<DateTime<Utc>>,
@@ -181,19 +181,19 @@ pub async fn analyze_checkpoint_gaps(pool: &PgPool) -> DbResult<Vec<CheckpointGa
         r#"
         WITH checkpoint_analysis AS (
             SELECT 
-                ac.automaton_name,
+                ac.processor_name,
                 ac.last_processed_id::uuid as last_processed_id,
                 ac.processed_count,
                 ac.last_activity,
                 COUNT(e.event_id) as events_after_checkpoint,
                 MIN(e.ts_ingest) as first_unprocessed_event_time,
                 MAX(e.ts_ingest) as last_unprocessed_event_time
-            FROM core.automaton_checkpoints ac
+            FROM core.processor_checkpoints ac
             LEFT JOIN core.events e ON e.event_id::uuid > ac.last_processed_id::uuid
-            GROUP BY ac.automaton_name, ac.last_processed_id, ac.processed_count, ac.last_activity
+            GROUP BY ac.processor_name, ac.last_processed_id, ac.processed_count, ac.last_activity
         )
         SELECT 
-            automaton_name as "automaton_name!",
+            processor_name as "processor_name!",
             last_processed_id,
             processed_count,
             last_activity,

@@ -6,28 +6,30 @@
 use crate::prelude::*;
 use serde_json::Value;
 use sinex_core_types::RawEvent;
-use sinex_error::CoreError;
+use sinex_error::SinexError;
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext
 pub trait ErrorAssertions<T> {
     /// Assert result contains specific error text
-    fn assert_contains_error(self, text: &str) -> TestResult<T>;
+    fn assert_contains_error(self, text: &str) -> Result<T, SinexError>;
 
     /// Assert result is specific error type
-    fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(self) -> TestResult<T>;
+    fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(
+        self,
+    ) -> Result<T, SinexError>;
 
     /// Assert result fails with any error
-    fn assert_fails(self) -> TestResult<CoreError>;
+    fn assert_fails(self) -> Result<SinexError, SinexError>;
 
     /// Assert result succeeds (inverse of assert_fails)
-    fn assert_succeeds(self) -> TestResult<T>;
+    fn assert_succeeds(self) -> Result<T, SinexError>;
 }
 
-impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
-    fn assert_contains_error(self, text: &str) -> TestResult<T> {
+impl<T: Debug> ErrorAssertions<T> for Result<T, SinexError> {
+    fn assert_contains_error(self, text: &str) -> Result<T, SinexError> {
         match self {
-            Ok(val) => Err(CoreError::Validation(format!(
+            Ok(val) => Err(SinexError::validation(format!(
                 "Expected error containing '{}' but operation succeeded: {:?}",
                 text, val
             ))),
@@ -36,7 +38,7 @@ impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
                 if err_string.contains(text) {
                     Err(err) // Return the original error for further chaining
                 } else {
-                    Err(CoreError::Validation(format!(
+                    Err(SinexError::validation(format!(
                         "Error does not contain expected text '{}'. Actual error: {}",
                         text, err_string
                     )))
@@ -45,24 +47,26 @@ impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
         }
     }
 
-    fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(self) -> TestResult<T> {
+    fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(
+        self,
+    ) -> Result<T, SinexError> {
         match self {
-            Ok(val) => Err(CoreError::Validation(format!(
+            Ok(val) => Err(SinexError::validation(format!(
                 "Expected specific error type {} but operation succeeded: {:?}",
                 std::any::type_name::<E>(),
                 val
             ))),
             Err(err) => {
-                // For CoreError, we'll just return the error since we can't downcast
-                // In practice, this is used for pattern matching on CoreError variants
+                // For SinexError, we'll just return the error since we can't downcast
+                // In practice, this is used for pattern matching on SinexError variants
                 Err(err)
             }
         }
     }
 
-    fn assert_fails(self) -> TestResult<CoreError> {
+    fn assert_fails(self) -> Result<SinexError, SinexError> {
         match self {
-            Ok(val) => Err(CoreError::Validation(format!(
+            Ok(val) => Err(SinexError::validation(format!(
                 "Expected operation to fail but it succeeded: {:?}",
                 val
             ))),
@@ -70,10 +74,77 @@ impl<T: Debug> ErrorAssertions<T> for Result<T, CoreError> {
         }
     }
 
-    fn assert_succeeds(self) -> TestResult<T> {
+    fn assert_succeeds(self) -> Result<T, SinexError> {
         match self {
             Ok(val) => Ok(val),
-            Err(err) => Err(CoreError::Validation(format!(
+            Err(err) => Err(SinexError::validation(format!(
+                "Expected operation to succeed but it failed: {}",
+                err
+            ))),
+        }
+    }
+}
+
+impl<T: Debug> ErrorAssertions<T> for anyhow::Result<T> {
+    fn assert_contains_error(self, text: &str) -> Result<T, SinexError> {
+        match self {
+            Ok(val) => Err(SinexError::validation(format!(
+                "Expected error containing '{}' but operation succeeded: {:?}",
+                text, val
+            ))),
+            Err(err) => {
+                let err_string = err.to_string();
+                if err_string.contains(text) {
+                    // Convert anyhow error to SinexError
+                    Err(SinexError::unknown(err_string))
+                } else {
+                    Err(SinexError::validation(format!(
+                        "Error does not contain expected text '{}'. Actual error: {}",
+                        text, err_string
+                    )))
+                }
+            }
+        }
+    }
+
+    fn assert_error_type<E: std::error::Error + 'static + Send + Sync>(
+        self,
+    ) -> Result<T, SinexError> {
+        match self {
+            Ok(val) => Err(SinexError::validation(format!(
+                "Expected specific error type {} but operation succeeded: {:?}",
+                std::any::type_name::<E>(),
+                val
+            ))),
+            Err(err) => {
+                // Try to downcast the error
+                if err.downcast_ref::<E>().is_some() {
+                    Err(SinexError::unknown(err.to_string()))
+                } else {
+                    Err(SinexError::validation(format!(
+                        "Expected error type {} but got different error: {}",
+                        std::any::type_name::<E>(),
+                        err
+                    )))
+                }
+            }
+        }
+    }
+
+    fn assert_fails(self) -> Result<SinexError, SinexError> {
+        match self {
+            Ok(val) => Err(SinexError::validation(format!(
+                "Expected operation to fail but it succeeded: {:?}",
+                val
+            ))),
+            Err(err) => Ok(SinexError::unknown(err.to_string())),
+        }
+    }
+
+    fn assert_succeeds(self) -> Result<T, SinexError> {
+        match self {
+            Ok(val) => Ok(val),
+            Err(err) => Err(SinexError::validation(format!(
                 "Expected operation to succeed but it failed: {}",
                 err
             ))),
@@ -98,7 +169,7 @@ impl<'ctx> ValidationTester<'ctx> {
         event_type: &str,
         payload: Value,
         expected_error: &str,
-    ) -> TestResult<()> {
+    ) -> Result<(), SinexError> {
         let result = self
             .ctx
             .event()
@@ -118,7 +189,7 @@ impl<'ctx> ValidationTester<'ctx> {
         source: &str,
         event_type: &str,
         payload: Value,
-    ) -> TestResult<RawEvent> {
+    ) -> Result<RawEvent, SinexError> {
         self.ctx
             .event()
             .source(source)
@@ -126,40 +197,39 @@ impl<'ctx> ValidationTester<'ctx> {
             .payload(payload)
             .insert()
             .await
+            .map_err(|e| SinexError::unknown(e.to_string()))
     }
 
     /// Test batch of validation cases using production error context
     pub async fn test_validation_cases(
         &self,
         cases: Vec<(&str, Value, Option<&str>)>, // (name, payload, expected_error)
-    ) -> TestResult<()> {
+    ) -> Result<(), SinexError> {
         for (case_name, payload, expected_error) in cases {
             tracing::debug!("Testing validation case: {}", case_name);
 
             if let Some(error_text) = expected_error {
                 self.test_invalid_payload("test", "validation", payload.clone(), error_text)
                     .await
-                    .map_err(|e| CoreError::Unknown(format!("Validation test case failed: {}", e)))
+                    .map_err(|e| SinexError::unknown(format!("Validation test case failed: {}", e)))
                     .map_err(|e| {
-                        CoreError::validation("Batch validation case failed")
+                        SinexError::validation("Batch validation case failed")
                             .with_context("case_name", case_name)
                             .with_context("expected_error", error_text)
                             .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
-                            .build()
                     })?;
             } else {
                 self.test_valid_payload("test", "validation", payload.clone())
                     .await
-                    .map_err(|e| CoreError::Unknown(format!("Valid payload test failed: {}", e)))
+                    .map_err(|e| SinexError::unknown(format!("Valid payload test failed: {}", e)))
                     .map_err(|e| {
-                        CoreError::validation("Expected valid payload but validation failed")
+                        SinexError::validation("Expected valid payload but validation failed")
                             .with_context("case_name", case_name)
                             .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
-                            .build()
                     })?;
             }
         }
@@ -181,19 +251,19 @@ impl<'ctx> DatabaseErrorTester<'ctx> {
     /// Test constraint violation scenarios
     pub async fn test_constraint_violation(
         &self,
-        operation: impl std::future::Future<Output = TestResult<()>>,
+        operation: impl std::future::Future<Output = Result<(), SinexError>>,
         constraint_name: &str,
-    ) -> TestResult<()> {
+    ) -> Result<(), SinexError> {
         let result = operation.await;
         result.assert_contains_error(constraint_name)?;
         Ok(())
     }
 
     /// Test foreign key violations
-    pub async fn test_foreign_key_violation<F, Fut>(&self, operation: F) -> TestResult<()>
+    pub async fn test_foreign_key_violation<F, Fut>(&self, operation: F) -> Result<(), SinexError>
     where
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = TestResult<()>>,
+        Fut: std::future::Future<Output = Result<(), SinexError>>,
     {
         let result = operation().await;
         result.assert_contains_error("foreign key constraint")?;
@@ -216,10 +286,10 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
         &self,
         operation: F,
         concurrent_count: usize,
-    ) -> Result<Vec<Result<T, CoreError>>, CoreError>
+    ) -> Result<Vec<Result<T, SinexError>>, SinexError>
     where
         F: Fn(usize) -> Fut + Send + Sync + 'static,
-        Fut: std::future::Future<Output = TestResult<T>> + Send + 'static,
+        Fut: std::future::Future<Output = Result<T, SinexError>> + Send + 'static,
         T: Send + 'static,
     {
         use std::sync::Arc;
@@ -239,7 +309,7 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
         while let Some(result) = join_set.join_next().await {
             match result {
                 Ok(op_result) => results.push(op_result),
-                Err(join_err) => results.push(Err(CoreError::Service(format!(
+                Err(join_err) => results.push(Err(SinexError::service(format!(
                     "Concurrent operation failed: {}",
                     join_err
                 )))),
@@ -255,12 +325,12 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
         operation1: F1,
         operation2: F2,
         timeout_secs: u64,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         F1: FnOnce() -> Fut1 + Send + 'static,
         F2: FnOnce() -> Fut2 + Send + 'static,
-        Fut1: std::future::Future<Output = TestResult<()>> + Send + 'static,
-        Fut2: std::future::Future<Output = TestResult<()>> + Send + 'static,
+        Fut1: std::future::Future<Output = Result<(), SinexError>> + Send + 'static,
+        Fut2: std::future::Future<Output = Result<(), SinexError>> + Send + 'static,
     {
         use tokio::time::{timeout, Duration};
 
@@ -294,14 +364,14 @@ impl<'ctx> ConcurrencyErrorTester<'ctx> {
                     Err(e1)
                 }
             }
-            Ok(Err(join_err)) => Err(CoreError::Service(format!(
+            Ok(Err(join_err)) => Err(SinexError::service(format!(
                 "Concurrent operation failed: {}",
                 join_err
             ))),
             Err(_timeout_err) => {
                 // Timeout suggests potential deadlock
-                Err(CoreError::Unknown(
-                    "Potential deadlock detected - operations timed out".to_string(),
+                Err(SinexError::unknown(
+                    "Potential deadlock detected - operations timed out",
                 ))
             }
         }
@@ -341,30 +411,29 @@ mod tests {
     use serde_json::json;
 
     #[sinex_test]
-    async fn test_error_assertions_basic(ctx: TestContext) -> TestResult<()> {
+    async fn test_error_assertions_basic(ctx: TestContext) -> Result<(), SinexError> {
         // Test assert_fails
-        let failed: Result<(), CoreError> = Err(CoreError::Validation("test error".to_string()));
+        let failed: Result<(), SinexError> = Err(SinexError::validation("test error"));
         let error = failed.assert_fails()?;
         assert_eq!(error.to_string(), "test error");
 
         // Test assert_succeeds
-        let success: Result<i32, CoreError> = Ok(42);
+        let success: Result<i32, SinexError> = Ok(42);
         let value = success.assert_succeeds()?;
         assert_eq!(value, 42);
 
         // Test assert_contains_error
-        let error_result: Result<(), CoreError> = Err(CoreError::Validation(
-            "database connection failed".to_string(),
-        ));
+        let error_result: Result<(), SinexError> =
+            Err(SinexError::validation("database connection failed"));
         error_result.assert_contains_error("database")?;
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_error_assertions_negative_cases(_ctx: TestContext) -> TestResult<()> {
+    async fn test_error_assertions_negative_cases(_ctx: TestContext) -> Result<(), SinexError> {
         // assert_fails should fail on success
-        let success: Result<i32, CoreError> = Ok(42);
+        let success: Result<i32, SinexError> = Ok(42);
         let result = success.assert_fails();
         assert!(result.is_err());
         assert!(result
@@ -373,7 +442,7 @@ mod tests {
             .contains("Expected operation to fail"));
 
         // assert_succeeds should fail on error
-        let failed: Result<(), CoreError> = Err(CoreError::Validation("error".to_string()));
+        let failed: Result<(), SinexError> = Err(SinexError::validation("error"));
         let result = failed.assert_succeeds();
         assert!(result.is_err());
         assert!(result
@@ -382,8 +451,7 @@ mod tests {
             .contains("Expected operation to succeed"));
 
         // assert_contains_error should fail on wrong text
-        let error_result: Result<(), CoreError> =
-            Err(CoreError::Validation("something else".to_string()));
+        let error_result: Result<(), SinexError> = Err(SinexError::validation("something else"));
         let result = error_result.assert_contains_error("database");
         assert!(result.is_err());
         assert!(result
@@ -395,7 +463,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validation_tester(ctx: TestContext) -> TestResult<()> {
+    async fn test_validation_tester(ctx: TestContext) -> Result<(), SinexError> {
         let validator = ctx.validation_tester();
 
         // Test invalid payload
@@ -423,7 +491,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validation_batch_cases(ctx: TestContext) -> TestResult<()> {
+    async fn test_validation_batch_cases(ctx: TestContext) -> Result<(), SinexError> {
         let validator = ctx.validation_tester();
 
         // Test batch validation
@@ -444,7 +512,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_database_error_tester(ctx: TestContext) -> TestResult<()> {
+    async fn test_database_error_tester(ctx: TestContext) -> Result<(), SinexError> {
         let db_tester = ctx.database_error_tester();
 
         // Test constraint violation
@@ -452,9 +520,7 @@ mod tests {
             .test_constraint_violation(
                 async {
                     // Simulate a constraint violation
-                    Err(CoreError::Database(
-                        "constraint violation: unique_key".to_string(),
-                    ))
+                    Err(SinexError::database("constraint violation: unique_key"))
                 },
                 "unique_key",
             )
@@ -466,7 +532,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_concurrency_error_race_condition(ctx: TestContext) -> TestResult<()> {
+    async fn test_concurrency_error_race_condition(ctx: TestContext) -> Result<(), SinexError> {
         let concurrency_tester = ctx.concurrency_error_tester();
 
         // Test race condition with counter
@@ -501,7 +567,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_concurrency_error_with_failures(ctx: TestContext) -> TestResult<()> {
+    async fn test_concurrency_error_with_failures(ctx: TestContext) -> Result<(), SinexError> {
         let concurrency_tester = ctx.concurrency_error_tester();
 
         // Test with some operations failing
@@ -509,7 +575,7 @@ mod tests {
             .test_race_condition(
                 |i| async move {
                     if i % 3 == 0 {
-                        Err(CoreError::Validation(format!(
+                        Err(SinexError::validation(format!(
                             "Simulated failure for {}",
                             i
                         )))
@@ -534,7 +600,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_deadlock_detection(ctx: TestContext) -> TestResult<()> {
+    async fn test_deadlock_detection(ctx: TestContext) -> Result<(), SinexError> {
         let concurrency_tester = ctx.concurrency_error_tester();
 
         // Test deadlock scenario with timeout
@@ -578,30 +644,29 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_error_context_builder(ctx: TestContext) -> TestResult<()> {
+    async fn test_error_context_builder(ctx: TestContext) -> Result<(), SinexError> {
         // Test using production error context patterns
-        let error = CoreError::validation("Test validation error")
+        let error = SinexError::validation("Test validation error")
             .with_context("field", "username")
             .with_context("value", "invalid@user")
-            .with_operation("user_registration")
-            .build();
+            .with_operation("user_registration");
 
         let error_str = error.to_string();
         assert!(error_str.contains("Test validation error"));
 
         // Create an operation that uses error context
-        let result: Result<(), CoreError> = Err(error);
+        let result: Result<(), SinexError> = Err(error);
         result.assert_contains_error("validation")?;
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_error_chaining(ctx: TestContext) -> TestResult<()> {
+    async fn test_error_chaining(ctx: TestContext) -> Result<(), SinexError> {
         // Test error chaining with source errors
-        let base_error = CoreError::Database("connection refused".to_string());
+        let _base_error = SinexError::database("connection refused");
 
-        let wrapped_error = CoreError::Service("Failed to process event".to_string());
+        let wrapped_error = SinexError::service("Failed to process event");
 
         let error_str = wrapped_error.to_string();
         assert!(error_str.contains("Failed to process event"));
@@ -610,7 +675,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_validation_with_real_events(ctx: TestContext) -> TestResult<()> {
+    async fn test_validation_with_real_events(ctx: TestContext) -> Result<(), SinexError> {
         let validator = ctx.validation_tester();
 
         // Test filesystem event validation
@@ -639,23 +704,23 @@ mod tests {
 
     #[test]
     fn test_error_type_matching() {
-        // Test CoreError variant matching
-        let validation_err = CoreError::Validation("test".to_string());
-        let database_err = CoreError::Database("test".to_string());
-        let service_err = CoreError::Service("test".to_string());
+        // Test SinexError variant matching
+        let validation_err = SinexError::validation("test");
+        let database_err = SinexError::database("test");
+        let service_err = SinexError::service("test");
 
         match validation_err {
-            CoreError::Validation(_) => assert!(true),
+            SinexError::Validation(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
 
         match database_err {
-            CoreError::Database(_) => assert!(true),
+            SinexError::Database(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
 
         match service_err {
-            CoreError::Service(_) => assert!(true),
+            SinexError::Service(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
     }

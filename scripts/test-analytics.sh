@@ -34,14 +34,12 @@ START_TIME=$(date +%s%N)
 
 echo "🧪 Running tests with coverage analysis..."
 
-# Run with coverage and multiple output formats
+# Run with coverage and output to JSON
 cargo llvm-cov nextest \
     --all-features \
     --workspace \
     --json \
     --output-path "$RUN_DIR/coverage.json" \
-    --lcov \
-    --output-path "$RUN_DIR/coverage.lcov" \
     "$@" 2>&1 | tee "$RUN_DIR/output.log"
 
 EXIT_CODE=$?

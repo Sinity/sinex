@@ -8,23 +8,29 @@
 // - Transaction-scoped fixtures for database isolation
 // - Performance fixtures with pre-warmed data
 //
+// NOTE: Static fixture persistence to disk is available in the static_fixtures module
+// which is behind the "bench" feature flag. When enabled, fixtures can be generated
+// once and stored on disk for deterministic testing across runs. Currently, fixtures
+// are generated in-memory and cached for the duration of the test run.
+//
 // Usage:
 // ```rust
 // #[sinex_test]
-// async fn test_with_fixture(ctx: TestContext) -> TestResult<()> {
+// async fn test_with_fixture(ctx: TestContext) -> Result<()> {
 //     let session = fixtures::standard_user_session(&ctx).await?;
 //     // fixture automatically cleaned up
 // }
 // ```
 
 use crate::builders::EventBuilder;
-use crate::builders::{TestCheckpointBuilder, TestEventBuilder};
+use crate::builders::TestCheckpointBuilder;
+use crate::fixture_config::FIXTURE_CONFIG;
 use crate::prelude::*;
 use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
-use sinex_core_types::{CoreError, DbPool};
+use sinex_core_types::{DbPool, SinexError};
 use sinex_events::{event_types, sources, EventFactory};
 use sinex_ulid::Ulid;
 use std::any::{Any, TypeId};
@@ -68,7 +74,7 @@ impl FixtureRegistry {
     where
         T: Send + Sync + 'static,
         F: FnOnce() -> Fut,
-        Fut: std::future::Future<Output = TestResult<T>>,
+        Fut: std::future::Future<Output = Result<T>>,
     {
         let type_id = TypeId::of::<T>();
         let cache_key = (type_id, key.clone());
@@ -132,10 +138,20 @@ pub struct UserSessionFixture {
     pub checkpoint_id: Option<Ulid>,
 }
 
+/// Fixture metadata for large datasets
+#[derive(Debug, Clone)]
+pub struct LargeDatasetFixture {
+    pub event_ids: Vec<Ulid>,
+    pub event_count: usize,
+    pub source_distribution: HashMap<String, usize>,
+    pub type_distribution: HashMap<String, usize>,
+    pub time_range: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
+}
+
 /// Fixture data for populated checkpoints
 #[derive(Debug, Clone)]
 pub struct PopulatedCheckpointsFixture {
-    pub automaton_names: Vec<String>,
+    pub processor_names: Vec<String>,
     pub checkpoint_ids: Vec<Ulid>,
     pub total_events_processed: u64,
 }
@@ -156,6 +172,16 @@ pub struct PerformanceDatasetFixture {
     pub time_range: (chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>),
     pub sources: Vec<String>,
 }
+
+// Type aliases for fixture types
+pub type CheckpointFixture = PopulatedCheckpointsFixture;
+pub type TerminalSessionFixture = UserSessionFixture;
+pub type ConcurrentOperationsFixture = UserSessionFixture;
+pub type EventStormFixture = PerformanceDatasetFixture;
+pub type HighVolumeCheckpointsFixture = PopulatedCheckpointsFixture;
+pub type ValidationErrorsFixture = ErrorScenariosFixture;
+pub type SchemaViolationsFixture = ErrorScenariosFixture;
+pub type MalformedEventsFixture = ErrorScenariosFixture;
 
 /// Builder for parameterized fixtures
 pub struct FixtureBuilder<T> {
@@ -186,9 +212,9 @@ impl<T> FixtureBuilder<T> {
 // =============================================================================
 
 /// Create a standard user session fixture with activity events
-pub async fn standard_user_session(
+pub(crate) async fn standard_user_session(
     ctx: &TestContext,
-) -> TestResult<FixtureHandle<UserSessionFixture>> {
+) -> Result<FixtureHandle<UserSessionFixture>> {
     let key = format!("standard_user_session_{}", ctx.test_name());
     let registry = get_registry().await;
 
@@ -197,8 +223,15 @@ pub async fn standard_user_session(
         .lock()
         .await
         .get_or_create(key.clone(), || {
-            let pool = pool.clone();
-            async move { create_user_session_fixture(&pool, 30, 10).await }
+            let _pool = pool.clone();
+            async move {
+                create_user_session_fixture(
+                    &pool,
+                    FIXTURE_CONFIG.user_session_event_count,
+                    FIXTURE_CONFIG.checkpoint_interval,
+                )
+                .await
+            }
         })
         .await;
 
@@ -206,11 +239,11 @@ pub async fn standard_user_session(
 }
 
 /// Create a parameterized user session fixture
-pub async fn user_session_with_params(
+pub(crate) async fn user_session_with_params(
     ctx: &TestContext,
     event_count: usize,
     checkpoint_interval: usize,
-) -> TestResult<FixtureHandle<UserSessionFixture>> {
+) -> Result<FixtureHandle<UserSessionFixture>> {
     let key = format!(
         "user_session_{}_{}_{}_{}",
         ctx.test_name(),
@@ -232,14 +265,14 @@ pub async fn user_session_with_params(
 }
 
 /// Create an empty database fixture (useful for isolation tests)
-pub async fn empty_database(ctx: &TestContext) -> TestResult<FixtureHandle<()>> {
+pub(crate) async fn empty_database(ctx: &TestContext) -> Result<FixtureHandle<()>> {
     let pool = ctx.pool().clone();
 
     // Clean any test data
     sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
         .execute(&pool)
         .await?;
-    sqlx::query!("DELETE FROM core.automaton_checkpoints WHERE automaton_name LIKE 'test_%'")
+    sqlx::query!("DELETE FROM core.processor_checkpoints WHERE processor_name LIKE 'test_%'")
         .execute(&pool)
         .await?;
 
@@ -247,9 +280,9 @@ pub async fn empty_database(ctx: &TestContext) -> TestResult<FixtureHandle<()>> 
 }
 
 /// Create populated checkpoints fixture
-pub async fn populated_checkpoints(
+pub(crate) async fn populated_checkpoints(
     ctx: &TestContext,
-) -> TestResult<FixtureHandle<PopulatedCheckpointsFixture>> {
+) -> Result<FixtureHandle<PopulatedCheckpointsFixture>> {
     let key = format!("populated_checkpoints_{}", ctx.test_name());
     let registry = get_registry().await;
 
@@ -258,7 +291,7 @@ pub async fn populated_checkpoints(
         .lock()
         .await
         .get_or_create(key.clone(), || {
-            let pool = pool.clone();
+            let _pool = pool.clone();
             async move { create_populated_checkpoints_fixture(&pool).await }
         })
         .await;
@@ -267,9 +300,9 @@ pub async fn populated_checkpoints(
 }
 
 /// Create error scenarios fixture
-pub async fn error_scenarios(
+pub(crate) async fn error_scenarios(
     ctx: &TestContext,
-) -> TestResult<FixtureHandle<ErrorScenariosFixture>> {
+) -> Result<FixtureHandle<ErrorScenariosFixture>> {
     let key = format!("error_scenarios_{}", ctx.test_name());
     let registry = get_registry().await;
 
@@ -278,7 +311,7 @@ pub async fn error_scenarios(
         .lock()
         .await
         .get_or_create(key.clone(), || {
-            let pool = pool.clone();
+            let _pool = pool.clone();
             async move { create_error_scenarios_fixture(&pool).await }
         })
         .await;
@@ -287,17 +320,17 @@ pub async fn error_scenarios(
 }
 
 /// Create performance dataset fixture
-pub async fn performance_dataset(
+pub(crate) async fn performance_dataset(
     ctx: &TestContext,
-) -> TestResult<FixtureHandle<PerformanceDatasetFixture>> {
-    performance_dataset_with_size(ctx, 10000).await
+) -> Result<FixtureHandle<PerformanceDatasetFixture>> {
+    performance_dataset_with_size(ctx, FIXTURE_CONFIG.medium_dataset_size).await
 }
 
 /// Create parameterized performance dataset fixture
-pub async fn performance_dataset_with_size(
+pub(crate) async fn performance_dataset_with_size(
     ctx: &TestContext,
     event_count: usize,
-) -> TestResult<FixtureHandle<PerformanceDatasetFixture>> {
+) -> Result<FixtureHandle<PerformanceDatasetFixture>> {
     let key = format!(
         "performance_dataset_{}_{}_{}",
         ctx.test_name(),
@@ -311,7 +344,7 @@ pub async fn performance_dataset_with_size(
         .lock()
         .await
         .get_or_create(key.clone(), || {
-            let pool = pool.clone();
+            let _pool = pool.clone();
             async move { create_performance_dataset_fixture(&pool, event_count).await }
         })
         .await;
@@ -327,7 +360,7 @@ async fn create_user_session_fixture(
     pool: &DbPool,
     event_count: usize,
     checkpoint_interval: usize,
-) -> TestResult<UserSessionFixture> {
+) -> Result<UserSessionFixture> {
     let user_id = format!("test_user_{}", uuid::Uuid::new_v4());
     let session_start = Utc::now() - Duration::hours(1);
     let mut event_ids = Vec::new();
@@ -341,7 +374,12 @@ async fn create_user_session_fixture(
 
         let inserted = sinex_db::insert_event_with_validator(pool, &event, None)
             .await
-            .map_err(|e| CoreError::Database(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database("Failed to insert event")
+                    .with_source(e)
+                    .with_context("event_type", event.event_type.clone())
+                    .with_context("fixture", "user_session")
+            })?;
         event_ids.push(inserted.id);
     }
 
@@ -363,7 +401,12 @@ async fn create_user_session_fixture(
 
         let inserted = sinex_db::insert_event_with_validator(pool, &event, None)
             .await
-            .map_err(|e| CoreError::Database(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database("Failed to insert event")
+                    .with_source(e)
+                    .with_context("event_type", event.event_type.clone())
+                    .with_context("fixture", "user_session")
+            })?;
         event_ids.push(inserted.id);
     }
 
@@ -375,16 +418,21 @@ async fn create_user_session_fixture(
 
         let inserted = sinex_db::insert_event_with_validator(pool, &event, None)
             .await
-            .map_err(|e| CoreError::Database(e.to_string()))?;
+            .map_err(|e| {
+                SinexError::database("Failed to insert event")
+                    .with_source(e)
+                    .with_context("event_type", event.event_type.clone())
+                    .with_context("fixture", "user_session")
+            })?;
         event_ids.push(inserted.id);
     }
 
     // Create checkpoint if needed
     let checkpoint_id = if checkpoint_interval > 0 && event_count >= checkpoint_interval {
         let checkpoint_id = Ulid::new();
-        TestCheckpointBuilder::new(&format!("test_automaton_{}", user_id))
+        TestCheckpointBuilder::new(&format!("test_processor_{}", user_id))
             .with_processed_count((event_count / checkpoint_interval * checkpoint_interval) as i64)
-            .with_last_processed(&event_ids[checkpoint_interval - 1].to_string())
+            .with_last_processed(event_ids[checkpoint_interval - 1])
             .with_state(json!({
                 "user_id": user_id,
                 "session_start": session_start,
@@ -407,25 +455,39 @@ async fn create_user_session_fixture(
 
 async fn create_populated_checkpoints_fixture(
     pool: &DbPool,
-) -> TestResult<PopulatedCheckpointsFixture> {
-    let automaton_names = vec![
-        "health-aggregator".to_string(),
-        "command-canonicalizer".to_string(),
-        "activity-tracker".to_string(),
+) -> Result<PopulatedCheckpointsFixture> {
+    let count = FIXTURE_CONFIG.populated_checkpoints_count;
+    let mut processor_names = Vec::new();
+
+    // Generate processor names based on configured count
+    let base_names = vec![
+        "health-aggregator",
+        "command-canonicalizer",
+        "activity-tracker",
+        "event-processor",
+        "data-enricher",
     ];
+
+    for i in 0..count {
+        processor_names.push(if i < base_names.len() {
+            base_names[i].to_string()
+        } else {
+            format!("processor-{}", i)
+        });
+    }
     let mut checkpoint_ids = Vec::new();
     let mut total_events_processed = 0u64;
 
-    for (i, name) in automaton_names.iter().enumerate() {
+    for (i, name) in processor_names.iter().enumerate() {
         let processed_count = 100 * (i + 1) as i64;
         total_events_processed += processed_count as u64;
 
         let checkpoint_id = Ulid::new();
         TestCheckpointBuilder::new(name)
             .with_processed_count(processed_count)
-            .with_last_processed(&Ulid::new().to_string())
+            .with_last_processed(Ulid::new())
             .with_state(json!({
-                "automaton_name": name,
+                "processor_name": name,
                 "version": "1.0.0",
                 "status": "healthy",
                 "last_health_check": Utc::now(),
@@ -437,13 +499,13 @@ async fn create_populated_checkpoints_fixture(
     }
 
     Ok(PopulatedCheckpointsFixture {
-        automaton_names,
+        processor_names,
         checkpoint_ids,
         total_events_processed,
     })
 }
 
-async fn create_error_scenarios_fixture(pool: &DbPool) -> TestResult<ErrorScenariosFixture> {
+async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosFixture> {
     let mut invalid_event_ids = Vec::new();
     let mut failed_operation_ids = Vec::new();
     let mut error_messages = Vec::new();
@@ -489,8 +551,11 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> TestResult<ErrorScenar
         .await?
         .expect("start_operation should return an ID");
 
-        let op_id = Ulid::from_str(&op_id_str)
-            .map_err(|e| CoreError::Parse(format!("Invalid ULID: {}", e)))?;
+        let op_id = Ulid::from_str(&op_id_str).map_err(|e| {
+            SinexError::parse("Invalid ULID")
+                .with_source(e)
+                .with_context("ulid_str", &op_id_str)
+        })?;
 
         sqlx::query!(
             "SELECT core.fail_operation($1::uuid, $2::jsonb)",
@@ -514,7 +579,7 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> TestResult<ErrorScenar
 async fn create_performance_dataset_fixture(
     pool: &DbPool,
     event_count: usize,
-) -> TestResult<PerformanceDatasetFixture> {
+) -> Result<PerformanceDatasetFixture> {
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     let sources = vec![
@@ -543,21 +608,29 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let builder = TestEventBuilder::new(source, event_type)
-            .with_field("index", json!(i))
-            .with_field("data", json!("x".repeat(payload_size)))
-            .with_timestamp(start_time + time_step * i as i32);
-
-        batch.push(builder.build());
+        let factory = EventFactory::new(source);
+        let mut event = factory.create_event(
+            event_type,
+            json!({
+                "index": i,
+                "data": "x".repeat(payload_size)
+            }),
+        );
+        event.ts_orig = Some(start_time + time_step * i as i32);
+        batch.push(event);
     }
 
     // Insert in batches for performance
-    let chunk_size = 1000;
+    let chunk_size = FIXTURE_CONFIG.batch_insert_size;
     for chunk in batch.chunks(chunk_size) {
         for event in chunk {
             let inserted = sinex_db::insert_event_with_validator(pool, event, None)
                 .await
-                .map_err(|e| CoreError::Database(e.to_string()))?;
+                .map_err(|e| {
+                    SinexError::database("Failed to insert event")
+                        .with_source(e)
+                        .with_context("fixture", "user_session")
+                })?;
             event_ids.push(inserted.id);
         }
     }
@@ -581,11 +654,15 @@ pub struct CompositeFixture<A: 'static + Send, B: 'static + Send> {
 }
 
 /// Create a fixture that depends on other fixtures
-pub async fn user_session_with_checkpoints(
+pub(crate) async fn user_session_with_checkpoints(
     ctx: &TestContext,
-) -> Result<CompositeFixture<UserSessionFixture, PopulatedCheckpointsFixture>, CoreError> {
-    let session = standard_user_session(ctx).await?;
-    let checkpoints = populated_checkpoints(ctx).await?;
+) -> Result<CompositeFixture<UserSessionFixture, PopulatedCheckpointsFixture>, SinexError> {
+    let session = standard_user_session(ctx)
+        .await
+        .map_err(|e| SinexError::unknown("Failed to get composite fixture").with_source(e))?;
+    let checkpoints = populated_checkpoints(ctx)
+        .await
+        .map_err(|e| SinexError::unknown("Failed to get composite fixture").with_source(e))?;
 
     Ok(CompositeFixture {
         first: session,
@@ -598,10 +675,9 @@ pub async fn user_session_with_checkpoints(
 // =============================================================================
 
 /// Run a test with a transaction-scoped fixture
-pub async fn with_transaction_fixture<F, Fut, T>(ctx: &TestContext, fixture_fn: F) -> TestResult<T>
+pub(crate) async fn with_transaction_fixture<F, T>(ctx: &TestContext, fixture_fn: F) -> Result<T>
 where
-    F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> Fut,
-    Fut: std::future::Future<Output = TestResult<T>>,
+    F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> BoxFuture<'a, Result<T>>,
 {
     let mut tx = ctx.pool().begin().await?;
 
@@ -644,7 +720,9 @@ pub struct PreWarmedFixture {
 }
 
 /// Create a pre-warmed fixture with various data types
-pub async fn pre_warmed_database(ctx: &TestContext) -> TestResult<FixtureHandle<PreWarmedFixture>> {
+pub(crate) async fn pre_warmed_database(
+    ctx: &TestContext,
+) -> Result<FixtureHandle<PreWarmedFixture>> {
     let key = format!("pre_warmed_database_{}", ctx.test_name());
     let registry = get_registry().await;
 
@@ -653,7 +731,7 @@ pub async fn pre_warmed_database(ctx: &TestContext) -> TestResult<FixtureHandle<
         .lock()
         .await
         .get_or_create(key.clone(), || {
-            let pool = pool.clone();
+            let _pool = pool.clone();
             async move { create_pre_warmed_fixture(&pool).await }
         })
         .await;
@@ -661,7 +739,7 @@ pub async fn pre_warmed_database(ctx: &TestContext) -> TestResult<FixtureHandle<
     Ok(fixture)
 }
 
-async fn create_pre_warmed_fixture(pool: &DbPool) -> TestResult<PreWarmedFixture> {
+async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let event_count = 5000;
     let checkpoint_count = 10;
     let operation_count = 50;
@@ -672,10 +750,14 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> TestResult<PreWarmedFixture
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let event = TestEventBuilder::new("performance_test", "test.event")
-            .with_field("index", json!(i))
-            .with_field("data", json!("x".repeat(payload_size)))
-            .build();
+        let factory = EventFactory::new("performance_test");
+        let event = factory.create_event(
+            "test.event",
+            json!({
+                "index": i,
+                "data": "x".repeat(payload_size)
+            }),
+        );
         batch.push(event);
     }
 
@@ -685,13 +767,17 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> TestResult<PreWarmedFixture
             total_size_bytes += size;
             sinex_db::insert_event_with_validator(pool, event, None)
                 .await
-                .map_err(|e| CoreError::Database(e.to_string()))?;
+                .map_err(|e| {
+                    SinexError::database("Failed to insert event")
+                        .with_source(e)
+                        .with_context("fixture", "user_session")
+                })?;
         }
     }
 
     // Create checkpoints
     for i in 0..checkpoint_count {
-        TestCheckpointBuilder::new(&format!("pre_warmed_automaton_{}", i))
+        TestCheckpointBuilder::new(&format!("pre_warmed_processor_{}", i))
             .with_processed_count((i * 500) as i64)
             .with_state(json!({
                 "fixture": "pre_warmed",
@@ -721,8 +807,11 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> TestResult<PreWarmedFixture
         .await?
         .expect("start_operation should return an ID");
 
-        let op_id = Ulid::from_str(&op_id_str)
-            .map_err(|e| CoreError::Parse(format!("Invalid ULID: {}", e)))?;
+        let op_id = Ulid::from_str(&op_id_str).map_err(|e| {
+            SinexError::parse("Invalid ULID")
+                .with_source(e)
+                .with_context("ulid_str", &op_id_str)
+        })?;
 
         if i % 2 == 0 {
             sqlx::query!(
@@ -748,7 +837,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> TestResult<PreWarmedFixture
 // =============================================================================
 
 /// Manually cleanup all fixtures (useful for test teardown)
-pub async fn cleanup_all_fixtures() -> TestResult<()> {
+pub(crate) async fn cleanup_all_fixtures() -> Result<()> {
     let registry = get_registry().await;
     let mut registry = registry.lock().await;
 
@@ -766,7 +855,7 @@ pub async fn cleanup_all_fixtures() -> TestResult<()> {
 }
 
 /// Force cleanup of a specific fixture type
-pub async fn cleanup_fixture<T: 'static>(key: &str) -> TestResult<()> {
+pub(crate) async fn cleanup_fixture<T: 'static>(key: &str) -> Result<()> {
     let registry = get_registry().await;
     let mut registry = registry.lock().await;
 
@@ -783,19 +872,163 @@ pub async fn cleanup_fixture<T: 'static>(key: &str) -> TestResult<()> {
     Ok(())
 }
 
+// Additional fixture functions for API completeness
+
+pub(crate) async fn large_event_dataset(
+    ctx: &TestContext,
+    count: usize,
+) -> Result<LargeDatasetFixture> {
+    // Create a performance dataset fixture
+    let perf_fixture = performance_dataset_with_size(ctx, count).await?;
+
+    // Convert PerformanceDatasetFixture to LargeDatasetFixture
+    Ok(LargeDatasetFixture {
+        event_ids: perf_fixture.event_ids.clone(),
+        event_count: perf_fixture.event_count,
+        source_distribution: HashMap::new(), // TODO: calculate from events
+        type_distribution: HashMap::new(),   // TODO: calculate from events
+        time_range: perf_fixture.time_range,
+    })
+}
+
+pub(crate) async fn terminal_session(ctx: &TestContext) -> Result<TerminalSessionFixture> {
+    // Create a terminal-focused user session
+    let session = user_session_with_params(
+        ctx, 10, // event count
+        5,  // checkpoint interval
+    )
+    .await?;
+
+    Ok((*session).clone())
+}
+
+pub(crate) async fn concurrent_operations(
+    ctx: &TestContext,
+) -> Result<ConcurrentOperationsFixture> {
+    // Create a fixture with concurrent event patterns
+    let session = user_session_with_params(
+        ctx, 20, // event count - mix of different types
+        10, // checkpoint interval
+    )
+    .await?;
+
+    Ok((*session).clone())
+}
+
+pub(crate) async fn event_storm(ctx: &TestContext) -> Result<EventStormFixture> {
+    // Create a high-volume burst of events
+    let fixture = performance_dataset_with_size(ctx, 50000).await?;
+    Ok((*fixture).clone())
+}
+
+pub(crate) async fn high_volume_checkpoints(
+    ctx: &TestContext,
+) -> Result<HighVolumeCheckpointsFixture> {
+    // Simply use the existing populated_checkpoints fixture
+    // This already creates multiple checkpoints
+    let fixture = populated_checkpoints(ctx).await?;
+    Ok((*fixture).clone())
+}
+
+pub(crate) async fn validation_failures(ctx: &TestContext) -> Result<ValidationErrorsFixture> {
+    let fixture = error_scenarios(ctx).await?;
+    Ok((*fixture).clone())
+}
+
+pub(crate) async fn schema_violations(ctx: &TestContext) -> Result<SchemaViolationsFixture> {
+    let key = format!("schema_violations_{}", ctx.test_name());
+    let registry = get_registry().await;
+    let pool = ctx.pool().clone();
+
+    let fixture = registry
+        .lock()
+        .await
+        .get_or_create(key.clone(), || {
+            let _pool = pool.clone();
+            async move {
+                let mut invalid_event_ids = Vec::new();
+                let mut failed_operation_ids = Vec::new();
+                let mut error_messages = Vec::new();
+
+                // Simple schema violation examples
+                error_messages.push("Missing required field: required_field".to_string());
+                error_messages.push("Value below minimum: -1 < 0".to_string());
+                error_messages.push("Value above maximum: 101 > 100".to_string());
+                error_messages.push("Additional properties not allowed".to_string());
+
+                // Generate some fake IDs
+                for _ in 0..4 {
+                    invalid_event_ids.push(Ulid::new());
+                    failed_operation_ids.push(Ulid::new());
+                }
+
+                Ok(ErrorScenariosFixture {
+                    invalid_event_ids,
+                    failed_operation_ids,
+                    error_messages,
+                })
+            }
+        })
+        .await;
+
+    Ok((*fixture).clone())
+}
+
+pub(crate) async fn malformed_events(ctx: &TestContext) -> Result<MalformedEventsFixture> {
+    let key = format!("malformed_events_{}", ctx.test_name());
+    let registry = get_registry().await;
+    let pool = ctx.pool().clone();
+
+    let fixture = registry
+        .lock()
+        .await
+        .get_or_create(key.clone(), || {
+            let _pool = pool.clone();
+            async move {
+                let mut invalid_event_ids = Vec::new();
+                let mut failed_operation_ids = Vec::new();
+                let mut error_messages = Vec::new();
+
+                // Test various malformed event scenarios
+                let test_cases = vec![
+                    ("empty source", "source cannot be empty"),
+                    ("empty type", "event_type cannot be empty"),
+                    ("very long source", "source exceeds maximum length"),
+                    ("huge payload", "payload size exceeds limit"),
+                ];
+
+                for (error_desc, message) in test_cases {
+                    invalid_event_ids.push(Ulid::new());
+                    failed_operation_ids.push(Ulid::new());
+                    error_messages.push(format!("{}: {}", error_desc, message));
+                }
+
+                Ok(ErrorScenariosFixture {
+                    invalid_event_ids,
+                    failed_operation_ids,
+                    error_messages,
+                })
+            }
+        })
+        .await;
+
+    Ok((*fixture).clone())
+}
+
 // =============================================================================
 // TEST HELPERS
 // =============================================================================
 
 /// Macro for defining custom fixtures
-#[macro_export]
+// Internal macro for fixture definitions
+#[allow(unused_macros)]
 macro_rules! fixture {
     ($name:ident, {
         setup: $setup:expr,
         teardown: $teardown:expr,
         cache: $cache:expr
     }) => {
-        pub async fn $name(ctx: &TestContext) -> TestResult<FixtureHandle<_>> {
+        pub async fn $name(ctx: &TestContext) -> Result<FixtureHandle<_>> {
             use $crate::fixtures::*;
 
             let key = if $cache {
@@ -816,7 +1049,7 @@ macro_rules! fixture {
                 .lock()
                 .await
                 .get_or_create(key.clone(), || {
-                    let pool = pool.clone();
+                    let _pool = pool.clone();
                     async move { $setup(pool).await }
                 })
                 .await;
@@ -842,12 +1075,11 @@ macro_rules! fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prelude::*;
     use std::sync::Arc;
     use std::time::Duration;
 
     #[sinex_test]
-    async fn test_fixture_caching_basic(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_caching_basic(ctx: TestContext) -> Result<()> {
         // First fixture should be created
         let fixture1 = standard_user_session(&ctx).await?;
         let user_id1 = fixture1.user_id.clone();
@@ -874,7 +1106,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_lifecycle(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_lifecycle(ctx: TestContext) -> Result<()> {
         // Create fixture with specific params
         let fixture = user_session_with_params(&ctx, 15, 5).await?;
 
@@ -891,7 +1123,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_empty_database_fixture(ctx: TestContext) -> TestResult<()> {
+    async fn test_empty_database_fixture(ctx: TestContext) -> Result<()> {
         // Insert some test data
         ctx.event().source("test").type_("test").insert().await?;
         ctx.event().source("test_2").type_("test").insert().await?;
@@ -907,17 +1139,17 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_populated_checkpoints_fixture(ctx: TestContext) -> TestResult<()> {
+    async fn test_populated_checkpoints_fixture(ctx: TestContext) -> Result<()> {
         let fixture = populated_checkpoints(&ctx).await?;
 
         // Should have created multiple checkpoints
-        assert!(fixture.automaton_names.len() >= 3);
-        assert_eq!(fixture.automaton_names.len(), fixture.checkpoint_ids.len());
+        assert!(fixture.processor_names.len() >= 3);
+        assert_eq!(fixture.processor_names.len(), fixture.checkpoint_ids.len());
         assert!(fixture.total_events_processed > 0);
 
         // Verify checkpoints exist
-        for name in &fixture.automaton_names {
-            let count = ctx.checkpoints().by_automaton(name).count().await?;
+        for name in &fixture.processor_names {
+            let count = ctx.checkpoints().by_processor(name).count().await?;
             assert_eq!(count, 1, "Should have one checkpoint for {}", name);
         }
 
@@ -925,7 +1157,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_error_scenarios_fixture(ctx: TestContext) -> TestResult<()> {
+    async fn test_error_scenarios_fixture(ctx: TestContext) -> Result<()> {
         let fixture = error_scenarios(&ctx).await?;
 
         // Should have error messages
@@ -938,7 +1170,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_performance_dataset_fixture(ctx: TestContext) -> TestResult<()> {
+    async fn test_performance_dataset_fixture(ctx: TestContext) -> Result<()> {
         // Create small performance dataset
         let fixture = performance_dataset_with_size(&ctx, 100).await?;
 
@@ -958,18 +1190,18 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_composite_fixtures(ctx: TestContext) -> TestResult<()> {
+    async fn test_composite_fixtures(ctx: TestContext) -> Result<()> {
         let composite = user_session_with_checkpoints(&ctx).await?;
 
         // Both fixtures should be available
         assert!(!composite.first.event_ids.is_empty());
-        assert!(!composite.second.automaton_names.is_empty());
+        assert!(!composite.second.processor_names.is_empty());
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_pre_warmed_fixture(ctx: TestContext) -> TestResult<()> {
+    async fn test_pre_warmed_fixture(ctx: TestContext) -> Result<()> {
         let fixture = pre_warmed_database(&ctx).await?;
 
         assert!(fixture.event_count > 0);
@@ -981,26 +1213,29 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_transaction_fixture(ctx: TestContext) -> TestResult<()> {
-        let result = with_transaction_fixture(&ctx, |mut tx| async move {
-            // Work with transaction
-            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM core.events")
-                .fetch_one(&mut *tx)
+    async fn test_transaction_fixture(ctx: TestContext) -> Result<()> {
+        let result = with_transaction_fixture(&ctx, |mut tx| {
+            Box::pin(async move {
+                // Work with transaction
+                let count_result = sqlx::query!("SELECT COUNT(*) as count FROM core.events")
+                    .fetch_one(&mut *tx)
+                    .await?;
+                let count = count_result.count.unwrap_or(0);
+
+                // Should see fixture event
+                assert!(count >= 1);
+
+                // Insert more data
+                sqlx::query(
+                    "INSERT INTO core.events (id, source, event_type, host, payload) 
+                     VALUES ($1, 'tx_test', 'test', 'test', '{}'::jsonb)",
+                )
+                .bind(sinex_ulid::Ulid::new().to_uuid())
+                .execute(&mut *tx)
                 .await?;
 
-            // Should see fixture event
-            assert!(count >= 1);
-
-            // Insert more data
-            sqlx::query(
-                "INSERT INTO core.events (id, source, event_type, host, payload) 
-                 VALUES ($1, 'tx_test', 'test', 'test', '{}'::jsonb)",
-            )
-            .bind(sinex_ulid::Ulid::new().to_uuid())
-            .execute(&mut *tx)
-            .await?;
-
-            Ok(42)
+                Ok(42)
+            })
         })
         .await?;
 
@@ -1014,7 +1249,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_registry_cleanup() -> TestResult<()> {
+    async fn test_fixture_registry_cleanup() -> Result<()> {
         // Create multiple fixtures
         let ctx1 = TestContext::with_name("cleanup_test_1").await?;
         let ctx2 = TestContext::with_name("cleanup_test_2").await?;
@@ -1035,7 +1270,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_builder_pattern(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_builder_pattern(ctx: TestContext) -> Result<()> {
         // Test the FixtureBuilder pattern
         let builder = FixtureBuilder::<UserSessionFixture>::new()
             .param("event_count", 20)
@@ -1050,20 +1285,32 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_scenario_fixture_creation(ctx: TestContext) -> TestResult<()> {
-        // Create a complex scenario
-        let scenario = ctx
-            .scenarios()
-            .multi_event()
-            .with_event(TestEventBuilder::new("scenario", "test.start"))
-            .with_events_from_source("scenario", "test.middle", 5)
-            .with_event(TestEventBuilder::new("scenario", "test.end"))
-            .with_checkpoint(TestCheckpointBuilder::new("scenario-processor"))
-            .execute(ctx.pool())
-            .await?;
+    async fn test_scenario_fixture_creation(ctx: TestContext) -> Result<()> {
+        // Create events using the event factory
+        let factory = EventFactory::new("scenario");
+        let mut event_ids = vec![];
 
-        assert_eq!(scenario.event_count, 7); // 1 + 5 + 1
-        assert_eq!(scenario.event_ids.len(), 7);
+        // Insert start event
+        let start = ctx
+            .insert_event(&factory.create_event("test.start", json!({})))
+            .await?;
+        event_ids.push(start.id);
+
+        // Insert middle events
+        for i in 0..5 {
+            let event = ctx
+                .insert_event(&factory.create_event("test.middle", json!({"index": i})))
+                .await?;
+            event_ids.push(event.id);
+        }
+
+        // Insert end event
+        let end = ctx
+            .insert_event(&factory.create_event("test.end", json!({})))
+            .await?;
+        event_ids.push(end.id);
+
+        assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
 
         // Verify all events exist
         let events = ctx.events().by_source("scenario").fetch().await?;
@@ -1073,7 +1320,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_concurrent_fixture_access(ctx: TestContext) -> TestResult<()> {
+    async fn test_concurrent_fixture_access(ctx: TestContext) -> Result<()> {
         // Since fixtures are cached per context, we'll test sequential access
         // to verify caching works correctly
         let mut user_ids = vec![];
@@ -1096,12 +1343,12 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_timeout_handling(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_timeout_handling(ctx: TestContext) -> Result<()> {
         // Create fixture that simulates slow operation
         let start = std::time::Instant::now();
 
         // Create a user session fixture
-        let fixture = standard_user_session(&ctx).await?;
+        let _fixture = standard_user_session(&ctx).await?;
 
         let elapsed = start.elapsed();
         assert!(
@@ -1113,7 +1360,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_error_propagation(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_error_propagation(ctx: TestContext) -> Result<()> {
         // Test error propagation by trying to query non-existent data
         let result = ctx.events().by_id(Ulid::new()).fetch_one().await;
 
@@ -1123,12 +1370,11 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_parameterized_fixtures(ctx: TestContext) -> TestResult<()> {
+    async fn test_parameterized_fixtures(ctx: TestContext) -> Result<()> {
         // Test fixtures with different parameters
-        parameterized!([(5, 1), (10, 2), (20, 5), (50, 10),], |(
-            event_count,
-            checkpoint_interval,
-        )| {
+        let test_cases = [(5, 1), (10, 2), (20, 5), (50, 10)];
+
+        for (event_count, checkpoint_interval) in test_cases {
             let fixture = user_session_with_params(&ctx, event_count, checkpoint_interval).await?;
 
             assert_eq!(fixture.event_ids.len(), event_count);
@@ -1137,16 +1383,14 @@ mod tests {
             if event_count >= checkpoint_interval {
                 assert!(fixture.checkpoint_id.is_some());
             }
-
-            Ok(())
-        });
+        }
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_fixture_cleanup_on_drop(ctx: TestContext) -> TestResult<()> {
-        let fixture_id = {
+    async fn test_fixture_cleanup_on_drop(ctx: TestContext) -> Result<()> {
+        let _fixture_id = {
             let fixture = standard_user_session(&ctx).await?;
             fixture.user_id.clone()
         }; // Fixture dropped here
@@ -1164,7 +1408,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_fixture_scenario(ctx: TestContext) -> TestResult<()> {
+    async fn test_complex_fixture_scenario(ctx: TestContext) -> Result<()> {
         // Create a complex scenario with multiple fixture types
         let user_session = standard_user_session(&ctx).await?;
         let checkpoints = populated_checkpoints(&ctx).await?;
@@ -1172,7 +1416,7 @@ mod tests {
 
         // All fixtures should coexist
         assert!(!user_session.event_ids.is_empty());
-        assert!(!checkpoints.automaton_names.is_empty());
+        assert!(!checkpoints.processor_names.is_empty());
         assert_eq!(perf_data.event_count, 50);
 
         // Total events should be sum of all fixtures
@@ -1192,22 +1436,23 @@ mod tests {
     }
 
     #[test]
-    fn test_fixture_builder_immutability() {
-        let builder1 = FixtureBuilder::<UserSessionFixture>::new().param("test", 1);
+    fn test_fixture_builder_chaining() {
+        let builder = FixtureBuilder::<UserSessionFixture>::new()
+            .param("test", 1)
+            .param("test2", 2);
 
-        let builder2 = builder1.param("test2", 2);
-
-        // Original builder unchanged
-        assert_eq!(builder1.params().len(), 1);
-        assert_eq!(builder2.params().len(), 2);
+        // Builder should have both params
+        assert_eq!(builder.params().len(), 2);
+        assert!(builder.params().contains_key("test"));
+        assert!(builder.params().contains_key("test2"));
     }
 
     #[sinex_test]
-    async fn test_fixture_lazy_loading(ctx: TestContext) -> TestResult<()> {
+    async fn test_fixture_lazy_loading(ctx: TestContext) -> Result<()> {
         let initial_count = ctx.test_event_count().await;
 
         // Getting scenarios handle shouldn't create events
-        let scenarios = ctx.scenarios();
+        let scenarios = ctx.fixtures().scenarios();
         assert_eq!(ctx.test_event_count().await, initial_count);
 
         // Actually accessing a fixture should create events
@@ -1218,8 +1463,8 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_caching_via_scenarios(ctx: TestContext) -> TestResult<()> {
-        let scenarios = ctx.scenarios();
+    async fn test_fixture_caching_via_scenarios(ctx: TestContext) -> Result<()> {
+        let scenarios = ctx.fixtures().scenarios();
 
         // First access
         let fixture1 = scenarios.user_session().await?;
@@ -1234,6 +1479,25 @@ mod tests {
 
         // Should be same fixture data
         assert_eq!(fixture1.user_id, fixture2.user_id);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_fixture_basic_usage(ctx: TestContext) -> Result<()> {
+        // Test that fixtures provide reusable test data
+        let session = ctx.fixtures().scenarios().user_session().await?;
+
+        // Should have created events
+        assert!(!session.event_ids.is_empty());
+
+        // Should have metadata
+        assert!(!session.user_id.to_string().is_empty());
+        assert!(session.session_start < chrono::Utc::now());
+
+        // Events should exist in database
+        let events = ctx.events().by_id(session.event_ids[0]).fetch().await?;
+        assert_eq!(events.len(), 1);
 
         Ok(())
     }

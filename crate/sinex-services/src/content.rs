@@ -6,13 +6,16 @@ use sinex_db::DbPool;
 use std::sync::Arc;
 
 pub struct ContentService {
-    pool: DbPool,
+    _pool: DbPool,
     blob_manager: Arc<BlobManager>,
 }
 
 impl ContentService {
     pub fn new(pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
-        Self { pool, blob_manager }
+        Self {
+            _pool: pool,
+            blob_manager,
+        }
     }
 
     /// Store large content as blob and return source material reference

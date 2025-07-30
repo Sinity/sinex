@@ -92,10 +92,10 @@ impl ChaosRedisProxy {
 
 /// Test multiple agent instances registering simultaneously
 #[sinex_test]
-async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> TestResult {
+async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
-    let automaton_name = "chaos-agent";
+    let processor_name = "chaos-agent";
     let successful_registrations = Arc::new(AtomicU64::new(0));
     let failed_registrations = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -108,7 +108,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 
         let handle = tokio::spawn(async move {
             let manifest = AgentManifest {
-                automaton_name: automaton_name.to_string(),
+                processor_name: processor_name.to_string(),
                 description: Some(format!("Chaos agent instance {}", instance_id)),
                 version: format!("1.0.{}", instance_id), // Slightly different versions
                 status: "running".to_string(),
@@ -133,7 +133,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 
             match sinex_db::upsert_automaton_manifest(
                 &pool_clone,
-                &manifest.automaton_name,
+                &manifest.processor_name,
                 &manifest.version,
                 manifest.description.as_deref(),
                 &manifest.agent_type,
@@ -147,14 +147,14 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
                 Ok(_) => {
                     println!(
                         "Instance {} successfully registered agent {}",
-                        instance_id, automaton_name
+                        instance_id, processor_name
                     );
                     success_count.fetch_add(1, Ordering::SeqCst);
                 }
                 Err(e) => {
                     println!(
                         "Instance {} failed to register agent {}: {}",
-                        instance_id, automaton_name, e
+                        instance_id, processor_name, e
                     );
                     fail_count.fetch_add(1, Ordering::SeqCst);
                 }
@@ -197,7 +197,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
         FROM sinex_schemas.processor_manifests
         WHERE processor_name = $1 AND processor_type = 'automaton'
         "#,
-        automaton_name
+        processor_name
     )
     .fetch_all(ctx.pool())
     .await?;
@@ -213,13 +213,13 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> Tes
 
 /// Test agent heartbeat chaos with network failures
 #[sinex_test]
-async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> TestResult {
+async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
-    let automaton_name = "heartbeat-chaos-agent";
+    let processor_name = "heartbeat-chaos-agent";
 
     // Register initial agent
     let manifest = AgentManifest {
-        automaton_name: automaton_name.to_string(),
+        processor_name: processor_name.to_string(),
         description: Some("Heartbeat chaos test agent".to_string()),
         version: "1.0.0".to_string(),
         status: "running".to_string(),
@@ -239,7 +239,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
 
     sinex_db::upsert_automaton_manifest(
         pool,
-        &manifest.automaton_name,
+        &manifest.processor_name,
         &manifest.version,
         manifest.description.as_deref(),
         &manifest.agent_type,
@@ -276,7 +276,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
                  WHERE processor_name = $3 AND processor_type = 'automaton'",
                 Utc::now(),
                 Utc::now(),
-                automaton_name
+                processor_name
             )
             .execute(&pool_clone)
             .await
@@ -316,9 +316,9 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> T
 
 /// Test agent lifecycle during concurrent operations
 #[sinex_test]
-async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> TestResult {
+async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
-    let base_automaton_name = "lifecycle-chaos";
+    let base_processor_name = "lifecycle-chaos";
 
     let registration_count = Arc::new(AtomicU64::new(0));
     let heartbeat_count = Arc::new(AtomicU64::new(0));
@@ -332,7 +332,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
         let reg_count = registration_count.clone();
         let hb_count = heartbeat_count.clone();
         let dereg_count = deregistration_count.clone();
-        let automaton_name = format!("{}-{}", base_automaton_name, agent_id);
+        let processor_name = format!("{}-{}", base_processor_name, agent_id);
 
         let handle = tokio::spawn(async move {
             // Register agent
@@ -351,10 +351,10 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             {
                 Ok(_) => {
                     reg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} registered", automaton_name);
+                    println!("Agent {} registered", processor_name);
                 }
                 Err(e) => {
-                    println!("Agent {} registration failed: {}", automaton_name, e);
+                    println!("Agent {} registration failed: {}", processor_name, e);
                     return;
                 }
             }
@@ -367,7 +367,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
                      WHERE processor_name = $3 AND processor_type = 'automaton",
                     Utc::now(),
                     Utc::now(),
-                    automaton_name
+                    processor_name
                 )
                 .execute(&pool_clone)
                 .await
@@ -376,7 +376,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
                         hb_count.fetch_add(1, Ordering::SeqCst);
                     }
                     Err(e) => {
-                        println!("Heartbeat failed for {}: {}", automaton_name, e);
+                        println!("Heartbeat failed for {}: {}", processor_name, e);
                     }
                 }
 
@@ -386,17 +386,17 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
             // Deregister agent
             match sqlx::query!(
                 "DELETE FROM sinex_schemas.processor_manifests WHERE processor_name = $1 AND processor_type = 'automaton",
-                automaton_name
+                processor_name
             )
             .execute(&pool_clone)
             .await
             {
                 Ok(_) => {
                     dereg_count.fetch_add(1, Ordering::SeqCst);
-                    println!("Agent {} deregistered", automaton_name);
+                    println!("Agent {} deregistered", processor_name);
                 }
                 Err(e) => {
-                    println!("Agent {} deregistration failed: {}", automaton_name, e);
+                    println!("Agent {} deregistration failed: {}", processor_name, e);
                 }
             }
         });
@@ -418,7 +418,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
     // Verify final database state
     let remaining_agents = sqlx::query!(
         "SELECT COUNT(*) as count FROM sinex_schemas.processor_manifests WHERE processor_name LIKE $1 AND processor_type = 'automaton",
-        format!("{}%", base_automaton_name)
+        format!("{}%", base_processor_name)
     )
     .fetch_one(ctx.pool())
     .await?;
@@ -439,7 +439,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
 /// Test file permission revoked while watching
 #[sinex_test]
-async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestResult {
+async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
 
@@ -510,7 +510,7 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> TestRe
 
 /// Test directory unmounted while watching
 #[sinex_test]
-async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult {
+async fn test_directory_unmounted_while_watching(ctx: TestContext) -> anyhow::Result<()> {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount_point");
@@ -597,7 +597,7 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> TestResult
 
 /// Test filesystem chaos with concurrent operations
 #[sinex_test]
-async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestResult {
+async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = resources::temp_dir()?;
     let chaos_dir = temp_dir.path().join("chaos_testing");
     fs::create_dir(&chaos_dir).unwrap();
@@ -719,7 +719,7 @@ async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> TestRe
 
 /// Test shutdown signal during initialization
 #[sinex_test]
-async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestResult {
+async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let pool_clone = ctx.pool();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
@@ -812,7 +812,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> TestRes
 
 /// Test multiple concurrent shutdown signals
 #[sinex_test]
-async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResult {
+async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> anyhow::Result<()> {
     let shutdown_count = Arc::new(AtomicU64::new(0));
     let shutdown_handler_count = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -865,7 +865,7 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> TestResu
 
 /// Test state machine corruption under load
 #[sinex_test]
-async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResult {
+async fn test_state_machine_corruption_under_load(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let state_transitions = Arc::new(AtomicU64::new(0));
     let invalid_transitions = Arc::new(AtomicU64::new(0));
@@ -882,7 +882,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
                 transitions.fetch_add(1, Ordering::SeqCst);
 
                 // Simulate state transition by updating agent status
-                let automaton_name = format!("state-test-{}", worker_id);
+                let processor_name = format!("state-test-{}", worker_id);
                 let new_status = match transition_id % 4 {
                     0 => "initializing",
                     1 => "running",
@@ -936,14 +936,14 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
 
     // Check final state consistency
     let final_agents = sqlx::query!(
-        "SELECT processor_name as automaton_name, status FROM sinex_schemas.processor_manifests WHERE processor_name LIKE 'state-test-%' AND processor_type = 'automaton'"
+        "SELECT processor_name as processor_name, status FROM sinex_schemas.processor_manifests WHERE processor_name LIKE 'state-test-%' AND processor_type = 'automaton'"
     )
     .fetch_all(ctx.pool())
     .await?;
 
     println!("Final agent states:");
     for agent in &final_agents {
-        println!("  {}: {}", agent.automaton_name, agent.status);
+        println!("  {}: {}", agent.processor_name, agent.status);
     }
 
     // Most transitions should succeed
@@ -959,7 +959,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> TestResul
 
 /// Test system resilience under database connection failures
 #[sinex_test]
-async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
+async fn test_database_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let failure_count = Arc::new(AtomicU64::new(0));
     let recovery_count = Arc::new(AtomicU64::new(0));
@@ -1082,7 +1082,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> TestResult {
 
 /// Test Redis failure resilience with stream operations
 #[sinex_test]
-async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
+async fn test_redis_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
     use sinex_test_utils::mocks::{MockRedis, MockRedisConfig, FailureInjector, FailurePattern};
 
     let mut mock_redis = MockRedis::new(MockRedisConfig {
@@ -1213,7 +1213,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
 // TODO: Rewrite this test to use real network tools or testcontainers
 // /// Test network partition resilience
 // // #[sinex_test]
-// // async fn test_network_partition_resilience(ctx: TestContext) -> TestResult {
+// // async fn test_network_partition_resilience(ctx: TestContext) -> anyhow::Result<()> {
 //     use sinex_test_utils::mocks::{MockNetwork, MockNetworkConfig, FailurePattern};
 //
 //     let mut mock_network = MockNetwork::new(MockNetworkConfig {
@@ -1322,7 +1322,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
 // // TODO: Rewrite this test to use real services or chaos proxies
 // // /// Test cascading failure resilience
 // // #[sinex_test]
-// // async fn test_cascading_failure_resilience(ctx: TestContext) -> TestResult {
+// // async fn test_cascading_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
 //     use sinex_test_utils::mocks::{FailureInjector, FailurePattern};
 //
 //     let mut failure_injector = FailureInjector::new();
@@ -1479,7 +1479,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> TestResult {
 // // TODO: Rewrite this test to use real services
 // // /// Test post-chaos recovery and system state consistency
 // // #[sinex_test]
-// // async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> TestResult {
+// // async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> anyhow::Result<()> {
 //     use sinex_test_utils::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
 //
 //     let pool = ctx.pool().clone();

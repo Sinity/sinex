@@ -7,7 +7,6 @@
 //!
 //! The checkpoint system provides:
 //! - **Unified Storage**: All checkpoints stored in `core.automaton_checkpoints` table
-//! - **Format Migration**: Automatic migration from legacy (v1) to unified (v2) format
 //! - **Type Safety**: Strongly typed checkpoint variants for different use cases
 //! - **Persistence**: Atomic checkpoint updates with optimistic concurrency
 //!
@@ -25,14 +24,12 @@
 //! - `consumer_group`: Redis consumer group (for automata)
 //! - `consumer_name`: Instance identifier (hostname + PID)
 //! - `checkpoint_data`: JSON-serialized unified checkpoint (v2+)
-//! - `last_processed_id`: Legacy field for Redis Stream ID (v1 compatibility)
 //!
 //! # Error Handling
 //!
 //! Common error scenarios:
 //! - **Serialization failures**: Corrupt checkpoint data falls back to `Checkpoint::None`
 //! - **Database errors**: Connection failures are propagated as `SatelliteError::Database`
-//! - **Migration failures**: Legacy format migration logged as warnings
 //!
 //! # Performance Considerations
 //!
@@ -51,7 +48,7 @@ use tracing::{debug, info, warn};
 struct CheckpointRecord {
     pub id: Ulid,
     #[allow(dead_code)] // Used by database query but not in code
-    pub automaton_name: String,
+    pub processor_name: String,
     #[allow(dead_code)] // Used by database query but not in code
     pub consumer_group: String,
     #[allow(dead_code)] // Used by database query but not in code
@@ -77,11 +74,9 @@ struct CheckpointStatsRecord {
 /// Unified checkpoint state for both ingestors and automata.
 ///
 /// This structure wraps the unified `Checkpoint` enum with additional metadata
-/// for persistence and monitoring. It supports both current (v2) and legacy (v1)
 /// checkpoint formats with automatic migration.
 ///
 /// # Version Evolution
-/// - **Version 1**: Legacy format with `last_processed_id` string field
 /// - **Version 2**: Unified format with strongly-typed `Checkpoint` enum
 ///
 /// # Fields
@@ -108,7 +103,6 @@ pub struct CheckpointState {
     pub version: u32,
 }
 
-/// Legacy checkpoint state for backward compatibility
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyCheckpointState {
     /// Last processed message ID from Redis Stream
@@ -128,7 +122,6 @@ pub struct LegacyCheckpointState {
 }
 
 impl CheckpointState {
-    /// Extract the last processed ID in string format for backward compatibility
     pub fn last_processed_id(&self) -> Option<String> {
         match &self.checkpoint {
             Checkpoint::None => None,
@@ -139,7 +132,6 @@ impl CheckpointState {
         }
     }
 
-    /// Set the last processed ID (for backward compatibility)
     pub fn set_last_processed_id(&mut self, id: Option<String>) {
         self.checkpoint = match id {
             Some(id_str) => {
@@ -207,7 +199,6 @@ impl From<LegacyCheckpointState> for CheckpointState {
 ///
 /// This manager handles checkpoint storage, retrieval, and migration in the
 /// `core.automaton_checkpoints` table. It supports both ingestors and automata
-/// with automatic format migration from legacy checkpoints.
 ///
 /// # Usage Pattern
 /// ```rust
@@ -256,9 +247,7 @@ impl CheckpointManager {
         }
     }
 
-    /// Load checkpoint from database with automatic migration from legacy format.
     ///
-    /// This method handles both current (v2) and legacy (v1) checkpoint formats:
     /// - **Version 2+**: Deserializes `checkpoint_data` JSON field
     /// - **Version 1**: Migrates from `last_processed_id` string field
     /// - **No checkpoint**: Returns default `CheckpointState` with `Checkpoint::None`
@@ -269,7 +258,6 @@ impl CheckpointManager {
     /// - `Err(SatelliteError::Serialization)`: Corrupt checkpoint data (falls back to None)
     ///
     /// # Behavior
-    /// - Legacy checkpoints are automatically migrated and saved in v2 format
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
@@ -310,7 +298,6 @@ impl CheckpointManager {
                     version,
                 }
             } else {
-                // Legacy format (version 1) - migrate to new format
                 warn!(
                     processor = %self.processor_name,
                     "Migrating legacy checkpoint format to unified format"
@@ -360,7 +347,6 @@ impl CheckpointManager {
     /// # Atomicity
     /// - Uses `ON CONFLICT` upsert for atomic updates
     /// - Updates `updated_at` timestamp on each save
-    /// - Maintains backward compatibility with legacy `last_processed_id` field
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> SatelliteResult<()> {
         let checkpoint_id = Ulid::new();
 
@@ -368,9 +354,8 @@ impl CheckpointManager {
         let checkpoint_data =
             serde_json::to_value(&state.checkpoint).map_err(SatelliteError::Serialization)?;
 
-        // Extract legacy fields for backward compatibility
         let last_processed_id = match &state.checkpoint {
-            Checkpoint::Stream { message_id, .. } => Some(message_id.clone()),
+            Checkpoint::Stream { message_id, .. } => message_id.parse::<sinex_ulid::Ulid>().ok(),
             _ => None,
         };
 

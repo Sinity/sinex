@@ -536,7 +536,7 @@ impl BottleneckDetector {
 
 /// Test database connection bottleneck identification
 #[sinex_test]
-async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult {
+async fn test_database_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
 
@@ -670,7 +670,7 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> TestResult
 
 /// Test memory bottleneck identification
 #[sinex_test]
-async fn test_memory_bottleneck_identification(ctx: TestContext) -> TestResult {
+async fn test_memory_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
 
@@ -757,7 +757,7 @@ async fn test_memory_bottleneck_identification(ctx: TestContext) -> TestResult {
 
 /// Test Redis bottleneck identification
 #[sinex_test]
-async fn test_redis_bottleneck_identification(ctx: TestContext) -> TestResult {
+async fn test_redis_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
     let mut detector = BottleneckDetector::new();
 
     println!("🔍 Testing Redis bottleneck identification");
@@ -855,7 +855,7 @@ async fn test_redis_bottleneck_identification(ctx: TestContext) -> TestResult {
 
 /// Test concurrent bottleneck identification
 #[sinex_test]
-async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> TestResult {
+async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let shared_detector = Arc::new(Mutex::new(BottleneckDetector::new()));
 

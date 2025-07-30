@@ -9,7 +9,7 @@ use tracing::info;
 
 /// Integration test for provenance tracking functionality
 #[sinex_test]
-async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::TestResult {
+async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::anyhow::Result<()> {
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());

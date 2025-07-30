@@ -79,7 +79,9 @@ impl MetricsProvider for MockMetricsProvider {
 // =============================================================================
 
 #[sinex_test]
-async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) -> TestResult {
+async fn test_process_heartbeat_emitter_basic_functionality(
+    ctx: TestContext,
+) -> anyhow::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     metrics_provider.set_uptime(3600); // 1 hour
     metrics_provider.set_memory(256); // 256 MB
@@ -133,7 +135,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(ctx: TestContext) ->
 }
 
 #[sinex_test]
-async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
+async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "lifecycle_test";
     let version = "2.0.0";
@@ -248,7 +250,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestResult {
+async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> anyhow::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "custom_metrics_test";
     let version = "1.5.0";
@@ -307,7 +309,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> TestRes
 }
 
 #[sinex_test]
-async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestResult {
+async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> anyhow::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "continuous_test";
     let version = "1.0.0";
@@ -384,7 +386,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> TestRes
 // =============================================================================
 
 #[sinex_test]
-async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResult {
+async fn test_health_aggregator_process_discovery(ctx: TestContext) -> anyhow::Result<()> {
     // Create multiple processes with different states
     let processes = vec![
         ("web_server", "healthy", 3600, 512, 1000),
@@ -482,7 +484,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> TestResul
 }
 
 #[sinex_test]
-async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
+async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "failing_process";
     let version = "1.0.0";
@@ -629,7 +631,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
+async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> {
     let process_name = "restartable_process";
     let event_factory = EventFactory::new("sinex.process");
 
@@ -758,7 +760,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_high_frequency_heartbeats(ctx: TestContext) -> TestResult {
+async fn test_high_frequency_heartbeats(ctx: TestContext) -> anyhow::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "high_freq_test";
     let version = "1.0.0";

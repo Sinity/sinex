@@ -3,7 +3,6 @@
 //! This demonstrates the new pattern where automata implement StatefulStreamProcessor
 //! directly and use the processor_main! macro for consistent CLI and lifecycle management.
 
-mod automaton; // Keep legacy for now
 mod unified_processor;
 
 use unified_processor::HealthAggregator;

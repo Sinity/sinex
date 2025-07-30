@@ -186,18 +186,18 @@ parameterized_test!(
 parameterized_test!(
     test_error_display_formats,
     vec![
-        ("database", CoreError::Database("Connection failed".into())),
-        ("validation", CoreError::Validation("Invalid format".into())),
+        ("database", CoreError::database("Connection failed".into())),
+        ("validation", CoreError::validation("Invalid format".into())),
         (
             "serialization",
-            CoreError::Serialization("Parse error".into())
+            CoreError::serialization("Parse error".into())
         ),
         (
             "configuration",
-            CoreError::Configuration("Missing key".into())
+            CoreError::configuration("Missing key".into())
         ),
-        ("io", CoreError::Io("File not found".into())),
-        ("unknown", CoreError::Unknown("Mystery error".into())),
+        ("io", CoreError::io("File not found".into())),
+        ("unknown", CoreError::unknown("Mystery error".into())),
     ],
     |_pool: &DbPool, (name, error): (&str, CoreError)| async move {
         let display = error.to_string();
@@ -362,7 +362,7 @@ stateful_proptest! {
 // =============================================================================
 
 #[sinex_test]
-async fn test_realistic_user_activity_scenario(ctx: TestContext) -> TestResult {
+async fn test_realistic_user_activity_scenario(ctx: TestContext) -> anyhow::Result<()> {
     // Use property-generated realistic activity
     let mut runner = proptest::test_runner::TestRunner::default();
     let activity = user_activity_batch()
@@ -413,16 +413,18 @@ configured_proptest! {
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> TestResult {
+async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> anyhow::Result<()> {
     // Both methods should produce equivalent events
     let factory_event = EventFactory::new(sources::FS).create_event(
         event_types::filesystem::FILE_CREATED,
         json!({ "path": "/test.txt" }),
     );
 
-    let builder_event = TestEventBuilder::new(sources::FS, event_types::filesystem::FILE_CREATED)
-        .with_payload(json!({ "path": "/test.txt" }))
-        .build();
+    let builder_factory = EventFactory::new(sources::FS);
+    let builder_event = builder_factory.create_event(
+        event_types::filesystem::FILE_CREATED,
+        json!({ "path": "/test.txt" }),
+    );
 
     // Should have same structure (except IDs and timestamps)
     assert_eq!(factory_event.source, builder_event.source);
@@ -437,7 +439,7 @@ async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> TestRes
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_invariants_across_sources(ctx: TestContext) -> TestResult {
+async fn test_event_invariants_across_sources(ctx: TestContext) -> anyhow::Result<()> {
     // Generate events from all sources
     let sources = vec![
         sources::FS,

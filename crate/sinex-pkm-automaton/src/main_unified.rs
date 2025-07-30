@@ -1,6 +1,5 @@
 //! Main entry point for PKM Service using unified StatefulStreamProcessor
 
-mod lib; // Keep legacy for now
 mod unified_processor;
 
 use unified_processor::PkmServiceProcessor;

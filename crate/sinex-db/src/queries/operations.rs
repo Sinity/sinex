@@ -159,9 +159,9 @@ impl OperationQueries {
     /// # Returns
     /// QueryBuilder that can be executed with `.fetch_all::<CheckpointHealthRecord>(pool)`
     pub fn get_checkpoint_health() -> QueryBuilder {
-        QueryBuilder::select(tables::AUTOMATON_CHECKPOINTS)
+        QueryBuilder::select(tables::PROCESSOR_CHECKPOINTS)
             .columns(&[
-                "automaton_name as \"processor_name!\"",
+                "processor_name as \"processor_name!\"",
                 "consumer_group as \"consumer_group!\"",
                 "consumer_name as \"consumer_name!\"",
                 "processed_count as \"processed_count!\"",

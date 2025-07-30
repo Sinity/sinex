@@ -9,8 +9,7 @@
 
 use crate::version::{SatelliteInstance, SatelliteVersion};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sinex_core_types::{CoreError, DbPool, Result};
+use sinex_core_types::{DbPool, Result, SinexError};
 use sinex_core_utils::CoordinationPrimitive;
 use sinex_db::distributed_locking::{DistributedCoordination, LeadershipGuard};
 use std::time::{Duration, SystemTime};
@@ -252,7 +251,7 @@ impl SatelliteCoordination {
                     "🚨 Critical failure detected - signaling for immediate takeover"
                 );
                 self.signal_critical_failure("Critical system failure").await?;
-                return Err(CoreError::InvalidState("Critical failure detected".to_string()));
+                return Err(SinexError::invalid_state("Critical failure detected"));
             }
 
             // Heartbeat failure

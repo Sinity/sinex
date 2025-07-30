@@ -8,7 +8,6 @@ use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rusqlite::{Connection, Row};
 use serde_json::json;
-use sinex_events::constants::sources;
 use sinex_events::{event_types, EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::path::PathBuf;

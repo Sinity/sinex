@@ -342,7 +342,7 @@ impl BlobManager {
                 original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
                 size_bytes: row.file_size_bytes.unwrap_or(0),
                 mime_type: row.mime_type,
-                checksum_sha256: "legacy".to_string(), // Legacy field, not used in new system
+                checksum_sha256: row.checksum_blake3.clone().unwrap_or_else(|| String::new()), // Using BLAKE3 as SHA256 is not available
                 checksum_blake3: row.checksum_blake3,
                 storage_backend: "git-annex".to_string(), // Default storage backend
                 verification_status: Some(if row.is_archived {
@@ -402,7 +402,7 @@ impl BlobManager {
             original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
             size_bytes: row.file_size_bytes.unwrap_or(0),
             mime_type: row.mime_type,
-            checksum_sha256: "legacy".to_string(), // Legacy field
+            checksum_sha256: row.checksum_blake3.clone().unwrap_or_else(|| String::new()),
             checksum_blake3: row.checksum_blake3,
             storage_backend: row
                 .metadata

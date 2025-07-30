@@ -53,7 +53,7 @@ sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-events = { path = "../sinex-events" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-macros = { path = "../sinex-macros" }
-sinex-metrics-lib = { path = "../sinex-metrics-lib" }
+sinex-telemetry = { path = "../sinex-telemetry" }
 
 [features]
 default = []

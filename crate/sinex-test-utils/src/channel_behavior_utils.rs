@@ -58,7 +58,7 @@ pub mod behavior {
         receiver: &mut impl ChannelReceiverExt<T>,
         test_value: T,
         test_name: &str,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + PartialEq + Debug + Clone,
     {
@@ -72,21 +72,22 @@ pub mod behavior {
             .recv_timeout(Duration::from_secs(1))
             .await
             .map_err(|e| {
-                CoreError::Unknown(format!(
+                SinexError::unknown(format!(
                     "Failed to receive from channel in test {}: {}",
                     test_name, e
                 ))
             })?
             .ok_or_else(|| {
-                CoreError::Unknown(format!("Channel closed unexpectedly in test {}", test_name))
+                SinexError::unknown(format!("Channel closed unexpectedly in test {}", test_name))
             })?;
 
         // Verify the received value matches what was sent
         if received != expected_value {
-            return Err(CoreError::Validation(format!(
+            return Err(SinexError::validation(format!(
                 "Channel test '{}' failed: received {:?}, expected {:?}",
                 test_name, received, expected_value
-            )));
+            ))
+            .into());
         }
 
         Ok(())
@@ -97,7 +98,7 @@ pub mod behavior {
         receiver: &mut impl ChannelReceiverExt<T>,
         timeout: Duration,
         should_timeout: bool,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send,
     {
@@ -109,14 +110,14 @@ pub mod behavior {
         ) {
             (true, true) => Ok(()),   // Expected timeout
             (false, false) => Ok(()), // Expected receive
-            (false, true) => Err(CoreError::validation("Expected timeout but received value")
-                .with_context("timeout_duration", format!("{:?}", timeout))
-                .build()
-                .into()),
-            (true, false) => Err(
-                CoreError::validation("Expected receive but got timeout/close")
+            (false, true) => Err(
+                SinexError::validation("Expected timeout but received value")
                     .with_context("timeout_duration", format!("{:?}", timeout))
-                    .build()
+                    .into(),
+            ),
+            (true, false) => Err(
+                SinexError::validation("Expected receive but got timeout/close")
+                    .with_context("timeout_duration", format!("{:?}", timeout))
                     .into(),
             ),
         }
@@ -129,7 +130,7 @@ pub mod behavior {
         items: Vec<T>,
         max_batch_size: usize,
         batch_timeout: Duration,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone + Debug,
     {
@@ -146,13 +147,11 @@ pub mod behavior {
             let batch = receiver.recv_batch(max_batch_size, batch_timeout).await;
 
             if batch.is_empty() {
-                return Err(CoreError::validation(
+                return Err(SinexError::validation(
                     "Received empty batch before all items collected",
                 )
                 .with_context("total_received", total_received)
-                .with_context("expected_total", items.len())
-                .build()
-                .into());
+                .with_context("expected_total", items.len()));
             }
 
             total_received += batch.len();
@@ -161,21 +160,18 @@ pub mod behavior {
             // Prevent infinite loops
             if batch_count > 100 {
                 return Err(
-                    CoreError::validation("Too many batches - possible infinite loop")
-                        .with_context("batch_count", batch_count)
-                        .build()
-                        .into(),
+                    SinexError::validation("Too many batches - possible infinite loop")
+                        .with_context("batch_count", batch_count),
                 );
             }
         }
 
         if total_received != items.len() {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Batch receive count mismatch: {} != {}",
                 total_received,
                 items.len()
-            ))
-            .into());
+            )));
         }
         Ok(())
     }
@@ -185,7 +181,7 @@ pub mod behavior {
         sender: &impl ChannelSenderExt<T>,
         receiver: &mut impl ChannelReceiverExt<T>,
         items: Vec<T>,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone + Debug,
     {
@@ -201,12 +197,11 @@ pub mod behavior {
         let drained = receiver.drain_all().await;
 
         if drained.len() != items.len() {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Drain count mismatch: {} != {}",
                 drained.len(),
                 items.len()
-            ))
-            .into());
+            )));
         }
         Ok(())
     }
@@ -221,7 +216,7 @@ pub mod backpressure {
         sender: &impl ChannelSenderExt<T>,
         test_items: Vec<T>,
         expected_timeout: Duration,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone,
     {
@@ -244,10 +239,9 @@ pub mod backpressure {
 
         // Validate that we got some timeouts (indicating backpressure)
         if timeouts == 0 {
-            return Err(CoreError::Unknown(
+            return Err(SinexError::unknown(
                 "Expected some timeouts due to backpressure".to_string(),
-            )
-            .into());
+            ));
         }
 
         Ok(())
@@ -258,7 +252,7 @@ pub mod backpressure {
         sender: &impl ChannelSenderExt<T>,
         items: Vec<T>,
         max_queue_size: usize,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone,
     {
@@ -287,19 +281,18 @@ pub mod backpressure {
 
         // Validate queue behavior
         if queue.len() > max_queue_size {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Queue size {} exceeds maximum {}",
                 queue.len(),
                 max_queue_size
-            ))
-            .into());
+            )));
         }
 
         Ok(())
     }
 
     /// Test adaptive backpressure with varying load
-    pub async fn test_adaptive_backpressure() -> TestResult<()> {
+    pub async fn test_adaptive_backpressure() -> Result<(), SinexError> {
         let mut manager = BackpressureManager::new(50, 20);
         let start_time = tokio::time::Instant::now();
 
@@ -314,7 +307,7 @@ pub mod backpressure {
 
         // Should have some delay due to high queue depths
         if total_time <= Duration::from_millis(10) {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Adaptive backpressure should introduce some delay, but total time was {:?}",
                 total_time
             ))
@@ -335,7 +328,7 @@ pub mod performance {
         mut receiver: impl ChannelReceiverExt<T> + Send + 'static,
         item_count: usize,
         test_item: T,
-    ) -> TestResult<ChannelPerformanceReport>
+    ) -> Result<ChannelPerformanceReport, SinexError>
     where
         T: Send + Clone + 'static,
     {
@@ -383,7 +376,7 @@ pub mod performance {
 
         // Wait for completion
         let _ = tokio::try_join!(sender_task, receiver_task)
-            .map_err(|e| CoreError::Service(format!("Task join failed: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("Task join failed: {}", e)))?;
 
         let total_time = start_time.elapsed();
         let sent = sent_counter.load(Ordering::Relaxed);
@@ -404,7 +397,7 @@ pub mod performance {
         concurrent_senders: usize,
         items_per_sender: usize,
         test_item: T,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone + 'static,
     {
@@ -445,9 +438,9 @@ pub mod performance {
 
         // Wait for all senders to complete
         for handle in handles {
-            handle
-                .await
-                .map_err(|e| CoreError::Unknown(format!("Concurrent sender task failed: {}", e)))?;
+            handle.await.map_err(|e| {
+                SinexError::unknown(format!("Concurrent sender task failed: {}", e))
+            })?;
         }
 
         let successes = success_counter.load(Ordering::Relaxed);
@@ -455,7 +448,7 @@ pub mod performance {
 
         // Validate results
         if successes + errors != total_expected as u64 {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Operation count mismatch: successes: {}, errors: {}, expected: {}",
                 successes, errors, total_expected
             ))
@@ -475,7 +468,7 @@ pub mod monitoring {
         sender: &impl ChannelSenderExt<T>,
         monitor: &ChannelMonitor,
         test_items: Vec<T>,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone,
     {
@@ -497,7 +490,7 @@ pub mod monitoring {
 
         // Validate monitoring data
         if final_stats.sent <= initial_stats.sent {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Send count should have increased: initial: {}, final: {}",
                 initial_stats.sent, final_stats.sent
             ))
@@ -505,7 +498,7 @@ pub mod monitoring {
         }
 
         if final_stats.sent - initial_stats.sent != test_items.len() as u64 {
-            return Err(CoreError::Unknown(format!(
+            return Err(SinexError::unknown(format!(
                 "Send count mismatch: delta: {}, items: {}",
                 final_stats.sent - initial_stats.sent,
                 test_items.len()
@@ -607,7 +600,7 @@ pub mod scenarios {
         test_name: &str,
         test_items: Vec<T>,
         buffer_size: usize,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone + Debug + PartialEq + 'static,
     {
@@ -650,7 +643,7 @@ pub mod scenarios {
     pub async fn run_backpressure_test_scenario<T>(
         test_name: &str,
         test_items: Vec<T>,
-    ) -> TestResult<()>
+    ) -> Result<(), SinexError>
     where
         T: Send + Clone + 'static,
     {
@@ -737,11 +730,10 @@ mod tests {
 #[cfg(test)]
 mod comprehensive_tests {
     use super::*;
-    use crate::prelude::*;
     use tokio::sync::mpsc;
 
     #[sinex_test]
-    async fn test_channel_setup_creation(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_setup_creation(_ctx: TestContext) -> Result<(), SinexError> {
         // Test different channel setup methods
         let zero_cap = TestChannelSetup::<i32>::zero_capacity();
         assert_eq!(zero_cap.monitor.stats().sent, 0);
@@ -757,7 +749,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_basic_send_receive_behavior(_ctx: TestContext) -> TestResult<()> {
+    async fn test_basic_send_receive_behavior(_ctx: TestContext) -> Result<(), SinexError> {
         let mut setup = TestChannelSetup::<String>::new(10);
 
         // Test successful send/receive
@@ -776,7 +768,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_timeout_behavior(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_timeout_behavior(_ctx: TestContext) -> Result<(), SinexError> {
         let mut setup = TestChannelSetup::<i32>::new(1);
 
         // Test timeout when no data
@@ -792,9 +784,9 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_backpressure_handling(_ctx: TestContext) -> TestResult<()> {
+    async fn test_backpressure_handling(_ctx: TestContext) -> Result<(), SinexError> {
         let setup = TestChannelSetup::<i32>::zero_capacity();
-        let backpressure = BackpressureManager::new(
+        let _backpressure = BackpressureManager::new(
             10, // high watermark
             5,  // low watermark
         );
@@ -814,7 +806,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_batch_receive_operations(_ctx: TestContext) -> TestResult<()> {
+    async fn test_batch_receive_operations(_ctx: TestContext) -> Result<(), SinexError> {
         let mut setup = TestChannelSetup::<String>::new(20);
 
         // Send multiple items
@@ -844,7 +836,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_monitoring(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_monitoring(_ctx: TestContext) -> Result<(), SinexError> {
         let monitor = Arc::new(ChannelMonitor::new());
 
         // Record various operations
@@ -864,7 +856,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_extension_traits(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_extension_traits(_ctx: TestContext) -> Result<(), SinexError> {
         let (sender, mut receiver) = mpsc::channel::<i32>(5);
 
         // Test send_or_log
@@ -889,7 +881,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_error_handling(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_error_handling(_ctx: TestContext) -> Result<(), SinexError> {
         let (sender, receiver) = mpsc::channel::<String>(1);
 
         // Drop receiver to cause send errors
@@ -907,7 +899,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_drain_operations(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_drain_operations(_ctx: TestContext) -> Result<(), SinexError> {
         let (sender, mut receiver) = mpsc::channel::<i32>(10);
 
         // Send multiple items
@@ -928,7 +920,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_concurrent_channel_operations(_ctx: TestContext) -> TestResult<()> {
+    async fn test_concurrent_channel_operations(_ctx: TestContext) -> Result<(), SinexError> {
         let setup = TestChannelSetup::<i32>::new(100);
         let sender = setup.sender.clone();
         let monitor = setup.monitor.clone();
@@ -943,7 +935,7 @@ mod comprehensive_tests {
                     sender_clone.send(i * 10 + j).await?;
                     monitor_clone.record_send();
                 }
-                Ok::<_, CoreError>(())
+                Ok::<_, SinexError>(())
             });
             handles.push(handle);
         }
@@ -960,7 +952,7 @@ mod comprehensive_tests {
     }
 
     #[sinex_test]
-    async fn test_channel_queue_management(_ctx: TestContext) -> TestResult<()> {
+    async fn test_channel_queue_management(_ctx: TestContext) -> Result<(), SinexError> {
         let (sender, mut receiver) = mpsc::channel::<String>(2);
         let mut queue = Vec::new();
 

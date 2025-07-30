@@ -160,7 +160,7 @@ impl DatabaseMetrics {
 
 /// Test performance of different query patterns
 #[sinex_test]
-async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
+async fn test_query_performance_patterns(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
 
@@ -313,7 +313,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> TestResult {
 
 /// Test database performance under concurrent load
 #[sinex_test]
-async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
+async fn test_concurrent_database_performance(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     let concurrent_workers = 15;
@@ -426,7 +426,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> TestResult {
 
 /// Test database connection pool performance
 #[sinex_test]
-async fn test_connection_pool_performance(ctx: TestContext) -> TestResult {
+async fn test_connection_pool_performance(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
 
@@ -576,7 +576,7 @@ async fn test_connection_pool_performance(ctx: TestContext) -> TestResult {
 
 /// Test transaction performance and isolation
 #[sinex_test]
-async fn test_transaction_performance(ctx: TestContext) -> TestResult {
+async fn test_transaction_performance(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
 

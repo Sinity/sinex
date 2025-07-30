@@ -2,10 +2,8 @@
 //!
 //! This module provides advanced systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
-//! Ported from the legacy sinex-events-system implementation with satellite support.
 
 use crate::payloads::*;
-use sinex_events::constants::sources;
 use sinex_events::{EventFactory, RawEvent};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;

@@ -11,7 +11,6 @@
 //! - `schemas`: Schema validation and metadata
 //! - `operations`: System operations and health checks
 //! - `processor_manifests`: Processor registration and management
-//! - `metrics`: Metrics storage and aggregation
 //! - `verification`: Preflight and integration testing
 //! - `knowledge_graph`: Entity and relation management
 //!
@@ -45,7 +44,6 @@ pub mod checkpoints;
 pub mod events;
 pub mod integrity;
 pub mod knowledge_graph;
-pub mod metrics;
 pub mod operations;
 pub mod processor_manifests;
 pub mod schemas;
@@ -59,7 +57,6 @@ pub use checkpoints::CheckpointQueries;
 pub use events::EventQueries;
 pub use integrity::IntegrityQueries;
 pub use knowledge_graph::KnowledgeGraphQueries;
-pub use metrics::MetricsQueries;
 pub use operations::OperationQueries;
 pub use processor_manifests::ProcessorManifestQueries;
 pub use schemas::SchemaQueries;

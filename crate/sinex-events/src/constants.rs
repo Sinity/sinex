@@ -72,7 +72,6 @@ pub mod services {
     pub const METRICS: &str = "sinex-metrics";
     pub const PIPELINE: &str = "sinex-pipeline";
 
-    // Legacy/alternative names
     pub const COLLECTOR: &str = "sinex-collector";
     pub const ROUTER: &str = "sinex-router";
     pub const UNIFIED_COLLECTOR: &str = "sinex-unified-collector";

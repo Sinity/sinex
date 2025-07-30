@@ -1,6 +1,5 @@
 //! Unified StatefulStreamProcessor implementation for PKM Service Automaton
 //!
-//! This replaces the legacy HotlogAutomaton implementation with the unified architecture.
 
 use async_trait::async_trait;
 use chrono::Utc;

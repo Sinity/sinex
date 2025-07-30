@@ -3,7 +3,7 @@
 //! This module provides file system watching capabilities with
 //! configurable event filtering and error handling.
 
-use sinex_error::{CoreError, Result};
+use sinex_error::{SinexError, Result};
 use sinex_constants::filesystem;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
@@ -139,7 +139,7 @@ impl FileWatcher {
             },
             Config::default(),
         )
-        .map_err(|e| CoreError::Unknown(format!("Failed to create file watcher: {}", e)))?;
+        .map_err(|e| SinexError::unknown(format!("Failed to create file watcher: {}", e)))?;
 
         // Watch all configured paths
         for path in &config.watch_paths {
@@ -150,7 +150,7 @@ impl FileWatcher {
             };
 
             watcher.watch(path, mode).map_err(|e| {
-                CoreError::Unknown(format!("Failed to watch path {:?}: {}", path, e))
+                SinexError::unknown(format!("Failed to watch path {:?}: {}", path, e))
             })?;
 
             debug!("Started watching path: {:?}", path);

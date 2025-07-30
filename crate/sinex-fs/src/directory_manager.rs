@@ -3,7 +3,7 @@
 //! This module provides utilities for managing directories with
 //! consistent error handling and permissions.
 
-use sinex_error::{CoreError, Result};
+use sinex_error::{SinexError, Result};
 use sinex_constants::filesystem;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -49,14 +49,14 @@ impl DirectoryManager {
 
         if self.config.create_parents {
             fs::create_dir_all(&full_path).await.map_err(|e| {
-                CoreError::io_error(&full_path)
+                SinexError::io_error(&full_path)
                     .with_operation("create_directory_all")
                     .with_context("error", e.to_string())
                     .build()
             })?;
         } else {
             fs::create_dir(&full_path).await.map_err(|e| {
-                CoreError::io_error(&full_path)
+                SinexError::io_error(&full_path)
                     .with_operation("create_directory")
                     .with_context("error", e.to_string())
                     .build()
@@ -73,7 +73,7 @@ impl DirectoryManager {
         let full_path = self.config.base_path.join(path);
 
         fs::remove_dir_all(&full_path).await.map_err(|e| {
-            CoreError::io_error(&full_path)
+            SinexError::io_error(&full_path)
                 .with_operation("remove_directory")
                 .with_context("error", e.to_string())
                 .build()
@@ -91,7 +91,7 @@ impl DirectoryManager {
         match fs::metadata(&full_path).await {
             Ok(metadata) => Ok(metadata.is_dir()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(CoreError::io_error(&full_path)
+            Err(e) => Err(SinexError::io_error(&full_path)
                 .with_operation("directory_exists")
                 .with_context("error", e.to_string())
                 .build()),
@@ -105,14 +105,14 @@ impl DirectoryManager {
 
         let mut entries = Vec::new();
         let mut dir_entries = fs::read_dir(&full_path).await.map_err(|e| {
-            CoreError::io_error(&full_path)
+            SinexError::io_error(&full_path)
                 .with_operation("list_directory")
                 .with_context("error", e.to_string())
                 .build()
         })?;
 
         while let Some(entry) = dir_entries.next_entry().await.map_err(|e| {
-            CoreError::io_error(&full_path)
+            SinexError::io_error(&full_path)
                 .with_operation("read_directory_entry")
                 .with_context("error", e.to_string())
                 .build()

@@ -3,7 +3,7 @@
 //! This module provides utilities for common SQLite operations with
 //! consistent error handling and context.
 
-use sinex_error::{CoreError, ErrorContext, Result};
+use sinex_error::{SinexError, Result};
 use rusqlite::{Connection, OpenFlags, Statement};
 use std::path::Path;
 
@@ -16,7 +16,7 @@ impl SqliteConnection {
         let path_ref = path.as_ref();
 
         Connection::open_with_flags(path_ref, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| {
-            CoreError::database(format!("Failed to open database: {}", e))
+            SinexError::database(format!("Failed to open database: {}", e))
                 .with_operation(operation)
                 .with_context("db_path", path_ref.display().to_string())
                 .with_context("access_mode", "read_only")
@@ -33,7 +33,7 @@ impl SqliteConnection {
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )
         .map_err(|e| {
-            CoreError::database(format!("Failed to open database: {}", e))
+            SinexError::database(format!("Failed to open database: {}", e))
                 .with_operation(operation)
                 .with_context("db_path", path_ref.display().to_string())
                 .with_context("access_mode", "read_write")
@@ -50,7 +50,7 @@ pub trait SqliteStatementExt {
 impl SqliteStatementExt for Connection {
     fn prepare_with_context(&self, sql: &str, operation: &str) -> Result<Statement> {
         self.prepare(sql).map_err(|e| {
-            CoreError::database(format!("Failed to prepare statement: {}", e))
+            SinexError::database(format!("Failed to prepare statement: {}", e))
                 .with_operation(operation)
                 .with_context("sql_length", sql.len().to_string())
                 .build()
@@ -90,7 +90,7 @@ impl<'a> SqliteQueryBuilder<'a> {
         result: std::result::Result<T, E>,
     ) -> Result<T> {
         result.map_err(|e| {
-            let mut ctx = CoreError::database(e.to_string())
+            let mut ctx = SinexError::database(e.to_string())
                 .with_operation(self.operation);
 
             if let Some(qt) = self.query_type {

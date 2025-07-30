@@ -155,7 +155,6 @@ pub struct StatusDashboard;
 /// ## Incremental Progress
 ///
 /// - Ship working code frequently
-/// - Maintain backward compatibility
 /// - Document breaking changes
 /// - Keep migrations simple
 ///

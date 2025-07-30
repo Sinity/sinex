@@ -3,7 +3,7 @@
 //! This module provides utilities for health monitoring and heartbeat emission,
 //! including system health checks and process monitoring.
 
-use sinex_error::{CoreError, Result};
+use sinex_error::{SinexError, Result};
 use sinex_events::{RawEvent, EventFactory};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

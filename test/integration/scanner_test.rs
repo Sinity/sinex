@@ -23,7 +23,7 @@ use tempfile::TempDir;
 // =============================================================================
 
 #[sinex_test]
-async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> TestResult {
+async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 
@@ -78,7 +78,7 @@ async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> TestRe
 }
 
 #[sinex_test]
-async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> TestResult {
+async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 
@@ -137,7 +137,7 @@ async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> TestR
 // =============================================================================
 
 #[sinex_test]
-async fn test_shell_history_scanner_bash_format(ctx: TestContext) -> TestResult {
+async fn test_shell_history_scanner_bash_format(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".bash_history");
 
@@ -206,7 +206,7 @@ sudo apt update
 }
 
 #[sinex_test]
-async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> TestResult {
+async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".zsh_history");
 
@@ -266,7 +266,7 @@ async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_time_range_filtering(ctx: TestContext) -> TestResult {
+async fn test_scanner_time_range_filtering(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".bash_history");
 
@@ -327,7 +327,7 @@ command_after_range
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_dry_run_mode(ctx: TestContext) -> TestResult {
+async fn test_scanner_dry_run_mode(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 
@@ -375,7 +375,7 @@ async fn test_scanner_dry_run_mode(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_handles_missing_files(ctx: TestContext) -> TestResult {
+async fn test_scanner_handles_missing_files(ctx: TestContext) -> anyhow::Result<()> {
     let config = serde_json::json!({
         "watch_patterns": [],
         "ignore_patterns": [],
@@ -404,7 +404,7 @@ async fn test_scanner_handles_missing_files(ctx: TestContext) -> TestResult {
 }
 
 #[sinex_test]
-async fn test_scanner_handles_empty_paths(ctx: TestContext) -> TestResult {
+async fn test_scanner_handles_empty_paths(ctx: TestContext) -> anyhow::Result<()> {
     let config = serde_json::json!({
         "watch_patterns": [],
         "ignore_patterns": [],
@@ -439,7 +439,7 @@ async fn test_scanner_handles_empty_paths(ctx: TestContext) -> TestResult {
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_performance_large_directory(ctx: TestContext) -> TestResult {
+async fn test_scanner_performance_large_directory(ctx: TestContext) -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 

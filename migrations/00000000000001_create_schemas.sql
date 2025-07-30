@@ -12,18 +12,23 @@ COMMENT ON SCHEMA raw IS 'Raw source material and blob storage';
 CREATE SCHEMA IF NOT EXISTS sinex_schemas;
 COMMENT ON SCHEMA sinex_schemas IS 'JSON schemas for event payload validation';
 
--- Knowledge management schema
-CREATE SCHEMA IF NOT EXISTS km;
-COMMENT ON SCHEMA km IS 'Knowledge management: concepts, relations, and annotations';
 
 -- Metrics schema for analytics
 CREATE SCHEMA IF NOT EXISTS metrics;
 COMMENT ON SCHEMA metrics IS 'Metrics, analytics, and continuous aggregates';
 
--- Sinex schema for metrics storage (required by sinex-metrics-lib)
+-- Sinex schema for metrics storage (required by sinex-telemetry)
 CREATE SCHEMA IF NOT EXISTS sinex;
-COMMENT ON SCHEMA sinex IS 'Schema for sinex-metrics-lib compatibility';
+COMMENT ON SCHEMA sinex IS 'Schema for sinex-telemetry compatibility';
 
 -- Synthesis schema for derived events
 CREATE SCHEMA IF NOT EXISTS synthesis;
 COMMENT ON SCHEMA synthesis IS 'Synthesis configuration and state management';
+
+-- Audit schema for system audit trails
+CREATE SCHEMA IF NOT EXISTS audit;
+COMMENT ON SCHEMA audit IS 'Audit trails for administrative actions and data changes';
+
+-- Router schema for event routing rules
+CREATE SCHEMA IF NOT EXISTS sinex_router;
+COMMENT ON SCHEMA sinex_router IS 'Event routing rules and dead letter queues';

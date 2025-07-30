@@ -1,7 +1,6 @@
 //! Unified Document Ingestor
 //!
 //! This module provides a unified StatefulStreamProcessor for ingesting documents
-//! of all types into the source material registry, replacing the legacy artifacts system.
 //! It follows the vision's "documents as source material" approach.
 
 use async_trait::async_trait;

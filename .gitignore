@@ -66,3 +66,7 @@ rustc-ice-*.txt
 
 # Git worktrees
 worktree-*
+
+# Removed daemon scripts - don't restore
+scripts/compile-daemon.sh
+scripts/git-state-tracker.sh

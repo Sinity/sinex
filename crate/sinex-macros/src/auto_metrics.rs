@@ -22,7 +22,7 @@ pub fn auto_metrics(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #(#attrs)*
         #vis #sig {
-            let _guard = sinex_metrics_lib::track_function_call(#fn_name_str, module_path!());
+            let _guard = sinex_telemetry::track_function_call(#fn_name_str, module_path!());
             #original_block
         }
     };
@@ -60,7 +60,7 @@ pub fn auto_db_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #(#attrs)*
         #vis #sig {
-            let _guard = sinex_metrics_lib::track_database_query(#operation);
+            let _guard = sinex_telemetry::track_database_query(#operation);
             #original_block
         }
     };
@@ -98,7 +98,7 @@ pub fn auto_event_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
     let expanded = quote! {
         #(#attrs)*
         #vis #sig {
-            let _guard = sinex_metrics_lib::track_event_processing(#event_type);
+            let _guard = sinex_telemetry::track_event_processing(#event_type);
             #original_block
         }
     };
@@ -118,7 +118,7 @@ pub fn auto_resource_metrics(_attr: TokenStream, item: TokenStream) -> TokenStre
     let expanded = quote! {
         #(#attrs)*
         #vis #sig {
-            let _metrics = sinex_metrics_lib::create_system_metrics();
+            let _metrics = sinex_telemetry::create_system_metrics();
             _metrics.collect_system_metrics();
             #original_block
         }

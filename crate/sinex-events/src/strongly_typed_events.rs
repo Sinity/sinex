@@ -574,13 +574,10 @@ impl TypedEventPipelineAdapter {
         Self { json_tx }
     }
 
-    /// Run adapter loop converting typed events to JSON for legacy systems
     pub async fn run_adapter(self, mut typed_rx: TypedEventReceiver) -> TypedEventResult<()> {
         while let Some(envelope) = typed_rx.recv().await {
-            // Convert typed event to JSON for database/legacy systems
             let json_event = envelope.to_json_event();
 
-            // Send to legacy pipeline
             self.json_tx.send(json_event).await.map_err(|e| {
                 TypedEventError::ChannelSend(format!("Failed to send converted event: {}", e))
             })?;
@@ -847,7 +844,6 @@ impl TypedToJsonAdapter {
     }
 }
 
-// Note: LegacyEventSourceAdapter removed to avoid circular dependency with sinex-core
 // It can be re-implemented in sinex-core if needed, using the TypedToJsonAdapter
 
 #[cfg(test)]

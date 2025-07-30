@@ -9,7 +9,7 @@ use sinex_test_utils::prelude::*;
 
 /// Test basic PEL recovery after consumer failure
 #[sinex_test]
-async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
+async fn test_basic_pel_recovery(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:basic:stream";
     let group_name = "basic-pel-group";
@@ -95,7 +95,7 @@ async fn test_basic_pel_recovery(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery with partial acknowledgments
 #[sinex_test]
-async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
+async fn test_partial_pel_recovery(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:partial:stream";
     let group_name = "partial-pel-group";
@@ -189,7 +189,7 @@ async fn test_partial_pel_recovery(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery with multiple consumers
 #[sinex_test]
-async fn test_multi_consumer_pel_recovery(ctx: TestContext) -> TestResult {
+async fn test_multi_consumer_pel_recovery(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:multi:stream";
     let group_name = "multi-pel-group";
@@ -298,7 +298,7 @@ async fn test_multi_consumer_pel_recovery(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery with idle timeout scenarios
 #[sinex_test]
-async fn test_idle_timeout_pel_recovery(ctx: TestContext) -> TestResult {
+async fn test_idle_timeout_pel_recovery(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:idle:stream";
     let group_name = "idle-pel-group";
@@ -392,7 +392,7 @@ async fn test_idle_timeout_pel_recovery(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery with forced takeover
 #[sinex_test]
-async fn test_forced_pel_takeover(ctx: TestContext) -> TestResult {
+async fn test_forced_pel_takeover(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:force:stream";
     let group_name = "force-pel-group";
@@ -475,7 +475,7 @@ async fn test_forced_pel_takeover(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery with message redelivery count
 #[sinex_test]
-async fn test_pel_redelivery_count(ctx: TestContext) -> TestResult {
+async fn test_pel_redelivery_count(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:redelivery:stream";
     let group_name = "redelivery-pel-group";
@@ -544,7 +544,7 @@ async fn test_pel_redelivery_count(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery with concurrent claims
 #[sinex_test]
-async fn test_concurrent_pel_claims(ctx: TestContext) -> TestResult {
+async fn test_concurrent_pel_claims(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:concurrent:stream";
     let group_name = "concurrent-pel-group";
@@ -658,7 +658,7 @@ async fn test_concurrent_pel_claims(ctx: TestContext) -> TestResult {
 
 /// Test PEL recovery patterns for production scenarios
 #[sinex_test]
-async fn test_production_pel_recovery_patterns(ctx: TestContext) -> TestResult {
+async fn test_production_pel_recovery_patterns(ctx: TestContext) -> anyhow::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:pel:production:stream";
     let group_name = "production-pel-group";

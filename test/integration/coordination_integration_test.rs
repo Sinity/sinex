@@ -13,7 +13,7 @@ use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
 use test_sinex_test_utils::TestContext;
 
 #[sinex_test]
-async fn test_coordination_primitive_unified_api() -> TestResult<()> {
+async fn test_coordination_primitive_unified_api() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
 
     // Test event counter factory method
@@ -36,7 +36,7 @@ async fn test_coordination_primitive_unified_api() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_primitive_barrier() -> TestResult<()> {
+async fn test_coordination_primitive_barrier() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
 
     // Test barrier factory method  
@@ -55,7 +55,7 @@ async fn test_coordination_primitive_barrier() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_primitive_synchronizer() -> TestResult<()> {
+async fn test_coordination_primitive_synchronizer() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
 
     // Test synchronizer factory method
@@ -69,7 +69,7 @@ async fn test_coordination_primitive_synchronizer() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_resource_guard_cleanup() -> TestResult<()> {
+async fn test_resource_guard_cleanup() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     
     let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -93,7 +93,7 @@ async fn test_resource_guard_cleanup() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_basic() -> TestResult<()> {
+async fn test_advisory_lock_basic() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -116,7 +116,7 @@ async fn test_advisory_lock_basic() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_satellite_version_comparison() -> TestResult<()> {
+async fn test_satellite_version_comparison() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     
     let v1 = SatelliteVersion::parse("1.0.100+abc123").unwrap();
@@ -132,7 +132,7 @@ async fn test_satellite_version_comparison() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_satellite_instance_creation() -> TestResult<()> {
+async fn test_satellite_instance_creation() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     
     let instance = SatelliteInstance::new(
@@ -148,7 +148,7 @@ async fn test_satellite_instance_creation() -> TestResult<()> {
 }
 
 #[sinex_test] 
-async fn test_coordination_tables_exist() -> TestResult<()> {
+async fn test_coordination_tables_exist() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     
     // Test that coordination tables were created by migration
@@ -168,7 +168,7 @@ async fn test_coordination_tables_exist() -> TestResult<()> {
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_leadership() -> TestResult<()> {
+async fn test_distributed_coordination_leadership() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -213,7 +213,7 @@ async fn create_test_processor() -> Box<dyn Fn() -> std::pin::Pin<Box<dyn std::f
 }
 
 #[sinex_test]
-async fn test_satellite_coordination_basic() -> TestResult<()> {
+async fn test_satellite_coordination_basic() -> anyhow::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -234,7 +234,7 @@ async fn test_satellite_coordination_basic() -> TestResult<()> {
 }
 
 mod test_common {
-    use sinex_core_types::Result as TestResult;
+    use sinex_core_types::Result as anyhow::Result<()>;
     use sinex_db::DbPool;
     use std::collections::HashMap;
     
@@ -243,7 +243,7 @@ mod test_common {
     }
     
     impl TestContext {
-        pub async fn new() -> TestResult<Self> {
+        pub async fn new() -> anyhow::Result<Self> {
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
@@ -256,7 +256,7 @@ mod test_common {
             &self.pool
         }
         
-        pub async fn query_raw(&self, sql: &str) -> TestResult<Vec<HashMap<String, serde_json::Value>>> {
+        pub async fn query_raw(&self, sql: &str) -> anyhow::Result<Vec<HashMap<String, serde_json::Value>>> {
             let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
             
             let mut results = Vec::new();
@@ -276,7 +276,7 @@ mod test_common {
 
 // Re-export for sinex_test macro
 use test_sinex_test_utils::TestContext;
-type TestResult<T> = sinex_core_types::Result<T>;
+type anyhow::Result<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation
 macro_rules! sinex_test {

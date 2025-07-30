@@ -784,7 +784,7 @@ impl FilesystemProcessor {
     }
 
     /// Process file with stage-as-you-go pattern for real-time provenance
-    async fn process_file_with_staging(
+    async fn _process_file_with_staging(
         &self,
         file_path: &Path,
         event_kind: &str,
@@ -948,10 +948,8 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             }
         }
 
-        // Legacy support: Extract watch paths from configuration (backward compatibility)
         if let Some(paths_json) = ctx.config.get("watch_paths") {
             if let Ok(paths) = serde_json::from_value::<Vec<String>>(paths_json.clone()) {
-                // Convert legacy watch_paths to watch_patterns
                 self.config.watch_patterns = paths;
             }
         }

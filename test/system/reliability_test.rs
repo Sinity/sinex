@@ -31,7 +31,7 @@ use std::fs;
 
 /// Test startup sequence robustness and error handling
 #[sinex_test(timeout = 60)]
-async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
+async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -110,7 +110,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
         let checkpoint_id = Ulid::new();
         let last_processed_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
                  VALUES ($1::uuid, $2, $3::uuid, $4)",
             checkpoint_id.to_uuid(),
             "existing_agent",
@@ -137,7 +137,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
         // Verify data integrity after restart - use timing utilities for better reliability
         let checkpoint_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
                 .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
@@ -240,7 +240,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> TestResult {
 
 /// Test shutdown sequence and graceful termination
 #[sinex_test]
-async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestResult {
+async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -492,7 +492,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> TestRe
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]
-async fn test_configuration_validation_and_reload(ctx: TestContext) -> TestResult {
+async fn test_configuration_validation_and_reload(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -789,7 +789,7 @@ channel_buffer_size = 10000
 
 /// Test data migration safety and version compatibility
 #[sinex_test]
-async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
+async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing
@@ -936,7 +936,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
         let migration_checkpoint_id = Ulid::new();
         let migration_last_processed_id = Ulid::new();
         sqlx::query!(
-            "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+            "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
                  VALUES ($1::uuid, $2, $3::uuid, $4)",
             migration_checkpoint_id.to_uuid(),
             "migration_test_agent",
@@ -961,7 +961,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Record initial state - use timing utilities for consistency
         let initial_checkpoint_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
                 .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
@@ -987,7 +987,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Verify data preservation - use timing utilities for reliability
         let final_checkpoint_count: i64 =
-            sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+            sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
                 .fetch_one(pool)
                 .await?
                 .unwrap_or(0);
@@ -1005,8 +1005,8 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
         // Verify checkpoint data integrity
         let checkpoint_data: Option<serde_json::Value> = sqlx::query_scalar!(
-            "SELECT state_data FROM core.automaton_checkpoints
-                 WHERE automaton_name = 'migration_test_agent'"
+            "SELECT state_data FROM core.processor_checkpoints
+                 WHERE processor_name = 'migration_test_agent'"
         )
         .fetch_optional(pool)
         .await?
@@ -1156,7 +1156,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> TestResult {
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestResult {
+async fn test_graceful_degradation_database_failure(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test checkpoint for degradation testing
@@ -1164,7 +1164,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
     let degradation_checkpoint_id = Ulid::new();
     let degradation_last_processed_id = Ulid::new();
     sqlx::query!(
-        "INSERT INTO core.automaton_checkpoints (id, automaton_name, last_processed_id, state_data)
+        "INSERT INTO core.processor_checkpoints (id, processor_name, last_processed_id, state_data)
          VALUES ($1::uuid, $2, $3::uuid, $4)",
         degradation_checkpoint_id.to_uuid(),
         agent_name,
@@ -1227,7 +1227,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
     async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
         let _checkpoint_check =
-            sqlx::query!("SELECT automaton_name FROM core.automaton_checkpoints LIMIT 1")
+            sqlx::query!("SELECT processor_name FROM core.processor_checkpoints LIMIT 1")
                 .fetch_one(&pool)
                 .await
                 .map_err(anyhow::Error::from)?;
@@ -1339,7 +1339,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
         .await
         .ok();
     sqlx::query!(
-        "DELETE FROM core.automaton_checkpoints WHERE automaton_name = $1",
+        "DELETE FROM core.processor_checkpoints WHERE processor_name = $1",
         agent_name
     )
     .execute(&pool)
@@ -1350,7 +1350,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> TestRes
 
 /// Test resource limits and monitoring under load
 #[sinex_test]
-async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
+async fn test_resource_limits_monitoring(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource limits and monitoring under load...");
@@ -1514,7 +1514,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
                 let mut conn = pool.acquire().await?;
 
                 // Perform a quick operation
-                sqlx::query_scalar!("SELECT COUNT(*) FROM core.automaton_checkpoints")
+                sqlx::query_scalar!("SELECT COUNT(*) FROM core.processor_checkpoints")
                     .fetch_one(&mut *conn)
                     .await
                     .map(|opt| opt.unwrap_or(0))
@@ -1608,7 +1608,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> TestResult {
 
 /// Test system behavior under resource exhaustion scenarios
 #[sinex_test]
-async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> TestResult {
+async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> anyhow::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource exhaustion scenarios...");
