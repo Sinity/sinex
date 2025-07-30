@@ -364,7 +364,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_event_source_strategy(ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that event source strategy produces valid sources
         for _ in 0..20 {
@@ -394,7 +394,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_event_type_strategy(ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that event type strategy produces valid types
         for _ in 0..20 {
@@ -421,7 +421,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_file_path_strategy(_ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that file path strategy produces valid paths
         for _ in 0..20 {
@@ -446,7 +446,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_json_payload_strategy(ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test that JSON payload strategy produces valid JSON
         for _ in 0..10 {
@@ -477,7 +477,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_filesystem_event_strategy(ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test filesystem event generation
         for _ in 0..10 {
@@ -564,7 +564,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_complex_property_with_context(ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Complex property: events with same source should be grouped correctly
         let sources = vec!["test-a", "test-b", "test-c"];
@@ -623,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_malicious_payload_generation() {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Should generate various malicious payloads
         let mut has_sql = false;
@@ -653,7 +653,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_property_based_edge_cases(ctx: TestContext) -> Result<()> {
-        let _runner = proptest::test_runner::TestRunner::deterministic();
+        let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test edge cases with property strategies
         let long_source = "a".repeat(256);
