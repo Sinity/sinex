@@ -36,9 +36,11 @@ prost.workspace = true
 clap = { workspace = true, features = ["derive"] }
 toml.workspace = true
 dirs.workspace = true
+figment = { workspace = true }
 
 # Validation
 jsonschema.workspace = true
+validator = { workspace = true }
 
 # Networking
 tokio-stream = { workspace = true, features = ["net"] }
@@ -59,6 +61,7 @@ sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 sinex-telemetry = { path = "../sinex-telemetry" }
+sinex-validation = { path = "../sinex-validation" }
 
 [build-dependencies]
 tonic-build.workspace = true

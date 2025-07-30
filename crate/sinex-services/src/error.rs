@@ -1,6 +1,7 @@
 //! Service layer error types
 
-use sinex_db::query_helpers::DbError;
+use sinex_db::repositories::DbResult;
+use sinex_error::SinexError;
 use thiserror::Error;
 
 pub type ServiceResult<T> = Result<T, ServiceError>;
@@ -9,9 +10,6 @@ pub type ServiceResult<T> = Result<T, ServiceError>;
 pub enum ServiceError {
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
-
-    #[error("Database helper error: {0}")]
-    DatabaseHelper(#[from] DbError),
 
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
@@ -27,6 +25,9 @@ pub enum ServiceError {
 
     #[error("Service unavailable: {0}")]
     ServiceUnavailable(String),
+
+    #[error(transparent)]
+    Sinex(#[from] SinexError),
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),

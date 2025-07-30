@@ -5,7 +5,7 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_db::queries::EventQueries;
+use sinex_db::repositories::{EventRepository, Repository};
 use sinex_events::RawEvent;
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
@@ -276,16 +276,17 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                 };
 
                 // Query RPC request events
-                let events = EventQueries::get_events_by_type_and_time_range(
-                    "rpc.content".to_string(),
-                    "request".to_string(),
-                    start_time,
-                    end_time,
-                    Some(1000),
-                    None,
-                )
-                .fetch_all(&ctx.db_pool)
-                .await?;
+                let event_repo = EventRepository::new(&ctx.db_pool);
+                let events = event_repo
+                    .get_events_by_type_and_time_range(
+                        "rpc.content",
+                        "request",
+                        start_time,
+                        end_time,
+                        Some(1000),
+                        None,
+                    )
+                    .await?;
 
                 // Process using batch processor
                 let mut redis_consumer = RedisStreamConsumer::from_context(

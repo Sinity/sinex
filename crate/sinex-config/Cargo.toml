@@ -18,3 +18,9 @@ chrono = { version = "0.4", features = ["serde"] }
 
 # Validation
 regex = "1.0"
+validator = { workspace = true }
+
+# Configuration management
+figment = { workspace = true }
+thiserror = { workspace = true }
+tempfile = { workspace = true }

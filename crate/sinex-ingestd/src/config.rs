@@ -4,26 +4,38 @@ use crate::{IngestdError, IngestdResult};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tracing::info;
+use validator::Validate;
 
 /// Configuration for the ingestion daemon
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct IngestdConfig {
     /// Database URL for PostgreSQL connection
+    #[validate(url(message = "Invalid database URL"))]
+    #[validate(custom(
+        function = "validate_postgres_url",
+        message = "Must be a PostgreSQL URL"
+    ))]
     pub database_url: String,
 
     /// Database connection pool size
+    #[validate(range(min = 1, max = 1000, message = "Pool size must be between 1 and 1000"))]
     pub database_pool_size: u32,
 
     /// Redis URL for message bus
+    #[validate(url(message = "Invalid Redis URL"))]
+    #[validate(custom(function = "validate_redis_url", message = "Must be a Redis URL"))]
     pub redis_url: String,
 
     /// Unix Domain Socket path for gRPC server
+    #[validate(custom(function = "validate_socket_path", message = "Invalid socket path"))]
     pub socket_path: String,
 
     /// Batch size for database writes
+    #[validate(range(min = 1, message = "Batch size must be greater than 0"))]
     pub batch_size: usize,
 
     /// Batch timeout in seconds
+    #[validate(range(min = 1, message = "Batch timeout must be greater than 0"))]
     pub batch_timeout_secs: u64,
 
     /// Enable dry-run mode (no database writes)
@@ -33,12 +45,19 @@ pub struct IngestdConfig {
     pub validate_schemas: bool,
 
     /// Working directory for temporary files
+    #[validate(custom(function = "validate_work_dir", message = "Invalid work directory"))]
     pub work_dir: PathBuf,
 
     /// Maximum message size in bytes
+    #[validate(range(
+        min = 1024,
+        max = 1073741824,
+        message = "Max message size must be between 1KB and 1GB"
+    ))]
     pub max_message_size: usize,
 
     /// Redis stream prefix for topics
+    #[validate(length(min = 1, message = "Redis stream prefix cannot be empty"))]
     pub redis_stream_prefix: String,
 }
 
@@ -80,42 +99,13 @@ impl IngestdConfig {
 
     /// Validate the configuration
     pub async fn validate(&self) -> IngestdResult<()> {
-        // Validate database URL format
-        if !self.database_url.starts_with("postgresql://")
-            && !self.database_url.starts_with("postgres://")
-        {
-            return Err(IngestdError::Config(
-                "Database URL must be a PostgreSQL connection string".to_string(),
-            ));
-        }
+        use validator::Validate as ValidateTrait;
 
-        // Validate Redis URL format
-        if !self.redis_url.starts_with("redis://") && !self.redis_url.starts_with("rediss://") {
-            return Err(IngestdError::Config(
-                "Redis URL must be a valid Redis connection string".to_string(),
-            ));
-        }
+        // Run validator crate validation first
+        ValidateTrait::validate(self)
+            .map_err(|e| IngestdError::Config(format!("Validation failed: {}", e)))?;
 
-        // Validate batch configuration
-        if self.batch_size == 0 {
-            return Err(IngestdError::Config(
-                "Batch size must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.batch_timeout_secs == 0 {
-            return Err(IngestdError::Config(
-                "Batch timeout must be greater than 0".to_string(),
-            ));
-        }
-
-        if self.database_pool_size == 0 {
-            return Err(IngestdError::Config(
-                "Database pool size must be greater than 0".to_string(),
-            ));
-        }
-
-        // Validate socket path directory exists or can be created
+        // Additional runtime validation - create directories if needed
         if let Some(parent) = PathBuf::from(&self.socket_path).parent() {
             if !parent.exists() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
@@ -128,7 +118,6 @@ impl IngestdConfig {
             }
         }
 
-        // Validate work directory exists or can be created
         if !self.work_dir.exists() {
             tokio::fs::create_dir_all(&self.work_dir)
                 .await
@@ -153,7 +142,6 @@ impl IngestdConfig {
 
     /// Test database connection
     async fn test_database_connection(&self) -> IngestdResult<()> {
-        use sinex_db::queries::OperationQueries;
         use sqlx::postgres::PgPoolOptions;
 
         let pool = PgPoolOptions::new()
@@ -161,9 +149,9 @@ impl IngestdConfig {
             .connect(&self.database_url)
             .await?;
 
-        // Test basic query using the query system
-        OperationQueries::health_check()
-            .fetch_one::<()>(&pool)
+        // Test basic query with a simple SELECT 1
+        sqlx::query("SELECT 1")
+            .fetch_one(&pool)
             .await
             .map_err(|e| IngestdError::Config(format!("Database connection test failed: {}", e)))?;
 
@@ -218,4 +206,42 @@ impl Default for IngestdConfig {
             redis_stream_prefix: "sinex:events".to_string(),
         }
     }
+}
+
+// Custom validator functions
+
+fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
+    if url.starts_with("postgresql://") || url.starts_with("postgres://") {
+        Ok(())
+    } else {
+        Err(validator::ValidationError::new("not_postgres_url"))
+    }
+}
+
+fn validate_redis_url(url: &str) -> Result<(), validator::ValidationError> {
+    if url.starts_with("redis://") || url.starts_with("rediss://") {
+        Ok(())
+    } else {
+        Err(validator::ValidationError::new("not_redis_url"))
+    }
+}
+
+fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
+    use sinex_validation::validate_path;
+
+    validate_path(path)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_socket_path"))
+}
+
+fn validate_work_dir(path: &PathBuf) -> Result<(), validator::ValidationError> {
+    use sinex_validation::validate_path;
+
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| validator::ValidationError::new("non_utf8_path"))?;
+
+    validate_path(path_str)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_work_dir"))
 }

@@ -3,84 +3,30 @@
 //! This module provides utilities for retrying async operations with
 //! configurable backoff strategies.
 
+use bon::Builder;
 use sinex_error::{Result, SinexError};
 use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
 
 /// Retry configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Builder)]
 pub struct RetryConfig {
     /// Maximum number of attempts
+    #[builder(default = 3)]
     pub max_attempts: u32,
     /// Initial delay between attempts
+    #[builder(default = Duration::from_millis(100))]
     pub initial_delay: Duration,
     /// Maximum delay between attempts
+    #[builder(default = Duration::from_millis(1000))]
     pub max_delay: Duration,
     /// Backoff multiplier
+    #[builder(default = 2.0)]
     pub multiplier: f64,
     /// Add jitter to delays
+    #[builder(default = true)]
     pub jitter: bool,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_attempts: 3,
-            initial_delay: Duration::from_millis(100),
-            max_delay: Duration::from_millis(1000),
-            multiplier: 2.0,
-            jitter: true,
-        }
-    }
-}
-
-/// Builder for retry configuration
-pub struct RetryBuilder {
-    config: RetryConfig,
-}
-
-impl Default for RetryBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl RetryBuilder {
-    pub fn new() -> Self {
-        Self {
-            config: RetryConfig::default(),
-        }
-    }
-
-    pub fn max_attempts(mut self, attempts: u32) -> Self {
-        self.config.max_attempts = attempts;
-        self
-    }
-
-    pub fn initial_delay(mut self, delay: Duration) -> Self {
-        self.config.initial_delay = delay;
-        self
-    }
-
-    pub fn max_delay(mut self, delay: Duration) -> Self {
-        self.config.max_delay = delay;
-        self
-    }
-
-    pub fn multiplier(mut self, multiplier: f64) -> Self {
-        self.config.multiplier = multiplier;
-        self
-    }
-
-    pub fn no_jitter(mut self) -> Self {
-        self.config.jitter = false;
-        self
-    }
-
-    pub fn build(self) -> RetryConfig {
-        self.config
-    }
 }
 
 /// Retry an async operation with the given configuration
@@ -107,110 +53,45 @@ where
             Err(e) => {
                 if attempt >= config.max_attempts {
                     return Err(SinexError::unknown(format!(
-                        "Operation '{}' failed after {} attempts: {}",
+                        "{} failed after {} attempts: {}",
                         operation_name, attempt, e
                     )));
                 }
 
-                sleep(apply_jitter(delay, config.jitter)).await;
+                // Log the retry attempt (in production, use proper logging)
+                eprintln!(
+                    "{} attempt {} failed: {}. Retrying in {:?}",
+                    operation_name, attempt, e, delay
+                );
+
+                // Sleep before next attempt
+                sleep(delay).await;
 
                 // Calculate next delay with exponential backoff
                 delay = std::cmp::min(
-                    Duration::from_secs_f64(delay.as_secs_f64() * config.multiplier),
+                    Duration::from_millis((delay.as_millis() as f64 * config.multiplier) as u64),
                     config.max_delay,
                 );
-            }
-        }
-    }
-}
 
-/// Retry with a simple closure that returns Result
-pub async fn retry_simple<F, T>(_operation_name: &str, mut f: F) -> Result<T>
-where
-    F: FnMut() -> Result<T>,
-{
-    let config = RetryConfig::default();
-    let mut attempt = 0;
-    let mut delay = config.initial_delay;
-
-    loop {
-        attempt += 1;
-
-        match f() {
-            Ok(value) => {
-                return Ok(value);
-            }
-            Err(e) => {
-                if attempt >= config.max_attempts {
-                    return Err(e);
+                // Add jitter if configured
+                if config.jitter {
+                    let jitter_range = delay.as_millis() as f64 * 0.1;
+                    let jitter = (rand::random::<f64>() - 0.5) * jitter_range;
+                    delay = Duration::from_millis((delay.as_millis() as f64 + jitter) as u64);
                 }
-
-                sleep(apply_jitter(delay, config.jitter)).await;
-
-                delay = std::cmp::min(
-                    Duration::from_secs_f64(delay.as_secs_f64() * config.multiplier),
-                    config.max_delay,
-                );
             }
         }
     }
 }
 
-/// Retry with custom should_retry predicate
-pub async fn retry_with_predicate<F, Fut, T, E, P>(
-    config: RetryConfig,
-    operation_name: &str,
-    mut f: F,
-    mut should_retry: P,
-) -> Result<T>
+/// Convenience function to retry with default configuration
+pub async fn retry_default<F, Fut, T, E>(operation_name: &str, f: F) -> Result<T>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = std::result::Result<T, E>>,
     E: std::fmt::Display,
-    P: FnMut(&E) -> bool,
 {
-    let mut attempt = 0;
-    let mut delay = config.initial_delay;
-
-    loop {
-        attempt += 1;
-
-        match f().await {
-            Ok(value) => {
-                return Ok(value);
-            }
-            Err(e) => {
-                if attempt >= config.max_attempts || !should_retry(&e) {
-                    return Err(SinexError::unknown(format!(
-                        "Operation '{}' failed: {}",
-                        operation_name, e
-                    )));
-                }
-
-                sleep(apply_jitter(delay, config.jitter)).await;
-
-                delay = std::cmp::min(
-                    Duration::from_secs_f64(delay.as_secs_f64() * config.multiplier),
-                    config.max_delay,
-                );
-            }
-        }
-    }
-}
-
-/// Apply jitter to a duration
-fn apply_jitter(duration: Duration, apply: bool) -> Duration {
-    if !apply {
-        return duration;
-    }
-
-    use rand::Rng;
-    let mut rng = rand::thread_rng();
-    let jitter_factor = 0.1; // 10% jitter
-    let jitter_range = duration.as_secs_f64() * jitter_factor;
-    let jitter = rng.gen_range(-jitter_range..=jitter_range);
-
-    Duration::from_secs_f64((duration.as_secs_f64() + jitter).max(0.0))
+    retry_async(RetryConfig::builder().build(), operation_name, f).await
 }
 
 #[cfg(test)]
@@ -221,91 +102,63 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_success_first_attempt() {
-        let result = retry_simple("test_op", || Ok::<_, SinexError>(42)).await;
+        let result = retry_default("test_op", || async { Ok::<_, &str>(42) }).await;
         assert_eq!(result.unwrap(), 42);
     }
 
     #[tokio::test]
-    async fn test_retry_eventual_success() {
+    async fn test_retry_success_after_failures() {
         let attempts = Arc::new(AtomicU32::new(0));
         let attempts_clone = attempts.clone();
 
-        let config = RetryBuilder::new()
-            .max_attempts(3)
-            .initial_delay(Duration::from_millis(10))
-            .no_jitter()
-            .build();
-
-        let result = retry_async(config, "test_op", || {
-            let attempts = attempts_clone.clone();
+        let result = retry_default("test_op", move || {
+            let attempt = attempts_clone.fetch_add(1, Ordering::SeqCst);
             async move {
-                let current = attempts.fetch_add(1, Ordering::SeqCst);
-                if current < 2 {
+                if attempt < 2 {
                     Err("temporary failure")
                 } else {
-                    Ok(current)
+                    Ok(42)
                 }
             }
         })
         .await;
 
-        assert_eq!(result.unwrap(), 2);
+        assert_eq!(result.unwrap(), 42);
         assert_eq!(attempts.load(Ordering::SeqCst), 3);
     }
 
     #[tokio::test]
-    async fn test_retry_max_attempts_exceeded() {
-        let config = RetryBuilder::new()
-            .max_attempts(2)
-            .initial_delay(Duration::from_millis(1))
-            .no_jitter()
-            .build();
+    async fn test_retry_all_attempts_fail() {
+        let attempts = Arc::new(AtomicU32::new(0));
+        let attempts_clone = attempts.clone();
 
-        let result = retry_async::<_, _, (), _>(config, "failing_op", || async {
-            Err::<(), _>("always fails")
+        let result = retry_default("test_op", move || {
+            attempts_clone.fetch_add(1, Ordering::SeqCst);
+            async { Err::<i32, _>("permanent failure") }
         })
         .await;
 
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("failed after 2 attempts"));
+        assert_eq!(attempts.load(Ordering::SeqCst), 3); // Default max attempts
     }
 
     #[tokio::test]
-    async fn test_retry_with_predicate() {
+    async fn test_custom_retry_config() {
+        let config = RetryConfig::builder()
+            .max_attempts(2)
+            .initial_delay(Duration::from_millis(10))
+            .build();
+
         let attempts = Arc::new(AtomicU32::new(0));
         let attempts_clone = attempts.clone();
 
-        let config = RetryBuilder::new()
-            .max_attempts(5)
-            .initial_delay(Duration::from_millis(1))
-            .no_jitter()
-            .build();
-
-        let result = retry_with_predicate(
-            config,
-            "selective_retry",
-            || {
-                let attempts = attempts_clone.clone();
-                async move {
-                    let current = attempts.fetch_add(1, Ordering::SeqCst);
-                    if current < 2 {
-                        Err("retryable error")
-                    } else if current == 2 {
-                        Err("non-retryable error")
-                    } else {
-                        Ok(current)
-                    }
-                }
-            },
-            |e| !e.contains("non-retryable"),
-        )
+        let result = retry_async(config, "test_op", move || {
+            attempts_clone.fetch_add(1, Ordering::SeqCst);
+            async { Err::<i32, _>("failure") }
+        })
         .await;
 
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("non-retryable"));
-        assert_eq!(attempts.load(Ordering::SeqCst), 3);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2); // Custom max attempts
     }
 }

@@ -33,9 +33,16 @@ gethostname = { workspace = true }
 urlencoding = "2.1"
 blake3 = "1.5"
 strum = { version = "0.26", features = ["derive"] }
+validator = { workspace = true }
+bon = { workspace = true }
+
+# Query building
+sea-query = { version = "0.31", features = ["with-uuid", "with-chrono", "with-json", "postgres-array"] }
+# sea-query-binder = { version = "0.6", features = ["sqlx-postgres", "with-uuid", "with-chrono", "with-json", "runtime-tokio-rustls"] }
 
 # No additional dependencies needed for declarative macros
 
 [dev-dependencies]
 tokio-test = "0.4"
 sinex-test-utils = { path = "../sinex-test-utils" }
+anyhow = { workspace = true }

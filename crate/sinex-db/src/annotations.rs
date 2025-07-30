@@ -36,7 +36,7 @@ pub async fn create_annotation(
         metadata,
         input.created_by,
     )
-    .fetch_one::<AnnotationRecord>(pool)
+    .fetch_one(pool)
     .await
     .map_err(|e| anyhow::anyhow!("Failed to create annotation: {}", e))?;
 
@@ -59,7 +59,7 @@ pub async fn get_annotations_for_event(
     event_id: Ulid,
 ) -> Result<Vec<EventAnnotation>> {
     let records = AnnotationQueries::get_by_event_id(event_id)
-        .fetch_all::<AnnotationRecord>(pool)
+        .fetch_all(pool)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get annotations for event: {}", e))?;
 
@@ -86,7 +86,7 @@ pub async fn get_annotation_by_id(
     annotation_id: Ulid,
 ) -> Result<Option<EventAnnotation>> {
     let record = AnnotationQueries::get_by_id(annotation_id)
-        .fetch_optional::<AnnotationRecord>(pool)
+        .fetch_optional(pool)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get annotation by ID: {}", e))?;
 
@@ -109,7 +109,7 @@ pub async fn update_annotation_content(
     new_content: &str,
 ) -> Result<EventAnnotation> {
     let record = AnnotationQueries::update_content(annotation_id, new_content.to_string())
-        .fetch_one::<AnnotationRecord>(pool)
+        .fetch_one(pool)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to update annotation content: {}", e))?;
 
@@ -141,7 +141,7 @@ pub async fn get_recent_annotations(
     limit: i64,
 ) -> Result<Vec<EventAnnotation>> {
     let records = AnnotationQueries::get_recent(limit)
-        .fetch_all::<AnnotationRecord>(pool)
+        .fetch_all(pool)
         .await
         .map_err(|e| anyhow::anyhow!("Failed to get recent annotations: {}", e))?;
 

@@ -164,7 +164,8 @@ macro_rules! define_identifier {
             fn encode_by_ref(
                 &self,
                 buf: &mut sqlx::postgres::PgArgumentBuffer,
-            ) -> sqlx::encode::IsNull {
+            ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>>
+            {
                 <String as sqlx::Encode<sqlx::Postgres>>::encode_by_ref(&self.0, buf)
             }
         }

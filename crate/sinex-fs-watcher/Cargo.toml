@@ -42,7 +42,12 @@ sinex-events = { path = "../sinex-events" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-macros = { path = "../sinex-macros" }
 sinex-telemetry = { path = "../sinex-telemetry" }
+sinex-validation = { path = "../sinex-validation" }
 
 [features]
 default = []
 metrics = []
+
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils" }
+tempfile = "3.8"

@@ -38,6 +38,8 @@ clap = { workspace = true, features = ["derive"] }
 dirs.workspace = true
 toml = "0.8"
 tower = "0.4"
+validator = { workspace = true }
+figment = { workspace = true }
 
 # System
 sd-notify = "0.4"
@@ -56,6 +58,7 @@ sinex-macros = { path = "../sinex-macros" }
 sinex-telemetry = { path = "../sinex-telemetry" }
 sinex-error = { path = "../sinex-error" }
 sinex-preflight = { path = "../sinex-preflight" }
+sinex-validation = { path = "../sinex-validation" }
 
 [build-dependencies]
 tonic-build = "0.11"

@@ -8,8 +8,10 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::{Deserialize, Serialize};
-use sinex_db::queries::EventQueries;
+use sinex_core_types::domain::{EventSource, EventType, HostName};
+use sinex_db::repositories::{EventRepository, NewEvent, Repository};
 use sinex_events::constants::{event_types, sources};
+use sinex_events::RawEvent;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -415,19 +417,25 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         "custom_metrics": serde_json::to_value(report)?,
     });
 
-    EventQueries::insert_event(
-        sources::SINEX.to_string(),
-        event_types::sinex::PROCESS_HEARTBEAT.to_string(),
-        report.system_info.hostname.clone(),
+    let repo = EventRepository::new(&pool);
+    let new_event = NewEvent {
+        source: EventSource::new(sources::SINEX),
+        event_type: EventType::new(event_types::sinex::PROCESS_HEARTBEAT),
+        host: HostName::new(&report.system_info.hostname),
         payload,
-        Some(chrono::Utc::now()),
-        None,
-        None,
-        None,
-    )
-    .fetch_one::<()>(&pool)
-    .await
-    .context("Failed to record verification result")?;
+        ts_orig: Some(chrono::Utc::now()),
+        ingestor_version: None,
+        payload_schema_id: None,
+        source_event_ids: None,
+        source_material_id: None,
+        source_material_offset_start: None,
+        source_material_offset_end: None,
+        anchor_byte: None,
+        associated_blob_ids: None,
+    };
+    repo.insert(new_event)
+        .await
+        .context("Failed to record verification result")?;
 
     Ok(())
 }
@@ -525,19 +533,11 @@ async fn generate_verification_report(
     let end_time = chrono::Utc::now();
     let start_time = end_time - chrono::Duration::hours(24);
 
-    #[derive(sqlx::FromRow)]
-    struct HeartbeatRow {
-        id: sinex_ulid::Ulid,
-        timestamp: chrono::DateTime<chrono::Utc>,
-        payload: serde_json::Value,
-        _host: String,
-    }
-
-    let recent_verifications: Vec<HeartbeatRow> =
-        EventQueries::get_process_heartbeats("sinex-preflight".to_string(), start_time, end_time)
-            .fetch_all(&pool)
-            .await
-            .context("Failed to fetch verification history")?;
+    let repo = EventRepository::new(&pool);
+    let recent_verifications: Vec<RawEvent> = repo
+        .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
+        .await
+        .context("Failed to fetch verification history")?;
 
     let report = if detailed {
         serde_json::json!({
@@ -559,7 +559,7 @@ async fn generate_verification_report(
             for verification in &recent_verifications {
                 println!(
                     "  {} - {} ({})",
-                    verification.timestamp.to_string(),
+                    verification.ts_ingest.to_string(),
                     verification
                         .payload
                         .get("health_status")

@@ -5,7 +5,7 @@
 //! - Record various metrics
 //! - Query telemetry events from the database
 
-use sinex_events::{EventFactory, EventSender};
+use sinex_events::EventSender;
 use sinex_telemetry::{
     init_metrics, set_global_telemetry, SystemTelemetryEmitter, TelemetryAccumulator,
 };

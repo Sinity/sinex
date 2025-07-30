@@ -4,7 +4,6 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use sinex_error::{ResultExt, SinexError};
-use std::collections::HashMap;
 
 fn bench_error_creation(c: &mut Criterion) {
     c.bench_function("create_simple_error", |b| {

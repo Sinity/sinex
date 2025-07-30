@@ -1100,19 +1100,26 @@ mod tests {
             db_name = db.name().to_string();
 
             // Insert test data
-            use sinex_db::queries::EventQueries;
-            EventQueries::insert_event(
-                "test".to_string(),
-                "test.event".to_string(),
-                "test-host".to_string(),
-                serde_json::json!({}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .execute(db.pool())
-            .await?;
+            use sinex_core_types::domain::{EventSource, EventType, HostName};
+            use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+
+            let repo = EventRepository::new(db.pool());
+            let new_event = NewEvent {
+                source: EventSource::new("test"),
+                event_type: EventType::new("test.event"),
+                host: HostName::new("test-host"),
+                payload: serde_json::json!({}),
+                ts_orig: None,
+                ingestor_version: None,
+                payload_schema_id: None,
+                source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
+            };
+            repo.insert(new_event).await?;
 
             // Verify data exists
             use sinex_db::count_events;
@@ -1193,19 +1200,26 @@ mod tests {
         let db = acquire_test_database().await?;
 
         // Insert data with foreign key relationships
-        use sinex_db::queries::EventQueries;
-        let event = EventQueries::insert_event(
-            "test".to_string(),
-            "test".to_string(),
-            "test".to_string(),
-            serde_json::json!({}),
-            None,
-            None,
-            None,
-            None,
-        )
-        .fetch_one::<sinex_core_types::RawEvent>(db.pool())
-        .await?;
+        use sinex_core_types::domain::{EventSource, EventType, HostName};
+        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+
+        let repo = EventRepository::new(db.pool());
+        let new_event = NewEvent {
+            source: EventSource::new("test"),
+            event_type: EventType::new("test"),
+            host: HostName::new("test"),
+            payload: serde_json::json!({}),
+            ts_orig: None,
+            ingestor_version: None,
+            payload_schema_id: None,
+            source_event_ids: None,
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        };
+        let event = repo.insert(new_event).await?;
 
         // Add annotation
         sqlx::query(
@@ -1256,26 +1270,32 @@ mod tests {
                 let db = acquire_test_database().await?;
 
                 // Do some work
-                use sinex_db::queries::EventQueries;
+                use sinex_core_types::domain::{EventSource, EventType, HostName};
+                use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+
+                let repo = EventRepository::new(db.pool());
                 for _j in 0..5 {
-                    EventQueries::insert_event(
-                        format!("task_{}", i),
-                        "stress.test".to_string(),
-                        "test".to_string(),
-                        serde_json::json!({}),
-                        None,
-                        None,
-                        None,
-                        None,
-                    )
-                    .execute(db.pool())
-                    .await?;
+                    let new_event = NewEvent {
+                        source: EventSource::new(&format!("task_{}", i)),
+                        event_type: EventType::new("stress.test"),
+                        host: HostName::new("test"),
+                        payload: serde_json::json!({}),
+                        ts_orig: None,
+                        ingestor_version: None,
+                        payload_schema_id: None,
+                        source_event_ids: None,
+                        source_material_id: None,
+                        source_material_offset_start: None,
+                        source_material_offset_end: None,
+                        anchor_byte: None,
+                        associated_blob_ids: None,
+                    };
+                    repo.insert(new_event).await?;
                 }
 
                 // Verify isolation
-                let (count,): (i64,) = EventQueries::count_by_source(format!("task_{}", i))
-                    .fetch_one(db.pool())
-                    .await?;
+                let repo = EventRepository::new(db.pool());
+                let count = repo.count_by_source(&format!("task_{}", i)).await?;
 
                 assert_eq!(count, 5);
 
@@ -1409,7 +1429,8 @@ mod benches {
     /// Measures contention and performance when multiple tasks
     /// try to acquire databases simultaneously.
     #[sinex_bench(args = [2, 4, 8, 16])]
-    async fn bench_concurrent_acquisition(concurrency: usize) -> anyhow::Result<()> {
+    async fn bench_concurrent_acquisition(arg: usize) -> anyhow::Result<()> {
+        let concurrency = arg;
         let handles: Vec<_> = (0..concurrency)
             .map(|_| tokio::spawn(async move { acquire_test_database().await.unwrap() }))
             .collect();
@@ -1432,20 +1453,27 @@ mod benches {
         let pool = db.pool();
 
         // Insert test data
-        use sinex_db::queries::EventQueries;
+        use sinex_core_types::domain::{EventSource, EventType, HostName};
+        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+
+        let repo = EventRepository::new(pool);
         for i in 0..100 {
-            EventQueries::insert_event(
-                "bench".to_string(),
-                "test".to_string(),
-                "host".to_string(),
-                serde_json::json!({"index": i}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .execute(pool)
-            .await?;
+            let new_event = NewEvent {
+                source: EventSource::new("bench"),
+                event_type: EventType::new("test"),
+                host: HostName::new("host"),
+                payload: serde_json::json!({"index": i}),
+                ts_orig: None,
+                ingestor_version: None,
+                payload_schema_id: None,
+                source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
+            };
+            repo.insert(new_event).await?;
         }
 
         // Perform cleanup
@@ -1480,20 +1508,27 @@ mod benches {
 
         // Insert some varied data
         let pool = db.pool();
-        use sinex_db::queries::EventQueries;
+        use sinex_core_types::domain::{EventSource, EventType, HostName};
+        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+
+        let repo = EventRepository::new(pool);
         for i in 0..50 {
-            EventQueries::insert_event(
-                format!("source_{}", i % 10),
-                "test".to_string(),
-                "bench".to_string(),
-                serde_json::json!({}),
-                None,
-                None,
-                None,
-                None,
-            )
-            .execute(pool)
-            .await?;
+            let new_event = NewEvent {
+                source: EventSource::new(&format!("source_{}", i % 10)),
+                event_type: EventType::new("test"),
+                host: HostName::new("bench"),
+                payload: serde_json::json!({}),
+                ts_orig: None,
+                ingestor_version: None,
+                payload_schema_id: None,
+                source_event_ids: None,
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
+            };
+            repo.insert(new_event).await?;
         }
 
         let stats = db.get_stats().await?;

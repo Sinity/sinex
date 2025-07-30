@@ -48,7 +48,7 @@ use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use sinex_core_types::{DbPool, SinexError};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -413,7 +413,6 @@ pub async fn ensure_fixture(
 mod tests {
     use super::*;
     use crate::sinex_test;
-    use anyhow::Result;
 
     #[sinex_test]
     fn test_fixture_set_builder() -> Result<()> {

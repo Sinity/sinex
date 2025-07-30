@@ -3,10 +3,13 @@
 //! This module tests the new centralized query system to ensure it works correctly
 //! and provides the expected functionality.
 
+// TODO: Re-enable these tests after migrating to repository pattern
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use crate::queries::EventQueries;
-    use crate::query_builder::{QueryBuilder, QueryParam};
+    // NOTE: query_builder module has been removed in favor of repository pattern
+    // use crate::query_builder::{QueryBuilder, QueryParam};
     use chrono::Utc;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
@@ -279,12 +282,11 @@ mod tests {
 /// Integration test helpers for testing with real database
 #[cfg(test)]
 mod integration_helpers {
-    use crate::create_test_pool;
-    use crate::queries::EventQueries;
+
     use chrono::Utc;
     use serde_json::json;
     use sinex_events::RawEvent;
-    use sinex_test_utils::prelude::*;
+
     use sinex_ulid::Ulid;
 
     /// Helper to create a test event

@@ -1,7 +1,10 @@
 //! Event validation for the ingestion daemon
 
 use crate::IngestdResult;
-use sinex_db::{queries::SchemaQueries, SqlxPgPool as PgPool};
+use sinex_db::{
+    repositories::{EventRepository, Repository},
+    SqlxPgPool as PgPool,
+};
 use sinex_events::RawEvent;
 use sqlx::FromRow;
 use std::collections::HashMap;
@@ -48,9 +51,22 @@ impl EventValidator {
         }
 
         // Load all active schemas from the database using the query system
-        let rows: Vec<ActiveSchemaRow> = SchemaQueries::get_all_active_schemas()
-            .fetch_all(pool)
-            .await?;
+        let repo = EventRepository::new(pool);
+        let schemas = repo.list_schemas(None, None, Some(true), None).await?;
+
+        // Convert EventPayloadSchema to ActiveSchemaRow format
+        let rows: Vec<ActiveSchemaRow> = schemas
+            .into_iter()
+            .map(|s| ActiveSchemaRow {
+                schema_id: Some(s.id.to_string()),
+                event_source: s.schema_name.into_inner(),
+                event_type: s.event_type.unwrap_or_default().into_inner(),
+                schema_version: Some(s.schema_version.into_inner() as i32),
+                schema_content: s.schema_content,
+            })
+            .collect();
+
+        // Process the loaded schemas
 
         for row in rows {
             let schema_key = row.schema_id.unwrap_or_default();

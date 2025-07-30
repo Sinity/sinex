@@ -11,12 +11,28 @@
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use sinex_core_types::timeouts;
-use sinex_db::queries::VerificationQueries;
+// VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, error, info};
 
 use crate::VerificationStatus;
+
+/// Check if a table exists in the specified schema
+async fn table_exists(pool: &PgPool, schema: &str, table: &str) -> Result<bool> {
+    let exists: (bool,) = sqlx::query_as(
+        "SELECT EXISTS(
+            SELECT 1 FROM information_schema.tables 
+            WHERE table_schema = $1 AND table_name = $2
+        )",
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(exists.0)
+}
 
 /// Verify database connectivity and basic operations
 pub async fn verify_database_connectivity() -> Result<(VerificationStatus, Value, Vec<String>)> {
@@ -406,10 +422,9 @@ async fn test_extension_functionality(
 
 async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
     // Check if migration table exists
-    let migration_table_exists =
-        VerificationQueries::table_exists(pool, "public", "_sqlx_migrations")
-            .await
-            .context("Failed to check migration table existence")?;
+    let migration_table_exists = table_exists(pool, "public", "_sqlx_migrations")
+        .await
+        .context("Failed to check migration table existence")?;
 
     if !migration_table_exists {
         messages.push(
@@ -602,7 +617,7 @@ async fn check_table_exists(pool: &PgPool, table_name: &str) -> Result<bool> {
         ("public", table_name)
     };
 
-    VerificationQueries::table_exists(pool, schema, table)
+    table_exists(pool, schema, table)
         .await
         .context("Failed to check table existence")
 }

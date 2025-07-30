@@ -80,6 +80,8 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use thiserror::Error;
 
+pub mod enhanced_context;
+
 /// Core error type for the Sinex system.
 ///
 /// This enum represents all possible error conditions in the Sinex ecosystem.
@@ -782,12 +784,14 @@ mod tests {
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
-    fn test_error_display_with_displaydoc() -> Result<()> {
+    fn test_error_display_with_displaydoc() -> anyhow::Result<()> {
         let error = SinexError::database("Connection failed");
         assert_eq!(error.to_string(), "Database error: Connection failed");
 
         let error = SinexError::validation("Invalid input");
         assert_eq!(error.to_string(), "Validation error: Invalid input");
+
+        Ok(())
     }
 
     #[test]
@@ -999,13 +1003,13 @@ mod tests {
         }
 
         use crate::ResultExt;
-        let result: Result<()> = failing_operation().context("Operation failed");
+        let result: crate::Result<()> = ResultExt::context(failing_operation(), "Operation failed");
 
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SinexError::Io(_)));
         assert_eq!(
-            err.details.context.get("context"),
+            err.context_map().get("context"),
             Some(&"Operation failed".to_string())
         );
     }
@@ -1017,7 +1021,7 @@ mod tests {
         }
 
         use crate::ResultExt;
-        let result: Result<()> = failing_operation().with_context(|| {
+        let result: crate::Result<()> = ResultExt::with_context(failing_operation(), || {
             SinexError::service("Custom error").with_context("component", "test-component")
         });
 
@@ -1027,7 +1031,7 @@ mod tests {
         // SinexError doesn't have a message() method, use to_string()
         assert!(err.to_string().contains("Custom error"));
         assert_eq!(
-            err.details.context.get("component"),
+            err.context_map().get("component"),
             Some(&"test-component".to_string())
         );
     }
@@ -1099,7 +1103,7 @@ mod tests {
         }
 
         // Test oneshot RecvError conversion
-        let (tx, rx) = oneshot::channel::<i32>();
+        let (tx, _rx) = oneshot::channel::<i32>();
         drop(tx); // Drop the sender
                   // We can't easily test the actual error without async context,
                   // but we can test the type conversion compiles

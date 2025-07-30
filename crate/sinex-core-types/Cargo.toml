@@ -12,10 +12,14 @@ thiserror = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { workspace = true, optional = true }
 
 # For ULID support
 sinex-ulid = { path = "../sinex-ulid" }
+
+# For strongly-typed IDs
+paste = "1.0"
+uuid = { workspace = true }
 
 # For event types
 sinex-events = { path = "../sinex-events" }
@@ -32,6 +36,13 @@ async-trait = { workspace = true }
 
 # For error handling
 anyhow = { workspace = true }
+
+# For event constants
+lazy_static = "1.4"
+
+[features]
+default = ["sqlx"]
+sqlx = ["dep:sqlx", "sinex-ulid/sqlx"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

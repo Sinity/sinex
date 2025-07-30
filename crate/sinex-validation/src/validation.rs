@@ -201,6 +201,27 @@ pub fn validate_json(json_str: &str) -> Result<Value> {
     Ok(value)
 }
 
+/// Validate a JSON Value with depth and structure limits
+pub fn validate_json_value(value: &Value) -> Result<()> {
+    // Validate structure (depth and key count)
+    validate_json_structure(value, 0)?;
+    Ok(())
+}
+
+/// Deserialize JSON with validation and enhanced error handling
+pub fn deserialize_json_with_validation<T>(json_str: &str) -> Result<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    // First validate the JSON structure
+    let value = validate_json(json_str)?;
+
+    // Then deserialize with path-to-error tracking
+    let deserializer = serde_json::from_value::<T>(value);
+
+    deserializer.map_err(|e| ValidationError::Json(format!("Deserialization failed: {}", e)))
+}
+
 fn validate_json_structure(value: &Value, depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(ValidationError::Json(format!(
@@ -384,6 +405,55 @@ mod tests {
         }
         deep.push('}');
         assert!(validate_json(&deep).is_err());
+    }
+
+    #[test]
+    fn test_validate_json_value() {
+        use serde_json::json;
+
+        // Valid JSON value
+        let valid = json!({"key": "value", "number": 42});
+        assert!(validate_json_value(&valid).is_ok());
+
+        // Object with many keys (should fail due to MAX_JSON_KEYS)
+        let mut large_obj = serde_json::Map::new();
+        for i in 0..1100 {
+            large_obj.insert(format!("key{}", i), json!("value"));
+        }
+        let large_value = Value::Object(large_obj);
+        assert!(validate_json_value(&large_value).is_err());
+
+        // Deeply nested JSON (manually constructed to avoid borrowing issues)
+        let deep_json = r#"{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":{"k":{"l":{"m":{"n":{"o":{"p":{"q":{"r":{"s":{"t":{"u":{"v":{"w":{"x":{"y":{"z":{"aa":{"bb":{"cc":{"dd":{"ee":{"ff":{"gg":{"hh":{"ii":{"jj":{"kk":{"ll":{"mm":{"nn": 1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"#;
+        let deep_value: Value = serde_json::from_str(deep_json).unwrap();
+        assert!(validate_json_value(&deep_value).is_err());
+    }
+
+    #[test]
+    fn test_deserialize_json_with_validation() {
+        #[derive(Debug, serde::Deserialize, PartialEq)]
+        struct TestStruct {
+            name: String,
+            age: u32,
+        }
+
+        // Valid JSON
+        let valid_json = r#"{"name": "Alice", "age": 30}"#;
+        let result: Result<TestStruct> = deserialize_json_with_validation(valid_json);
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert_eq!(value.name, "Alice");
+        assert_eq!(value.age, 30);
+
+        // Invalid JSON - missing field
+        let invalid_json = r#"{"name": "Bob"}"#;
+        let result: Result<TestStruct> = deserialize_json_with_validation(invalid_json);
+        assert!(result.is_err());
+
+        // Too large JSON
+        let large_json = format!(r#"{{"name": "{}", "age": 25}}"#, "x".repeat(11_000_000));
+        let result: Result<TestStruct> = deserialize_json_with_validation(&large_json);
+        assert!(result.is_err());
     }
 
     #[test]

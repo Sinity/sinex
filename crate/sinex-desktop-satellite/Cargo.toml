@@ -42,7 +42,7 @@ urlencoding = "2.1"
 gethostname = "0.4"
 
 # Database integration (for blob storage)
-sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono"] }
+sqlx = { workspace = true }
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
@@ -54,3 +54,4 @@ sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-macros = { path = "../sinex-macros" }
 sinex-telemetry = { path = "../sinex-telemetry" }
+sinex-validation = { path = "../sinex-validation" }

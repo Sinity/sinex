@@ -286,18 +286,23 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> anyhow::Result<()> {
 
         // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
-        EventQueries::insert_event(
-            event.source.clone(),
-            event.event_type.clone(),
-            event.host.clone(),
-            event.payload.clone(),
-            event.ts_orig,
-            event.ingestor_version.clone(),
-            event.payload_schema_id,
-            event.source_event_ids.clone(),
-        )
-        .execute(&pool)
-        .await?;
+        let repo = EventRepository::new(&pool);
+        let new_event = NewEvent {
+            source: EventSource::new(&event.source),
+            event_type: EventType::new(&event.event_type),
+            host: HostName::new(&event.host),
+            payload: event.payload.clone(),
+            ts_orig: event.ts_orig,
+            ingestor_version: event.ingestor_version.clone(),
+            payload_schema_id: event.payload_schema_id,
+            source_event_ids: event.source_event_ids.clone(),
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        };
+        repo.insert(new_event).await?;
     }
 
     // Get new chunk count

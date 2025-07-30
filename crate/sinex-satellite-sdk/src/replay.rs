@@ -3,7 +3,11 @@
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::{queries::EventQueries, SqlxPgPool as PgPool};
+use sinex_core_types::domain::{EventSource, EventType};
+use sinex_db::{
+    repositories::{EventRepository, Repository},
+    DbPool as PgPool,
+};
 use sinex_events::RawEvent;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
@@ -94,10 +98,8 @@ impl ReplayManager {
                 end_time,
             } => {
                 let end_time = end_time.unwrap_or_else(Utc::now);
-                let (count,): (i64,) = EventQueries::count_by_time_range(*start_time, end_time)
-                    .fetch_one(&self.pool)
-                    .await?;
-                count as u64
+                let repo = EventRepository::new(&self.pool);
+                repo.count_by_time_range(*start_time, end_time).await? as u64
             }
             ReplayMode::Source {
                 source,
@@ -105,23 +107,16 @@ impl ReplayManager {
                 end_time,
             } => {
                 if start_time.is_none() && end_time.is_none() {
-                    let (count,): (i64,) = EventQueries::count_by_source(source.clone())
-                        .fetch_one(&self.pool)
-                        .await?;
-                    count as u64
+                    let repo = EventRepository::new(&self.pool);
+                    repo.count_by_source(source).await? as u64
                 } else {
                     // Use a complex query for source with time range
                     let start_time =
                         start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
                     let end_time = end_time.unwrap_or_else(Utc::now);
-                    let (count,): (i64,) = EventQueries::count_by_source_and_time_range(
-                        source.clone(),
-                        start_time,
-                        end_time,
-                    )
-                    .fetch_one(&self.pool)
-                    .await?;
-                    count as u64
+                    let repo = EventRepository::new(&self.pool);
+                    repo.count_by_source_and_time_range(source, start_time, end_time)
+                        .await? as u64
                 }
             }
             ReplayMode::EventTypes {
@@ -130,21 +125,18 @@ impl ReplayManager {
                 end_time,
             } => {
                 if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
-                    let (count,): (i64,) =
-                        EventQueries::count_by_event_type(event_types[0].clone())
-                            .fetch_one(&self.pool)
-                            .await?;
-                    count as u64
+                    let repo = EventRepository::new(&self.pool);
+                    repo.count_by_event_type(&event_types[0]).await? as u64
                 } else {
                     // For complex event type queries, fall back to count all (simplified)
-                    let (count,): (i64,) = EventQueries::count_all().fetch_one(&self.pool).await?;
-                    count as u64
+                    let repo = EventRepository::new(&self.pool);
+                    repo.count().await? as u64
                 }
             }
             ReplayMode::Custom { .. } => {
                 // For custom filters, use count all as approximation
-                let (count,): (i64,) = EventQueries::count_all().fetch_one(&self.pool).await?;
-                count as u64
+                let repo = EventRepository::new(&self.pool);
+                repo.count().await? as u64
             }
         };
 
@@ -192,13 +184,13 @@ impl ReplayManager {
                     end_time,
                 } => {
                     let end_time = end_time.unwrap_or_else(Utc::now);
-                    EventQueries::get_by_time_range(
+                    let repo = EventRepository::new(&self.pool);
+                    repo.find_by_time_range(
                         *start_time,
                         end_time,
-                        Some(self.batch_size as i64),
-                        Some(offset as i64),
+                        self.batch_size as i64,
+                        offset as i64,
                     )
-                    .fetch_all(&self.pool)
                     .await?
                 }
                 ReplayMode::Source {
@@ -207,25 +199,21 @@ impl ReplayManager {
                     end_time,
                 } => {
                     if start_time.is_none() && end_time.is_none() {
-                        EventQueries::get_by_source(
-                            source.clone(),
-                            Some(self.batch_size as i64),
-                            Some(offset as i64),
-                        )
-                        .fetch_all(&self.pool)
-                        .await?
+                        let repo = EventRepository::new(&self.pool);
+                        repo.find_by_source(source, self.batch_size as i64, offset as i64)
+                            .await?
                     } else {
                         // For source with time range, use time range query and filter
                         let start_time =
                             start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
                         let end_time = end_time.unwrap_or_else(Utc::now);
-                        EventQueries::get_by_time_range(
+                        let repo = EventRepository::new(&self.pool);
+                        repo.find_by_time_range(
                             start_time,
                             end_time,
-                            Some(self.batch_size as i64),
-                            Some(offset as i64),
+                            self.batch_size as i64,
+                            offset as i64,
                         )
-                        .fetch_all(&self.pool)
                         .await?
                         .into_iter()
                         .filter(|event: &RawEvent| &event.source == source)
@@ -238,17 +226,17 @@ impl ReplayManager {
                     end_time,
                 } => {
                     if event_types.len() == 1 && start_time.is_none() && end_time.is_none() {
-                        EventQueries::get_by_event_type(
-                            event_types[0].clone(),
-                            Some(self.batch_size as i64),
-                            Some(offset as i64),
+                        let repo = EventRepository::new(&self.pool);
+                        repo.find_by_event_type(
+                            &event_types[0],
+                            self.batch_size as i64,
+                            offset as i64,
                         )
-                        .fetch_all(&self.pool)
                         .await?
                     } else {
                         // For complex queries, use get_recent and filter
-                        EventQueries::get_recent(Some(self.batch_size as i64), Some(offset as i64))
-                            .fetch_all(&self.pool)
+                        let repo = EventRepository::new(&self.pool);
+                        repo.find_recent(self.batch_size as i64, offset as i64)
                             .await?
                             .into_iter()
                             .filter(|event: &RawEvent| {
@@ -264,8 +252,8 @@ impl ReplayManager {
                 }
                 ReplayMode::Custom { filters } => {
                     // Use get_recent as base query and apply filters
-                    EventQueries::get_recent(Some(self.batch_size as i64), Some(offset as i64))
-                        .fetch_all(&self.pool)
+                    let repo = EventRepository::new(&self.pool);
+                    repo.find_recent(self.batch_size as i64, offset as i64)
                         .await?
                         .into_iter()
                         .filter(|event| self.apply_custom_filters(event, filters))

@@ -48,15 +48,14 @@ pub async fn create_relation(
     let metadata = input.metadata.unwrap_or_else(|| serde_json::json!({}));
     let valid_from = input.valid_from.unwrap_or_else(Utc::now);
 
-    let record: EntityRelationRecord = KnowledgeGraphQueries::create_relation(
+    let record: EntityRelationRecord = KnowledgeGraphQueries::insert_relation(
         input.from_entity_id,
         input.to_entity_id,
         input.relation_type,
         input.strength,
         metadata,
-        valid_from,
+        Some(valid_from),
         input.valid_until,
-        input.created_from_event_id,
     )
     .fetch_one(pool)
     .await?;
@@ -180,7 +179,9 @@ pub async fn search_entities(
     search_term: &str,
     limit: i64,
 ) -> Result<Vec<Entity>> {
-    let records = KnowledgeGraphQueries::search_entities(pool, search_term, limit).await?;
+    let records = KnowledgeGraphQueries::search_entities(search_term.to_string(), None, limit)
+        .fetch_all(pool)
+        .await?;
 
     let entities = records
         .into_iter()

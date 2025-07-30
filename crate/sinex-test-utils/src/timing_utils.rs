@@ -9,7 +9,7 @@ use crate::prelude::*;
 use crate::Result;
 use sinex_core_types::DbPool;
 use sinex_core_utils::coordination::CoordinationPrimitive; // Use production primitives
-use sinex_db::queries::EventQueries;
+use sinex_db::repositories::{EventRepository, Repository};
 use sinex_error::SinexError;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -195,9 +195,8 @@ impl WaitHelpers {
 
         sinex_core_utils::wait_for_condition_adaptive(
             || async {
-                let (count,) = EventQueries::count_by_source(source.clone())
-                    .fetch_one::<(i64,)>(&pool)
-                    .await?;
+                let repo = EventRepository::new(&pool);
+                let count = repo.count_by_source(&source).await?;
                 Ok(count as usize >= expected_count)
             },
             timeout_secs,
@@ -214,9 +213,8 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let (final_count,) = EventQueries::count_by_source(source)
-            .fetch_one::<(i64,)>(&pool)
-            .await?;
+        let repo = EventRepository::new(&pool);
+        let final_count = repo.count_by_source(&source).await?;
         Ok(final_count as usize)
     }
 

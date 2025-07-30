@@ -66,14 +66,14 @@
 //! ```
 
 mod auto_metrics;
-mod config_struct;
+// mod config_struct; // REMOVED: Used ValidationChain which is being replaced
 mod database_helpers;
 mod error_context;
 mod event_registry;
 mod satellite_helpers;
 mod stream_processor;
 mod typed_event_envelope;
-mod validation_chain;
+// mod validation_chain; // REMOVED: ValidationChain is being replaced with validator crate
 
 use proc_macro::TokenStream;
 
@@ -151,74 +151,11 @@ pub fn typed_event_envelope(attr: TokenStream, item: TokenStream) -> TokenStream
     typed_event_envelope::typed_event_envelope(attr, item)
 }
 
-/// Macro for creating fluent validation chains
-///
-/// Provides a concise syntax for building validation chains.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::validation_chain;
-///
-/// validation_chain! {
-///     username: String => {
-///         not_empty(),
-///         min_length(3),
-///         max_length(50),
-///     },
-///     port: u16 => {
-///         in_range(1, 65535),
-///     },
-/// }
-/// ```
-#[proc_macro]
-pub fn validation_chain(input: TokenStream) -> TokenStream {
-    validation_chain::validation_chain(input)
-}
+// REMOVED: validation_chain macro - ValidationChain is being replaced with validator crate
 
-/// Macro for creating custom validation functions
-///
-/// Helps create validation functions that can be used with ValidationChain.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::validation_fn;
-///
-/// validation_fn! {
-///     fn is_valid_port(value: u16) -> bool {
-///         value > 0 && value < 65536
-///     }
-/// }
-/// ```
-#[proc_macro]
-pub fn validation_fn(input: TokenStream) -> TokenStream {
-    validation_chain::validation_fn(input)
-}
+// REMOVED: validation_fn macro - ValidationChain is being replaced with validator crate
 
-/// Macro for generating configuration structs with validation and defaults
-///
-/// Automatically generates Default impl, validation methods, and environment loading.
-///
-/// # Examples
-///
-/// ```rust
-/// use sinex_macros::config_struct;
-///
-/// config_struct! {
-///     pub struct DatabaseConfig {
-///         #[config(env = "DATABASE_URL", validate = "not_empty")]
-///         pub url: String,
-///         
-///         #[config(env = "DATABASE_MAX_CONNECTIONS", default = 10)]
-///         pub max_connections: u32,
-///     }
-/// }
-/// ```
-#[proc_macro]
-pub fn config_struct(input: TokenStream) -> TokenStream {
-    config_struct::config_struct(input)
-}
+// REMOVED: config_struct macro - Used ValidationChain which is being replaced with validator crate
 
 /// Macro for generating StatefulStreamProcessor implementations
 ///

@@ -13,6 +13,7 @@
 use async_trait::async_trait;
 use serde_json::json;
 use sinex_core_types::{CoreError, EventSender};
+use sinex_core_types::event_constants::{sources, types};
 use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_events::{event_types, EventFactory};
@@ -35,11 +36,11 @@ use tokio::sync::{mpsc, Mutex, RwLock};
 fn create_comprehensive_config() -> serde_json::Value {
     json!({
         "enabled_events": [
-            "file.created",
-            "file.modified",
-            "command.executed",
-            "window.focused",
-            "copied"
+            types::filesystem::FILE_CREATED.as_str(),
+            types::filesystem::FILE_MODIFIED.as_str(),
+            types::shell::COMMAND_EXECUTED.as_str(),
+            types::window::WINDOW_FOCUSED.as_str(),
+            types::clipboard::COPIED.as_str()
         ],
         "annex_repo_path": "/tmp/test-annex"
     })

@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::queries::EventQueries;
+use sinex_db::repositories::{EventRepository, Repository};
 use sinex_events::{EventFactory, RawEvent};
 use sinex_events::constants::{event_types, sources};
 use sinex_satellite_sdk::{
@@ -309,16 +309,17 @@ impl StatefulStreamProcessor for HealthAggregator {
                 };
 
                 // Query events
-                let events = EventQueries::get_events_by_type_and_time_range(
-                    "journald".to_string(),
-                    "satellite.heartbeat".to_string(),
-                    start_time,
-                    end_time,
-                    Some(1000),
-                    None,
-                )
-                .fetch_all(&ctx.db_pool)
-                .await?;
+                let event_repo = EventRepository::new(&ctx.db_pool);
+                let events = event_repo
+                    .get_events_by_type_and_time_range(
+                        "journald",
+                        "satellite.heartbeat",
+                        start_time,
+                        end_time,
+                        Some(1000),
+                        None,
+                    )
+                    .await?;
 
                 // Process using batch processor
                 let mut redis_consumer = RedisStreamConsumer::from_context(

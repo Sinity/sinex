@@ -38,6 +38,9 @@ schemars = { workspace = true, features = ["chrono", "uuid1"] }
 # Logging
 tracing = { workspace = true }
 
+# Builder pattern
+bon = { workspace = true }
+
 [features]
 default = []
 

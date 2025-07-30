@@ -4,10 +4,12 @@
 //! validates them, writes them to PostgreSQL, and broadcasts them to Redis Streams.
 
 pub mod config;
+pub mod figment_config;
 pub mod service;
 pub mod validator;
 
 pub use config::IngestdConfig;
+pub use figment_config::IngestdFigmentConfig;
 pub use service::IngestService;
 pub use validator::EventValidator;
 

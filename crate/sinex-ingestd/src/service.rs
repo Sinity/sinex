@@ -11,7 +11,11 @@ use crate::{
     IngestdError, IngestdResult,
 };
 use redis::{AsyncCommands, Client as RedisClient};
-use sinex_db::{events::EventRecord, queries::EventQueries};
+use sinex_core_types::domain::{EventSource, EventType, HostName};
+use sinex_db::{
+    repositories::{EventRepository, NewEvent, Repository},
+    RawEvent as EventRecord,
+};
 use sinex_events::RawEvent;
 use sinex_telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_ulid::Ulid;
@@ -378,20 +382,25 @@ impl IngestService {
         }
 
         // Insert all events into core.events table
-        // TODO: Use transaction once query builder supports executor trait
+        let repo = EventRepository::new(pool);
+
         for event in events {
-            let _: EventRecord = EventQueries::insert_event_with_source_ids(
-                event.source.clone(),
-                event.event_type.clone(),
-                event.host.clone(),
-                event.payload.clone(),
-                event.ts_orig,
-                event.ingestor_version.clone(),
-                event.payload_schema_id,
-                event.source_event_ids.clone(),
-            )
-            .fetch_one(pool)
-            .await?;
+            let new_event = NewEvent {
+                source: EventSource::new(&event.source),
+                event_type: EventType::new(&event.event_type),
+                host: HostName::new(&event.host),
+                payload: event.payload.clone(),
+                ts_orig: event.ts_orig,
+                ingestor_version: event.ingestor_version.clone(),
+                payload_schema_id: event.payload_schema_id,
+                source_event_ids: event.source_event_ids.clone(),
+                source_material_id: None,
+                source_material_offset_start: None,
+                source_material_offset_end: None,
+                anchor_byte: None,
+                associated_blob_ids: None,
+            };
+            repo.insert(new_event).await?;
         }
 
         debug!("Successfully wrote {} events to core.events", events.len());
@@ -690,7 +699,9 @@ impl IngestServiceTrait for IngestServiceImpl {
 impl IngestServiceImpl {
     /// Convert protobuf event to RawEvent
     async fn proto_to_raw_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
-        let payload: serde_json::Value = serde_json::from_str(&proto.payload)?;
+        // Validate and parse JSON payload
+        let payload = sinex_validation::validate_json(&proto.payload)
+            .map_err(|e| IngestdError::Validation(format!("Invalid JSON payload: {}", e)))?;
 
         let _blob_id = if let Some(blob_id_str) = proto.blob_id {
             Some(

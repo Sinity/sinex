@@ -9,6 +9,7 @@
 
 use chrono::{Duration, Utc};
 use sinex_core_runtime::{MetricsProvider, ProcessHeartbeatEmitter};
+use sinex_core_types::event_constants::{sources, types};
 use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_events::{
@@ -101,7 +102,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
+    let heartbeat_event = event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat_payload);
 
     // Insert the event into the database
     ctx.insert_event(&heartbeat_event).await?;
@@ -115,7 +116,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(
     let heartbeat_events: Vec<_> = all_events
         .iter()
         .filter(|e| {
-            e.event_type == "process.heartbeat"
+            e.event_type == types::system::PROCESS_HEARTBEAT.as_str()
                 && e.payload.get("process_name") == Some(&serde_json::json!("test_process"))
         })
         .collect();
@@ -153,7 +154,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
         "build_time": Utc::now(),
         "config_hash": "ghi789"
     });
-    let started_event = event_factory.create_event("process.started", started_payload);
+    let started_event = event_factory.create_event(types::system::PROCESS_STARTED.as_str(), started_payload);
     ctx.insert_event(&started_event).await?;
 
     // Update metrics over time
@@ -172,7 +173,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    let heartbeat1_event = event_factory.create_event("process.heartbeat", heartbeat1_payload);
+    let heartbeat1_event = event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat1_payload);
     ctx.insert_event(&heartbeat1_event).await?;
 
     // Update metrics again
@@ -191,7 +192,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    let heartbeat2_event = event_factory.create_event("process.heartbeat", heartbeat2_payload);
+    let heartbeat2_event = event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat2_payload);
     ctx.insert_event(&heartbeat2_event).await?;
 
     // Emit process shutdown event
@@ -202,7 +203,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
         "graceful": true,
         "shutdown_reason": "Graceful shutdown requested"
     });
-    let shutdown_event = event_factory.create_event("process.shutdown", shutdown_payload);
+    let shutdown_event = event_factory.create_event(types::system::PROCESS_SHUTDOWN.as_str(), shutdown_payload);
     ctx.insert_event(&shutdown_event).await?;
 
     // Verify all events were created in correct order
@@ -220,25 +221,25 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
     assert_eq!(all_events.len(), 4, "Should have 4 lifecycle events");
 
     // Check process.started event
-    assert_eq!(all_events[0].event_type, "process.started");
+    assert_eq!(all_events[0].event_type, types::system::PROCESS_STARTED.as_str());
     let started_payload: serde_json::Value = all_events[0].payload.clone();
     assert_eq!(started_payload["process_name"], "lifecycle_test");
     assert_eq!(started_payload["version"], "2.0.0");
 
     // Check first heartbeat
-    assert_eq!(all_events[1].event_type, "process.heartbeat");
+    assert_eq!(all_events[1].event_type, types::system::PROCESS_HEARTBEAT.as_str());
     let heartbeat1_payload: serde_json::Value = all_events[1].payload.clone();
     assert_eq!(heartbeat1_payload["uptime_seconds"], 10);
     assert_eq!(heartbeat1_payload["events_processed"], 15);
 
     // Check second heartbeat
-    assert_eq!(all_events[2].event_type, "process.heartbeat");
+    assert_eq!(all_events[2].event_type, types::system::PROCESS_HEARTBEAT.as_str());
     let heartbeat2_payload: serde_json::Value = all_events[2].payload.clone();
     assert_eq!(heartbeat2_payload["uptime_seconds"], 20);
     assert_eq!(heartbeat2_payload["events_processed"], 40); // Cumulative
 
     // Check process.shutdown event
-    assert_eq!(all_events[3].event_type, "process.shutdown");
+    assert_eq!(all_events[3].event_type, types::system::PROCESS_SHUTDOWN.as_str());
     let shutdown_payload: serde_json::Value = all_events[3].payload.clone();
     assert_eq!(shutdown_payload["process_name"], "lifecycle_test");
     assert_eq!(
@@ -278,7 +279,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> anyhow:
         "health_status": "healthy",
         "custom_metrics": custom_metrics
     });
-    let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
+    let heartbeat_event = event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat_payload);
     ctx.insert_event(&heartbeat_event).await?;
 
     // Verify custom metrics are included
@@ -291,7 +292,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> anyhow:
     let events: Vec<_> = events
         .into_iter()
         .filter(|e| {
-            e.event_type == "process.heartbeat"
+            e.event_type == types::system::PROCESS_HEARTBEAT.as_str()
                 && e.payload.get("process_name") == Some(&serde_json::json!(process_name))
         })
         .collect();
@@ -336,7 +337,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> anyhow:
             "health_status": "healthy",
             "custom_metrics": {}
         });
-        let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
+        let heartbeat_event = event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat_payload);
         ctx.insert_event(&heartbeat_event).await?;
 
         // Small delay between heartbeats
@@ -353,7 +354,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> anyhow:
     let heartbeat_count = all_events
         .iter()
         .filter(|e| {
-            e.event_type == "process.heartbeat"
+            e.event_type == types::system::PROCESS_HEARTBEAT.as_str()
                 && e.payload.get("process_name") == Some(&serde_json::json!("continuous_test"))
         })
         .count();
@@ -368,7 +369,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> anyhow:
     let latest_event = all_events
         .iter()
         .filter(|e| {
-            e.event_type == "process.heartbeat"
+            e.event_type == types::system::PROCESS_HEARTBEAT.as_str()
                 && e.payload.get("process_name") == Some(&serde_json::json!("continuous_test"))
         })
         .max_by_key(|e| e.ts_ingest)
@@ -407,7 +408,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> anyhow::R
             "build_time": Utc::now(),
             "config_hash": "ghi789"
         });
-        let started_event = event_factory.create_event("process.started", started_payload);
+        let started_event = event_factory.create_event(types::system::PROCESS_STARTED.as_str(), started_payload);
         ctx.insert_event(&started_event).await?;
 
         // Emit heartbeat with health status
@@ -422,7 +423,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> anyhow::R
             "health_status": status,
             "custom_metrics": {}
         });
-        let heartbeat_event = event_factory.create_event("process.heartbeat", heartbeat_payload);
+        let heartbeat_event = event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat_payload);
         ctx.insert_event(&heartbeat_event).await?;
     }
 
@@ -499,7 +500,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
         "build_time": Utc::now(),
         "config_hash": "ghi789"
     });
-    ctx.insert_event(&event_factory.create_event("process.started", started_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_STARTED.as_str(), started_payload))
         .await?;
 
     // First heartbeat - healthy
@@ -514,7 +515,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat1_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat1_payload))
         .await?;
 
     // Simulate degraded state
@@ -533,7 +534,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
         "health_status": "degraded",
         "custom_metrics": custom_metrics
     });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat2_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat2_payload))
         .await?;
 
     // Simulate critical state
@@ -556,7 +557,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
         "health_status": "critical",
         "custom_metrics": custom_metrics
     });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat3_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat3_payload))
         .await?;
 
     // Simulate shutdown due to errors
@@ -567,7 +568,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
         "graceful": false,
         "shutdown_reason": "Process terminated due to critical errors"
     });
-    ctx.insert_event(&event_factory.create_event("process.shutdown", shutdown_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_SHUTDOWN.as_str(), shutdown_payload))
         .await?;
 
     // Verify the failure progression is recorded
@@ -587,7 +588,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
     // Check progression through health states
     let heartbeat_events: Vec<_> = events
         .iter()
-        .filter(|e| e.event_type == "process.heartbeat")
+        .filter(|e| e.event_type == types::system::PROCESS_HEARTBEAT.as_str())
         .collect();
 
     assert_eq!(heartbeat_events.len(), 3);
@@ -619,7 +620,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
     // Shutdown event should contain error reason
     let shutdown_event = events
         .iter()
-        .find(|e| e.event_type == "process.shutdown")
+        .find(|e| e.event_type == types::system::PROCESS_SHUTDOWN.as_str())
         .unwrap();
     let shutdown_payload: serde_json::Value = shutdown_event.payload.clone();
     assert_eq!(
@@ -647,7 +648,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
         "build_time": Utc::now(),
         "config_hash": "ghi789"
     });
-    ctx.insert_event(&event_factory.create_event("process.started", started1_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_STARTED.as_str(), started1_payload))
         .await?;
 
     metrics1.set_uptime(10);
@@ -662,7 +663,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat1_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat1_payload))
         .await?;
 
     let shutdown1_payload = serde_json::json!({
@@ -672,7 +673,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
         "graceful": true,
         "shutdown_reason": "Planned restart"
     });
-    ctx.insert_event(&event_factory.create_event("process.shutdown", shutdown1_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_SHUTDOWN.as_str(), shutdown1_payload))
         .await?;
 
     // Small delay to ensure different timestamps
@@ -690,7 +691,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
         "build_time": Utc::now(),
         "config_hash": "rst456"
     });
-    ctx.insert_event(&event_factory.create_event("process.started", started2_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_STARTED.as_str(), started2_payload))
         .await?;
 
     metrics2.set_uptime(5); // Fresh start
@@ -705,7 +706,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
         "health_status": "healthy",
         "custom_metrics": {}
     });
-    ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat2_payload))
+    ctx.insert_event(&event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat2_payload))
         .await?;
 
     // Verify restart is detectable by analyzing events
@@ -725,7 +726,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
     // Find the two start events
     let start_events: Vec<_> = all_events
         .iter()
-        .filter(|e| e.event_type == "process.started")
+        .filter(|e| e.event_type == types::system::PROCESS_STARTED.as_str())
         .collect();
 
     assert_eq!(
@@ -743,7 +744,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
     // Verify restart is detectable by uptime reset
     let heartbeat_events: Vec<_> = all_events
         .iter()
-        .filter(|e| e.event_type == "process.heartbeat")
+        .filter(|e| e.event_type == types::system::PROCESS_HEARTBEAT.as_str())
         .collect();
 
     let heartbeat1_payload: serde_json::Value = heartbeat_events[0].payload.clone();
@@ -783,7 +784,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> anyhow::Result<()> 
             "health_status": "healthy",
             "custom_metrics": {}
         });
-        ctx.insert_event(&event_factory.create_event("process.heartbeat", heartbeat_payload))
+        ctx.insert_event(&event_factory.create_event(types::system::PROCESS_HEARTBEAT.as_str(), heartbeat_payload))
             .await?;
 
         // Small delay to avoid overwhelming the database
@@ -801,7 +802,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> anyhow::Result<()> 
     let count = all_events
         .iter()
         .filter(|e| {
-            e.event_type == "process.heartbeat"
+            e.event_type == types::system::PROCESS_HEARTBEAT.as_str()
                 && e.payload.get("process_name") == Some(&serde_json::json!("high_freq_test"))
         })
         .count();
@@ -818,7 +819,7 @@ async fn test_high_frequency_heartbeats(ctx: TestContext) -> anyhow::Result<()> 
     let heartbeat_events: Vec<_> = all_events
         .iter()
         .filter(|e| {
-            e.event_type == "process.heartbeat"
+            e.event_type == types::system::PROCESS_HEARTBEAT.as_str()
                 && e.payload.get("process_name") == Some(&serde_json::json!("high_freq_test"))
         })
         .collect();

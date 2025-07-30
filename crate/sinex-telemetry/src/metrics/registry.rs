@@ -617,6 +617,7 @@ impl Collector for ExternalMetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::collectors::{MetricEntry, MetricType, MetricValue};
     use sinex_test_utils::prelude::*;
 
     #[test]
@@ -875,8 +876,10 @@ mod tests {
 
         let metric = MetricEntry {
             name: "external_metric".to_string(),
-            value: 42.0,
-            timestamp: chrono::Utc::now(),
+            help: "Test external metric".to_string(),
+            metric_type: MetricType::Gauge,
+            value: MetricValue::Gauge(42.0),
+            timestamp: chrono::Utc::now().timestamp() as u64,
             labels: HashMap::new(),
         };
 

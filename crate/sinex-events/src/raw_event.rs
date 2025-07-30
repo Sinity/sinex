@@ -21,11 +21,14 @@ pub type JsonValue = serde_json::Value;
 ///
 /// NOTE: This struct uses ULID directly. When using with SQLX queries,
 /// use type overrides like: `id::uuid as "id: _"` for proper type inference
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, bon::Builder)]
+#[builder(on(String, into))] // Convert &str to String automatically
 pub struct RawEvent {
+    #[builder(default = Ulid::new())]
     pub id: Ulid,
     pub source: String,
     pub event_type: String,
+    #[builder(default = chrono::Utc::now())]
     pub ts_ingest: Timestamp,
     pub ts_orig: OptionalTimestamp,
     pub host: String,

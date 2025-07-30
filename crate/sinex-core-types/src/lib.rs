@@ -43,7 +43,10 @@
 //! philosophical principles, Sinex creates an external augmentation of human cognition.
 
 pub mod development;
+pub mod domain;
+pub mod event_constants;
 pub mod glossary;
+pub mod ids;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

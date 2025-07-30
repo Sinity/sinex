@@ -5,6 +5,7 @@
 
 pub mod duration_parser;
 pub mod extractors;
+pub mod figment_config;
 pub mod helpers;
 pub mod validation_framework;
 pub mod validators;

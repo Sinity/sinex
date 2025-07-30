@@ -11,6 +11,7 @@ sinex-core-utils = { path = "../sinex-core-utils" }
 sinex-db = { path = "../sinex-db" }
 sinex-ulid = { path = "../sinex-ulid" }
 sinex-annex = { path = "../sinex-annex" }
+sinex-error = { path = "../sinex-error" }
 
 # Async runtime
 tokio.workspace = true

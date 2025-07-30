@@ -22,7 +22,6 @@
 // }
 // ```
 
-use crate::builders::EventBuilder;
 use crate::builders::TestCheckpointBuilder;
 use crate::fixture_config::FIXTURE_CONFIG;
 use crate::prelude::*;
@@ -366,8 +365,10 @@ async fn create_user_session_fixture(
     let mut event_ids = Vec::new();
 
     // Create filesystem events
+    let factory = EventFactory::new(sources::FS);
     for i in 0..event_count / 3 {
-        let event = EventBuilder::filesystem()
+        let event = factory
+            .filesystem()
             .path(&format!("/home/{}/documents/file_{}.txt", user_id, i))
             .created()
             .build();
@@ -393,7 +394,9 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let event = EventBuilder::terminal()
+        let factory = EventFactory::new(sources::SHELL_KITTY);
+        let event = factory
+            .terminal()
             .command(cmd)
             .success()
             .duration_ms(100 + i as u64 * 10)
@@ -412,7 +415,9 @@ async fn create_user_session_fixture(
 
     // Create clipboard events
     for i in 0..event_count / 3 {
-        let event = EventBuilder::clipboard()
+        let factory = EventFactory::new(sources::CLIPBOARD);
+        let event = factory
+            .clipboard()
             .text(&format!("Clipboard content {}", i))
             .build();
 
@@ -679,26 +684,16 @@ pub(crate) async fn with_transaction_fixture<F, T>(ctx: &TestContext, fixture_fn
 where
     F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> BoxFuture<'a, Result<T>>,
 {
-    let mut tx = ctx.pool().begin().await?;
+    let tx = ctx.pool().begin().await?;
 
     // Create some fixture data in the transaction
-    let event = EventBuilder::filesystem()
+    let factory = EventFactory::new(sources::FS);
+    let event = factory
+        .filesystem()
         .path("/test/transaction/file.txt")
         .created()
         .build();
-    use sinex_db::queries::EventQueries;
-    let _record = EventQueries::insert_event(
-        event.source.clone(),
-        event.event_type.clone(),
-        event.host.clone(),
-        event.payload.clone(),
-        event.ts_orig,
-        event.ingestor_version.clone(),
-        event.payload_schema_id,
-        event.source_event_ids.clone(),
-    )
-    .execute_tx(&mut tx)
-    .await?;
+    let _record = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
 
     let result = fixture_fn(tx).await?;
 

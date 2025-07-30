@@ -679,6 +679,7 @@ pub fn record_function_telemetry(module: &str, function: &str, duration_ms: f64,
 mod tests {
     use super::*;
     use serde_json::json;
+    use sinex_test_utils::parameterized;
     use sinex_test_utils::prelude::*;
     use std::time::Duration;
     use tokio::sync::mpsc;
@@ -706,7 +707,10 @@ mod tests {
         accumulator.record_error("permission_denied");
 
         // Emit telemetry
-        accumulator.emit_telemetry().await?;
+        accumulator
+            .emit_telemetry()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         // Collect emitted events
         let mut events = Vec::new();
@@ -741,7 +745,7 @@ mod tests {
         // Verify event content
         for event in &events {
             ctx.assert("event structure")
-                .eq(&event.source, &"sinex.telemetry")?;
+                .eq(&event.source, &"sinex.telemetry".to_string())?;
 
             match event.event_type.as_str() {
                 "events.processed" => {
@@ -815,7 +819,10 @@ mod tests {
         accumulator.record_error("error.one");
 
         // Emit and check
-        accumulator.emit_telemetry().await?;
+        accumulator
+            .emit_telemetry()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         let mut first_batch = Vec::new();
         while let Ok(event) = rx.try_recv() {
@@ -829,7 +836,10 @@ mod tests {
         accumulator.record_error("error.two");
 
         // Emit again
-        accumulator.emit_telemetry().await?;
+        accumulator
+            .emit_telemetry()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         let mut second_batch = Vec::new();
         while let Ok(event) = rx.try_recv() {
@@ -967,14 +977,17 @@ mod tests {
         let emitter = SystemTelemetryEmitter::new(tx).with_interval(Duration::from_millis(100));
 
         // Emit system resources
-        emitter.emit_system_resources().await?;
+        emitter
+            .emit_system_resources()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         // Check event
         let event = rx.recv().await.unwrap();
 
         ctx.assert("system telemetry")
-            .eq(&event.source, &"sinex.telemetry")?
-            .eq(&event.event_type, &"system.resources")?;
+            .eq(&event.source, &"sinex.telemetry".to_string())?
+            .eq(&event.event_type, &"system.resources".to_string())?;
 
         let payload = &event.payload;
         ctx.assert("system payload")
@@ -1003,7 +1016,10 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(50)).await;
 
         // Emit to see the recorded data
-        accumulator.emit_telemetry().await?;
+        accumulator
+            .emit_telemetry()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         // Verify
         let mut found_operation = false;
@@ -1031,7 +1047,10 @@ mod tests {
         let accumulator = TelemetryAccumulator::new("no-data-test").with_event_sender(tx);
 
         // Emit without recording any data
-        accumulator.emit_telemetry().await?;
+        accumulator
+            .emit_telemetry()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         // Should not emit any events
         let event = rx.try_recv();
@@ -1070,7 +1089,10 @@ mod tests {
         }
 
         // Emit and verify
-        accumulator.emit_telemetry().await?;
+        accumulator
+            .emit_telemetry()
+            .await
+            .map_err(|e| anyhow::anyhow!("Emit failed: {}", e))?;
 
         let mut events = Vec::new();
         while let Ok(event) = rx.try_recv() {

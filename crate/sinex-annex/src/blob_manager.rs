@@ -44,7 +44,8 @@ use anyhow::{Context, Result};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::queries::{EventQueries, SourceMaterialQueries};
+use sinex_core_types::ids::MaterialId;
+use sinex_db::repositories::{EventRepository, Repository, SourceMaterialRepository};
 use sinex_db::DbPool;
 use sinex_ulid::Ulid;
 use std::path::{Path, PathBuf};
@@ -56,7 +57,7 @@ use sinex_events::constants::{event_types, sources};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlobMetadata {
-    pub blob_id: Ulid,
+    pub id: Ulid,
     pub annex_key: String,
     pub original_filename: String,
     pub size_bytes: i64,
@@ -94,15 +95,11 @@ impl BlobManager {
 
         // Check if blob already exists
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
-            info!(
-                "File already exists in blob store with ID: {}",
-                existing.blob_id
-            );
+            info!("File already exists in blob store with ID: {}", existing.id);
 
             // Update original_filenames array if this is a new filename
             if let Some(filename) = original_filename {
-                self.add_original_filename(&existing.blob_id, filename)
-                    .await?;
+                self.add_original_filename(&existing.id, filename).await?;
             }
 
             // Emit deduplication metric
@@ -140,7 +137,7 @@ impl BlobManager {
         });
 
         let blob_metadata = BlobMetadata {
-            blob_id,
+            id: blob_id,
             annex_key: annex_key.key.clone(),
             original_filename: filename.to_string(),
             size_bytes,
@@ -184,12 +181,11 @@ impl BlobManager {
         if let Some(existing) = self.find_blob_by_blake3(&blake3_hash).await? {
             info!(
                 "Content already exists in blob store with ID: {}",
-                existing.blob_id
+                existing.id
             );
 
             // Update original_filenames array if this is a new filename
-            self.add_original_filename(&existing.blob_id, filename)
-                .await?;
+            self.add_original_filename(&existing.id, filename).await?;
 
             // Emit deduplication metric
             self.emit_operation_metric(
@@ -223,7 +219,7 @@ impl BlobManager {
         let size_bytes = content.len() as i64;
 
         let blob_metadata = BlobMetadata {
-            blob_id,
+            id: blob_id,
             annex_key: annex_key.key.clone(),
             original_filename: filename.to_string(),
             size_bytes,
@@ -327,17 +323,17 @@ impl BlobManager {
 
     /// Find blob by BLAKE3 hash for deduplication
     async fn find_blob_by_blake3(&self, blake3_hash: &str) -> Result<Option<BlobMetadata>> {
-        use sinex_db::models::SourceMaterialRecord;
+        // Using SourceMaterialRepository instead of direct model
 
-        let row: Option<SourceMaterialRecord> =
-            SourceMaterialQueries::find_by_checksum(blake3_hash.to_string())
-                .fetch_optional(&self.db_pool)
-                .await
-                .context("Failed to query source material by BLAKE3 hash")?;
+        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+        let existing = source_material_repo
+            .find_by_checksum(blake3_hash)
+            .await
+            .context("Failed to query source material by BLAKE3 hash")?;
 
-        if let Some(row) = row {
+        if let Some(row) = existing {
             Ok(Some(BlobMetadata {
-                blob_id: row.blob_id,
+                id: *row.id.as_ulid(),
                 annex_key: format!("BLAKE3-{}", blake3_hash), // Generate annex key from checksum
                 original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
                 size_bytes: row.file_size_bytes.unwrap_or(0),
@@ -358,52 +354,61 @@ impl BlobManager {
 
     /// Insert new blob metadata into database
     pub async fn insert_blob(&self, blob: &BlobMetadata) -> Result<()> {
-        SourceMaterialQueries::insert(
-            "blob.binary".to_string(), // Material type for blob storage
-            Some(blob.original_filename.clone()),
-            Some(blob.size_bytes),
-            blob.checksum_blake3.clone(),
-            blob.mime_type.clone(),
-            None, // encoding
-            json!({
+        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+
+        let new_material = sinex_db::repositories::source_materials::NewSourceMaterial {
+            material_type: "blob.binary".to_string(),
+            source_uri: Some(blob.original_filename.clone()),
+            file_size_bytes: Some(blob.size_bytes),
+            checksum_blake3: blob.checksum_blake3.clone(),
+            mime_type: blob.mime_type.clone(),
+            encoding: None,
+            metadata: Some(json!({
                 "annex_key": blob.annex_key,
                 "storage_backend": blob.storage_backend,
                 "verification_status": blob.verification_status,
-            }),
-            None, // content_preview
-        )
-        .execute(&self.db_pool)
-        .await
-        .context("Failed to insert blob as source material")?;
+            })),
+            content_preview: None,
+            retention_policy: None,
+        };
+
+        source_material_repo
+            .register_material(new_material)
+            .await
+            .context("Failed to insert blob as source material")?;
 
         Ok(())
     }
 
     /// Get blob metadata by ID
     pub async fn get_blob_metadata(&self, blob_id: &Ulid) -> Result<BlobMetadata> {
-        use sinex_db::models::SourceMaterialRecord;
+        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+        let material_id = MaterialId::from_ulid(*blob_id);
 
-        let row: SourceMaterialRecord = SourceMaterialQueries::get_by_id(*blob_id)
-            .fetch_one(&self.db_pool)
+        let row = source_material_repo
+            .get_by_id(material_id)
             .await
-            .context("Failed to get source material metadata")?;
+            .context("Failed to get source material metadata")?
+            .ok_or_else(|| anyhow::anyhow!("Blob not found with ID: {}", blob_id))?;
 
         Ok(BlobMetadata {
-            blob_id: row.blob_id,
+            id: *row.id.as_ulid(),
             annex_key: row
                 .metadata
                 .get("annex_key")
                 .and_then(|v| v.as_str())
-                .unwrap_or(&format!(
-                    "BLAKE3-{}",
-                    row.checksum_blake3.as_deref().unwrap_or("unknown")
-                ))
+                .unwrap_or("unknown")
                 .to_string(),
             original_filename: row.source_uri.unwrap_or_else(|| "unknown".to_string()),
             size_bytes: row.file_size_bytes.unwrap_or(0),
             mime_type: row.mime_type,
-            checksum_sha256: row.checksum_blake3.clone().unwrap_or_else(|| String::new()),
-            checksum_blake3: row.checksum_blake3,
+            checksum_sha256: row
+                .metadata
+                .get("checksum_sha256")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
+            checksum_blake3: row.checksum_blake3.clone(),
             storage_backend: row
                 .metadata
                 .get("storage_backend")
@@ -505,20 +510,30 @@ impl BlobManager {
             "duration_ms": duration_ms,
         });
 
-        // Insert metric event into core.events using EventQueries
-        EventQueries::insert_event(
-            sources::BLOB_STORAGE.to_string(),
-            event_types::metrics::BLOB_STORAGE_OPERATION.to_string(),
-            host,
+        // Insert metric event into core.events using EventRepository
+        let event_repo = EventRepository::new(&self.db_pool);
+        let new_event = sinex_db::repositories::NewEvent {
+            source: sinex_core_types::domain::EventSource::new(sources::BLOB_STORAGE),
+            event_type: sinex_core_types::domain::EventType::new(
+                event_types::metrics::BLOB_STORAGE_OPERATION,
+            ),
+            host: sinex_core_types::domain::HostName::new(&host),
             payload,
-            Some(Utc::now()),
-            None,
-            None,
-            None,
-        )
-        .execute(&self.db_pool)
-        .await
-        .context("Failed to emit blob operation metric")?;
+            ts_orig: Some(Utc::now()),
+            ingestor_version: None,
+            payload_schema_id: None,
+            source_event_ids: Some(vec![]),
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        };
+
+        event_repo
+            .insert(new_event)
+            .await
+            .context("Failed to emit blob operation metric")?;
 
         Ok(())
     }
@@ -565,20 +580,30 @@ impl BlobManager {
             "storage_backend": "git-annex",
         });
 
-        // Insert metric event using EventQueries
-        EventQueries::insert_event(
-            sources::BLOB_STORAGE.to_string(),
-            event_types::metrics::BLOB_STORAGE_STATISTICS.to_string(),
-            host,
+        // Insert metric event using EventRepository
+        let event_repo = EventRepository::new(&self.db_pool);
+        let new_event = sinex_db::repositories::NewEvent {
+            source: sinex_core_types::domain::EventSource::new(sources::BLOB_STORAGE),
+            event_type: sinex_core_types::domain::EventType::new(
+                event_types::metrics::BLOB_STORAGE_STATISTICS,
+            ),
+            host: sinex_core_types::domain::HostName::new(&host),
             payload,
-            Some(Utc::now()),
-            None,
-            None,
-            None,
-        )
-        .execute(&self.db_pool)
-        .await
-        .context("Failed to emit blob storage statistics")?;
+            ts_orig: Some(Utc::now()),
+            ingestor_version: None,
+            payload_schema_id: None,
+            source_event_ids: Some(vec![]),
+            source_material_id: None,
+            source_material_offset_start: None,
+            source_material_offset_end: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        };
+
+        event_repo
+            .insert(new_event)
+            .await
+            .context("Failed to emit blob storage statistics")?;
 
         Ok(())
     }

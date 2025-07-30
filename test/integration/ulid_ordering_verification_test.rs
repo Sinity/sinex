@@ -9,7 +9,7 @@
 
 use sinex_test_utils::prelude::*;
 use sinex_db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_db::queries::EventQueries;
+use sinex_db::repositories::{EventRepository, Repository};
 use sinex_events::EventFactory;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -68,9 +68,8 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> anyhow::Res
     );
 
     // Cleanup
-    EventQueries::delete_by_source("test.ulid_ordering".to_string())
-        .execute(pool)
-        .await?;
+    let repo = EventRepository::new(pool);
+    repo.delete_by_source("test.ulid_ordering").await?;
 
     Ok(())
 }
@@ -210,9 +209,8 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> anyhow::R
     );
 
     // Cleanup
-    EventQueries::delete_by_source("test.concurrent_ulid".to_string())
-        .execute(pool)
-        .await?;
+    let repo = EventRepository::new(pool);
+    repo.delete_by_source("test.concurrent_ulid").await?;
 
     Ok(())
 }
@@ -326,9 +324,8 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> anyhow::Result<
     );
 
     // Cleanup
-    EventQueries::delete_by_source("test.db_ordering".to_string())
-        .execute(pool)
-        .await?;
+    let repo = EventRepository::new(pool);
+    repo.delete_by_source("test.db_ordering").await?;
 
     Ok(())
 }
@@ -403,9 +400,8 @@ async fn test_clock_skew_detection(ctx: TestContext) -> anyhow::Result<()> {
     }
 
     // Cleanup
-    EventQueries::delete_by_source("test.clock_skew".to_string())
-        .execute(pool)
-        .await?;
+    let repo = EventRepository::new(pool);
+    repo.delete_by_source("test.clock_skew").await?;
 
     Ok(())
 }
@@ -519,9 +515,8 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> anyhow::Re
     );
 
     // Cleanup
-    EventQueries::delete_by_source("test.ulid_performance".to_string())
-        .execute(pool)
-        .await?;
+    let repo = EventRepository::new(pool);
+    repo.delete_by_source("test.ulid_performance").await?;
 
     Ok(())
 }

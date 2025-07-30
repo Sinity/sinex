@@ -1,7 +1,7 @@
 //! Advanced patterns and best practices for sinex-error
 
 use serde::{Deserialize, Serialize};
-use sinex_error::{bail, ensure, Result, ResultExt, SinexError};
+use sinex_error::{Result, SinexError};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -87,6 +87,11 @@ impl From<&SinexError> for ApiErrorResponse {
             None
         };
 
+        let request_id = details
+            .get("request_id")
+            .cloned()
+            .unwrap_or_else(|| "unknown".to_string());
+
         ApiErrorResponse {
             error: ErrorInfo {
                 code: error.variant_name().to_lowercase(),
@@ -94,10 +99,7 @@ impl From<&SinexError> for ApiErrorResponse {
                 details,
                 retry_after,
             },
-            request_id: details
-                .get("request_id")
-                .cloned()
-                .unwrap_or_else(|| "unknown".to_string()),
+            request_id,
             timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
@@ -172,28 +174,21 @@ impl CircuitBreaker {
 
 // Pattern 6: Using bail! and ensure! macros
 fn validate_request(user_id: Option<&str>, data: &str) -> Result<()> {
-    // Use ensure! for validation
-    ensure!(
-        user_id.is_some(),
-        SinexError::validation("Missing user ID").with_context("field", "user_id")
-    );
+    // Validation checks
+    if user_id.is_none() {
+        return Err(SinexError::validation("Missing user ID").with_context("field", "user_id"));
+    }
 
-    ensure!(
-        !data.is_empty(),
-        SinexError::validation("Empty data").with_context("field", "data")
-    );
-
-    ensure!(
-        data.len() <= 1024,
-        SinexError::validation("Data too large")
+    if data.len() > 1024 {
+        return Err(SinexError::validation("Data too large")
             .with_context("field", "data")
             .with_context("size", data.len())
-            .with_context("max_size", 1024)
-    );
+            .with_context("max_size", 1024));
+    }
 
-    // Use bail! for early returns with errors
+    // Permission checks
     if data.contains("forbidden") {
-        bail!(SinexError::permission_denied("Forbidden content detected")
+        return Err(SinexError::permission_denied("Forbidden content detected")
             .with_context("user_id", user_id.unwrap()));
     }
 
@@ -247,7 +242,7 @@ fn main() -> Result<()> {
 
     // Simulate failures
     for i in 1..=5 {
-        let result = breaker.call(|| Err(SinexError::network("Service unavailable")));
+        let result: Result<()> = breaker.call(|| Err(SinexError::network("Service unavailable")));
         match result {
             Ok(_) => println!("Call {} succeeded", i),
             Err(e) => println!("Call {} failed: {}", i, e.message()),

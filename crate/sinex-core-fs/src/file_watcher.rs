@@ -3,6 +3,7 @@
 //! This module provides file system watching capabilities with
 //! configurable event filtering and error handling.
 
+use bon::Builder;
 use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_error::{Result, SinexError};
@@ -12,34 +13,27 @@ use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
 /// Configuration for file watcher
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Builder)]
 pub struct FileWatcherConfig {
     /// Paths to watch
+    #[builder(default)]
     pub watch_paths: Vec<PathBuf>,
     /// Whether to watch recursively
+    #[builder(default = true)]
     pub recursive: bool,
     /// Event types to monitor
+    #[builder(default = vec![
+        FileChangeKind::Created,
+        FileChangeKind::Modified,
+        FileChangeKind::Deleted,
+    ])]
     pub event_kinds: Vec<FileChangeKind>,
     /// Debounce delay for events
+    #[builder(default = Duration::from_millis(100))]
     pub debounce_delay: Duration,
     /// Maximum events to buffer
+    #[builder(default = 1000)]
     pub max_buffer_size: usize,
-}
-
-impl Default for FileWatcherConfig {
-    fn default() -> Self {
-        Self {
-            watch_paths: Vec::new(),
-            recursive: true,
-            event_kinds: vec![
-                FileChangeKind::Created,
-                FileChangeKind::Modified,
-                FileChangeKind::Deleted,
-            ],
-            debounce_delay: Duration::from_millis(100),
-            max_buffer_size: 1000,
-        }
-    }
 }
 
 /// File change event kinds
@@ -58,54 +52,6 @@ pub struct FileChangeEvent {
     pub path: PathBuf,
     pub kind: FileChangeKind,
     pub timestamp: chrono::DateTime<chrono::Utc>,
-}
-
-/// File watcher builder
-pub struct FileWatcherBuilder {
-    config: FileWatcherConfig,
-}
-
-impl FileWatcherBuilder {
-    pub fn new() -> Self {
-        Self {
-            config: FileWatcherConfig::default(),
-        }
-    }
-
-    pub fn watch_path<P: AsRef<Path>>(mut self, path: P) -> Self {
-        self.config.watch_paths.push(path.as_ref().to_path_buf());
-        self
-    }
-
-    pub fn recursive(mut self, recursive: bool) -> Self {
-        self.config.recursive = recursive;
-        self
-    }
-
-    pub fn event_kinds(mut self, kinds: Vec<FileChangeKind>) -> Self {
-        self.config.event_kinds = kinds;
-        self
-    }
-
-    pub fn debounce_delay(mut self, delay: Duration) -> Self {
-        self.config.debounce_delay = delay;
-        self
-    }
-
-    pub fn max_buffer_size(mut self, size: usize) -> Self {
-        self.config.max_buffer_size = size;
-        self
-    }
-
-    pub fn build(self) -> Result<FileWatcher> {
-        FileWatcher::new(self.config)
-    }
-}
-
-impl Default for FileWatcherBuilder {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// File system watcher
@@ -216,11 +162,13 @@ mod tests {
     #[tokio::test]
     async fn test_file_watcher_builder() {
         let temp_dir = TempDir::new().unwrap();
-        let watcher = FileWatcherBuilder::new()
-            .watch_path(temp_dir.path())
-            .recursive(true)
-            .debounce_delay(Duration::from_millis(50))
-            .build();
+        let watcher = FileWatcher::new(
+            FileWatcherConfig::builder()
+                .watch_paths(vec![temp_dir.path().to_path_buf()])
+                .recursive(true)
+                .debounce_delay(Duration::from_millis(50))
+                .build(),
+        );
 
         assert!(watcher.is_ok());
     }
@@ -230,12 +178,14 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
 
-        let mut watcher = FileWatcherBuilder::new()
-            .watch_path(temp_dir.path())
-            .recursive(false)
-            .event_kinds(vec![FileChangeKind::Created, FileChangeKind::Modified])
-            .build()
-            .unwrap();
+        let mut watcher = FileWatcher::new(
+            FileWatcherConfig::builder()
+                .watch_paths(vec![temp_dir.path().to_path_buf()])
+                .recursive(false)
+                .event_kinds(vec![FileChangeKind::Created, FileChangeKind::Modified])
+                .build(),
+        )
+        .unwrap();
 
         // Give the watcher time to start
         tokio::time::sleep(Duration::from_millis(100)).await;

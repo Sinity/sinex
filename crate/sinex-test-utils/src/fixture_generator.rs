@@ -12,7 +12,7 @@ use sinex_events::{event_types, sources, RawEvent};
 use sinex_ulid::Ulid;
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Configuration for dataset generation
 #[derive(Debug, Clone, Serialize, Deserialize)]

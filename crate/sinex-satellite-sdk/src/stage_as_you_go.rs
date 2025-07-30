@@ -54,7 +54,7 @@
 //! - **Network Streams**: Process packets in real-time, finalize on connection close
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
-use sinex_db::queries::SourceMaterialQueries;
+use sinex_db::repositories::{Repository, SourceMaterialRepository};
 use sinex_db::SqlxPgPool as PgPool;
 use sinex_events::RawEvent;
 use sinex_ulid::Ulid;
@@ -88,13 +88,9 @@ impl StageAsYouGoContext {
         source_uri: Option<&str>,
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
-        let result: sinex_db::models::SourceMaterialRecord =
-            SourceMaterialQueries::register_in_flight(
-                material_type.to_string(),
-                source_uri.map(String::from),
-                initial_metadata,
-            )
-            .fetch_one::<sinex_db::models::SourceMaterialRecord>(&self.db_pool)
+        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+        let result = source_material_repo
+            .register_in_flight(material_type, source_uri, initial_metadata)
             .await
             .map_err(|e| {
                 SatelliteError::General(anyhow::anyhow!(
@@ -103,7 +99,7 @@ impl StageAsYouGoContext {
                 ))
             })?;
 
-        let blob_id = result.blob_id;
+        let blob_id = result.id.as_ulid();
 
         info!(
             blob_id = %blob_id,
@@ -170,23 +166,24 @@ impl StageAsYouGoContext {
             None
         };
 
-        SourceMaterialQueries::finalize_in_flight(
-            blob_id,
-            content.len() as i64,
-            checksum,
-            mime_type.map(String::from),
-            encoding.map(String::from),
-            content_preview,
-        )
-        .execute(&self.db_pool)
-        .await
-        .map_err(|e| {
-            SatelliteError::General(anyhow::anyhow!(
-                "Failed to finalize source material {}: {}",
+        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+        source_material_repo
+            .finalize_in_flight(
                 blob_id,
-                e
-            ))
-        })?;
+                content.len() as i64,
+                checksum,
+                mime_type,
+                encoding,
+                content_preview,
+            )
+            .await
+            .map_err(|e| {
+                SatelliteError::General(anyhow::anyhow!(
+                    "Failed to finalize source material {}: {}",
+                    blob_id,
+                    e
+                ))
+            })?;
 
         info!(
             blob_id = %blob_id,

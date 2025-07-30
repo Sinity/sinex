@@ -7,13 +7,22 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 use sinex_error::{Result, SinexError};
 
-/// Parse JSON from a string with error context
+/// Parse JSON from a string with error context and validation
 pub fn parse_json<T: DeserializeOwned>(
     json_str: &str,
     context_type: &str,
     operation: &str,
 ) -> Result<T> {
-    serde_json::from_str(json_str).map_err(|e| {
+    // First validate the JSON structure
+    let validated_value = sinex_validation::validate_json(json_str).map_err(|e| {
+        SinexError::validation(format!(
+            "Invalid JSON structure for {} (operation: {}): {}",
+            context_type, operation, e
+        ))
+    })?;
+
+    // Then deserialize with error context
+    serde_json::from_value(validated_value).map_err(|e| {
         SinexError::serialization(format!(
             "Failed to parse {} (operation: {}, json_length: {}): {}",
             context_type,
@@ -24,13 +33,24 @@ pub fn parse_json<T: DeserializeOwned>(
     })
 }
 
-/// Parse JSON from a string with file path context
+/// Parse JSON from a string with file path context and validation
 pub fn parse_json_file<T: DeserializeOwned>(
     json_str: &str,
     file_path: impl AsRef<std::path::Path>,
     operation: &str,
 ) -> Result<T> {
-    serde_json::from_str(json_str).map_err(|e| {
+    // First validate the JSON structure
+    let validated_value = sinex_validation::validate_json(json_str).map_err(|e| {
+        SinexError::validation(format!(
+            "Invalid JSON structure in file {} (operation: {}): {}",
+            file_path.as_ref().display(),
+            operation,
+            e
+        ))
+    })?;
+
+    // Then deserialize with error context
+    serde_json::from_value(validated_value).map_err(|e| {
         SinexError::serialization(format!(
             "Failed to parse JSON file {} (operation: {}, json_length: {}): {}",
             file_path.as_ref().display(),
@@ -41,15 +61,13 @@ pub fn parse_json_file<T: DeserializeOwned>(
     })
 }
 
-/// Parse JSON Value from a string with error context
+/// Parse JSON Value from a string with error context and validation
 pub fn parse_json_value(json_str: &str, context_type: &str, operation: &str) -> Result<Value> {
-    serde_json::from_str(json_str).map_err(|e| {
-        SinexError::serialization(format!(
-            "Failed to parse {} as JSON (operation: {}, preview: {}): {}",
-            context_type,
-            operation,
-            json_str.chars().take(100).collect::<String>(),
-            e
+    // Use sinex_validation to parse and validate in one step
+    sinex_validation::validate_json(json_str).map_err(|e| {
+        SinexError::validation(format!(
+            "Invalid JSON structure for {} (operation: {}): {}",
+            context_type, operation, e
         ))
     })
 }

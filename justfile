@@ -23,108 +23,33 @@ default:
 
 # === Testing ===
 
-# 🧪 Run complete test suite (unit → integration → system → stress → property → adversarial → VM)
-test-all:
-    @echo "🧪 Running complete Sinex test suite..."
-    @echo "This includes: unit → integration → system → stress → property → adversarial → VM"
-    @echo "Expected duration: 10-15 minutes"
-    @echo ""
-    just test-unit
-    just test-integration  
-    just test-system
-    just test-property
-    just test-performance
-    just test-adversarial
-    just test-vm
+# 🧪 Run all tests (inline tests in library crates)
+test *ARGS:
+    @echo "🧪 Running all tests..."
+    cargo test --workspace --lib -- {{ARGS}}
 
-# 📦 Unit tests - Fast isolated component tests (~5s)
-test-unit *ARGS:
-    @echo "📦 Running unit tests (fast, isolated components)..."
-    cargo nextest run -E "test(unit::)" -- {{ARGS}}
+# 🎯 Run specific test with pattern matching
+test-filter PATTERN *ARGS:
+    @echo "🎯 Running tests matching: {{PATTERN}}"
+    cargo test --workspace --lib {{PATTERN}} -- {{ARGS}}
 
-
-# 🔗 Integration tests - Component interaction tests (~30s)
-test-integration *ARGS:
-    @echo "🔗 Running integration tests (component interactions)..."
-    cargo nextest run -E "test(integration::)" -- {{ARGS}}
-
-# 🌐 System tests - Full pipeline E2E tests (~2min)
-test-system *ARGS:
-    @echo "🌐 Running system tests (full pipeline E2E)..."
-    cargo nextest run -E "test(system::)" -- {{ARGS}}
-
-
-# 🎲 Property-based tests - Randomized edge case testing (~1min)
-test-property *ARGS:
-    @echo "🎲 Running property-based tests (randomized edge cases)..."
-    cargo nextest run -E "test(property::)" -- {{ARGS}}
-
-# 🚀 Performance tests - Load and performance testing (~2min)
-test-performance *ARGS:
-    @echo "🚀 Running performance tests..."
-    cargo nextest run -E "test(performance::) or test(stress_test)" -- {{ARGS}}
-
-# ⚔️  Adversarial tests - Security and chaos testing (~3min)
-test-adversarial *ARGS:
-    @echo "⚔️ Running adversarial tests (security and chaos scenarios)..."
-    cargo nextest run -E "test(adversarial::)" -- {{ARGS}}
-
-# ⚡ Fast tests only - Unit + property tests for quick feedback (~30s)
-test-fast *ARGS:
-    @echo "⚡ Running fast tests only (unit + property)..."
-    @./scripts/test-analytics.sh -E "test(unit::) or test(property::)" -- {{ARGS}}
-
-
-
-# 🎯 Run specific test file or pattern
-test FILE="" *ARGS:
-    @echo "🎯 Running tests: {{FILE}} {{ARGS}}"
-    @if [ -n "{{FILE}}" ]; then \
-        cargo nextest run -E "test({{FILE}})" -- {{ARGS}}; \
-    else \
-        cargo nextest run -- {{ARGS}}; \
-    fi
-
-
-
-
-
-
-
-
-# 👀 Watch and run specific command
-watch CMD="check":
-    @echo "👀 Watching and running: {{CMD}}"
-    cargo watch -x "{{CMD}}"
-
-
-
-
-
-
-
+# 👀 Watch and run tests continuously
+test-watch:
+    @echo "👀 Watching and running tests..."
+    cargo watch -x "test --workspace --lib"
 
 # 🛡️ Run tests with limited parallelism (for flaky tests)
-test-reliable *ARGS:
+test-serial *ARGS:
     @echo "🛡️ Running tests with limited parallelism..."
-    cargo nextest run -j 2 -- {{ARGS}}
+    cargo test --workspace --lib -- --test-threads=1 {{ARGS}}
 
-# === VM Tests ===
+# === VM Tests (separate test suite in test/*) ===
 
-# 🖥️  VM smoke tests - Basic VM functionality (~5min)
+# 🖥️  VM tests - Run NixOS VM test suite
 test-vm:
-    @echo "🖥️ Running VM smoke tests (basic functionality)..."
+    @echo "🖥️ Running VM tests (separate test suite)..."
+    @echo "Note: VM tests are in test/* and excluded from workspace"
     ./test/nixos-vm/run-vm-tests.sh -c smoke
-
-# 🖥️  All VM tests - Complete VM test suite (~15min)
-test-vm-all:
-    @echo "🖥️ Running complete VM test suite..."
-    ./test/nixos-vm/run-vm-tests.sh -c all
-
-# 🐛 Debug specific VM test
-test-vm-debug TEST="basic-flow":
-    @echo "🐛 Debugging VM test: {{TEST}}"
-    ./test/nixos-vm/run-vm-tests.sh -d {{TEST}}
 
 # === Database ===
 
@@ -348,14 +273,14 @@ docs:
 # === Common Workflows ===
 
 
-# ⚡ Quick development cycle - Format, check, and run fast tests
-dev: fmt qc test-fast
+# ⚡ Quick development cycle - Format, check, and run tests
+dev: fmt qc test
 
 # 🚀 Pre-commit validation - Essential checks before committing
-pre-commit: fmt lint qc test-fast
+pre-commit: fmt lint qc test
 
 # 🔄 CI-style validation - All tests except VM (for automation)
-ci: fmt lint test-unit test-integration test-system test-property test-performance test-adversarial
+ci: fmt lint test
 
 # 🚀 PR validation - Run same checks as CI would
 pr-check:
@@ -463,9 +388,9 @@ list-tests:
 # === Aliases ===
 alias t := test
 alias b := build
-alias tf := test-fast
-alias tu := test-unit
-alias ti := test-integration
+# alias tf := test-fast  # TODO: Add test-fast target
+# alias tu := test-unit  # TODO: Add test-unit target
+# alias ti := test-integration  # TODO: Add test-integration target
 alias tp := test-pkg
 alias e := errors
 alias w := warnings

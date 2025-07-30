@@ -7,7 +7,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
 use sinex_error::SinexError;
-use sinex_db::queries::EventQueries;
+use sinex_db::repositories::{EventRepository, Repository};
+use sinex_core_types::event_constants::{sources as typed_sources, types as typed_types};
 use sinex_events::{EventFactory, RawEvent, event_types, sources};
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
@@ -65,15 +66,30 @@ impl TerminalCommandCanonicalizer {
         let start_time = timestamp - Duration::seconds(window_secs);
         let end_time = timestamp + Duration::seconds(window_secs);
 
-        let event_id = EventQueries::find_canonical_command_by_time_and_text(
-            pool,
-            start_time,
-            end_time,
-            command_text.to_string(),
-        )
-        .await?;
-
-        Ok(event_id)
+        let event_repo = EventRepository::new(pool);
+        
+        // Search for canonical command events within the time window
+        let events = event_repo
+            .get_events_by_type_and_time_range(
+                "automaton.terminal_command_canonicalizer",
+                "command.canonical",
+                start_time,
+                end_time,
+                Some(1000),
+                None,
+            )
+            .await?;
+        
+        // Find matching command text
+        for event in events {
+            if let Some(cmd) = event.payload.get("command").and_then(|v| v.as_str()) {
+                if cmd == command_text {
+                    return Ok(Some(event.id));
+                }
+            }
+        }
+        
+        Ok(None)
     }
 
     /// Extract command data from a terminal event
@@ -149,25 +165,25 @@ impl TerminalCommandCanonicalizer {
             // Kitty terminal events
             StreamEventFilter::new(
                 Some("shell.kitty".to_string()),
-                Some("command.executed".to_string()),
+                Some(typed_types::shell::COMMAND_EXECUTED.as_str().to_string()),
             ),
             // Atuin history events
             StreamEventFilter::new(
                 Some("shell.atuin".to_string()),
-                Some("command.executed".to_string()),
+                Some(typed_types::shell::COMMAND_EXECUTED.as_str().to_string()),
             ),
             // Shell history events
             StreamEventFilter::new(
                 Some("shell.history.bash".to_string()),
-                Some("command.executed".to_string()),
+                Some(typed_types::shell::COMMAND_EXECUTED.as_str().to_string()),
             ),
             StreamEventFilter::new(
                 Some("shell.history.zsh".to_string()),
-                Some("command.executed".to_string()),
+                Some(typed_types::shell::COMMAND_EXECUTED.as_str().to_string()),
             ),
             StreamEventFilter::new(
                 Some("shell.history.fish".to_string()),
-                Some("command.executed".to_string()),
+                Some(typed_types::shell::COMMAND_EXECUTED.as_str().to_string()),
             ),
         ]
     }
@@ -307,16 +323,17 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                 
                 for source in &["shell.kitty", "shell.atuin", "shell.history.bash", 
                                "shell.history.zsh", "shell.history.fish"] {
-                    let events = EventQueries::get_events_by_type_and_time_range(
-                        source.to_string(),
-                        "command.executed".to_string(),
-                        start_time,
-                        end_time,
-                        Some(10000),
-                        None,
-                    )
-                    .fetch_all(&ctx.db_pool)
-                    .await?;
+                    let event_repo = EventRepository::new(&ctx.db_pool);
+                    let events = event_repo
+                        .get_events_by_type_and_time_range(
+                            source,
+                            typed_types::shell::COMMAND_EXECUTED.as_str(),
+                            start_time,
+                            end_time,
+                            Some(10000),
+                            None,
+                        )
+                        .await?;
                     
                     all_events.extend(events);
                 }

@@ -1,0 +1,1316 @@
+//! State repository for managing system state including checkpoints and operations log
+//!
+//! This repository combines management of:
+//! - Processor checkpoints (tracking progress of event processing)
+//! - Operations log (audit trail of system operations)
+
+use super::checkpoints::{Checkpoint, NewCheckpoint};
+use super::common::{db_error, DbResult, Repository};
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use serde_json::Value as JsonValue;
+use sinex_core_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_core_types::ids::{CheckpointId, EventId, OperationId};
+use sqlx::types::BigDecimal;
+use sqlx::{FromRow, PgPool, Postgres, Transaction};
+
+/// Operation types for the audit log
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationType {
+    // Event operations
+    EventIngested,
+    EventProcessed,
+    EventArchived,
+    EventRestored,
+    EventDeleted,
+
+    // Schema operations
+    SchemaRegistered,
+    SchemaDeprecated,
+    SchemaActivated,
+
+    // Checkpoint operations
+    CheckpointCreated,
+    CheckpointUpdated,
+    CheckpointDeleted,
+
+    // System operations
+    SystemStartup,
+    SystemShutdown,
+    ConfigurationChanged,
+    MigrationExecuted,
+
+    // Service operations
+    ServiceStarted,
+    ServiceStopped,
+    ServiceHealthCheck,
+
+    // Data operations
+    BulkImport,
+    BulkExport,
+    DataPurge,
+
+    // Security operations
+    AccessGranted,
+    AccessDenied,
+    AuthenticationFailed,
+}
+
+impl OperationType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::EventIngested => "event_ingested",
+            Self::EventProcessed => "event_processed",
+            Self::EventArchived => "event_archived",
+            Self::EventRestored => "event_restored",
+            Self::EventDeleted => "event_deleted",
+            Self::SchemaRegistered => "schema_registered",
+            Self::SchemaDeprecated => "schema_deprecated",
+            Self::SchemaActivated => "schema_activated",
+            Self::CheckpointCreated => "checkpoint_created",
+            Self::CheckpointUpdated => "checkpoint_updated",
+            Self::CheckpointDeleted => "checkpoint_deleted",
+            Self::SystemStartup => "system_startup",
+            Self::SystemShutdown => "system_shutdown",
+            Self::ConfigurationChanged => "configuration_changed",
+            Self::MigrationExecuted => "migration_executed",
+            Self::ServiceStarted => "service_started",
+            Self::ServiceStopped => "service_stopped",
+            Self::ServiceHealthCheck => "service_health_check",
+            Self::BulkImport => "bulk_import",
+            Self::BulkExport => "bulk_export",
+            Self::DataPurge => "data_purge",
+            Self::AccessGranted => "access_granted",
+            Self::AccessDenied => "access_denied",
+            Self::AuthenticationFailed => "authentication_failed",
+        }
+    }
+}
+
+impl std::fmt::Display for OperationType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Operation log entry matching core.operations_log
+#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+pub struct Operation {
+    pub operation_id: OperationId,
+    pub operation_ts: DateTime<Utc>,
+    pub operation_type: String,
+    pub operator: String,
+    pub target_table: String,
+    pub target_id: Option<String>,
+    pub operation_data: JsonValue,
+    pub result_status: String,
+    pub result_message: Option<String>,
+    pub duration_ms: Option<i32>,
+    pub metadata: Option<JsonValue>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// New operation to log
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NewOperation {
+    pub operation_type: OperationType,
+    pub performed_by: String,
+    pub target_type: Option<String>,
+    pub target_id: Option<String>,
+    pub description: String,
+    pub metadata: Option<JsonValue>,
+    pub result: OperationResult,
+    pub error_message: Option<String>,
+    pub duration_ms: Option<i64>,
+}
+
+/// Operation result status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationResult {
+    Success,
+    Failure,
+    Partial,
+}
+
+impl OperationResult {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Failure => "failure",
+            Self::Partial => "partial",
+        }
+    }
+}
+
+/// State repository combining checkpoints and operations
+pub struct StateRepository<'a> {
+    pool: &'a PgPool,
+}
+
+impl<'a> Repository<'a> for StateRepository<'a> {
+    fn new(pool: &'a PgPool) -> Self {
+        Self { pool }
+    }
+
+    fn pool(&self) -> &'a PgPool {
+        self.pool
+    }
+}
+
+// Note: Removed TransactionSupport implementation due to lifetime complexity.
+// Use the transaction methods directly on StateRepositoryTx instead.
+
+impl<'a> StateRepository<'a> {
+    // ===== Checkpoint Methods (from CheckpointRepository) =====
+
+    /// Save a checkpoint for a processor
+    pub async fn save_checkpoint(&self, checkpoint: NewCheckpoint) -> DbResult<Checkpoint> {
+        let id = CheckpointId::new();
+        let consumer_group = checkpoint
+            .consumer_group
+            .unwrap_or_else(|| "default".into());
+        let consumer_name = checkpoint.consumer_name.unwrap_or_else(|| "default".into());
+
+        sqlx::query_as!(
+            Checkpoint,
+            r#"
+            INSERT INTO core.processor_checkpoints (
+                id, processor_name, consumer_group, consumer_name,
+                last_processed_id, last_processed_ts, checkpoint_data, state_data
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8
+            )
+            ON CONFLICT ON CONSTRAINT unique_processor_consumer DO UPDATE SET
+                last_processed_id = EXCLUDED.last_processed_id,
+                last_processed_ts = EXCLUDED.last_processed_ts,
+                checkpoint_data = EXCLUDED.checkpoint_data,
+                state_data = EXCLUDED.state_data,
+                processed_count = core.processor_checkpoints.processed_count + 1,
+                last_activity = NOW(),
+                updated_at = NOW(),
+                checkpoint_version = core.processor_checkpoints.checkpoint_version + 1
+            RETURNING 
+                id as "id: CheckpointId",
+                processor_name as "processor_name: ProcessorName",
+                consumer_group as "consumer_group: ConsumerGroup",
+                consumer_name as "consumer_name: ConsumerName",
+                last_processed_id as "last_processed_id?: EventId",
+                last_processed_ts,
+                processed_count,
+                checkpoint_data,
+                state_data,
+                checkpoint_version,
+                last_activity,
+                created_at,
+                updated_at
+            "#,
+            *id.as_ulid() as _,
+            checkpoint.processor_name.as_ref(),
+            consumer_group.as_ref(),
+            consumer_name.as_ref(),
+            checkpoint.last_processed_id.map(|id| *id.as_ulid()) as _,
+            checkpoint.last_processed_ts,
+            checkpoint.checkpoint_data,
+            checkpoint.state_data
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "save checkpoint"))
+    }
+
+    /// Get checkpoint for a specific processor
+    pub async fn get_checkpoint(&self, processor_name: &str) -> DbResult<Option<Checkpoint>> {
+        sqlx::query_as!(
+            Checkpoint,
+            r#"
+            SELECT 
+                id as "id: CheckpointId",
+                processor_name as "processor_name: ProcessorName",
+                consumer_group as "consumer_group: ConsumerGroup",
+                consumer_name as "consumer_name: ConsumerName",
+                last_processed_id as "last_processed_id?: EventId",
+                last_processed_ts,
+                processed_count,
+                checkpoint_data,
+                state_data,
+                checkpoint_version,
+                last_activity,
+                created_at,
+                updated_at
+            FROM core.processor_checkpoints 
+            WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default'
+            "#,
+            processor_name
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get checkpoint"))
+    }
+
+    /// Get all checkpoints
+    pub async fn get_all_checkpoints(&self) -> DbResult<Vec<Checkpoint>> {
+        sqlx::query_as!(
+            Checkpoint,
+            r#"
+            SELECT 
+                id as "id: CheckpointId",
+                processor_name as "processor_name: ProcessorName",
+                consumer_group as "consumer_group: ConsumerGroup",
+                consumer_name as "consumer_name: ConsumerName",
+                last_processed_id as "last_processed_id?: EventId",
+                last_processed_ts,
+                processed_count,
+                checkpoint_data,
+                state_data,
+                checkpoint_version,
+                last_activity,
+                created_at,
+                updated_at
+            FROM core.processor_checkpoints 
+            WHERE consumer_group = 'default' AND consumer_name = 'default'
+            ORDER BY processor_name
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get all checkpoints"))
+    }
+
+    /// Delete checkpoint for a processor
+    pub async fn delete_checkpoint(&self, processor_name: &str) -> DbResult<bool> {
+        let result = sqlx::query!(
+            "DELETE FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default'",
+            processor_name
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete checkpoint"))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    // ===== Operations Log Methods =====
+
+    /// Log an operation
+    pub async fn log_operation(&self, operation: NewOperation) -> DbResult<Operation> {
+        let id = OperationId::new();
+
+        let result = sqlx::query_as!(
+            Operation,
+            r#"
+            INSERT INTO core.operations_log (
+                operation_id, operation_type, operator, target_table,
+                target_id, operation_data, result_status, result_message, duration_ms,
+                metadata
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+            )
+            RETURNING 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            "#,
+            *id.as_ulid() as _,
+            operation.operation_type.as_str(),
+            operation.performed_by,
+            operation
+                .target_type
+                .unwrap_or_else(|| "events".to_string()),
+            operation.target_id,
+            serde_json::json!({ "description": operation.description }),
+            operation.result.as_str(),
+            operation.error_message,
+            operation.duration_ms.map(|d| d as i32),
+            operation.metadata
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "log operation"))?;
+
+        Ok(result)
+    }
+
+    /// Get operation by ID
+    pub async fn get_operation(&self, id: &OperationId) -> DbResult<Option<Operation>> {
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            FROM core.operations_log 
+            WHERE operation_id = $1
+            "#,
+            *id.as_ulid() as _
+        )
+        .fetch_optional(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get operation"))
+    }
+
+    /// Get recent operations
+    pub async fn get_recent_operations(&self, limit: i64) -> DbResult<Vec<Operation>> {
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            FROM core.operations_log 
+            ORDER BY operation_ts DESC
+            LIMIT $1
+            "#,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get recent operations"))
+    }
+
+    /// Get operations by type
+    pub async fn get_operations_by_type(
+        &self,
+        operation_type: OperationType,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<Operation>> {
+        let limit = limit.unwrap_or(100);
+
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            FROM core.operations_log 
+            WHERE operation_type = $1
+            ORDER BY operation_ts DESC
+            LIMIT $2
+            "#,
+            operation_type.as_str(),
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get operations by type"))
+    }
+
+    /// Get operations for a target
+    pub async fn get_operations_for_target(
+        &self,
+        target_table: &str,
+        target_id: &str,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<Operation>> {
+        let limit = limit.unwrap_or(100);
+
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            FROM core.operations_log 
+            WHERE target_table = $1 AND target_id = $2
+            ORDER BY operation_ts DESC
+            LIMIT $3
+            "#,
+            target_table,
+            target_id,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get operations for target"))
+    }
+
+    /// Get operations by operator
+    pub async fn get_operations_by_operator(
+        &self,
+        operator: &str,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<Operation>> {
+        let limit = limit.unwrap_or(100);
+
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            FROM core.operations_log 
+            WHERE operator = $1
+            ORDER BY operation_ts DESC
+            LIMIT $2
+            "#,
+            operator,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get operations by operator"))
+    }
+
+    /// Get failed operations
+    pub async fn get_failed_operations(
+        &self,
+        since: Option<DateTime<Utc>>,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<Operation>> {
+        let limit = limit.unwrap_or(100);
+        let since = since.unwrap_or_else(|| Utc::now() - chrono::Duration::days(7));
+
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            FROM core.operations_log 
+            WHERE result_status = 'failure' AND operation_ts > $1
+            ORDER BY operation_ts DESC
+            LIMIT $2
+            "#,
+            since,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get failed operations"))
+    }
+
+    /// Get operation statistics
+    pub async fn get_operation_statistics(
+        &self,
+        since: Option<DateTime<Utc>>,
+    ) -> DbResult<OperationStatistics> {
+        let since = since.unwrap_or_else(|| Utc::now() - chrono::Duration::days(30));
+
+        let result = sqlx::query!(
+            r#"
+            SELECT
+                COUNT(*) as "total!",
+                COUNT(*) FILTER (WHERE result_status = 'success') as "successful!",
+                COUNT(*) FILTER (WHERE result_status = 'failure') as "failed!",
+                COUNT(*) FILTER (WHERE result_status = 'partial') as "partial!",
+                AVG(duration_ms) as "avg_duration_ms"
+            FROM core.operations_log
+            WHERE operation_ts > $1
+            "#,
+            since
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get operation statistics"))?;
+
+        Ok(OperationStatistics {
+            total: result.total,
+            successful: result.successful,
+            failed: result.failed,
+            partial: result.partial,
+            avg_duration_ms: result.avg_duration_ms.and_then(|d: BigDecimal| {
+                use std::str::FromStr;
+                i64::from_str(&d.to_string()).ok()
+            }),
+        })
+    }
+
+    // ========== Processor Manifests ==========
+
+    /// Register a processor in the manifest
+    pub async fn register_processor(
+        &self,
+        processor_name: &ProcessorName,
+        processor_type: &str,
+        processor_version: &str,
+        hostname: &str,
+    ) -> DbResult<ProcessorManifest> {
+        sqlx::query_as!(
+            ProcessorManifest,
+            r#"
+            INSERT INTO core.processor_manifests (
+                processor_name, processor_version, processor_type, hostname
+            ) VALUES (
+                $1, $2, $3, $4
+            )
+            RETURNING 
+                manifest_id,
+                processor_name,
+                processor_version,
+                processor_type,
+                hostname,
+                start_time,
+                end_time,
+                config,
+                metadata,
+                created_at
+            "#,
+            processor_name.as_ref(),
+            processor_version,
+            processor_type,
+            hostname
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "register processor"))
+    }
+
+    /// Get all active processors
+    pub async fn get_active_processors(&self) -> DbResult<Vec<ProcessorManifest>> {
+        sqlx::query_as!(
+            ProcessorManifest,
+            r#"
+            SELECT 
+                manifest_id,
+                processor_name,
+                processor_version,
+                processor_type,
+                hostname,
+                start_time,
+                end_time,
+                config,
+                metadata,
+                created_at
+            FROM core.processor_manifests
+            WHERE end_time IS NULL
+            ORDER BY processor_name, hostname
+            "#
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get active processors"))
+    }
+
+    /// Get processors by type
+    pub async fn get_processors_by_type(
+        &self,
+        processor_type: &str,
+    ) -> DbResult<Vec<ProcessorManifest>> {
+        sqlx::query_as!(
+            ProcessorManifest,
+            r#"
+            SELECT 
+                manifest_id,
+                processor_name,
+                processor_version,
+                processor_type,
+                hostname,
+                start_time,
+                end_time,
+                config,
+                metadata,
+                created_at
+            FROM core.processor_manifests
+            WHERE processor_type = $1 AND end_time IS NULL
+            ORDER BY processor_name, hostname
+            "#,
+            processor_type
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get processors by type"))
+    }
+
+    /// Update processor heartbeat by marking the end time and creating a new entry
+    pub async fn update_processor_heartbeat(
+        &self,
+        processor_name: &ProcessorName,
+        hostname: &str,
+    ) -> DbResult<bool> {
+        // First, mark the current processor as ended
+        let _ = sqlx::query!(
+            r#"
+            UPDATE core.processor_manifests
+            SET end_time = NOW()
+            WHERE processor_name = $1 AND hostname = $2 AND end_time IS NULL
+            "#,
+            processor_name.as_ref(),
+            hostname
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "end processor manifest"))?;
+
+        // Create a new manifest entry to signal the processor is still alive
+        let result = sqlx::query!(
+            r#"
+            INSERT INTO core.processor_manifests (processor_name, processor_version, processor_type, hostname)
+            SELECT processor_name, processor_version, processor_type, hostname
+            FROM core.processor_manifests
+            WHERE processor_name = $1 AND hostname = $2
+            ORDER BY created_at DESC
+            LIMIT 1
+            "#,
+            processor_name.as_ref(),
+            hostname
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "update processor heartbeat"))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Mark stale processors as ended
+    pub async fn mark_stale_processors(&self, stale_threshold: DateTime<Utc>) -> DbResult<i64> {
+        let result = sqlx::query!(
+            r#"
+            UPDATE core.processor_manifests
+            SET end_time = NOW()
+            WHERE end_time IS NULL AND start_time < $1
+            "#,
+            stale_threshold
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "mark stale processors"))?;
+
+        Ok(result.rows_affected() as i64)
+    }
+
+    /// Get processor health status
+    pub async fn get_processor_health(&self) -> DbResult<ProcessorHealthSummary> {
+        let row = sqlx::query!(
+            r#"
+            SELECT 
+                COUNT(*) FILTER (WHERE end_time IS NULL) as "active_count!",
+                COUNT(*) FILTER (WHERE end_time IS NOT NULL) as "inactive_count!",
+                COUNT(DISTINCT processor_name) as "unique_processors!",
+                MIN(start_time) FILTER (WHERE end_time IS NULL) as oldest_heartbeat
+            FROM core.processor_manifests
+            "#
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get processor health"))?;
+
+        Ok(ProcessorHealthSummary {
+            active_count: row.active_count,
+            inactive_count: row.inactive_count,
+            unique_processors: row.unique_processors,
+            oldest_heartbeat: row.oldest_heartbeat,
+        })
+    }
+
+    // ========== System Verification Methods (from old verification module) ==========
+
+    /// Test UUID generation functionality
+    pub async fn test_uuid_generation(&self) -> DbResult<sqlx::types::Uuid> {
+        let row = sqlx::query!("SELECT gen_random_uuid() as test_uuid")
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "test UUID generation"))?;
+
+        row.test_uuid
+            .ok_or_else(|| db_error(sqlx::Error::RowNotFound, "UUID generation returned NULL"))
+    }
+
+    /// Test ULID generation functionality
+    pub async fn test_ulid_generation(&self) -> DbResult<String> {
+        let row = sqlx::query!("SELECT gen_ulid()::text as test_ulid")
+            .fetch_one(self.pool)
+            .await
+            .map_err(|e| db_error(e, "test ULID generation"))?;
+
+        row.test_ulid
+            .ok_or_else(|| db_error(sqlx::Error::RowNotFound, "ULID generation returned NULL"))
+    }
+
+    /// Check TimescaleDB extension version
+    pub async fn get_timescaledb_version(&self) -> DbResult<Option<String>> {
+        let row = sqlx::query!("SELECT extversion FROM pg_extension WHERE extname = 'timescaledb'")
+            .fetch_optional(self.pool)
+            .await
+            .map_err(|e| db_error(e, "check TimescaleDB version"))?;
+
+        Ok(row.map(|r| r.extversion))
+    }
+
+    /// Test JSON schema validation functionality
+    pub async fn test_json_schema_validation(&self) -> DbResult<bool> {
+        let row =
+            sqlx::query!(r#"SELECT json_matches_schema('{"type": "object"}', '{}') as valid"#)
+                .fetch_one(self.pool)
+                .await
+                .map_err(|e| db_error(e, "test JSON schema validation"))?;
+
+        Ok(row.valid.unwrap_or(false))
+    }
+
+    /// Check if a table exists
+    pub async fn table_exists(&self, schema: &str, table_name: &str) -> DbResult<bool> {
+        let row = sqlx::query!(
+            r#"
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_schema = $1 
+                AND table_name = $2
+            ) as exists
+            "#,
+            schema,
+            table_name
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "check table existence"))?;
+
+        Ok(row.exists.unwrap_or(false))
+    }
+
+    /// Create test event for verification (returns EventId)
+    pub async fn create_test_event(
+        &self,
+        source: &str,
+        event_type: &str,
+        host: &str,
+        payload: JsonValue,
+    ) -> DbResult<EventId> {
+        let id = EventId::new();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO core.events (event_id, source, event_type, host, payload)
+            VALUES ($1, $2, $3, $4, $5)
+            "#,
+            *id.as_ulid() as _,
+            source,
+            event_type,
+            host,
+            payload
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "create test event"))?;
+
+        Ok(id)
+    }
+
+    /// Delete test events by source
+    pub async fn cleanup_test_events_by_source(&self, source: &str) -> DbResult<u64> {
+        let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source)
+            .execute(self.pool)
+            .await
+            .map_err(|e| db_error(e, "cleanup test events by source"))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Delete test events by source and event type
+    pub async fn cleanup_test_events(&self, source: &str, event_type: &str) -> DbResult<u64> {
+        let result = sqlx::query!(
+            "DELETE FROM core.events WHERE source = $1 AND event_type = $2",
+            source,
+            event_type
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "cleanup test events"))?;
+
+        Ok(result.rows_affected())
+    }
+
+    /// Create test checkpoint for verification
+    pub async fn create_test_checkpoint(
+        &self,
+        processor_name: &str,
+        _processed_count: i64,
+        state_data: JsonValue,
+    ) -> DbResult<CheckpointId> {
+        let checkpoint = NewCheckpoint {
+            processor_name: processor_name.into(),
+            consumer_group: Some("test".into()),
+            consumer_name: Some("test".into()),
+            last_processed_id: None,
+            last_processed_ts: None,
+            checkpoint_data: None,
+            state_data: Some(state_data),
+        };
+
+        let result = self.save_checkpoint(checkpoint).await?;
+        Ok(result.id)
+    }
+
+    /// Delete test checkpoint
+    pub async fn delete_test_checkpoint(&self, checkpoint_id: CheckpointId) -> DbResult<bool> {
+        let result = sqlx::query!(
+            "DELETE FROM core.processor_checkpoints WHERE id = $1",
+            *checkpoint_id.as_ulid() as _
+        )
+        .execute(self.pool)
+        .await
+        .map_err(|e| db_error(e, "delete test checkpoint"))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    /// Count events by source and phase (for testing)
+    pub async fn count_events_by_source_and_phase(
+        &self,
+        source: &str,
+        event_type: &str,
+        phase: &str,
+    ) -> DbResult<i64> {
+        let result = sqlx::query!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM core.events
+            WHERE source = $1 
+              AND event_type = $2 
+              AND payload->>'phase' = $3
+            "#,
+            source,
+            event_type,
+            phase
+        )
+        .fetch_one(self.pool)
+        .await
+        .map_err(|e| db_error(e, "count events by source and phase"))?;
+
+        Ok(result.count.unwrap_or(0))
+    }
+
+    /// Run basic system health checks
+    pub async fn run_system_health_checks(&self) -> DbResult<SystemHealthReport> {
+        // Check database connectivity
+        let db_connected = sqlx::query!("SELECT 1 as one")
+            .fetch_one(self.pool)
+            .await
+            .is_ok();
+
+        // Check extensions
+        let timescaledb_version = self.get_timescaledb_version().await.ok().flatten();
+        let ulid_works = self.test_ulid_generation().await.is_ok();
+        let json_schema_works = self.test_json_schema_validation().await.is_ok();
+
+        // Check critical tables
+        let events_table_exists = self.table_exists("core", "events").await.unwrap_or(false);
+        let checkpoints_table_exists = self
+            .table_exists("core", "processor_checkpoints")
+            .await
+            .unwrap_or(false);
+
+        // Get processor health
+        let processor_health = self.get_processor_health().await.ok();
+
+        Ok(SystemHealthReport {
+            db_connected,
+            timescaledb_version,
+            ulid_extension_works: ulid_works,
+            json_schema_extension_works: json_schema_works,
+            events_table_exists,
+            checkpoints_table_exists,
+            processor_health,
+        })
+    }
+}
+
+/// Transaction-scoped state repository
+pub struct StateRepositoryTx<'a> {
+    tx: &'a mut Transaction<'a, Postgres>,
+}
+
+impl<'a> StateRepositoryTx<'a> {
+    /// Save checkpoint within transaction
+    pub async fn save_checkpoint(&mut self, checkpoint: NewCheckpoint) -> DbResult<Checkpoint> {
+        let id = CheckpointId::new();
+        let consumer_group = checkpoint
+            .consumer_group
+            .unwrap_or_else(|| "default".into());
+        let consumer_name = checkpoint.consumer_name.unwrap_or_else(|| "default".into());
+
+        sqlx::query_as!(
+            Checkpoint,
+            r#"
+            INSERT INTO core.processor_checkpoints (
+                id, processor_name, consumer_group, consumer_name,
+                last_processed_id, last_processed_ts, checkpoint_data, state_data
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8
+            )
+            ON CONFLICT ON CONSTRAINT unique_processor_consumer DO UPDATE SET
+                last_processed_id = EXCLUDED.last_processed_id,
+                last_processed_ts = EXCLUDED.last_processed_ts,
+                checkpoint_data = EXCLUDED.checkpoint_data,
+                state_data = EXCLUDED.state_data,
+                processed_count = core.processor_checkpoints.processed_count + 1,
+                last_activity = NOW(),
+                updated_at = NOW(),
+                checkpoint_version = core.processor_checkpoints.checkpoint_version + 1
+            RETURNING 
+                id as "id: CheckpointId",
+                processor_name as "processor_name: ProcessorName",
+                consumer_group as "consumer_group: ConsumerGroup",
+                consumer_name as "consumer_name: ConsumerName",
+                last_processed_id as "last_processed_id?: EventId",
+                last_processed_ts,
+                processed_count,
+                checkpoint_data,
+                state_data,
+                checkpoint_version,
+                last_activity,
+                created_at,
+                updated_at
+            "#,
+            *id.as_ulid() as _,
+            checkpoint.processor_name.as_ref(),
+            consumer_group.as_ref(),
+            consumer_name.as_ref(),
+            checkpoint.last_processed_id.map(|id| *id.as_ulid()) as _,
+            checkpoint.last_processed_ts,
+            checkpoint.checkpoint_data,
+            checkpoint.state_data
+        )
+        .fetch_one(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "save checkpoint with tx"))
+    }
+
+    /// Log operation within transaction
+    pub async fn log_operation(&mut self, operation: NewOperation) -> DbResult<Operation> {
+        let id = OperationId::new();
+
+        let result = sqlx::query_as!(
+            Operation,
+            r#"
+            INSERT INTO core.operations_log (
+                operation_id, operation_type, operator, target_table,
+                target_id, operation_data, result_status, result_message, duration_ms,
+                metadata
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+            )
+            RETURNING 
+                operation_id as "operation_id: OperationId",
+                operation_ts,
+                operation_type,
+                operator,
+                target_table,
+                target_id,
+                operation_data,
+                result_status,
+                result_message,
+                duration_ms,
+                metadata,
+                created_at
+            "#,
+            *id.as_ulid() as _,
+            operation.operation_type.as_str(),
+            operation.performed_by,
+            operation
+                .target_type
+                .unwrap_or_else(|| "events".to_string()),
+            operation.target_id,
+            serde_json::json!({ "description": operation.description }),
+            operation.result.as_str(),
+            operation.error_message,
+            operation.duration_ms.map(|d| d as i32),
+            operation.metadata
+        )
+        .fetch_one(&mut **self.tx)
+        .await
+        .map_err(|e| db_error(e, "log operation with tx"))?;
+
+        Ok(result)
+    }
+}
+
+/// Processor manifest record
+#[derive(Debug, sqlx::FromRow)]
+pub struct ProcessorManifest {
+    pub manifest_id: i32,
+    pub processor_name: String,
+    pub processor_version: String,
+    pub processor_type: String,
+    pub hostname: String,
+    pub start_time: DateTime<Utc>,
+    pub end_time: Option<DateTime<Utc>>,
+    pub config: Option<JsonValue>,
+    pub metadata: Option<JsonValue>,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Processor health summary
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProcessorHealthSummary {
+    pub active_count: i64,
+    pub inactive_count: i64,
+    pub unique_processors: i64,
+    pub oldest_heartbeat: Option<DateTime<Utc>>,
+}
+
+/// Checkpoint gap information
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct CheckpointGap {
+    pub processor_name: String,
+    pub last_processed_id: Option<EventId>,
+    pub processed_count: Option<i64>,
+    pub last_activity: Option<DateTime<Utc>>,
+    pub events_after_checkpoint: Option<i64>,
+    pub first_unprocessed_event_time: Option<DateTime<Utc>>,
+    pub last_unprocessed_event_time: Option<DateTime<Utc>>,
+    pub processing_delay_seconds: Option<i64>,
+}
+
+/// Processor status check result
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ProcessorStatusCheck {
+    pub processor_name: String,
+    pub last_checkpoint: Option<DateTime<Utc>>,
+    pub minutes_since_checkpoint: Option<f64>,
+    pub is_stale: bool,
+    pub expected_type: Option<String>,
+}
+
+/// Operation statistics
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OperationStatistics {
+    pub total: i64,
+    pub successful: i64,
+    pub failed: i64,
+    pub partial: i64,
+    pub avg_duration_ms: Option<i64>,
+}
+
+/// System health report
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SystemHealthReport {
+    pub db_connected: bool,
+    pub timescaledb_version: Option<String>,
+    pub ulid_extension_works: bool,
+    pub json_schema_extension_works: bool,
+    pub events_table_exists: bool,
+    pub checkpoints_table_exists: bool,
+    pub processor_health: Option<ProcessorHealthSummary>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_core_types::event_constants::sources;
+    use sinex_test_utils::prelude::*;
+
+    #[sinex_test]
+    async fn test_checkpoint_operations(ctx: TestContext) -> Result<()> {
+        let repo = StateRepository::new(ctx.pool());
+
+        // Create a checkpoint
+        let event_id = EventId::new();
+        let checkpoint = NewCheckpoint {
+            processor_name: "test-processor".into(),
+            consumer_group: None,
+            consumer_name: None,
+            last_processed_id: Some(event_id),
+            last_processed_ts: Some(Utc::now()),
+            checkpoint_data: Some(serde_json::json!({ "batch_size": 100 })),
+            state_data: None,
+        };
+
+        let saved = repo.save_checkpoint(checkpoint).await?;
+        assert_eq!(saved.processor_name.as_ref(), "test-processor");
+        assert_eq!(saved.checkpoint_version, 1);
+
+        // Update the checkpoint
+        let new_event_id = EventId::new();
+        let update = NewCheckpoint {
+            processor_name: "test-processor".into(),
+            consumer_group: None,
+            consumer_name: None,
+            last_processed_id: Some(new_event_id),
+            last_processed_ts: Some(Utc::now()),
+            checkpoint_data: Some(serde_json::json!({ "batch_size": 200 })),
+            state_data: None,
+        };
+
+        let updated = repo.save_checkpoint(update).await?;
+        assert_eq!(updated.processor_name.as_ref(), "test-processor");
+        assert_eq!(updated.checkpoint_version, 2);
+        assert_eq!(updated.last_processed_id, Some(new_event_id));
+
+        // Get checkpoint
+        let retrieved = repo.get_checkpoint("test-processor").await?;
+        assert!(retrieved.is_some());
+        assert_eq!(retrieved.unwrap().checkpoint_version, 2);
+
+        // Delete checkpoint
+        let deleted = repo.delete_checkpoint("test-processor").await?;
+        assert!(deleted);
+
+        let gone = repo.get_checkpoint("test-processor").await?;
+        assert!(gone.is_none());
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_operation_logging(ctx: TestContext) -> Result<()> {
+        let repo = StateRepository::new(ctx.pool());
+
+        // Log a successful operation
+        let operation = NewOperation {
+            operation_type: OperationType::EventIngested,
+            performed_by: "ingestd".to_string(),
+            target_type: Some("events".to_string()),
+            target_id: Some(EventId::new().to_string()),
+            description: "Ingested event from fs-watcher".to_string(),
+            metadata: Some(serde_json::json!({ "source": sources::FS_WATCHER.as_str() })),
+            result: OperationResult::Success,
+            error_message: None,
+            duration_ms: Some(15),
+        };
+
+        let logged = repo.log_operation(operation).await?;
+        assert_eq!(logged.operation_type, "event_ingested");
+        assert_eq!(logged.result_status, "success");
+        assert!(logged.result_message.is_none());
+
+        // Log a failed operation
+        let failed_op = NewOperation {
+            operation_type: OperationType::SchemaRegistered,
+            performed_by: "api-user".to_string(),
+            target_type: Some("schemas".to_string()),
+            target_id: Some("test-schema-1.0.0".to_string()),
+            description: "Failed to register schema".to_string(),
+            metadata: None,
+            result: OperationResult::Failure,
+            error_message: Some("Invalid JSON schema".to_string()),
+            duration_ms: Some(5),
+        };
+
+        let failed_logged = repo.log_operation(failed_op).await?;
+        assert_eq!(failed_logged.result_status, "failure");
+        assert_eq!(
+            failed_logged.result_message.as_deref(),
+            Some("Invalid JSON schema")
+        );
+
+        // Get recent operations
+        let recent = repo.get_recent_operations(10).await?;
+        assert_eq!(recent.len(), 2);
+
+        // Get operations by type
+        let ingested = repo
+            .get_operations_by_type(OperationType::EventIngested, None)
+            .await?;
+        assert_eq!(ingested.len(), 1);
+
+        // Get failed operations
+        let failed = repo.get_failed_operations(None, None).await?;
+        assert_eq!(failed.len(), 1);
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_operation_statistics(ctx: TestContext) -> Result<()> {
+        let repo = StateRepository::new(ctx.pool());
+
+        // Log various operations
+        let operations = vec![
+            (OperationType::EventIngested, OperationResult::Success, 10),
+            (OperationType::EventProcessed, OperationResult::Success, 20),
+            (OperationType::EventArchived, OperationResult::Success, 15),
+            (OperationType::SchemaRegistered, OperationResult::Failure, 5),
+            (OperationType::BulkImport, OperationResult::Partial, 100),
+        ];
+
+        for (op_type, result, duration) in operations {
+            let operation = NewOperation {
+                operation_type: op_type,
+                performed_by: "test-service".to_string(),
+                target_type: None,
+                target_id: None,
+                description: "Test operation".to_string(),
+                metadata: None,
+                result,
+                error_message: if result == OperationResult::Failure {
+                    Some("Test error".to_string())
+                } else {
+                    None
+                },
+                duration_ms: Some(duration),
+            };
+
+            repo.log_operation(operation).await?;
+        }
+
+        // Get statistics
+        let stats = repo.get_operation_statistics(None).await?;
+        assert_eq!(stats.total, 5);
+        assert_eq!(stats.successful, 3);
+        assert_eq!(stats.failed, 1);
+        assert_eq!(stats.partial, 1);
+        assert!(stats.avg_duration_ms.is_some());
+
+        Ok(())
+    }
+}

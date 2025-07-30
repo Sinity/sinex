@@ -20,6 +20,8 @@ chrono = { workspace = true }
 regex = { workspace = true }
 url = { workspace = true }
 jsonschema = { workspace = true }
+validator = { workspace = true }
+lazy_static = "1.5"
 
 # Logging
 tracing = { workspace = true }

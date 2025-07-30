@@ -564,7 +564,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_complex_property_with_context(ctx: TestContext) -> Result<()> {
-        let mut runner = proptest::test_runner::TestRunner::deterministic();
+        let runner = proptest::test_runner::TestRunner::deterministic();
 
         // Complex property: events with same source should be grouped correctly
         let sources = vec!["test-a", "test-b", "test-c"];
@@ -653,7 +653,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_property_based_edge_cases(ctx: TestContext) -> Result<()> {
-        let mut runner = proptest::test_runner::TestRunner::deterministic();
+        let runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test edge cases with property strategies
         let long_source = "a".repeat(256);

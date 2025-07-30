@@ -9,6 +9,7 @@ pub mod coordination;
 pub mod json_helpers;
 pub mod resource_guard;
 pub mod retry_helpers;
+pub mod retry_helpers_tokio; // New tokio-retry based implementation
 pub mod sqlite_helpers;
 pub mod timestamp_helpers;
 pub mod wait_helpers;
@@ -19,6 +20,7 @@ pub use coordination::*;
 pub use json_helpers::*;
 pub use resource_guard::*;
 pub use retry_helpers::*;
+pub use retry_helpers_tokio::*;
 pub use sqlite_helpers::*;
 pub use timestamp_helpers::*;
 pub use wait_helpers::*;

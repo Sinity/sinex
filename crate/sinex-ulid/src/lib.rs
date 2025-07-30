@@ -530,7 +530,11 @@ mod sqlx_impl {
     }
 
     impl sqlx::Encode<'_, Postgres> for Ulid {
-        fn encode_by_ref(&self, buf: &mut PgArgumentBuffer) -> sqlx::encode::IsNull {
+        fn encode_by_ref(
+            &self,
+            buf: &mut PgArgumentBuffer,
+        ) -> Result<sqlx::encode::IsNull, Box<dyn std::error::Error + Send + Sync + 'static>>
+        {
             self.to_uuid().encode_by_ref(buf)
         }
     }

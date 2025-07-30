@@ -15,6 +15,10 @@ sinex-ulid = { path = "../sinex-ulid" }
 displaydoc = "0.2"
 indexmap = { version = "2.0", features = ["serde"] }
 anyhow.workspace = true
+color-eyre = { workspace = true }
+serde_path_to_error = { workspace = true }
+gethostname = { workspace = true }
+
 
 [dev-dependencies]
 criterion = "0.5"

@@ -14,8 +14,8 @@ use crate::security::{SecurityError, SecurityValidator};
 use crate::{DbPool, RawEvent}; // Re-exported from sinex-events
 use sinex_events::constants::{event_types, sources};
 use sinex_ulid::Ulid;
-use sinex_validation::ValidationChain;
 use sqlx::FromRow;
+use validator::{Validate, ValidationError as ValidatorError, ValidationErrors as ValidatorErrors};
 
 /// Record structure for active schema queries
 #[derive(Debug, FromRow)]
@@ -28,7 +28,7 @@ struct ActiveSchemaRecord {
     pub schema_content: Value,
 }
 
-/// Helper function to validate required JSON fields using ValidationChain
+/// Helper function to validate required JSON fields
 fn validate_required_field<T, F>(
     payload: &Value,
     field_name: &str,
@@ -69,14 +69,13 @@ fn validate_required_string_field(
         })?
         .to_string();
 
-    // Use the ValidationChain directly since it returns Result<T, SinexError>
-    let _validated_string = ValidationChain::validate(string_value.clone(), field_name)
-        .not_empty()
-        .into_result()
-        .map_err(|e| ValidationError::InvalidValue {
+    // Validate non-empty
+    if string_value.is_empty() {
+        return Err(ValidationError::InvalidValue {
             field: field_name.to_string(),
-            reason: e.to_string(),
-        })?;
+            reason: "must not be empty".to_string(),
+        });
+    }
 
     Ok(string_value)
 }
@@ -104,7 +103,7 @@ where
     }
 }
 
-/// Enhanced ValidationChain helper for numeric field validation
+/// Helper for numeric field validation
 fn validate_required_numeric_field<T>(
     payload: &Value,
     field_name: &str,
@@ -135,7 +134,7 @@ where
     })
 }
 
-/// Enhanced ValidationChain helper for optional numeric field validation
+/// Helper for optional numeric field validation
 fn validate_optional_numeric_field<T>(
     payload: &Value,
     field_name: &str,
@@ -425,22 +424,20 @@ impl EventValidator {
             std::borrow::Cow::Borrowed(s) => s.to_string(),
         };
 
-        // Basic field validation using ValidationChain
-        let _validated_source = ValidationChain::validate(sanitized_source, "source")
-            .not_empty()
-            .into_result()
-            .map_err(|e| ValidationError::InvalidValue {
+        // Basic field validation
+        if sanitized_source.is_empty() {
+            return Err(ValidationError::InvalidValue {
                 field: "source".to_string(),
-                reason: e.to_string(),
-            })?;
+                reason: "must not be empty".to_string(),
+            });
+        }
 
-        let _validated_event_type = ValidationChain::validate(event_type.to_string(), "event_type")
-            .not_empty()
-            .into_result()
-            .map_err(|e| ValidationError::InvalidValue {
+        if event_type.is_empty() {
+            return Err(ValidationError::InvalidValue {
                 field: "event_type".to_string(),
-                reason: e.to_string(),
-            })?;
+                reason: "must not be empty".to_string(),
+            });
+        }
 
         // First check for exact match
         let key = (source.to_string(), event_type.to_string());
@@ -454,8 +451,7 @@ impl EventValidator {
             validator(payload)?;
         }
 
-        // For unknown event types, just ensure it's an object using manual validation
-        // (ValidationChain for JSON doesn't have custom method, needs to be added in future)
+        // For unknown event types, just ensure it's an object
         if !payload.is_object() {
             return Err(ValidationError::InvalidType {
                 field: "payload".to_string(),

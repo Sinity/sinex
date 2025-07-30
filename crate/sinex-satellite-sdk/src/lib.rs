@@ -109,6 +109,7 @@ pub mod cli;
 pub mod config;
 pub mod coordination;
 pub mod examples;
+pub mod figment_config;
 pub mod grpc_client;
 pub mod heartbeat;
 pub mod lifecycle;
@@ -227,7 +228,6 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_core_types::ValidationChain;
 pub use sinex_db::DbError; // Import DbError for conversion
 pub use sinex_error::SinexError;
 pub use sinex_events::RawEvent;

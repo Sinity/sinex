@@ -38,6 +38,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use validator::Validate;
 
 #[derive(thiserror::Error, Debug)]
 pub enum ConfigError {
@@ -63,13 +64,15 @@ pub enum ConfigError {
 /// # Field Defaults
 /// Most fields have sensible defaults provided by corresponding `default_*` functions.
 /// See individual field documentation for specific default values.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct SatelliteConfig {
     /// Service name (used for logging and identification)
+    #[validate(length(min = 1, message = "Service name cannot be empty"))]
     pub service_name: String,
 
     /// Log level
     #[serde(default = "default_log_level")]
+    #[validate(custom(function = "validate_log_level", message = "Invalid log level"))]
     pub log_level: String,
 
     /// Path to Unix Domain Socket for gRPC communication with ingestd.
@@ -79,6 +82,7 @@ pub struct SatelliteConfig {
     ///
     /// Default: `/run/sinex/ingest.sock` (see `default_ingest_socket()`)
     #[serde(default = "default_ingest_socket")]
+    #[validate(custom(function = "validate_socket_path", message = "Invalid socket path"))]
     pub ingest_socket_path: String,
 
     /// Redis connection URL for message bus.
@@ -88,6 +92,7 @@ pub struct SatelliteConfig {
     ///
     /// Default: `redis://localhost:6379` (see `default_redis_url()`)
     #[serde(default = "default_redis_url")]
+    #[validate(url(message = "Invalid Redis URL"))]
     pub redis_url: String,
 
     /// Database URL for direct database access (automata only).
@@ -97,6 +102,7 @@ pub struct SatelliteConfig {
     ///
     /// This field is optional - not all automata require database access.
     /// Ingestors typically don't need this as they communicate via gRPC.
+    #[validate(url(message = "Invalid database URL"))]
     pub database_url: Option<String>,
 
     /// Database connection pool size.
@@ -106,10 +112,12 @@ pub struct SatelliteConfig {
     ///
     /// Default: `10` (see `default_pool_size()`)
     #[serde(default = "default_pool_size")]
+    #[validate(range(min = 1, max = 1000, message = "Pool size must be between 1 and 1000"))]
     pub database_pool_size: u32,
 
     /// Working directory for temporary files
     #[serde(default = "default_work_dir")]
+    #[validate(custom(function = "validate_work_dir", message = "Invalid work directory"))]
     pub work_dir: PathBuf,
 
     /// Enable dry-run mode (no actual operations)
@@ -117,21 +125,25 @@ pub struct SatelliteConfig {
     pub dry_run: bool,
 
     /// Replay mode configuration
+    #[validate(nested)]
     pub replay: Option<ReplayConfig>,
 }
 
 /// Configuration for event source satellites
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct EventSourceConfig {
     #[serde(flatten)]
+    #[validate(nested)]
     pub base: SatelliteConfig,
 
     /// Batch size for event submission
     #[serde(default = "default_batch_size")]
+    #[validate(range(min = 1, message = "Batch size must be greater than 0"))]
     pub batch_size: usize,
 
     /// Maximum batch wait time in seconds
     #[serde(default = "default_batch_timeout")]
+    #[validate(range(min = 1, message = "Batch timeout must be greater than 0"))]
     pub batch_timeout_secs: u64,
 
     /// Source-specific configuration
@@ -139,26 +151,32 @@ pub struct EventSourceConfig {
 }
 
 /// Configuration for automaton satellites
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct AutomatonConfig {
     #[serde(flatten)]
+    #[validate(nested)]
     pub base: SatelliteConfig,
 
     /// Redis Stream consumer group name
+    #[validate(length(min = 1, message = "Consumer group cannot be empty"))]
     pub consumer_group: String,
 
     /// Redis Stream consumer name (usually hostname + process ID)
+    #[validate(length(min = 1, message = "Consumer name cannot be empty"))]
     pub consumer_name: String,
 
     /// Topics to subscribe to
+    #[validate(length(min = 1, message = "At least one topic must be specified"))]
     pub topics: Vec<String>,
 
     /// Maximum number of messages to process per batch
     #[serde(default = "default_processing_batch_size")]
+    #[validate(range(min = 1, message = "Processing batch size must be greater than 0"))]
     pub processing_batch_size: usize,
 
     /// Checkpoint interval in seconds
     #[serde(default = "default_checkpoint_interval")]
+    #[validate(range(min = 1, message = "Checkpoint interval must be greater than 0"))]
     pub checkpoint_interval_secs: u64,
 
     /// Automaton-specific configuration
@@ -166,15 +184,17 @@ pub struct AutomatonConfig {
 }
 
 /// Configuration for replay mode
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct ReplayConfig {
     /// Enable replay mode
     pub enabled: bool,
 
     /// Start time for replay (RFC 3339 format)
+    #[validate(custom(function = "validate_rfc3339", message = "Invalid RFC 3339 timestamp"))]
     pub start_time: Option<String>,
 
     /// End time for replay (RFC 3339 format)
+    #[validate(custom(function = "validate_rfc3339", message = "Invalid RFC 3339 timestamp"))]
     pub end_time: Option<String>,
 
     /// Event sources to replay (empty = all)
@@ -185,6 +205,7 @@ pub struct ReplayConfig {
 
     /// Maximum events per batch during replay
     #[serde(default = "default_replay_batch_size")]
+    #[validate(range(min = 1, message = "Replay batch size must be greater than 0"))]
     pub replay_batch_size: usize,
 }
 
@@ -243,23 +264,13 @@ impl SatelliteConfig {
     }
 
     /// Validate configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.service_name.is_empty() {
-            return Err(ConfigError::MissingField("service_name".to_string()));
-        }
+    pub fn validate_config(&self) -> Result<(), ConfigError> {
+        use validator::Validate as ValidateTrait;
 
-        // Validate log level
-        match self.log_level.as_str() {
-            "trace" | "debug" | "info" | "warn" | "error" => {}
-            _ => {
-                return Err(ConfigError::Validation(format!(
-                    "Invalid log level: {}",
-                    self.log_level
-                )));
-            }
-        }
+        ValidateTrait::validate(self)
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
 
-        // Validate paths exist or can be created
+        // Additional runtime validation - check if parent directory exists
         if let Some(parent) = self.work_dir.parent() {
             if !parent.exists() {
                 return Err(ConfigError::Validation(format!(
@@ -275,20 +286,14 @@ impl SatelliteConfig {
 
 impl EventSourceConfig {
     /// Validate event source configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        self.base.validate()?;
+    pub fn validate_config(&self) -> Result<(), ConfigError> {
+        use validator::Validate as ValidateTrait;
 
-        if self.batch_size == 0 {
-            return Err(ConfigError::Validation(
-                "batch_size must be greater than 0".to_string(),
-            ));
-        }
+        ValidateTrait::validate(self)
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
 
-        if self.batch_timeout_secs == 0 {
-            return Err(ConfigError::Validation(
-                "batch_timeout_secs must be greater than 0".to_string(),
-            ));
-        }
+        // Base validation includes runtime checks
+        self.base.validate_config()?;
 
         Ok(())
     }
@@ -296,28 +301,14 @@ impl EventSourceConfig {
 
 impl AutomatonConfig {
     /// Validate automaton configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        self.base.validate()?;
+    pub fn validate_config(&self) -> Result<(), ConfigError> {
+        use validator::Validate as ValidateTrait;
 
-        if self.consumer_group.is_empty() {
-            return Err(ConfigError::MissingField("consumer_group".to_string()));
-        }
+        ValidateTrait::validate(self)
+            .map_err(|e| ConfigError::Validation(format!("Validation failed: {}", e)))?;
 
-        if self.consumer_name.is_empty() {
-            return Err(ConfigError::MissingField("consumer_name".to_string()));
-        }
-
-        if self.topics.is_empty() {
-            return Err(ConfigError::Validation(
-                "At least one topic must be specified".to_string(),
-            ));
-        }
-
-        if self.processing_batch_size == 0 {
-            return Err(ConfigError::Validation(
-                "processing_batch_size must be greater than 0".to_string(),
-            ));
-        }
+        // Base validation includes runtime checks
+        self.base.validate_config()?;
 
         Ok(())
     }
@@ -371,4 +362,39 @@ fn default_checkpoint_interval() -> u64 {
 
 fn default_replay_batch_size() -> usize {
     1000
+}
+
+// Custom validator functions
+
+fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
+    match level {
+        "trace" | "debug" | "info" | "warn" | "error" => Ok(()),
+        _ => Err(validator::ValidationError::new("invalid_log_level")),
+    }
+}
+
+fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
+    use sinex_validation::validate_path;
+
+    validate_path(path)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_socket_path"))
+}
+
+fn validate_work_dir(path: &PathBuf) -> Result<(), validator::ValidationError> {
+    use sinex_validation::validate_path;
+
+    let path_str = path
+        .to_str()
+        .ok_or_else(|| validator::ValidationError::new("non_utf8_path"))?;
+
+    validate_path(path_str)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_work_dir"))
+}
+
+fn validate_rfc3339(timestamp: &str) -> Result<(), validator::ValidationError> {
+    chrono::DateTime::parse_from_rfc3339(timestamp)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
 }

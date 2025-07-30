@@ -415,14 +415,14 @@ fn get_cpu_count() -> usize {
 }
 
 fn get_memory_gb() -> Result<f64> {
-    #[cfg(all(feature = "bench", feature = "sysinfo"))]
+    #[cfg(feature = "bench")]
     {
-        use sysinfo::{System, SystemExt};
+        use sysinfo::System;
         let mut sys = System::new_all();
         sys.refresh_all();
         Ok(sys.total_memory() as f64 / 1024.0 / 1024.0 / 1024.0)
     }
-    #[cfg(not(all(feature = "bench", feature = "sysinfo")))]
+    #[cfg(not(feature = "bench"))]
     {
         Ok(0.0)
     }

@@ -111,6 +111,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
+use sinex_validation::validate_path;
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -513,7 +514,15 @@ impl FilesystemProcessor {
         path: &Path,
         metadata: &std::fs::Metadata,
     ) -> SatelliteResult<Vec<RawEvent>> {
-        let path_str = path.to_string_lossy().to_string();
+        // Validate path before processing
+        let path_str = path.to_str().ok_or_else(|| {
+            SatelliteError::General(anyhow::anyhow!("Path contains invalid UTF-8"))
+        })?;
+
+        // Validate the path structure
+        validate_path(path_str)
+            .map_err(|e| SatelliteError::General(anyhow::anyhow!("Invalid path: {}", e)))?;
+
         let now = Utc::now();
         let mut events = Vec::new();
 
@@ -706,6 +715,11 @@ impl FilesystemProcessor {
                 expanded.to_string()
             };
 
+            // Validate the base path
+            validate_path(&base_path_str).map_err(|e| {
+                SatelliteError::General(anyhow::anyhow!("Invalid watch path: {}", e))
+            })?;
+
             let base_path = std::path::Path::new(&base_path_str);
 
             // Create directory if it doesn't exist (for testing)
@@ -790,10 +804,17 @@ impl FilesystemProcessor {
         event_kind: &str,
     ) -> SatelliteResult<()> {
         if let Some(ref stage_context) = self.stage_context {
+            // Validate path before processing
+            let file_path_str = file_path.to_str().ok_or_else(|| {
+                SatelliteError::General(anyhow::anyhow!("Path contains invalid UTF-8"))
+            })?;
+
+            validate_path(file_path_str)
+                .map_err(|e| SatelliteError::General(anyhow::anyhow!("Invalid path: {}", e)))?;
+
             // Step 1: Register in-flight source material immediately
             let material_type = "file".to_string();
-            let file_path_str = file_path.to_string_lossy().to_string();
-            let source_uri = Some(file_path_str.as_str());
+            let source_uri = Some(file_path_str);
             let initial_metadata = json!({
                 "file_path": file_path_str,
                 "event_kind": event_kind,
@@ -810,7 +831,7 @@ impl FilesystemProcessor {
             let event = factory.create_event(
                 &format!("file.{}", event_kind),
                 json!({
-                    "path": file_path.to_string_lossy(),
+                    "path": file_path_str,
                     "event_kind": event_kind,
                     "source_material_id": source_material_id.to_string(),
                     "timestamp": Utc::now(),
@@ -1324,6 +1345,131 @@ impl ExplorationProvider for FilesystemProcessor {
 
             std::fs::write(path, content)?;
         }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sinex_test_utils::prelude::*;
+    use tempfile::TempDir;
+
+    #[sinex_test]
+    async fn test_path_validation_in_create_discovery_events(
+        ctx: TestContext,
+    ) -> anyhow::Result<()> {
+        let config = FilesystemConfig {
+            watch_patterns: vec!["**/*.rs".to_string()],
+            ignore_patterns: vec![],
+            debounce_ms: 100,
+            max_depth: None,
+        };
+
+        let processor = FilesystemProcessor {
+            config,
+            context: None,
+            stage_context: None,
+            watch_roots: vec![],
+            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            last_state: None,
+            checkpoint_manager: None,
+        };
+
+        // Test with invalid path containing null bytes
+        let invalid_path = Path::new("test\0file.rs");
+        let metadata = std::fs::Metadata::from(std::fs::metadata(".").unwrap());
+
+        let result = processor.create_discovery_events(invalid_path, &metadata);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("Invalid path"));
+
+        // Test with valid path
+        let valid_path = Path::new("test_file.rs");
+        let result = processor.create_discovery_events(valid_path, &metadata);
+        assert!(result.is_ok());
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_watch_path_validation(ctx: TestContext) -> anyhow::Result<()> {
+        let temp_dir = TempDir::new()?;
+        let base_path = temp_dir.path();
+
+        // Create a config with path that will be validated
+        let config = FilesystemConfig {
+            watch_patterns: vec![format!("{}/**/*.rs", base_path.display())],
+            ignore_patterns: vec![],
+            debounce_ms: 100,
+            max_depth: None,
+        };
+
+        let mut processor = FilesystemProcessor {
+            config: config.clone(),
+            context: None,
+            stage_context: None,
+            watch_roots: vec![],
+            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            last_state: None,
+            checkpoint_manager: None,
+        };
+
+        // Create a mock debouncer - we just need the setup logic to run
+        let (notify_tx, _notify_rx) = std::sync::mpsc::channel();
+        let mut debouncer = notify_debouncer_full::new_debouncer(
+            std::time::Duration::from_millis(100),
+            None,
+            notify_tx,
+        )?;
+
+        // Test setup with valid paths
+        let result = processor.setup_watch_paths(&mut debouncer).await;
+        assert!(result.is_ok());
+        assert!(!processor.watch_roots.is_empty());
+
+        // Test with invalid path pattern containing null bytes
+        processor.config.watch_patterns = vec!["test\0path/**/*.rs".to_string()];
+        processor.watch_roots.clear();
+
+        let result = processor.setup_watch_paths(&mut debouncer).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Invalid watch path"));
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_file_path_validation_in_staging(ctx: TestContext) -> anyhow::Result<()> {
+        let config = FilesystemConfig {
+            watch_patterns: vec!["**/*.rs".to_string()],
+            ignore_patterns: vec![],
+            debounce_ms: 100,
+            max_depth: None,
+        };
+
+        let processor = FilesystemProcessor {
+            config,
+            context: None,
+            stage_context: None,
+            watch_roots: vec![],
+            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            last_state: None,
+            checkpoint_manager: None,
+        };
+
+        // Test with path containing directory traversal
+        let invalid_path = Path::new("../../../etc/passwd");
+        let result = processor
+            ._process_file_with_staging(invalid_path, "modified")
+            .await;
+
+        // Should be OK since stage_context is None (no actual staging happens)
+        assert!(result.is_ok());
 
         Ok(())
     }

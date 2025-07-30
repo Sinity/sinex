@@ -13,4 +13,5 @@ pub use validation::{
     ValidationError,
 };
 
-pub use validation_chains::{JsonType, MultiValidator, ValidationChain, Validator};
+// Export validator crate types for convenience
+pub use validator::{Validate, ValidationError as ValidatorError, ValidationErrors};

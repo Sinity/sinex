@@ -689,7 +689,7 @@ mod tests {
         });
 
         // Wait for at least one collection cycle
-        ctx.timing().wait(Duration::from_millis(150)).await?;
+        tokio::time::sleep(Duration::from_millis(150)).await;
 
         handle.abort();
 

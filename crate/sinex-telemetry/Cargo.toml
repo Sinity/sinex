@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 
+[features]
+default = []
+bench = []
+
 
 [dependencies]
 # Core async and concurrency

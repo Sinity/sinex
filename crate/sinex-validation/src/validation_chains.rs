@@ -1,609 +1,255 @@
-use crate::validation::{Result, ValidationError};
-use regex::Regex;
-use serde_json::Value;
-use url::Url;
+//! Modern validation using the validator crate
+//!
+//! This module provides derive-based validation for structs using the validator crate,
+//! replacing the custom validation chains with a more standard approach.
 
-/// A validation chain that accumulates errors and provides fluent API for validation
-pub struct ValidationChain<T> {
-    value: T,
-    field_name: String,
-    errors: Vec<ValidationError>,
+use serde::{Deserialize, Serialize};
+use validator::{Validate, ValidationError, ValidationErrors};
+
+/// Example configuration struct with validation rules
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct DatabaseConfig {
+    #[validate(url)]
+    pub connection_url: String,
+
+    #[validate(range(min = 1, max = 1000))]
+    pub max_connections: u32,
+
+    #[validate(range(min = 0))]
+    pub connection_timeout_ms: u64,
+
+    #[validate(length(min = 1))]
+    pub database_name: String,
 }
 
-impl<T> ValidationChain<T> {
-    /// Create a new validation chain for a value
-    pub fn validate(value: T, field_name: &str) -> Self {
-        Self {
-            value,
-            field_name: field_name.to_string(),
-            errors: Vec::new(),
-        }
-    }
+/// Example event validation
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct EventValidation {
+    #[validate(length(min = 1, max = 100))]
+    pub event_type: String,
 
-    /// Check if the validation chain has no errors
-    pub fn is_valid(&self) -> bool {
-        self.errors.is_empty()
-    }
+    #[validate(length(min = 1, max = 50))]
+    pub source: String,
 
-    /// Convert the validation chain into a Result
-    pub fn into_result(self) -> Result<T> {
-        if self.errors.is_empty() {
-            Ok(self.value)
-        } else {
-            // Combine all errors into a single message
-            let combined_message = self
-                .errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("; ");
-            Err(ValidationError::General(combined_message))
-        }
-    }
+    #[validate(custom(function = "validate_host"))]
+    pub host: String,
 
-    /// Get all accumulated errors
-    pub fn errors(&self) -> &[ValidationError] {
-        &self.errors
-    }
+    #[validate(email)]
+    pub contact_email: Option<String>,
 }
 
-// String-specific validations
-impl ValidationChain<String> {
-    /// Validate that the string is not empty
-    pub fn not_empty(mut self) -> Self {
-        if self.value.is_empty() {
-            self.errors.push(ValidationError::General(format!(
-                "{} cannot be empty",
-                self.field_name
-            )));
-        }
-        self
+/// Custom validator for host names
+fn validate_host(host: &str) -> Result<(), ValidationError> {
+    if host.is_empty() {
+        return Err(ValidationError::new("host_empty"));
     }
 
-    /// Validate minimum string length
-    pub fn min_length(mut self, min: usize) -> Self {
-        if self.value.len() < min {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be at least {} characters long",
-                self.field_name, min
-            )));
-        }
-        self
+    // Basic hostname validation - could be more sophisticated
+    if host.contains("..") || host.starts_with('.') || host.ends_with('.') {
+        return Err(ValidationError::new("invalid_hostname"));
     }
 
-    /// Validate maximum string length
-    pub fn max_length(mut self, max: usize) -> Self {
-        if self.value.len() > max {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be at most {} characters long",
-                self.field_name, max
-            )));
-        }
-        self
-    }
+    Ok(())
+}
 
-    /// Validate string matches a regex pattern
-    pub fn matches_regex(mut self, pattern: &Regex) -> Self {
-        if !pattern.is_match(&self.value) {
-            self.errors.push(ValidationError::General(format!(
-                "{} does not match pattern: {}",
-                self.field_name,
-                pattern.as_str()
-            )));
-        }
-        self
-    }
+// Regex for safe relative paths (no directory traversal)
+lazy_static::lazy_static! {
+    static ref SAFE_PATH_REGEX: regex::Regex = regex::Regex::new(r"^[a-zA-Z0-9_\-/]+$").unwrap();
+}
 
-    /// Validate string is safe for use as a file path (no directory traversal)
-    pub fn is_path_safe(mut self) -> Self {
-        match crate::validation::validate_path(&self.value) {
-            Ok(_) => {}
-            Err(_) => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} contains unsafe path characters or patterns",
-                    self.field_name
-                )));
-            }
-        }
-        self
-    }
+/// File path validation
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct FilePathConfig {
+    #[validate(custom(function = "validate_path"))]
+    pub base_path: String,
 
-    /// Validate string is a valid URL
-    pub fn is_valid_url(mut self) -> Self {
-        match Url::parse(&self.value) {
-            Ok(_) => {}
-            Err(e) => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} invalid URL: {}",
-                    self.field_name, e
-                )));
-            }
-        }
-        self
-    }
+    #[validate(custom(function = "validate_relative_path"))]
+    pub relative_path: String,
+}
 
-    /// Validate string contains no shell metacharacters
-    pub fn no_shell_metacharacters(mut self) -> Self {
-        if crate::validation::contains_shell_metacharacters(&self.value) {
-            self.errors.push(ValidationError::General(format!(
-                "{} contains shell metacharacters",
-                self.field_name
-            )));
-        }
-        self
+fn validate_relative_path(path: &str) -> Result<(), ValidationError> {
+    if SAFE_PATH_REGEX.is_match(path) {
+        Ok(())
+    } else {
+        Err(ValidationError::new("invalid_relative_path"))
     }
 }
 
-// Generic validations for all types
-impl<T> ValidationChain<T> {
-    /// Custom validation with a predicate for any type
-    pub fn custom<F>(mut self, predicate: F, error_message: &str) -> Self
-    where
-        F: FnOnce(&T) -> bool,
-    {
-        if !predicate(&self.value) {
-            self.errors.push(ValidationError::General(format!(
-                "{} {}",
-                self.field_name, error_message
-            )));
+fn validate_path(path: &str) -> Result<(), ValidationError> {
+    if path.contains("..") {
+        return Err(ValidationError::new("path_traversal"));
+    }
+
+    if !path.starts_with('/') {
+        return Err(ValidationError::new("absolute_path_required"));
+    }
+
+    Ok(())
+}
+
+/// Network configuration with nested validation
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct NetworkConfig {
+    #[validate(ip)]
+    pub bind_address: String,
+
+    #[validate(range(min = 1, max = 65535))]
+    pub port: u16,
+
+    #[validate(nested)]
+    pub tls: Option<TlsConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+pub struct TlsConfig {
+    #[validate(custom(function = "validate_path"))]
+    pub cert_path: String,
+
+    #[validate(custom(function = "validate_path"))]
+    pub key_path: String,
+
+    #[validate(length(min = 1))]
+    pub ca_cert_path: Option<String>,
+}
+
+/// Helper functions for validation
+pub trait ValidateExt {
+    /// Validate and return a user-friendly error message
+    fn validate_friendly(&self) -> Result<(), String>;
+
+    /// Validate with field context
+    fn validate_with_context(&self, context: &str) -> Result<(), String>;
+}
+
+impl<T: Validate> ValidateExt for T {
+    fn validate_friendly(&self) -> Result<(), String> {
+        match self.validate() {
+            Ok(_) => Ok(()),
+            Err(errors) => Err(format_validation_errors(&errors)),
         }
-        self
+    }
+
+    fn validate_with_context(&self, context: &str) -> Result<(), String> {
+        match self.validate() {
+            Ok(_) => Ok(()),
+            Err(errors) => Err(format_validation_errors_with_context(&errors, context)),
+        }
     }
 }
 
-// String slice (&str) validations - mirrors String implementation for compatibility
-impl ValidationChain<&str> {
-    /// Validate that the string is not empty
-    pub fn not_empty(mut self) -> Self {
-        if self.value.is_empty() {
-            self.errors.push(ValidationError::General(format!(
-                "{} cannot be empty",
-                self.field_name
-            )));
-        }
-        self
-    }
+/// Format validation errors into a user-friendly message
+pub fn format_validation_errors(errors: &ValidationErrors) -> String {
+    let mut messages = Vec::new();
 
-    /// Validate minimum string length
-    pub fn min_length(mut self, min: usize) -> Self {
-        if self.value.len() < min {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be at least {} characters long",
-                self.field_name, min
-            )));
-        }
-        self
-    }
-
-    /// Validate maximum string length
-    pub fn max_length(mut self, max: usize) -> Self {
-        if self.value.len() > max {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be at most {} characters long",
-                self.field_name, max
-            )));
-        }
-        self
-    }
-
-    /// Validate string matches a regex pattern
-    pub fn matches_regex(mut self, pattern: &Regex) -> Self {
-        if !pattern.is_match(self.value) {
-            self.errors.push(ValidationError::General(format!(
-                "{} does not match pattern: {}",
-                self.field_name,
-                pattern.as_str()
-            )));
-        }
-        self
-    }
-
-    /// Validate string is safe for use as a file path (no directory traversal)
-    pub fn is_path_safe(mut self) -> Self {
-        match crate::validation::validate_path(self.value) {
-            Ok(_) => {}
-            Err(e) => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} path validation failed: {}",
-                    self.field_name, e
-                )));
-            }
-        }
-        self
-    }
-
-    /// Validate that string is a valid URL
-    pub fn is_valid_url(mut self) -> Self {
-        match Url::parse(self.value) {
-            Ok(_) => {}
-            Err(e) => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} invalid URL: {}",
-                    self.field_name, e
-                )));
-            }
-        }
-        self
-    }
-}
-
-// Numeric validations for types that can be compared
-impl<T> ValidationChain<T>
-where
-    T: PartialOrd + std::fmt::Display + Clone,
-{
-    /// Validate minimum value
-    pub fn min(mut self, min: T) -> Self {
-        if self.value < min {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be at least {}",
-                self.field_name, min
-            )));
-        }
-        self
-    }
-
-    /// Validate maximum value
-    pub fn max(mut self, max: T) -> Self {
-        if self.value > max {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be at most {}",
-                self.field_name, max
-            )));
-        }
-        self
-    }
-
-    /// Validate value is within range
-    pub fn range(mut self, range: std::ops::Range<T>) -> Self {
-        if self.value < range.start || self.value >= range.end {
-            self.errors.push(ValidationError::General(format!(
-                "{} must be between {} and {} (exclusive)",
-                self.field_name, range.start, range.end
-            )));
-        }
-        self
-    }
-
-    /// Alias for min() for compatibility
-    pub fn min_value(self, min: T) -> Self {
-        self.min(min)
-    }
-}
-
-/// JSON-specific validation chain
-impl ValidationChain<Value> {
-    /// Validate JSON has a specific field
-    pub fn has_field(mut self, field: &str) -> Self {
-        match &self.value {
-            Value::Object(map) => {
-                if !map.contains_key(field) {
-                    self.errors.push(ValidationError::General(format!(
-                        "Missing required field: {}",
-                        field
-                    )));
-                }
-            }
-            _ => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} expected object, got {}",
-                    self.field_name,
-                    json_type_name(&self.value)
-                )));
-            }
-        }
-        self
-    }
-
-    /// Validate field has expected type
-    pub fn field_type(mut self, field: &str, expected: JsonType) -> Self {
-        match &self.value {
-            Value::Object(map) => match map.get(field) {
-                Some(value) => {
-                    if !expected.matches(value) {
-                        self.errors.push(ValidationError::General(format!(
-                            "{} field expected {}, got {}",
-                            field,
-                            expected,
-                            json_type_name(value)
-                        )));
+    for (field, field_errors) in errors.field_errors() {
+        for error in field_errors {
+            let msg = match &error.code {
+                std::borrow::Cow::Borrowed("email") => format!("{}: invalid email format", field),
+                std::borrow::Cow::Borrowed("url") => format!("{}: invalid URL format", field),
+                std::borrow::Cow::Borrowed("required") => format!("{}: field is required", field),
+                std::borrow::Cow::Borrowed("range") => {
+                    let min = error.params.get("min");
+                    let max = error.params.get("max");
+                    match (min, max) {
+                        (Some(min), Some(max)) => {
+                            format!("{}: must be between {} and {}", field, min, max)
+                        }
+                        (Some(min), None) => format!("{}: must be at least {}", field, min),
+                        (None, Some(max)) => format!("{}: must be at most {}", field, max),
+                        _ => format!("{}: out of range", field),
                     }
                 }
-                None => {
-                    self.errors.push(ValidationError::General(format!(
-                        "Missing required field: {}",
-                        field
-                    )));
+                std::borrow::Cow::Borrowed("length") => {
+                    let min = error.params.get("min");
+                    let max = error.params.get("max");
+                    match (min, max) {
+                        (Some(min), Some(max)) => {
+                            format!("{}: length must be between {} and {}", field, min, max)
+                        }
+                        (Some(min), None) => format!("{}: length must be at least {}", field, min),
+                        (None, Some(max)) => format!("{}: length must be at most {}", field, max),
+                        _ => format!("{}: invalid length", field),
+                    }
                 }
-            },
-            _ => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} expected object, got {}",
-                    self.field_name,
-                    json_type_name(&self.value)
-                )));
-            }
-        }
-        self
-    }
-
-    /// Validate JSON depth doesn't exceed limit
-    pub fn max_depth(mut self, depth: usize) -> Self {
-        if calculate_json_depth(&self.value) > depth {
-            self.errors.push(ValidationError::General(format!(
-                "{} JSON nesting exceeds maximum depth of {}",
-                self.field_name, depth
-            )));
-        }
-        self
-    }
-
-    /// Validate JSON serialized size doesn't exceed limit
-    pub fn max_size(mut self, bytes: usize) -> Self {
-        match serde_json::to_string(&self.value) {
-            Ok(json_str) => {
-                if json_str.len() > bytes {
-                    self.errors.push(ValidationError::General(format!(
-                        "{} JSON size ({} bytes) exceeds maximum of {} bytes",
-                        self.field_name,
-                        json_str.len(),
-                        bytes
-                    )));
-                }
-            }
-            Err(_) => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} failed to serialize JSON for size check",
-                    self.field_name
-                )));
-            }
-        }
-        self
-    }
-
-    /// Validate against potential billion laughs attack
-    pub fn no_excessive_expansion(mut self) -> Self {
-        match crate::validation::check_json_expansion(&self.value) {
-            Ok(_) => {}
-            Err(_) => {
-                self.errors.push(ValidationError::General(format!(
-                    "{} JSON structure has excessive expansion ratio",
-                    self.field_name
-                )));
-            }
-        }
-        self
-    }
-
-    /// Validate JSON has a specific type
-    pub fn json_type(mut self, expected: JsonType) -> Self {
-        if !expected.matches(&self.value) {
-            self.errors.push(ValidationError::General(format!(
-                "{} expected {}, got {}",
-                self.field_name,
-                expected,
-                json_type_name(&self.value)
-            )));
-        }
-        self
-    }
-}
-
-/// JSON type enumeration for validation
-#[derive(Debug, Clone, Copy)]
-pub enum JsonType {
-    Null,
-    Bool,
-    Number,
-    String,
-    Array,
-    Object,
-}
-
-impl JsonType {
-    fn matches(&self, value: &Value) -> bool {
-        matches!(
-            (self, value),
-            (JsonType::Null, Value::Null)
-                | (JsonType::Bool, Value::Bool(_))
-                | (JsonType::Number, Value::Number(_))
-                | (JsonType::String, Value::String(_))
-                | (JsonType::Array, Value::Array(_))
-                | (JsonType::Object, Value::Object(_))
-        )
-    }
-}
-
-impl std::fmt::Display for JsonType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            JsonType::Null => write!(f, "null"),
-            JsonType::Bool => write!(f, "boolean"),
-            JsonType::Number => write!(f, "number"),
-            JsonType::String => write!(f, "string"),
-            JsonType::Array => write!(f, "array"),
-            JsonType::Object => write!(f, "object"),
-        }
-    }
-}
-
-/// Trait for types that can be validated
-pub trait Validator: Send {
-    fn validate(&self) -> Result<()>;
-}
-
-/// Multi-validator for combining multiple validation chains
-pub struct MultiValidator {
-    validators: Vec<Box<dyn Validator>>,
-}
-
-impl MultiValidator {
-    /// Create a new multi-validator
-    pub fn new() -> Self {
-        Self {
-            validators: Vec::new(),
+                code => format!("{}: {}", field, code),
+            };
+            messages.push(msg);
         }
     }
 
-    /// Add a validator to the collection
-    pub fn with_validator<T: Validator + 'static>(mut self, validator: T) -> Self {
-        self.validators.push(Box::new(validator));
-        self
-    }
-
-    /// Validate all validators and collect all errors
-    pub fn validate_all(self) -> Result<()> {
-        let mut all_errors = Vec::new();
-
-        for validator in self.validators {
-            if let Err(e) = validator.validate() {
-                all_errors.push(e.to_string());
-            }
-        }
-
-        if all_errors.is_empty() {
-            Ok(())
-        } else {
-            Err(ValidationError::General(format!(
-                "Multiple validation errors: {}",
-                all_errors.join("; ")
-            )))
-        }
-    }
+    messages.join("; ")
 }
 
-impl Default for MultiValidator {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-// Helper function to calculate JSON depth
-fn calculate_json_depth(value: &Value) -> usize {
-    match value {
-        Value::Object(map) => 1 + map.values().map(calculate_json_depth).max().unwrap_or(0),
-        Value::Array(arr) => 1 + arr.iter().map(calculate_json_depth).max().unwrap_or(0),
-        _ => 0,
-    }
-}
-
-// Helper function to get JSON type name
-fn json_type_name(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(_) => "boolean".to_string(),
-        Value::Number(_) => "number".to_string(),
-        Value::String(_) => "string".to_string(),
-        Value::Array(_) => "array".to_string(),
-        Value::Object(_) => "object".to_string(),
-    }
+/// Format validation errors with additional context
+pub fn format_validation_errors_with_context(errors: &ValidationErrors, context: &str) -> String {
+    let base_message = format_validation_errors(errors);
+    format!("{}: {}", context, base_message)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn test_string_validation_chain() {
-        // Valid string
-        let result = ValidationChain::validate("hello world".to_string(), "test_field")
-            .not_empty()
-            .min_length(5)
-            .max_length(20)
-            .into_result();
-        assert!(result.is_ok());
+    fn test_database_config_validation() {
+        let valid_config = DatabaseConfig {
+            connection_url: "postgresql://user:pass@localhost/db".to_string(),
+            max_connections: 100,
+            connection_timeout_ms: 5000,
+            database_name: "test_db".to_string(),
+        };
 
-        // Empty string
-        let result = ValidationChain::validate("".to_string(), "test_field")
-            .not_empty()
-            .into_result();
+        assert!(valid_config.validate().is_ok());
+
+        let invalid_config = DatabaseConfig {
+            connection_url: "not-a-url".to_string(),
+            max_connections: 2000, // Too high
+            connection_timeout_ms: 0,
+            database_name: "".to_string(), // Empty
+        };
+
+        let result = invalid_config.validate();
         assert!(result.is_err());
 
-        // Too short
-        let result = ValidationChain::validate("hi".to_string(), "test_field")
-            .min_length(5)
-            .into_result();
-        assert!(result.is_err());
-
-        // Too long
-        let result =
-            ValidationChain::validate("this is a very long string".to_string(), "test_field")
-                .max_length(10)
-                .into_result();
-        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        assert!(errors.field_errors().contains_key("connection_url"));
+        assert!(errors.field_errors().contains_key("max_connections"));
+        assert!(errors.field_errors().contains_key("database_name"));
     }
 
     #[test]
-    fn test_numeric_validation_chain() {
-        // Valid number
-        let result = ValidationChain::validate(42, "test_number")
-            .min(0)
-            .max(100)
-            .range(10..50)
-            .into_result();
-        assert!(result.is_ok());
+    fn test_event_validation() {
+        let valid_event = EventValidation {
+            event_type: "user.created".to_string(),
+            source: "api".to_string(),
+            host: "api-server-01".to_string(),
+            contact_email: Some("admin@example.com".to_string()),
+        };
 
-        // Too small
-        let result = ValidationChain::validate(-5, "test_number")
-            .min(0)
-            .into_result();
-        assert!(result.is_err());
+        assert!(valid_event.validate().is_ok());
 
-        // Out of range
-        let result = ValidationChain::validate(100, "test_number")
-            .range(0..50)
-            .into_result();
-        assert!(result.is_err());
+        let invalid_event = EventValidation {
+            event_type: "a".repeat(101), // Too long
+            source: "".to_string(),      // Empty
+            host: "..".to_string(),      // Invalid
+            contact_email: Some("not-an-email".to_string()),
+        };
+
+        assert!(invalid_event.validate().is_err());
     }
 
     #[test]
-    fn test_json_validation_chain() {
-        let json = json!({
-            "name": "test",
-            "age": 30,
-            "active": true
-        });
+    fn test_friendly_error_formatting() {
+        let config = DatabaseConfig {
+            connection_url: "invalid".to_string(),
+            max_connections: 0,
+            connection_timeout_ms: 0,
+            database_name: "".to_string(),
+        };
 
-        // Valid JSON
-        let result = ValidationChain::validate(json.clone(), "test_json")
-            .has_field("name")
-            .has_field("age")
-            .field_type("name", JsonType::String)
-            .field_type("age", JsonType::Number)
-            .max_depth(3)
-            .into_result();
-        assert!(result.is_ok());
-
-        // Missing field
-        let result = ValidationChain::validate(json.clone(), "test_json")
-            .has_field("nonexistent")
-            .into_result();
-        assert!(result.is_err());
-
-        // Wrong type
-        let result = ValidationChain::validate(json, "test_json")
-            .field_type("name", JsonType::Number)
-            .into_result();
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_custom_validation() {
-        let result = ValidationChain::validate("test123".to_string(), "username")
-            .custom(
-                |s| s.chars().all(|c| c.is_alphanumeric()),
-                "must be alphanumeric",
-            )
-            .into_result();
-        assert!(result.is_ok());
-
-        let result = ValidationChain::validate("test@123".to_string(), "username")
-            .custom(
-                |s| s.chars().all(|c| c.is_alphanumeric()),
-                "must be alphanumeric",
-            )
-            .into_result();
-        assert!(result.is_err());
+        let error = config.validate_friendly().unwrap_err();
+        assert!(error.contains("connection_url"));
+        assert!(error.contains("max_connections"));
+        assert!(error.contains("database_name"));
     }
 }

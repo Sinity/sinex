@@ -1,0 +1,42 @@
+[package]
+name = "sinex-nats"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# NATS client
+async-nats = "0.37"
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+humantime-serde = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Configuration
+figment = { workspace = true }
+
+# Time handling
+chrono = { workspace = true }
+time = "0.3"
+
+# Internal dependencies
+sinex-core-types = { path = "../sinex-core-types" }
+sinex-error = { path = "../sinex-error" }
+sinex-ulid = { path = "../sinex-ulid" }
+
+# Utilities
+futures = { workspace = true }
+bytes = "1.9"
+
+[dev-dependencies]
+tokio-test = "0.4"

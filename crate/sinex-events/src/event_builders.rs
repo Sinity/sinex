@@ -1,4 +1,4 @@
-//! Production event builders for consistent event creation
+//! Production event builders for consistent event creation using bon derive macros
 //!
 //! This module provides fluent, type-safe APIs for creating events in production code.
 //! Based on proven patterns from the test infrastructure, these builders eliminate
@@ -7,6 +7,7 @@
 use crate::event_types;
 use crate::raw_event::RawEvent;
 use crate::JsonValue;
+use bon::Builder;
 use chrono::{DateTime, Utc};
 use serde_json::json;
 use std::collections::HashMap;
@@ -51,33 +52,86 @@ impl EventFactory {
 
     /// Create a filesystem event builder
     pub fn filesystem(&self) -> FilesystemEventBuilder {
-        FilesystemEventBuilder::new(&self.source_name, &self.host, &self.ingestor_version)
+        FilesystemEventBuilder {
+            source_name: self.source_name.clone(),
+            host: self.host.clone(),
+            ingestor_version: self.ingestor_version.clone(),
+            path: None,
+            operation: None,
+            size: None,
+            permissions: None,
+            old_path: None,
+            timestamp: None,
+        }
     }
 
     /// Create a terminal event builder
     pub fn terminal(&self) -> TerminalEventBuilder {
-        TerminalEventBuilder::new(&self.source_name, &self.host, &self.ingestor_version)
+        TerminalEventBuilder {
+            source_name: self.source_name.clone(),
+            host: self.host.clone(),
+            ingestor_version: self.ingestor_version.clone(),
+            command: None,
+            command_output: None,
+            exit_code: None,
+            duration_ms: None,
+            working_dir: None,
+            window_id: None,
+            tab_id: None,
+            timestamp: None,
+        }
     }
 
     /// Create a clipboard event builder
     pub fn clipboard(&self) -> ClipboardEventBuilder {
-        ClipboardEventBuilder::new(&self.source_name, &self.host, &self.ingestor_version)
+        ClipboardEventBuilder {
+            source_name: self.source_name.clone(),
+            host: self.host.clone(),
+            ingestor_version: self.ingestor_version.clone(),
+            content: None,
+            content_type: None,
+            content_hash: None,
+            source_app: None,
+            selection_type: None,
+            timestamp: None,
+        }
     }
 
     /// Create a window manager event builder
     pub fn window_manager(&self) -> WindowManagerEventBuilder {
-        WindowManagerEventBuilder::new(&self.source_name, &self.host, &self.ingestor_version)
+        WindowManagerEventBuilder {
+            source_name: self.source_name.clone(),
+            host: self.host.clone(),
+            ingestor_version: self.ingestor_version.clone(),
+            window_address: None,
+            window_class: None,
+            window_title: None,
+            workspace_id: None,
+            event_data: None,
+            timestamp: None,
+        }
     }
 
     /// Create a system event builder
     pub fn system(&self) -> SystemEventBuilder {
-        SystemEventBuilder::new(&self.source_name, &self.host, &self.ingestor_version)
+        SystemEventBuilder {
+            source_name: self.source_name.clone(),
+            host: self.host.clone(),
+            ingestor_version: self.ingestor_version.clone(),
+            message: None,
+            priority: None,
+            unit: None,
+            pid: None,
+            cursor: None,
+            fields: HashMap::new(),
+            timestamp: None,
+        }
     }
 }
 
 // ===== Filesystem Event Builder =====
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum FileOperation {
     Create,
     Modify,
@@ -96,6 +150,8 @@ impl FileOperation {
     }
 }
 
+#[derive(Builder, Clone)]
+#[builder(on(String, into))] // Convert &str to String automatically
 pub struct FilesystemEventBuilder {
     source_name: String,
     host: String,
@@ -109,44 +165,8 @@ pub struct FilesystemEventBuilder {
 }
 
 impl FilesystemEventBuilder {
-    pub fn new(source_name: &str, host: &str, ingestor_version: &str) -> Self {
-        Self {
-            source_name: source_name.to_string(),
-            host: host.to_string(),
-            ingestor_version: ingestor_version.to_string(),
-            path: None,
-            operation: None,
-            size: None,
-            permissions: None,
-            old_path: None,
-            timestamp: None,
-        }
-    }
-
     pub fn path(mut self, path: impl Into<String>) -> Self {
         self.path = Some(path.into());
-        self
-    }
-
-    pub fn created(self) -> Self {
-        self.operation(FileOperation::Create)
-    }
-
-    pub fn modified(self) -> Self {
-        self.operation(FileOperation::Modify)
-    }
-
-    pub fn deleted(self) -> Self {
-        self.operation(FileOperation::Delete)
-    }
-
-    pub fn moved_from(mut self, old_path: impl Into<String>) -> Self {
-        self.old_path = Some(old_path.into());
-        self.operation(FileOperation::Move)
-    }
-
-    pub fn operation(mut self, op: FileOperation) -> Self {
-        self.operation = Some(op);
         self
     }
 
@@ -162,6 +182,27 @@ impl FilesystemEventBuilder {
 
     pub fn timestamp(mut self, ts: DateTime<Utc>) -> Self {
         self.timestamp = Some(ts);
+        self
+    }
+
+    pub fn created(mut self) -> Self {
+        self.operation = Some(FileOperation::Create);
+        self
+    }
+
+    pub fn modified(mut self) -> Self {
+        self.operation = Some(FileOperation::Modify);
+        self
+    }
+
+    pub fn deleted(mut self) -> Self {
+        self.operation = Some(FileOperation::Delete);
+        self
+    }
+
+    pub fn moved_from(mut self, old_path: impl Into<String>) -> Self {
+        self.old_path = Some(old_path.into());
+        self.operation = Some(FileOperation::Move);
         self
     }
 
@@ -223,6 +264,8 @@ impl FilesystemEventBuilder {
 
 // ===== Terminal Event Builder =====
 
+#[derive(Builder, Clone)]
+#[builder(on(String, into))]
 pub struct TerminalEventBuilder {
     source_name: String,
     host: String,
@@ -238,22 +281,6 @@ pub struct TerminalEventBuilder {
 }
 
 impl TerminalEventBuilder {
-    pub fn new(source_name: &str, host: &str, ingestor_version: &str) -> Self {
-        Self {
-            source_name: source_name.to_string(),
-            host: host.to_string(),
-            ingestor_version: ingestor_version.to_string(),
-            command: None,
-            command_output: None,
-            exit_code: None,
-            duration_ms: None,
-            working_dir: None,
-            window_id: None,
-            tab_id: None,
-            timestamp: None,
-        }
-    }
-
     pub fn command(mut self, cmd: impl Into<String>) -> Self {
         self.command = Some(cmd.into());
         self
@@ -269,12 +296,14 @@ impl TerminalEventBuilder {
         self
     }
 
-    pub fn success(self) -> Self {
-        self.exit_code(0)
+    pub fn success(mut self) -> Self {
+        self.exit_code = Some(0);
+        self
     }
 
-    pub fn failed(self, code: i32) -> Self {
-        self.exit_code(code)
+    pub fn failed(mut self, code: i32) -> Self {
+        self.exit_code = Some(code);
+        self
     }
 
     pub fn duration_ms(mut self, ms: u64) -> Self {
@@ -302,12 +331,16 @@ impl TerminalEventBuilder {
         self
     }
 
+    pub fn build(self) -> crate::RawEvent {
+        self.build_executed()
+    }
+
     pub fn build_executed(self) -> crate::RawEvent {
-        self.build_with_event_type("command.executed")
+        self.build_with_event_type("terminal.command.executed")
     }
 
     pub fn build_completed(self) -> crate::RawEvent {
-        self.build_with_event_type("command.completed")
+        self.build_with_event_type("terminal.command.completed")
     }
 
     fn build_with_event_type(self, event_type: &str) -> crate::RawEvent {
@@ -388,6 +421,8 @@ impl ClipboardContentType {
     }
 }
 
+#[derive(Builder, Clone)]
+#[builder(on(String, into))]
 pub struct ClipboardEventBuilder {
     source_name: String,
     host: String,
@@ -401,20 +436,6 @@ pub struct ClipboardEventBuilder {
 }
 
 impl ClipboardEventBuilder {
-    pub fn new(source_name: &str, host: &str, ingestor_version: &str) -> Self {
-        Self {
-            source_name: source_name.to_string(),
-            host: host.to_string(),
-            ingestor_version: ingestor_version.to_string(),
-            content: None,
-            content_type: None,
-            content_hash: None,
-            source_app: None,
-            selection_type: None,
-            timestamp: None,
-        }
-    }
-
     pub fn content(mut self, content: impl Into<String>) -> Self {
         self.content = Some(content.into());
         self
@@ -425,8 +446,10 @@ impl ClipboardEventBuilder {
         self
     }
 
-    pub fn text(self, text: impl Into<String>) -> Self {
-        self.content(text).content_type(ClipboardContentType::Text)
+    pub fn text(mut self, text: impl Into<String>) -> Self {
+        self.content = Some(text.into());
+        self.content_type = Some(ClipboardContentType::Text);
+        self
     }
 
     pub fn content_hash(mut self, hash: impl Into<String>) -> Self {
@@ -524,6 +547,8 @@ impl WindowManagerEventType {
     }
 }
 
+#[derive(Builder, Clone)]
+#[builder(on(String, into))]
 pub struct WindowManagerEventBuilder {
     source_name: String,
     host: String,
@@ -537,20 +562,6 @@ pub struct WindowManagerEventBuilder {
 }
 
 impl WindowManagerEventBuilder {
-    pub fn new(source_name: &str, host: &str, ingestor_version: &str) -> Self {
-        Self {
-            source_name: source_name.to_string(),
-            host: host.to_string(),
-            ingestor_version: ingestor_version.to_string(),
-            window_address: None,
-            window_class: None,
-            window_title: None,
-            workspace_id: None,
-            event_data: None,
-            timestamp: None,
-        }
-    }
-
     pub fn window_address(mut self, address: impl Into<String>) -> Self {
         self.window_address = Some(address.into());
         self
@@ -597,54 +608,34 @@ impl WindowManagerEventBuilder {
         self.build_with_event_type("workspace.switched")
     }
 
-    pub fn window_created(self) -> Self {
-        self
-    }
-
-    pub fn window_destroyed(self) -> Self {
-        self
-    }
-
-    pub fn window_focused(self) -> Self {
-        self
-    }
-
-    pub fn event_type(self, _event_type: WindowManagerEventType) -> Self {
-        self
-    }
-
-    pub fn custom_data(self, _data: JsonValue) -> Self {
-        self
-    }
-
-    pub fn build(self) -> crate::RawEvent {
-        self.build_window_focused()
+    pub fn build_custom(self, event_type: WindowManagerEventType) -> crate::RawEvent {
+        self.build_with_event_type(event_type.as_str())
     }
 
     fn build_with_event_type(self, event_type: &str) -> crate::RawEvent {
-        let mut payload = json!({
-            "focused_at": self.timestamp.unwrap_or_else(Utc::now).to_rfc3339(),
-        });
+        let mut payload = json!({});
 
         if let Some(address) = self.window_address {
-            payload["window_address"] = json!(address);
+            payload["address"] = json!(address);
         }
 
         if let Some(class) = self.window_class {
-            payload["window_class"] = json!(class);
+            payload["class"] = json!(class);
         }
 
         if let Some(title) = self.window_title {
-            payload["window_title"] = json!(title);
+            payload["title"] = json!(title);
         }
 
         if let Some(workspace) = self.workspace_id {
-            payload["workspace_id"] = json!(workspace);
+            payload["workspaceid"] = json!(workspace);
         }
 
         if let Some(data) = self.event_data {
-            payload["event_data"] = json!(data);
+            payload["data"] = json!(data);
         }
+
+        payload["timestamp"] = json!(self.timestamp.unwrap_or_else(Utc::now).to_rfc3339());
 
         RawEvent {
             id: sinex_ulid::Ulid::new(),
@@ -668,6 +659,8 @@ impl WindowManagerEventBuilder {
 
 // ===== System Event Builder =====
 
+#[derive(Builder, Clone)]
+#[builder(on(String, into))]
 pub struct SystemEventBuilder {
     source_name: String,
     host: String,
@@ -677,26 +670,12 @@ pub struct SystemEventBuilder {
     unit: Option<String>,
     pid: Option<u32>,
     cursor: Option<String>,
-    fields: HashMap<String, String>,
+    #[builder(default = HashMap::new())]
+    fields: HashMap<String, JsonValue>,
     timestamp: Option<DateTime<Utc>>,
 }
 
 impl SystemEventBuilder {
-    pub fn new(source_name: &str, host: &str, ingestor_version: &str) -> Self {
-        Self {
-            source_name: source_name.to_string(),
-            host: host.to_string(),
-            ingestor_version: ingestor_version.to_string(),
-            message: None,
-            priority: None,
-            unit: None,
-            pid: None,
-            cursor: None,
-            fields: HashMap::new(),
-            timestamp: None,
-        }
-    }
-
     pub fn message(mut self, message: impl Into<String>) -> Self {
         self.message = Some(message.into());
         self
@@ -722,34 +701,18 @@ impl SystemEventBuilder {
         self
     }
 
-    pub fn field(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
-        self.fields.insert(key.into(), value.into());
-        self
-    }
-
     pub fn timestamp(mut self, ts: DateTime<Utc>) -> Self {
         self.timestamp = Some(ts);
         self
     }
 
-    pub fn automaton_name(self, name: impl Into<String>) -> Self {
-        self.message(format!("Automaton: {}", name.into()))
-    }
-
-    pub fn heartbeat(self) -> Self {
-        self.message("Heartbeat")
-    }
-
-    pub fn error(self, error: impl Into<String>) -> Self {
-        self.message(format!("Error: {}", error.into()))
+    pub fn field(mut self, key: impl Into<String>, value: impl Into<JsonValue>) -> Self {
+        self.fields.insert(key.into(), value.into());
+        self
     }
 
     pub fn build(self) -> crate::RawEvent {
-        self.build_journal_entry()
-    }
-
-    pub fn build_journal_entry(self) -> crate::RawEvent {
-        let message = self.message.unwrap_or_default();
+        let message = self.message.unwrap_or_else(|| "".to_string());
         let timestamp = self.timestamp.unwrap_or_else(Utc::now);
 
         let mut payload = json!({
@@ -832,7 +795,7 @@ mod tests {
             .build_executed();
 
         assert_eq!(event.source, sources::SHELL_KITTY);
-        assert_eq!(event.event_type, "command.executed");
+        assert_eq!(event.event_type, "terminal.command.executed");
         assert_eq!(event.payload["command"], "ls -la");
         assert_eq!(event.payload["exit_status"], 0);
         assert_eq!(event.payload["execution_time_ms"], 150);

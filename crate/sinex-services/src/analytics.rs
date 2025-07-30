@@ -1,23 +1,13 @@
 //! Analytics service for event analysis and insights
 
 use crate::error::ServiceResult;
-use sinex_db::queries::{EventQueries, OperationQueries};
-use sinex_db::DbPool;
+use sinex_db::{
+    repositories::{EventRepository, Repository, SourceActivity},
+    DbPool,
+};
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
-use sqlx::FromRow;
 use std::collections::HashMap;
-
-#[derive(FromRow)]
-struct SourceActivityRow {
-    source: String,
-    event_count: i64,
-    #[allow(dead_code)] // Used by database query but not in code
-    event_types: i64,
-    last_event: DateTime<Utc>,
-    #[allow(dead_code)] // Used by database query but not in code
-    first_event: DateTime<Utc>,
-}
 
 pub struct AnalyticsService {
     pool: DbPool,
@@ -36,25 +26,25 @@ impl AnalyticsService {
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut result = HashMap::new();
 
+        let repo = EventRepository::new(&self.pool);
+
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows: Vec<SourceActivityRow> = OperationQueries::get_source_activity(start)
-                    .fetch_all(&self.pool)
-                    .await?;
+                let rows = repo.get_source_activity(start).await?;
 
                 for row in rows {
                     // Filter by end time on client side
-                    if row.last_event <= end {
-                        result.insert(row.source, row.event_count);
+                    if let Some(last_event) = row.last_event {
+                        if last_event <= end {
+                            result.insert(row.source, row.event_count);
+                        }
                     }
                 }
             }
             _ => {
                 // For all-time stats, use a timestamp far in the past
                 let very_old = DateTime::from_timestamp(0, 0).unwrap();
-                let rows: Vec<SourceActivityRow> = OperationQueries::get_source_activity(very_old)
-                    .fetch_all(&self.pool)
-                    .await?;
+                let rows = repo.get_source_activity(very_old).await?;
 
                 for row in rows {
                     result.insert(row.source, row.event_count);
@@ -75,30 +65,16 @@ impl AnalyticsService {
 
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                #[derive(sqlx::FromRow)]
-                struct CountRow {
-                    event_type: String,
-                    count: i64,
-                }
-
-                let rows: Vec<CountRow> = EventQueries::count_by_type_in_range(start, end)
-                    .fetch_all(&self.pool)
-                    .await?;
+                let repo = EventRepository::new(&self.pool);
+                let rows = repo.count_by_type_in_range(start, end).await?;
 
                 for row in rows {
                     result.insert(row.event_type, row.count);
                 }
             }
             _ => {
-                #[derive(sqlx::FromRow)]
-                struct CountRow {
-                    event_type: String,
-                    count: i64,
-                }
-
-                let rows: Vec<CountRow> = EventQueries::count_by_type_all_time()
-                    .fetch_all(&self.pool)
-                    .await?;
+                let repo = EventRepository::new(&self.pool);
+                let rows = repo.count_by_type_all_time().await?;
 
                 for row in rows {
                     result.insert(row.event_type, row.count);
@@ -122,8 +98,10 @@ impl AnalyticsService {
             microseconds: interval_minutes as i64 * 60 * 1_000_000,
         };
 
-        let rows =
-            EventQueries::get_events_over_time(&self.pool, start_time, end_time, interval).await?;
+        let repo = EventRepository::new(&self.pool);
+        let rows = repo
+            .get_events_over_time(start_time, end_time, interval)
+            .await?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }
@@ -137,27 +115,14 @@ impl AnalyticsService {
     ) -> ServiceResult<Vec<(String, i64)>> {
         let mut result = Vec::new();
 
-        #[derive(sqlx::FromRow)]
-        struct CommandRow {
-            command: String,
-            count: i64,
-        }
-
-        let rows: Vec<CommandRow> = match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                EventQueries::top_commands_in_range(start, end, limit as i64)
-                    .fetch_all(&self.pool)
-                    .await?
-            }
-            _ => {
-                EventQueries::top_commands_all_time(limit as i64)
-                    .fetch_all(&self.pool)
-                    .await?
-            }
+        let repo = EventRepository::new(&self.pool);
+        let commands = match (start_time, end_time) {
+            (Some(start), Some(end)) => repo.top_commands(start, end, limit as i64).await?,
+            _ => repo.top_commands_all_time(limit as i64).await?,
         };
 
-        for row in rows {
-            result.push((row.command, row.count));
+        for cmd_count in commands {
+            result.push((cmd_count.command, cmd_count.count));
         }
 
         Ok(result)
@@ -175,7 +140,8 @@ impl AnalyticsService {
             microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
         };
 
-        let rows = EventQueries::get_activity_heatmap(&self.pool, interval, limit as i64).await?;
+        let repo = EventRepository::new(&self.pool);
+        let rows = repo.get_activity_heatmap(interval, limit as i64).await?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }

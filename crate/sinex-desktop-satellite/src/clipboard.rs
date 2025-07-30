@@ -227,7 +227,27 @@ impl ClipboardWatcher {
                     .filter_map(|line| {
                         line.strip_prefix("file://")
                             .and_then(|p| urlencoding::decode(p).ok())
-                            .map(|p| p.to_string())
+                            .map(|p| {
+                                // Sanitize the path components
+                                let path_str = p.to_string();
+                                let path = std::path::Path::new(&path_str);
+                                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                                    // Use sanitization but fall back to original if it fails
+                                    let sanitized_name =
+                                        sinex_validation::sanitize_filename_component(filename)
+                                            .unwrap_or_else(|_| filename.to_string());
+                                    path.parent()
+                                        .map(|parent| {
+                                            parent
+                                                .join(&sanitized_name)
+                                                .to_string_lossy()
+                                                .to_string()
+                                        })
+                                        .unwrap_or_else(|| sanitized_name)
+                                } else {
+                                    path_str
+                                }
+                            })
                     })
                     .collect(),
             )
@@ -236,7 +256,23 @@ impl ClipboardWatcher {
                 content
                     .lines()
                     .filter(|l| !l.is_empty())
-                    .map(|l| l.to_string())
+                    .map(|l| {
+                        // Sanitize the path components
+                        let path = std::path::Path::new(l);
+                        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+                            // Use sanitization but fall back to original if it fails
+                            let sanitized_name =
+                                sinex_validation::sanitize_filename_component(filename)
+                                    .unwrap_or_else(|_| filename.to_string());
+                            path.parent()
+                                .map(|parent| {
+                                    parent.join(&sanitized_name).to_string_lossy().to_string()
+                                })
+                                .unwrap_or_else(|| sanitized_name)
+                        } else {
+                            l.to_string()
+                        }
+                    })
                     .collect(),
             )
         } else {
