@@ -15,7 +15,7 @@ use syn::{parse_macro_input, Ident, LitStr, Token};
 /// ```rust
 /// event_registry! {
 ///     sources {
-///         FILESYSTEM => sources::FS,
+///         FILESYSTEM => "fs",
 ///         SHELL => "shell",
 ///         CLIPBOARD => "clipboard",
 ///     }
@@ -253,7 +253,7 @@ mod tests {
     fn test_event_registry_parsing() {
         let input = quote! {
             sources {
-                FILESYSTEM => sources::FS,
+                FILESYSTEM => "fs",
                 SHELL => "shell",
             }
 

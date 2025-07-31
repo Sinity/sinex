@@ -10,7 +10,7 @@
 
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
-use sinex_core_types::timeouts;
+use sinex_types::timeouts;
 // VerificationQueries removed - using direct SQL queries instead
 use sqlx::PgPool;
 use std::collections::HashMap;
@@ -421,8 +421,8 @@ async fn test_extension_functionality(
 }
 
 async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
-    // Check if migration table exists
-    let migration_table_exists = table_exists(pool, "public", "_sqlx_migrations")
+    // Check if migration table exists (sea-orm uses seaql_migrations)
+    let migration_table_exists = table_exists(pool, "public", "seaql_migrations")
         .await
         .context("Failed to check migration table existence")?;
 
@@ -437,13 +437,12 @@ async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Re
         }));
     }
 
-    // Get applied migrations
-    let applied_migrations = sqlx::query!(
-        "SELECT version, description, installed_on FROM _sqlx_migrations ORDER BY version"
-    )
-    .fetch_all(pool)
-    .await
-    .context("Failed to query applied migrations")?;
+    // Get applied migrations from sea-orm migration table
+    let applied_migrations =
+        sqlx::query!("SELECT version, applied_at FROM seaql_migrations ORDER BY version")
+            .fetch_all(pool)
+            .await
+            .context("Failed to query applied migrations")?;
 
     let applied_count = applied_migrations.len();
     messages.push(format!("ℹ Found {} applied migrations", applied_count));
@@ -452,8 +451,7 @@ async fn check_migration_status(pool: &PgPool, messages: &mut Vec<String>) -> Re
         "migration_table_exists": true,
         "applied_migrations": applied_migrations.iter().map(|m| json!({
             "version": m.version,
-            "description": m.description,
-            "installed_on": m.installed_on
+            "applied_at": m.applied_at
         })).collect::<Vec<_>>(),
         "applied_count": applied_count
     }))
@@ -526,32 +524,66 @@ struct MigrationFile {
 }
 
 async fn discover_migration_files() -> Result<Vec<MigrationFile>> {
-    use std::path::Path;
-
-    // In a real implementation, this would scan the migrations directory
-    // For now, we'll return a mock list based on the known structure
-    let migrations_dir = Path::new("migrations");
-
-    if !migrations_dir.exists() {
-        return Ok(vec![]);
-    }
-
-    // Mock implementation - in reality, this would read the actual migration files
-    let mock_migrations = vec![
+    // Using sea-orm-migration system
+    // Migration files are now in crate/sinex-db/migration/src/
+    let migrations = vec![
         MigrationFile {
             version: 1,
             description: "Initial schema".to_string(),
-            path: "migrations/20240101000001_initial.sql".to_string(),
+            path: "crate/sinex-db/migration/src/m20240101_000001_initial_schema.rs".to_string(),
         },
-        // Add more as needed...
+        MigrationFile {
+            version: 2,
+            description: "Add validation functions".to_string(),
+            path: "crate/sinex-db/migration/src/m20240102_000002_add_validation_functions.rs".to_string(),
+        },
+        MigrationFile {
+            version: 3,
+            description: "Create analytics views".to_string(),
+            path: "crate/sinex-db/migration/src/m20240103_000003_create_analytics_views.rs".to_string(),
+        },
+        MigrationFile {
+            version: 4,
+            description: "Create helper functions".to_string(),
+            path: "crate/sinex-db/migration/src/m20240104_000004_create_helper_functions.rs".to_string(),
+        },
+        MigrationFile {
+            version: 5,
+            description: "Create test helper functions".to_string(),
+            path: "crate/sinex-db/migration/src/m20240105_000005_create_test_helper_functions.rs".to_string(),
+        },
+        MigrationFile {
+            version: 6,
+            description: "Create coordination tables".to_string(),
+            path: "crate/sinex-db/migration/src/m20240106_000006_create_coordination_tables.rs".to_string(),
+        },
+        MigrationFile {
+            version: 7,
+            description: "Create LLM infrastructure".to_string(),
+            path: "crate/sinex-db/migration/src/m20240107_000007_create_llm_infrastructure.rs".to_string(),
+        },
+        MigrationFile {
+            version: 8,
+            description: "Add schema content hash".to_string(),
+            path: "crate/sinex-db/migration/src/m20240108_000008_add_schema_content_hash.rs".to_string(),
+        },
+        MigrationFile {
+            version: 9,
+            description: "Add payload validation function".to_string(),
+            path: "crate/sinex-db/migration/src/m20240109_000009_add_payload_validation_function.rs".to_string(),
+        },
+        MigrationFile {
+            version: 10,
+            description: "Add event payload check constraint".to_string(),
+            path: "crate/sinex-db/migration/src/m20240110_000010_add_event_payload_check_constraint.rs".to_string(),
+        },
     ];
-
-    Ok(mock_migrations)
+    Ok(migrations)
 }
 
 async fn validate_migration_syntax(migration: &MigrationFile) -> Result<()> {
-    // In a real implementation, this would parse the SQL file and validate syntax
-    // For now, we'll do a basic file existence check
+    // Sea-orm migrations are Rust files that get compiled
+    // So we just check that the file exists
     debug!("Validating migration syntax for: {}", migration.description);
 
     // Basic validation - check that file exists and is readable

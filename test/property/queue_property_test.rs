@@ -17,7 +17,7 @@ use sinex_test_utils::satellite_test_utils::{StreamMessage, simulate_redis_consu
 use proptest::prelude::*;
 use redis::aio::ConnectionManager;
 use redis::{AsyncCommands, RedisResult, cmd};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

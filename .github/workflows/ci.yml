@@ -90,8 +90,7 @@ jobs:
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
       run: |
-        cargo install sqlx-cli --no-default-features --features postgres
-        sqlx migrate run
+        cd crate/sinex-db/migration && cargo run -- up
         
     - name: Run tests
       env:
@@ -150,8 +149,7 @@ jobs:
       env:
         DATABASE_URL: postgres://sinex_test:test_password@localhost/sinex_test
       run: |
-        cargo install sqlx-cli --no-default-features --features postgres
-        sqlx migrate run
+        cd crate/sinex-db/migration && cargo run -- up
         
     - name: Generate code coverage
       env:

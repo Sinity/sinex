@@ -332,11 +332,13 @@ pub use sinex_test_utils_macros::sinex_test;
 pub use anyhow::{anyhow, bail, ensure, Context};
 
 // Library Result type using SinexError
-pub type Result<T> = std::result::Result<T, sinex_error::SinexError>;
+pub type Result<T> = std::result::Result<T, sinex_types::error::SinexError>;
 
 // Import all the existing modules - all private
 mod builders;
 mod channel_behavior_utils;
+mod channel_enhancements;
+mod channel_helpers;
 mod coverage_assurance;
 mod database_pool;
 mod deployment_scenario_utils;
@@ -376,8 +378,9 @@ pub mod prelude {
     // Test macros are now internal only - use TestContext methods instead
 
     // Common imports that tests need
-    pub use sinex_core_types::RawEvent;
-    pub use sinex_error::SinexError;
+    pub use sinex_db::models::{Event, EventSource, EventType};
+    pub use sinex_types::error::SinexError;
+    pub use std::time::Duration;
 
     // Benchmarking support when feature is enabled
     #[cfg(feature = "bench")]
@@ -403,6 +406,7 @@ pub use test_context::TestContext;
 mod tests {
     use super::prelude::*;
     use serde_json::json;
+    use sinex_types::domain::EventSource;
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
     //
@@ -452,7 +456,7 @@ mod tests {
 
         // 4. Assert with rich context
         ctx.assert("workflow validation")
-            .eq(&events[0].event_type, &"fs.file.created".to_string())?
+            .eq(&events[0].event_type.as_str(), &"fs.file.created")?
             .that(
                 fs_event.ts_ingest < term_event.ts_ingest,
                 "file should be created before processing",
@@ -460,8 +464,6 @@ mod tests {
 
         Ok(())
     }
-
-    // Removed test_proptest_integration - consolidated with test_property_testing_integration
 
     // NOTE: Module-specific tests have been moved to their respective modules:
     // - Builder tests -> builders.rs
@@ -492,8 +494,8 @@ mod tests {
                     .await?;
 
                 // Verify event was created correctly
-                assert_eq!(event.source, source);
-                assert_eq!(event.event_type, event_type);
+                assert_eq!(event.source.as_str(), source);
+                assert_eq!(event.event_type.as_str(), event_type);
                 assert_eq!(event.payload["param_test"], json!(true));
 
                 // Query it back
@@ -512,9 +514,6 @@ mod tests {
         Ok(())
     }
 
-    // Removed test_parameterized_pattern - duplicate parameterized testing
-    // Removed test_edge_cases_with_parameterized - duplicate edge case testing
-
     #[sinex_test]
     async fn test_property_testing_integration(ctx: TestContext) -> Result<()> {
         // Comprehensive property test with database - test various valid inputs
@@ -528,12 +527,12 @@ mod tests {
             let source = "a".repeat(length);
             let event = ctx
                 .event()
-                .source(&source)
+                .source(EventSource::new(&source))
                 .type_("proptest.length")
                 .field("test_name", name)
                 .insert()
                 .await?;
-            assert_eq!(event.source, source);
+            assert_eq!(event.source.as_str(), source);
             Ok(())
         });
 
@@ -556,16 +555,12 @@ mod tests {
                 .payload(payload.clone())
                 .insert()
                 .await?;
-            assert_eq!(event.source, source);
-            assert_eq!(event.event_type, event_type);
+            assert_eq!(event.source.as_str(), source);
+            assert_eq!(event.event_type.as_str(), event_type);
             assert_eq!(event.payload, payload);
         }
         Ok(())
     }
-
-    // Removed test_parameterized_pattern - already consolidated above
-
-    // Removed test_edge_cases_with_parameterized - already consolidated above
 
     #[sinex_test]
     async fn test_edge_cases(ctx: TestContext) -> Result<()> {
@@ -636,7 +631,7 @@ mod tests {
                 // Each performs operations
                 for j in 0..10 {
                     ctx.event()
-                        .source(&format!("task_{}", i))
+                        .source(EventSource::new(&format!("task_{}", i)))
                         .type_("concurrent.test")
                         .field("iteration", j)
                         .insert()
@@ -730,8 +725,6 @@ mod tests {
         Ok(())
     }
 
-    // Removed test_test_context_helpers - functionality covered in test_context.rs
-
     #[sinex_test]
     async fn test_result_type_alias(_ctx: TestContext) -> Result<()> {
         // Test that Result is properly aliased
@@ -773,8 +766,8 @@ mod tests {
             .await?;
 
         // Both should succeed despite different order
-        assert_eq!(event1.event_type, "test");
-        assert_eq!(event2.event_type, "test");
+        assert_eq!(event1.event_type.as_str(), "test");
+        assert_eq!(event2.event_type.as_str(), "test");
 
         Ok(())
     }
@@ -1103,282 +1096,4 @@ mod tests {
 
         Ok(())
     }
-}
-
-// === Self-Benchmarks: Demonstrating benchmarking capabilities ===
-//
-// These benchmarks serve as both performance tests and examples of how to
-// properly benchmark database operations using sinex-test-utils.
-
-#[cfg(all(test, feature = "bench"))]
-mod benches {
-    // TODO: All benchmarks commented out - they need async support in sinex_bench macro
-    /*
-    use super::*;
-    use crate::prelude::*;
-    use serde_json::json;
-    use sinex_ulid::Ulid;
-
-    // Basic event operations benchmark
-    #[sinex_bench]
-    fn bench_event_creation() -> anyhow::Result<()> {
-        // Simple event creation - measures database round-trip
-        use sinex_db::repositories::{EventRepository, Repository, NewEvent};
-        use sinex_core_types::domain::{EventSource, EventType, HostName};
-
-        let repo = EventRepository::new(ctx.pool());
-        let new_event = NewEvent {
-            source: EventSource::new("bench"),
-            event_type: EventType::new("perf.test"),
-            host: HostName::new(&gethostname::gethostname().to_string_lossy()),
-            payload: json!({"iteration": 1}),
-            ts_orig: Some(chrono::Utc::now()),
-            ingestor_version: Some("bench/1.0".to_string()),
-            payload_schema_id: None,
-            source_event_ids: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
-        };
-        repo.insert(new_event).await?;
-
-        Ok(())
-    }
-
-    // Batch operations benchmark
-    #[sinex_bench(args = [10, 100, 1000])]
-    async fn bench_batch_insert(arg: usize) -> anyhow::Result<()> {
-        let count = arg;
-        use crate::prelude::DatasetSize;
-        // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-
-        // Insert events using query builders
-        for i in 0..count {
-            EventQueries::insert_event(
-                "bench-batch".to_string(),
-                "batch.test".to_string(),
-                "bench-host".to_string(),
-                json!({"index": i}),
-                Some(chrono::Utc::now()),
-                Some("bench/1.0".to_string()),
-                None,
-                None,
-            )
-            .execute(ctx.pool())
-            .await?;
-        }
-
-        Ok(())
-    }
-
-    // Query performance with fixtures
-    #[sinex_bench]
-    fn bench_query_by_source() -> anyhow::Result<()> {
-        // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-
-        // Load standard query fixture once per bench run
-        ctx.query_bench(DatasetSize::Small).await?;
-
-        // Measure query performance using query builder
-        let _events: Vec<RawEvent> =
-            EventQueries::get_by_source("sensor_a".to_string(), Some(100), None)
-                .fetch_all(ctx.pool())
-                .await?;
-
-        Ok(())
-    }
-
-    // Complex query patterns
-    #[sinex_bench]
-    fn bench_count_queries() -> anyhow::Result<()> {
-        // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-
-        ctx.time_series(DatasetSize::Small).await?;
-
-        // Count is often faster than fetch
-        let (count,): (i64,) = EventQueries::count_by_source("sensor_b".to_string())
-            .fetch_one(ctx.pool())
-            .await?;
-
-        // Use the result to prevent optimization
-        divan::black_box(count);
-        Ok(())
-    }
-
-    // Aggregation queries benchmark
-    #[sinex_bench]
-    fn bench_aggregation_queries() -> anyhow::Result<()> {
-        ctx.query_bench(DatasetSize::Small).await?;
-
-        // TODO: Replace with EventQueries::group_by_source() once implemented
-        // Group by source with counts
-        #[derive(sqlx::FromRow)]
-        struct SourceCount {
-            source: String,
-            count: i64,
-        }
-
-        let results: Vec<SourceCount> = sqlx::query_as!(
-            SourceCount,
-            r#"SELECT source, COUNT(*) as "count!"
-               FROM core.events
-               GROUP BY source
-               ORDER BY COUNT(*) DESC
-               LIMIT 10"#
-        )
-        .fetch_all(ctx.pool())
-        .await?;
-
-        divan::black_box(results);
-        Ok(())
-    }
-
-    // Time-based queries
-    #[sinex_bench]
-    fn bench_time_range_queries() -> anyhow::Result<()> {
-        // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-
-        ctx.time_series(DatasetSize::Medium).await?;
-
-        // Query last hour of events
-        let cutoff = chrono::Utc::now() - chrono::Duration::hours(1);
-        let end_time = chrono::Utc::now();
-
-        // Use existing time range query builder
-        let events: Vec<RawEvent> =
-            EventQueries::get_by_time_range(cutoff, end_time, Some(100), None)
-                .fetch_all(ctx.pool())
-                .await?;
-
-        divan::black_box(events);
-        Ok(())
-    }
-
-    // JSON payload queries
-    #[sinex_bench]
-    fn bench_json_queries() -> anyhow::Result<()> {
-        ctx.query_bench(DatasetSize::Small).await?;
-
-        // Query by JSON field
-        #[derive(sqlx::FromRow)]
-        struct EventPayload {
-            id: sqlx::types::Uuid,
-            payload: serde_json::Value,
-        }
-
-        let results: Vec<EventPayload> = sqlx::query_as!(
-            EventPayload,
-            r#"SELECT event_id::uuid as "id!", payload
-               FROM core.events
-               WHERE payload->>'type' = 'measurement'
-               LIMIT 50"#
-        )
-        .fetch_all(ctx.pool())
-        .await?;
-
-        divan::black_box(results);
-        Ok(())
-    }
-
-    // Concurrent operations benchmark
-    #[sinex_bench]
-    fn bench_concurrent_inserts() -> anyhow::Result<()> {
-        use futures::future;
-
-        // Reset to clean state
-        crate::db_common::reset_database(ctx.pool()).await?;
-
-        // Spawn concurrent insert tasks
-        let tasks: Vec<_> = (0..10)
-            .map(|i| {
-                let pool = ctx.pool().clone();
-                async move {
-                    // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-
-                    EventQueries::insert_event(
-                        format!("concurrent-{}", i),
-                        "bench.concurrent".to_string(),
-                        "bench-host".to_string(),
-                        json!({"task": i}),
-                        Some(chrono::Utc::now()),
-                        Some("bench/1.0".to_string()),
-                        None,
-                        None,
-                    )
-                    .execute(&pool)
-                    .await
-                }
-            })
-            .collect();
-
-        // Wait for all to complete
-        let results = future::join_all(tasks).await;
-        for result in results {
-            result?;
-        }
-
-        Ok(())
-    }
-
-    // Benchmark using test utilities directly
-    #[sinex_bench]
-    fn bench_test_utils_event_creation() -> anyhow::Result<()> {
-        // This demonstrates using test utils in benchmarks
-        use serde_json::json;
-        use sinex_events::EventFactory;
-        let factory = EventFactory::new("bench-utils");
-        let event = factory.create_event(
-            "perf.test",
-            json!({
-                "metric": "cpu_usage",
-                "value": 75.5,
-                "timestamp": chrono::Utc::now().to_rfc3339()
-            }),
-        );
-
-        // Insert using query builder
-        // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-
-        EventQueries::insert_event(
-            event.source,
-            event.event_type,
-            event.host,
-            event.payload,
-            event.ts_orig,
-            event.ingestor_version,
-            None,
-            None,
-        )
-        .execute(ctx.pool())
-        .await?;
-
-        Ok(())
-    }
-
-    // Benchmark fixture loading performance
-    #[sinex_bench(args = [DatasetSize::Small, DatasetSize::Medium])]
-    fn bench_fixture_loading(arg: DatasetSize) -> anyhow::Result<()> {
-        let size = arg;
-        // Reset first
-        crate::db_common::reset_database(ctx.pool()).await?;
-
-        // Load the fixture
-        ctx.time_series(size).await?;
-
-        // Verify it loaded
-        // use sinex_db::queries::EventQueries; // TODO: Migrate to repositories
-        let (count,): (i64,) = EventQueries::count_all().fetch_one(ctx.pool()).await?;
-
-        assert!(count > 0);
-        Ok(())
-    }
-    */
-}
-
-// Enable Divan benchmarks when feature is enabled
-#[cfg(all(test, feature = "bench"))]
-fn main() {
-    divan::main();
 }

@@ -7,6 +7,7 @@ authors.workspace = true
 [features]
 default = []
 bench = []
+macros = ["dep:sinex-macros"]
 
 
 [dependencies]
@@ -49,11 +50,8 @@ thiserror = { workspace = true }
 clap = { workspace = true }
 
 # Local dependencies
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
-sinex-ulid = { path = "../sinex-ulid" }
-sinex-error = { path = "../sinex-error" }
-sinex-macros = { path = "../sinex-macros" }
+sinex-types = { path = "../sinex-types" }
+sinex-macros = { path = "../sinex-macros", optional = true }
 sinex-db = { path = "../sinex-db" }
 sinex-events = { path = "../sinex-events" }
 

@@ -7,9 +7,9 @@ use crate::prelude::*;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core_types::DbPool;
-use sinex_events::{event_types, sources, RawEvent};
-use sinex_ulid::Ulid;
+use sinex_db::models::{Event, EventPayload};
+use sinex_types::ulid::Ulid;
+use sinex_types::DbPool;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -111,7 +111,7 @@ impl FixtureGenerator {
     }
 
     /// Generate events for the dataset
-    pub fn generate_events(&mut self) -> Vec<RawEvent> {
+    pub fn generate_events(&mut self) -> Vec<Event> {
         let mut events = Vec::with_capacity(self.config.event_count);
 
         // Pre-generate sources and event types
@@ -138,13 +138,17 @@ impl FixtureGenerator {
 
     /// Generate source names
     fn generate_sources(&self) -> Vec<String> {
+        use sinex_events::{
+            ClipboardCopiedPayload, DbusSignalPayload, FileCreatedPayload,
+            HyprlandWindowFocusedPayload, KittyCommandExecutedPayload, SystemdUnitStartedPayload,
+        };
         let base_sources = vec![
-            sources::FS.to_string(),
-            sources::SHELL_KITTY.to_string(),
-            sources::CLIPBOARD.to_string(),
-            sources::WM_HYPRLAND.to_string(),
-            sources::SYSTEMD.to_string(),
-            sources::DBUS.to_string(),
+            FileCreatedPayload::SOURCE.to_string(),
+            KittyCommandExecutedPayload::SOURCE.to_string(),
+            ClipboardCopiedPayload::SOURCE.to_string(),
+            HyprlandWindowFocusedPayload::SOURCE.to_string(),
+            SystemdUnitStartedPayload::SOURCE.to_string(),
+            DbusSignalPayload::SOURCE.to_string(),
         ];
 
         let mut sources = Vec::with_capacity(self.config.source_count);
@@ -160,11 +164,15 @@ impl FixtureGenerator {
 
     /// Generate event types
     fn generate_event_types(&self) -> Vec<String> {
+        use sinex_events::{
+            ClipboardCopiedPayload, FileCreatedPayload, HyprlandWindowFocusedPayload,
+            KittyCommandExecutedPayload,
+        };
         let base_types = vec![
-            event_types::filesystem::FILE_CREATED.to_string(),
-            event_types::shell::COMMAND_EXECUTED.to_string(),
-            event_types::clipboard::COPIED.to_string(),
-            event_types::window_manager::WINDOW_FOCUSED.to_string(),
+            FileCreatedPayload::EVENT_TYPE.to_string(),
+            KittyCommandExecutedPayload::EVENT_TYPE.to_string(),
+            ClipboardCopiedPayload::EVENT_TYPE.to_string(),
+            HyprlandWindowFocusedPayload::EVENT_TYPE.to_string(),
         ];
 
         let mut types = Vec::with_capacity(self.config.event_type_count);
@@ -198,7 +206,10 @@ impl FixtureGenerator {
         payload_size: usize,
         timestamp: DateTime<Utc>,
         index: usize,
-    ) -> RawEvent {
+    ) -> Event {
+        use sinex_events::{
+            ClipboardCopiedPayload, FileCreatedPayload, KittyCommandExecutedPayload,
+        };
         let mut payload = HashMap::new();
 
         // Add standard fields
@@ -208,14 +219,14 @@ impl FixtureGenerator {
 
         // Add source-specific fields
         match source {
-            s if s == sources::FS => {
+            s if s == FileCreatedPayload::SOURCE.as_str() => {
                 payload.insert(
                     "path".to_string(),
                     json!(format!("/fixture/path/{}/file_{}.txt", index / 100, index)),
                 );
                 payload.insert("operation".to_string(), json!("created"));
             }
-            s if s == sources::SHELL_KITTY => {
+            s if s == KittyCommandExecutedPayload::SOURCE.as_str() => {
                 let commands = ["ls", "cd", "git", "cargo", "vim", "grep", "find"];
                 payload.insert(
                     "command".to_string(),
@@ -224,7 +235,7 @@ impl FixtureGenerator {
                 payload.insert("exit_code".to_string(), json!(0));
                 payload.insert("duration_ms".to_string(), json!(self.rng.u32(10..1000)));
             }
-            s if s == sources::CLIPBOARD => {
+            s if s == ClipboardCopiedPayload::SOURCE.as_str() => {
                 payload.insert("format".to_string(), json!("text/plain"));
                 payload.insert("source_app".to_string(), json!("fixture_app"));
             }
@@ -238,27 +249,20 @@ impl FixtureGenerator {
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        RawEvent {
-            id: Ulid::new(),
-            source: source.to_string(),
-            event_type: event_type.to_string(),
-            host: "fixture_host".to_string(),
-            payload: serde_json::to_value(payload).unwrap(),
-            ts_ingest: timestamp,
-            ts_orig: Some(timestamp),
-            ingestor_version: Some("fixture_generator/1.0.0".to_string()),
-            payload_schema_id: None,
-            source_event_ids: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
-        }
+        use sinex_types::domain::{EventSource, EventType, HostName};
+
+        Event::builder()
+            .source(EventSource::new(source))
+            .event_type(EventType::new(event_type))
+            .host(HostName::new("fixture_host"))
+            .payload(serde_json::to_value(payload).unwrap())
+            .ts_orig(Some(timestamp))
+            .ingestor_version("fixture_generator/1.0.0".to_string())
+            .build()
     }
 
     /// Generate SQL for the dataset
-    pub fn generate_sql(&mut self, events: &[RawEvent]) -> String {
+    pub fn generate_sql(&mut self, events: &[Event]) -> String {
         let mut sql = String::new();
 
         // Header
@@ -278,7 +282,11 @@ impl FixtureGenerator {
             }
 
             sql.push_str("INSERT INTO core.events (id, source, event_type, host, payload, ts_ingest, ts_orig, ingestor_version) VALUES (\n");
-            sql.push_str(&format!("  '{}',\n", event.id.to_uuid()));
+            if let Some(id) = &event.id {
+                sql.push_str(&format!("  '{}',\n", id.as_ulid().to_uuid()));
+            } else {
+                sql.push_str(&format!("  '{}',\n", Ulid::new().to_uuid()));
+            }
             sql.push_str(&format!("  '{}',\n", event.source));
             sql.push_str(&format!("  '{}',\n", event.event_type));
             sql.push_str(&format!("  '{}',\n", event.host));
@@ -309,7 +317,7 @@ impl FixtureGenerator {
                 sql.push_str(&format!(
                     "INSERT INTO core.processor_checkpoints (processor_name, last_processed_event_id, processed_count, state) VALUES (\n  'fixture_processor_{}', '{}', {}, '{}'::jsonb\n);\n",
                     i % 3,
-                    last_event_id.to_string(),
+                    last_event_id.as_ref().map(|id| id.to_string()).unwrap_or_else(|| "UNKNOWN".to_string()),
                     (i + 1) * self.config.checkpoint_interval,
                     json!({
                         "checkpoint": i,
@@ -351,7 +359,7 @@ impl FixtureGenerator {
     }
 
     /// Generate JSON dataset
-    pub fn generate_json(&mut self, events: &[RawEvent]) -> serde_json::Value {
+    pub fn generate_json(&mut self, events: &[Event]) -> serde_json::Value {
         json!({
             "metadata": {
                 "dataset": self.config.name,
@@ -432,8 +440,8 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Path) -> Result<bool,
     let metadata: DatasetMetadata = serde_json::from_str(&fs::read_to_string(metadata_path)?)?;
 
     // Check event count
-    use sinex_db::count_events;
-    let event_count = count_events(pool).await?;
+    use sinex_db::repositories::DbPoolExt;
+    let event_count = pool.events().count_all().await?;
 
     if event_count != metadata.event_count as i64 {
         return Ok(false);

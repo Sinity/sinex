@@ -1,8 +1,11 @@
 use crate::repositories::{common::*, Repository};
+use crate::schema::Entities;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core_types::ids::{EntityId, EventId, RelationId};
+use sinex_types::Id;
 use sqlx::PgPool;
+
+use crate::models::{Entity, EntityRelation, Event};
 
 /// Entity types supported by the knowledge graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -33,10 +36,10 @@ impl EntityType {
     }
 }
 
-/// An entity in the knowledge graph
+/// An entity record from the knowledge graph
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Entity {
-    pub id: EntityId,
+pub struct EntityRecord {
+    pub id: Id<Entity>,
     pub entity_type: String,
     pub name: String,
     pub canonical_name: String,
@@ -45,12 +48,12 @@ pub struct Entity {
     pub metadata: serde_json::Value,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    pub merged_into_id: Option<EntityId>,
+    pub merged_into_id: Option<Id<Entity>>,
 }
 
-/// Data for creating a new entity
+/// Entity to create
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewEntity {
+pub struct CreateEntity {
     pub entity_type: EntityType,
     pub name: String,
     pub canonical_name: Option<String>,
@@ -59,32 +62,208 @@ pub struct NewEntity {
     pub metadata: Option<serde_json::Value>,
 }
 
-/// A relationship between entities
+impl CreateEntity {
+    /// Create a person entity
+    pub fn person(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Person,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create a project entity
+    pub fn project(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Project,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create a topic entity
+    pub fn topic(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Topic,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create an organization entity
+    pub fn organization(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Organization,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create a location entity
+    pub fn location(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Location,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create a concept entity
+    pub fn concept(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Concept,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create a tool entity
+    pub fn tool(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Tool,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Create an event entity
+    pub fn event(name: impl Into<String>) -> Self {
+        CreateEntity {
+            entity_type: EntityType::Event,
+            name: name.into(),
+            canonical_name: None,
+            aliases: None,
+            description: None,
+            metadata: None,
+        }
+    }
+
+    /// Fluent method to set canonical name
+    pub fn with_canonical_name(mut self, name: impl Into<String>) -> Self {
+        self.canonical_name = Some(name.into());
+        self
+    }
+
+    /// Fluent method to add aliases
+    pub fn with_aliases<I, S>(mut self, aliases: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.aliases = Some(aliases.into_iter().map(|s| s.into()).collect());
+        self
+    }
+
+    /// Fluent method to set description
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+
+    /// Fluent method to set metadata
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+}
+
+/// A relationship record between entities
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EntityRelation {
-    pub id: RelationId,
-    pub from_entity_id: EntityId,
-    pub to_entity_id: EntityId,
+pub struct EntityRelationRecord {
+    pub id: Id<EntityRelation>,
+    pub from_entity_id: Id<Entity>,
+    pub to_entity_id: Id<Entity>,
     pub relation_type: String,
     pub strength: f64,
     pub metadata: serde_json::Value,
     pub valid_from: DateTime<Utc>,
     pub valid_until: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-    pub created_from_event_id: Option<EventId>,
+    pub created_from_event_id: Option<Id<Event>>,
 }
 
-/// Data for creating a new entity relation
+/// Entity relation to create
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewEntityRelation {
-    pub from_entity_id: EntityId,
-    pub to_entity_id: EntityId,
+pub struct CreateEntityRelation {
+    pub from_entity_id: Id<Entity>,
+    pub to_entity_id: Id<Entity>,
     pub relation_type: String,
     pub strength: Option<f64>,
     pub metadata: Option<serde_json::Value>,
     pub valid_from: Option<DateTime<Utc>>,
     pub valid_until: Option<DateTime<Utc>>,
-    pub created_from_event_id: Option<EventId>,
+    pub created_from_event_id: Option<Id<Event>>,
+}
+
+impl CreateEntityRelation {
+    /// Create a new entity relation
+    pub fn new(
+        from_entity_id: Id<Entity>,
+        to_entity_id: Id<Entity>,
+        relation_type: impl Into<String>,
+    ) -> Self {
+        CreateEntityRelation {
+            from_entity_id,
+            to_entity_id,
+            relation_type: relation_type.into(),
+            strength: None,
+            metadata: None,
+            valid_from: None,
+            valid_until: None,
+            created_from_event_id: None,
+        }
+    }
+
+    /// Fluent method to set strength
+    pub fn with_strength(mut self, strength: f64) -> Self {
+        self.strength = Some(strength);
+        self
+    }
+
+    /// Fluent method to set metadata
+    pub fn with_metadata(mut self, metadata: serde_json::Value) -> Self {
+        self.metadata = Some(metadata);
+        self
+    }
+
+    /// Fluent method to set valid_from
+    pub fn with_valid_from(mut self, valid_from: DateTime<Utc>) -> Self {
+        self.valid_from = Some(valid_from);
+        self
+    }
+
+    /// Fluent method to set valid_until
+    pub fn with_valid_until(mut self, valid_until: DateTime<Utc>) -> Self {
+        self.valid_until = Some(valid_until);
+        self
+    }
+
+    /// Fluent method to set created_from_event_id
+    pub fn with_created_from_event(mut self, event_id: Id<Event>) -> Self {
+        self.created_from_event_id = Some(event_id);
+        self
+    }
 }
 
 /// Repository for knowledge graph operations
@@ -102,10 +281,14 @@ impl<'a> Repository<'a> for KnowledgeGraphRepository<'a> {
     }
 }
 
+impl<'a> EnhancedRepository<'a> for KnowledgeGraphRepository<'a> {
+    type Table = Entities;
+}
+
 impl<'a> KnowledgeGraphRepository<'a> {
     /// Create a new entity
-    pub async fn create_entity(&self, entity: NewEntity) -> DbResult<Entity> {
-        let id = EntityId::new();
+    pub async fn create_entity(&self, entity: CreateEntity) -> DbResult<EntityRecord> {
+        let id = Id::<Entity>::new();
         let canonical_name = entity
             .canonical_name
             .unwrap_or_else(|| entity.name.to_lowercase().replace(' ', "_"));
@@ -115,7 +298,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
             .unwrap_or(serde_json::Value::Object(Default::default()));
 
         sqlx::query_as!(
-            Entity,
+            EntityRecord,
             r#"
             INSERT INTO core.entities (
                 id, type, name, canonical_name, aliases, description, metadata
@@ -123,7 +306,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 $1, $2, $3, $4, $5, $6, $7
             )
             RETURNING 
-                id as "id: EntityId",
+                id as "id: Id<Entity>",
                 type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -132,7 +315,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 metadata as "metadata!",
                 created_at as "created_at!",
                 updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: EntityId"
+                merged_into_id as "merged_into_id: Id<Entity>"
             "#,
             *id.as_ulid() as _,
             entity.entity_type.as_str(),
@@ -148,12 +331,12 @@ impl<'a> KnowledgeGraphRepository<'a> {
     }
 
     /// Get an entity by ID
-    pub async fn get_entity(&self, id: EntityId) -> DbResult<Option<Entity>> {
+    pub async fn get_entity(&self, id: Id<Entity>) -> DbResult<Option<EntityRecord>> {
         sqlx::query_as!(
-            Entity,
+            EntityRecord,
             r#"
             SELECT 
-                id as "id: EntityId",
+                id as "id: Id<Entity>",
                 type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -162,7 +345,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 metadata as "metadata!",
                 created_at as "created_at!",
                 updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: EntityId"
+                merged_into_id as "merged_into_id: Id<Entity>"
             FROM core.entities
             WHERE id = $1
             "#,
@@ -174,14 +357,14 @@ impl<'a> KnowledgeGraphRepository<'a> {
     }
 
     /// Find entities by name or alias
-    pub async fn find_entities_by_name(&self, name: &str) -> DbResult<Vec<Entity>> {
+    pub async fn find_entities_by_name(&self, name: &str) -> DbResult<Vec<EntityRecord>> {
         let normalized = name.to_lowercase();
 
         sqlx::query_as!(
-            Entity,
+            EntityRecord,
             r#"
             SELECT 
-                id as "id: EntityId",
+                id as "id: Id<Entity>",
                 type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -190,7 +373,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 metadata as "metadata!",
                 created_at as "created_at!",
                 updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: EntityId"
+                merged_into_id as "merged_into_id: Id<Entity>"
             FROM core.entities
             WHERE 
                 LOWER(name) = $1 
@@ -211,17 +394,17 @@ impl<'a> KnowledgeGraphRepository<'a> {
         query: &str,
         entity_type: Option<EntityType>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Entity>> {
+    ) -> DbResult<Vec<EntityRecord>> {
         let pattern = format!("%{}%", query.to_lowercase());
         let limit = limit.unwrap_or(100);
 
         match entity_type {
             Some(et) => {
                 sqlx::query_as!(
-                    Entity,
+                    EntityRecord,
                     r#"
                     SELECT 
-                        id as "id: EntityId",
+                        id as "id: Id<Entity>",
                         type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
@@ -230,7 +413,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         metadata as "metadata!",
                         created_at as "created_at!",
                         updated_at as "updated_at!",
-                        merged_into_id as "merged_into_id: EntityId"
+                        merged_into_id as "merged_into_id: Id<Entity>"
                     FROM core.entities
                     WHERE 
                         type = $3
@@ -254,10 +437,10 @@ impl<'a> KnowledgeGraphRepository<'a> {
             }
             None => {
                 sqlx::query_as!(
-                    Entity,
+                    EntityRecord,
                     r#"
                     SELECT 
-                        id as "id: EntityId",
+                        id as "id: Id<Entity>",
                         type as "entity_type!",
                         name as "name!",
                         canonical_name as "canonical_name!",
@@ -266,7 +449,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         metadata as "metadata!",
                         created_at as "created_at!",
                         updated_at as "updated_at!",
-                        merged_into_id as "merged_into_id: EntityId"
+                        merged_into_id as "merged_into_id: Id<Entity>"
                     FROM core.entities
                     WHERE 
                         LOWER(name) LIKE $1 
@@ -291,14 +474,14 @@ impl<'a> KnowledgeGraphRepository<'a> {
     /// Update an entity
     pub async fn update_entity(
         &self,
-        id: EntityId,
+        id: Id<Entity>,
         name: Option<String>,
         description: Option<String>,
         aliases: Option<Vec<String>>,
         metadata: Option<serde_json::Value>,
-    ) -> DbResult<Entity> {
+    ) -> DbResult<EntityRecord> {
         sqlx::query_as!(
-            Entity,
+            EntityRecord,
             r#"
             UPDATE core.entities
             SET 
@@ -309,7 +492,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 updated_at = NOW()
             WHERE id = $1
             RETURNING 
-                id as "id: EntityId",
+                id as "id: Id<Entity>",
                 type as "entity_type!",
                 name as "name!",
                 canonical_name as "canonical_name!",
@@ -318,7 +501,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 metadata as "metadata!",
                 created_at as "created_at!",
                 updated_at as "updated_at!",
-                merged_into_id as "merged_into_id: EntityId"
+                merged_into_id as "merged_into_id: Id<Entity>"
             "#,
             *id.as_ulid() as _,
             name,
@@ -332,7 +515,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
     }
 
     /// Merge one entity into another
-    pub async fn merge_entities(&self, source_id: EntityId, target_id: EntityId) -> DbResult<()> {
+    pub async fn merge_entities(
+        &self,
+        source_id: Id<Entity>,
+        target_id: Id<Entity>,
+    ) -> DbResult<()> {
         // Update the source entity to point to target
         sqlx::query!(
             r#"
@@ -378,8 +565,11 @@ impl<'a> KnowledgeGraphRepository<'a> {
     }
 
     /// Create a new entity relation
-    pub async fn create_relation(&self, relation: NewEntityRelation) -> DbResult<EntityRelation> {
-        let id = RelationId::new();
+    pub async fn create_relation(
+        &self,
+        relation: CreateEntityRelation,
+    ) -> DbResult<EntityRelationRecord> {
+        let id = Id::<EntityRelation>::new();
         let strength = relation.strength.unwrap_or(1.0);
         let metadata = relation
             .metadata
@@ -387,7 +577,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
         let valid_from = relation.valid_from.unwrap_or_else(Utc::now);
 
         sqlx::query_as!(
-            EntityRelation,
+            EntityRelationRecord,
             r#"
             INSERT INTO core.entity_relations (
                 id, from_entity_id, to_entity_id, relation_type, 
@@ -396,16 +586,16 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9
             )
             RETURNING 
-                id as "id: RelationId",
-                from_entity_id as "from_entity_id: EntityId",
-                to_entity_id as "to_entity_id: EntityId",
+                id as "id: Id<EntityRelation>",
+                from_entity_id as "from_entity_id: Id<Entity>",
+                to_entity_id as "to_entity_id: Id<Entity>",
                 relation_type as "relation_type!",
                 strength as "strength!",
                 metadata as "metadata!",
                 valid_from as "valid_from!",
                 valid_until,
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: EventId"
+                created_from_event_id as "created_from_event_id: Id<Event>"
             "#,
             *id.as_ulid() as _,
             *relation.from_entity_id.as_ulid() as _,
@@ -425,26 +615,26 @@ impl<'a> KnowledgeGraphRepository<'a> {
     /// Get all relations for an entity
     pub async fn get_entity_relations(
         &self,
-        entity_id: EntityId,
+        entity_id: Id<Entity>,
         relation_type: Option<&str>,
         include_inactive: bool,
-    ) -> DbResult<Vec<EntityRelation>> {
+    ) -> DbResult<Vec<EntityRelationRecord>> {
         match (relation_type, include_inactive) {
             (Some(rt), false) => {
                 sqlx::query_as!(
-                    EntityRelation,
+                    EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: RelationId",
-                        from_entity_id as "from_entity_id: EntityId",
-                        to_entity_id as "to_entity_id: EntityId",
+                        id as "id: Id<EntityRelation>",
+                        from_entity_id as "from_entity_id: Id<Entity>",
+                        to_entity_id as "to_entity_id: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: EventId"
+                        created_from_event_id as "created_from_event_id: Id<Event>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -460,19 +650,19 @@ impl<'a> KnowledgeGraphRepository<'a> {
             }
             (Some(rt), true) => {
                 sqlx::query_as!(
-                    EntityRelation,
+                    EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: RelationId",
-                        from_entity_id as "from_entity_id: EntityId",
-                        to_entity_id as "to_entity_id: EntityId",
+                        id as "id: Id<EntityRelation>",
+                        from_entity_id as "from_entity_id: Id<Entity>",
+                        to_entity_id as "to_entity_id: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: EventId"
+                        created_from_event_id as "created_from_event_id: Id<Event>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -487,19 +677,19 @@ impl<'a> KnowledgeGraphRepository<'a> {
             }
             (None, false) => {
                 sqlx::query_as!(
-                    EntityRelation,
+                    EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: RelationId",
-                        from_entity_id as "from_entity_id: EntityId",
-                        to_entity_id as "to_entity_id: EntityId",
+                        id as "id: Id<EntityRelation>",
+                        from_entity_id as "from_entity_id: Id<Entity>",
+                        to_entity_id as "to_entity_id: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: EventId"
+                        created_from_event_id as "created_from_event_id: Id<Event>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -513,19 +703,19 @@ impl<'a> KnowledgeGraphRepository<'a> {
             }
             (None, true) => {
                 sqlx::query_as!(
-                    EntityRelation,
+                    EntityRelationRecord,
                     r#"
                     SELECT 
-                        id as "id: RelationId",
-                        from_entity_id as "from_entity_id: EntityId",
-                        to_entity_id as "to_entity_id: EntityId",
+                        id as "id: Id<EntityRelation>",
+                        from_entity_id as "from_entity_id: Id<Entity>",
+                        to_entity_id as "to_entity_id: Id<Entity>",
                         relation_type as "relation_type!",
                         strength as "strength!",
                         metadata as "metadata!",
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: EventId"
+                        created_from_event_id as "created_from_event_id: Id<Event>"
                     FROM core.entity_relations
                     WHERE 
                         from_entity_id = $1 OR to_entity_id = $1
@@ -543,26 +733,26 @@ impl<'a> KnowledgeGraphRepository<'a> {
     /// Update relation validity period
     pub async fn update_relation_validity(
         &self,
-        id: RelationId,
+        id: Id<EntityRelation>,
         valid_until: Option<DateTime<Utc>>,
-    ) -> DbResult<EntityRelation> {
+    ) -> DbResult<EntityRelationRecord> {
         sqlx::query_as!(
-            EntityRelation,
+            EntityRelationRecord,
             r#"
             UPDATE core.entity_relations
             SET valid_until = $2
             WHERE id = $1
             RETURNING 
-                id as "id: RelationId",
-                from_entity_id as "from_entity_id: EntityId",
-                to_entity_id as "to_entity_id: EntityId",
+                id as "id: Id<EntityRelation>",
+                from_entity_id as "from_entity_id: Id<Entity>",
+                to_entity_id as "to_entity_id: Id<Entity>",
                 relation_type as "relation_type!",
                 strength as "strength!",
                 metadata as "metadata!",
                 valid_from as "valid_from!",
                 valid_until,
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: EventId"
+                created_from_event_id as "created_from_event_id: Id<Event>"
             "#,
             *id.as_ulid() as _,
             valid_until
@@ -575,10 +765,10 @@ impl<'a> KnowledgeGraphRepository<'a> {
     /// Find paths between two entities
     pub async fn find_paths(
         &self,
-        _from_entity: EntityId,
-        _to_entity: EntityId,
+        _from_entity: Id<Entity>,
+        _to_entity: Id<Entity>,
         _max_depth: i32,
-    ) -> DbResult<Vec<Vec<EntityRelation>>> {
+    ) -> DbResult<Vec<Vec<EntityRelationRecord>>> {
         // This is a placeholder for graph traversal logic
         // In a real implementation, this would use recursive CTEs
         // or a graph database for efficient path finding
@@ -586,7 +776,10 @@ impl<'a> KnowledgeGraphRepository<'a> {
     }
 
     /// Get entity statistics
-    pub async fn get_entity_statistics(&self, entity_id: EntityId) -> DbResult<serde_json::Value> {
+    pub async fn get_entity_statistics(
+        &self,
+        entity_id: Id<Entity>,
+    ) -> DbResult<serde_json::Value> {
         let stats = sqlx::query!(
             r#"
             WITH relation_counts AS (
@@ -655,19 +848,19 @@ impl<'a> Repository<'a> for KnowledgeGraphRepositoryTx<'a> {
 
 // Implement all the same methods for the transaction wrapper
 impl<'a> KnowledgeGraphRepositoryTx<'a> {
-    pub async fn create_entity(&self, entity: NewEntity) -> DbResult<Entity> {
+    pub async fn create_entity(&self, entity: CreateEntity) -> DbResult<EntityRecord> {
         KnowledgeGraphRepository::new(self.pool)
             .create_entity(entity)
             .await
     }
 
-    pub async fn get_entity(&self, id: EntityId) -> DbResult<Option<Entity>> {
+    pub async fn get_entity(&self, id: Id<Entity>) -> DbResult<Option<EntityRecord>> {
         KnowledgeGraphRepository::new(self.pool)
             .get_entity(id)
             .await
     }
 
-    pub async fn find_entities_by_name(&self, name: &str) -> DbResult<Vec<Entity>> {
+    pub async fn find_entities_by_name(&self, name: &str) -> DbResult<Vec<EntityRecord>> {
         KnowledgeGraphRepository::new(self.pool)
             .find_entities_by_name(name)
             .await
@@ -678,7 +871,7 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
         query: &str,
         entity_type: Option<EntityType>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Entity>> {
+    ) -> DbResult<Vec<EntityRecord>> {
         KnowledgeGraphRepository::new(self.pool)
             .search_entities(query, entity_type, limit)
             .await
@@ -686,24 +879,31 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
 
     pub async fn update_entity(
         &self,
-        id: EntityId,
+        id: Id<Entity>,
         name: Option<String>,
         description: Option<String>,
         aliases: Option<Vec<String>>,
         metadata: Option<serde_json::Value>,
-    ) -> DbResult<Entity> {
+    ) -> DbResult<EntityRecord> {
         KnowledgeGraphRepository::new(self.pool)
             .update_entity(id, name, description, aliases, metadata)
             .await
     }
 
-    pub async fn merge_entities(&self, source_id: EntityId, target_id: EntityId) -> DbResult<()> {
+    pub async fn merge_entities(
+        &self,
+        source_id: Id<Entity>,
+        target_id: Id<Entity>,
+    ) -> DbResult<()> {
         KnowledgeGraphRepository::new(self.pool)
             .merge_entities(source_id, target_id)
             .await
     }
 
-    pub async fn create_relation(&self, relation: NewEntityRelation) -> DbResult<EntityRelation> {
+    pub async fn create_relation(
+        &self,
+        relation: CreateEntityRelation,
+    ) -> DbResult<EntityRelationRecord> {
         KnowledgeGraphRepository::new(self.pool)
             .create_relation(relation)
             .await
@@ -711,10 +911,10 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
 
     pub async fn get_entity_relations(
         &self,
-        entity_id: EntityId,
+        entity_id: Id<Entity>,
         relation_type: Option<&str>,
         include_inactive: bool,
-    ) -> DbResult<Vec<EntityRelation>> {
+    ) -> DbResult<Vec<EntityRelationRecord>> {
         KnowledgeGraphRepository::new(self.pool)
             .get_entity_relations(entity_id, relation_type, include_inactive)
             .await
@@ -722,9 +922,9 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
 
     pub async fn update_relation_validity(
         &self,
-        id: RelationId,
+        id: Id<EntityRelation>,
         valid_until: Option<DateTime<Utc>>,
-    ) -> DbResult<EntityRelation> {
+    ) -> DbResult<EntityRelationRecord> {
         KnowledgeGraphRepository::new(self.pool)
             .update_relation_validity(id, valid_until)
             .await
@@ -732,18 +932,49 @@ impl<'a> KnowledgeGraphRepositoryTx<'a> {
 
     pub async fn find_paths(
         &self,
-        from_entity: EntityId,
-        to_entity: EntityId,
+        from_entity: Id<Entity>,
+        to_entity: Id<Entity>,
         max_depth: i32,
-    ) -> DbResult<Vec<Vec<EntityRelation>>> {
+    ) -> DbResult<Vec<Vec<EntityRelationRecord>>> {
         KnowledgeGraphRepository::new(self.pool)
             .find_paths(from_entity, to_entity, max_depth)
             .await
     }
 
-    pub async fn get_entity_statistics(&self, entity_id: EntityId) -> DbResult<serde_json::Value> {
+    pub async fn get_entity_statistics(
+        &self,
+        entity_id: Id<Entity>,
+    ) -> DbResult<serde_json::Value> {
         KnowledgeGraphRepository::new(self.pool)
             .get_entity_statistics(entity_id)
+            .await
+    }
+}
+
+/// Extension trait for Entity terminal methods
+pub trait EntityExt {
+    /// Create the entity in the database
+    async fn create(self, pool: &PgPool) -> DbResult<EntityRecord>;
+}
+
+impl EntityExt for CreateEntity {
+    async fn create(self, pool: &PgPool) -> DbResult<EntityRecord> {
+        KnowledgeGraphRepository::new(pool)
+            .create_entity(self)
+            .await
+    }
+}
+
+/// Extension trait for EntityRelation terminal methods
+pub trait EntityRelationExt {
+    /// Create the entity relation in the database
+    async fn create(self, pool: &PgPool) -> DbResult<EntityRelationRecord>;
+}
+
+impl EntityRelationExt for CreateEntityRelation {
+    async fn create(self, pool: &PgPool) -> DbResult<EntityRelationRecord> {
+        KnowledgeGraphRepository::new(pool)
+            .create_relation(self)
             .await
     }
 }

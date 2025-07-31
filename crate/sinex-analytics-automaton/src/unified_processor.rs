@@ -90,7 +90,7 @@ impl StatefulStreamProcessor for AnalyticsProcessor {
 impl ExplorationProvider for AnalyticsProcessor {
     fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
         Ok(SourceState {
-            description: "Analytics processor - processes analytics requests".to_string(),
+            description: "Analytics processor - processes analytics requests".into(),
             last_updated: Utc::now(),
             total_items: Some(0),
             metadata: HashMap::new(),
@@ -117,7 +117,7 @@ impl ExplorationProvider for AnalyticsProcessor {
             sinex_total: 0,
             missing_items: Vec::new(),
             coverage_percentage: 100.0,
-            recommendations: vec!["Analytics processor is operational".to_string()],
+            recommendations: vec!["Analytics processor is operational".into()],
         })
     }
 

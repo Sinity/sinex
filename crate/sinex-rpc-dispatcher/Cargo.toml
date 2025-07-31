@@ -7,9 +7,7 @@ edition = "2021"
 sinex-events = { path = "../sinex-events" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 sinex-db = { path = "../sinex-db" }
-sinex-ulid = { path = "../sinex-ulid" }
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-types = { path = "../sinex-types" }
 
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

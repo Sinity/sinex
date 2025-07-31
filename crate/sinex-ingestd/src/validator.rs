@@ -1,30 +1,42 @@
 //! Event validation for the ingestion daemon
 
 use crate::IngestdResult;
-use sinex_db::{
-    repositories::{EventRepository, Repository},
-    SqlxPgPool as PgPool,
-};
-use sinex_events::RawEvent;
+use sinex_db::models::Event;
+use sinex_db::SqlxPgPool as PgPool;
+use sinex_types::ulid::Ulid;
 use sqlx::FromRow;
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use std::sync::Arc;
+use tracing::{debug, info, warn};
 
 /// Schema record from database
-#[derive(Debug, FromRow)]
-struct ActiveSchemaRow {
-    schema_id: Option<String>,
-    event_source: String,
+#[derive(Debug, FromRow, Clone)]
+struct SchemaRecord {
+    id: Ulid,
+    source: String,
     event_type: String,
-    schema_version: Option<i32>,
+    schema_version: String,
     schema_content: serde_json::Value,
+    content_hash: String,
+}
+
+/// Schema cache entry
+#[derive(Clone)]
+struct SchemaCacheEntry {
+    compiled_schema: Arc<jsonschema::JSONSchema>,
+    source: String,
+    event_type: String,
+    version: String,
+    content_hash: String,
 }
 
 /// Event validator that checks events against JSON schemas
-#[derive(Debug)]
+#[derive(Clone)]
 pub struct EventValidator {
-    schemas: HashMap<String, jsonschema::JSONSchema>,
-    schema_versions: HashMap<String, String>,
+    /// In-memory cache of compiled schemas keyed by schema ID
+    schema_cache: Arc<parking_lot::RwLock<HashMap<String, SchemaCacheEntry>>>,
+    /// Map of (source, event_type) to schema ID for quick lookups
+    schema_lookup: Arc<parking_lot::RwLock<HashMap<(String, String), String>>>,
     validation_enabled: bool,
 }
 
@@ -32,8 +44,8 @@ impl EventValidator {
     /// Create a new event validator
     pub fn new(validation_enabled: bool) -> Self {
         Self {
-            schemas: HashMap::new(),
-            schema_versions: HashMap::new(),
+            schema_cache: Arc::new(parking_lot::RwLock::new(HashMap::new())),
+            schema_lookup: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             validation_enabled,
         }
     }
@@ -43,53 +55,74 @@ impl EventValidator {
         pool: &PgPool,
         validation_enabled: bool,
     ) -> IngestdResult<Self> {
-        let mut validator = Self::new(validation_enabled);
+        let validator = Self::new(validation_enabled);
 
         if !validation_enabled {
             debug!("Schema validation disabled");
             return Ok(validator);
         }
 
-        // Load all active schemas from the database using the query system
-        let repo = EventRepository::new(pool);
-        let schemas = repo.list_schemas(None, None, Some(true), None).await?;
+        // Load all active schemas from the database
+        // For each source/event_type, we'll use the latest version for new events
+        let schemas = sqlx::query_as!(
+            SchemaRecord,
+            r#"
+            SELECT DISTINCT ON (source, event_type)
+                id as "id: Ulid",
+                source as "source!",
+                event_type as "event_type!",
+                schema_version as "schema_version!",
+                schema_content as "schema_content!",
+                content_hash as "content_hash!"
+            FROM sinex_schemas.event_payload_schemas
+            WHERE is_active = true
+            ORDER BY source, event_type, schema_version DESC
+            "#
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::IngestdError::Database(e))?;
 
-        // Convert EventPayloadSchema to ActiveSchemaRow format
-        let rows: Vec<ActiveSchemaRow> = schemas
-            .into_iter()
-            .map(|s| ActiveSchemaRow {
-                schema_id: Some(s.id.to_string()),
-                event_source: s.schema_name.into_inner(),
-                event_type: s.event_type.unwrap_or_default().into_inner(),
-                schema_version: Some(s.schema_version.into_inner() as i32),
-                schema_content: s.schema_content,
-            })
-            .collect();
+        // Process the loaded schemas and build cache
+        let mut cache = HashMap::new();
+        let mut lookup = HashMap::new();
+        let mut compiled_count = 0;
+        let mut failed_count = 0;
 
-        // Process the loaded schemas
+        for schema in schemas {
+            let schema_id = schema.id.to_string();
 
-        for row in rows {
-            let schema_key = row.schema_id.unwrap_or_default();
-
-            match jsonschema::JSONSchema::compile(&row.schema_content) {
+            match jsonschema::JSONSchema::compile(&schema.schema_content) {
                 Ok(compiled_schema) => {
-                    validator
-                        .schemas
-                        .insert(schema_key.clone(), compiled_schema);
+                    let cache_entry = SchemaCacheEntry {
+                        compiled_schema: Arc::new(compiled_schema),
+                        source: schema.source.clone(),
+                        event_type: schema.event_type.clone(),
+                        version: schema.schema_version.clone(),
+                        content_hash: schema.content_hash.clone(),
+                    };
+
+                    cache.insert(schema_id.clone(), cache_entry);
+                    lookup.insert(
+                        (schema.source.clone(), schema.event_type.clone()),
+                        schema_id.clone(),
+                    );
+                    compiled_count += 1;
+
                     debug!(
-                        schema_id = %schema_key,
-                        event_source = %row.event_source,
-                        event_type = %row.event_type,
-                        version = ?row.schema_version,
-                        "Loaded schema"
+                        schema_id = %schema_id,
+                        source = %schema.source,
+                        event_type = %schema.event_type,
+                        version = %schema.schema_version,
+                        "Compiled and cached schema"
                     );
                 }
                 Err(e) => {
+                    failed_count += 1;
                     warn!(
-                        schema_id = %schema_key,
-                        event_source = %row.event_source,
-                        event_type = %row.event_type,
-                        version = ?row.schema_version,
+                        schema_id = %schema_id,
+                        source = %schema.source,
+                        event_type = %schema.event_type,
                         error = %e,
                         "Failed to compile schema, skipping"
                     );
@@ -97,16 +130,20 @@ impl EventValidator {
             }
         }
 
-        debug!(
-            schema_count = validator.schemas.len(),
-            "Loaded schemas from database"
+        *validator.schema_cache.write() = cache;
+        *validator.schema_lookup.write() = lookup;
+
+        info!(
+            compiled = compiled_count,
+            failed = failed_count,
+            "Loaded and compiled schemas into cache"
         );
 
         Ok(validator)
     }
 
     /// Validate a raw event
-    pub fn validate_event(&self, event: &RawEvent) -> IngestdResult<ValidationResult> {
+    pub fn validate_event(&self, event: &Event) -> IngestdResult<ValidationResult> {
         if !self.validation_enabled {
             return Ok(ValidationResult::Skipped);
         }
@@ -117,14 +154,15 @@ impl EventValidator {
             None => return Ok(ValidationResult::NoSchema),
         };
 
-        // Find the schema
+        // Find the schema in cache
         let schema_key = schema_id.to_string();
-        let schema = match self.schemas.get(&schema_key) {
-            Some(schema) => schema,
+        let cache = self.schema_cache.read();
+        let cache_entry = match cache.get(&schema_key) {
+            Some(entry) => entry,
             None => {
                 warn!(
                     schema_id = %schema_id,
-                    "Schema not found"
+                    "Schema not found in cache"
                 );
                 return Ok(ValidationResult::SchemaNotFound {
                     schema_id: *schema_id,
@@ -132,8 +170,14 @@ impl EventValidator {
             }
         };
 
+        // Clone the Arc to avoid holding the lock during validation
+        let schema = cache_entry.compiled_schema.clone();
+        drop(cache); // Release read lock early
+
         // Validate the payload
-        match schema.validate(&event.payload) {
+        let validation_result = schema.as_ref().validate(&event.payload);
+
+        match validation_result {
             Ok(()) => {
                 debug!(
                     source = %event.source,
@@ -161,7 +205,7 @@ impl EventValidator {
     }
 
     /// Validate a batch of events
-    pub fn validate_batch(&self, events: &[RawEvent]) -> IngestdResult<Vec<ValidationResult>> {
+    pub fn validate_batch(&self, events: &[Event]) -> IngestdResult<Vec<ValidationResult>> {
         events
             .iter()
             .map(|event| self.validate_event(event))
@@ -170,37 +214,122 @@ impl EventValidator {
 
     /// Get available schemas
     pub fn get_available_schemas(&self) -> Vec<SchemaInfo> {
-        self.schema_versions
+        let cache = self.schema_cache.read();
+        cache
             .iter()
-            .map(|(name, version)| SchemaInfo {
-                name: name.clone(),
-                version: version.clone(),
-                schema_key: format!("{}:{}", name, version),
+            .map(|(schema_id, entry)| SchemaInfo {
+                name: format!("{}.{}", entry.source, entry.event_type),
+                version: entry.version.clone(),
+                schema_key: schema_id.clone(),
             })
             .collect()
     }
 
     /// Check if a schema is available by ID
-    pub fn has_schema_by_id(&self, schema_id: &sinex_ulid::Ulid) -> bool {
+    pub fn has_schema_by_id(&self, schema_id: &sinex_types::ulid::Ulid) -> bool {
         let schema_key = schema_id.to_string();
-        self.schemas.contains_key(&schema_key)
+        self.schema_cache.read().contains_key(&schema_key)
+    }
+
+    /// Get schema ID for a source and event type (latest version)
+    pub fn get_schema_id(&self, source: &str, event_type: &str) -> Option<String> {
+        let lookup = self.schema_lookup.read();
+        lookup
+            .get(&(source.to_string(), event_type.to_string()))
+            .cloned()
+    }
+
+    /// Load all schema versions from database (for validation of historical events)
+    pub async fn load_all_schema_versions(&mut self, pool: &PgPool) -> IngestdResult<()> {
+        let all_schemas = sqlx::query_as!(
+            SchemaRecord,
+            r#"
+            SELECT 
+                id as "id: Ulid",
+                source as "source!",
+                event_type as "event_type!",
+                schema_version as "schema_version!",
+                schema_content as "schema_content!",
+                content_hash as "content_hash!"
+            FROM sinex_schemas.event_payload_schemas
+            WHERE is_active = true
+            ORDER BY source, event_type, schema_version
+            "#
+        )
+        .fetch_all(pool)
+        .await
+        .map_err(|e| crate::IngestdError::Database(e))?;
+
+        let mut cache = HashMap::new();
+        let mut compiled_count = 0;
+        let mut failed_count = 0;
+
+        for schema in all_schemas {
+            let schema_id = schema.id.to_string();
+
+            match jsonschema::JSONSchema::compile(&schema.schema_content) {
+                Ok(compiled_schema) => {
+                    let cache_entry = SchemaCacheEntry {
+                        compiled_schema: Arc::new(compiled_schema),
+                        source: schema.source.clone(),
+                        event_type: schema.event_type.clone(),
+                        version: schema.schema_version.clone(),
+                        content_hash: schema.content_hash.clone(),
+                    };
+
+                    cache.insert(schema_id.clone(), cache_entry);
+                    compiled_count += 1;
+
+                    debug!(
+                        schema_id = %schema_id,
+                        source = %schema.source,
+                        event_type = %schema.event_type,
+                        version = %schema.schema_version,
+                        "Compiled and cached schema version"
+                    );
+                }
+                Err(e) => {
+                    failed_count += 1;
+                    warn!(
+                        schema_id = %schema_id,
+                        source = %schema.source,
+                        event_type = %schema.event_type,
+                        version = %schema.schema_version,
+                        error = %e,
+                        "Failed to compile schema version, skipping"
+                    );
+                }
+            }
+        }
+
+        // Update the cache with all versions
+        *self.schema_cache.write() = cache;
+
+        info!(
+            compiled = compiled_count,
+            failed = failed_count,
+            "Loaded all schema versions into cache"
+        );
+
+        Ok(())
     }
 
     /// Get schema count
     pub fn schema_count(&self) -> usize {
-        self.schemas.len()
+        self.schema_cache.read().len()
     }
 
     /// Reload schemas from database
     pub async fn reload_schemas(&mut self, pool: &PgPool) -> IngestdResult<usize> {
         let new_validator = Self::load_schemas_from_db(pool, self.validation_enabled).await?;
-        let old_count = self.schemas.len();
+        let old_count = self.schema_count();
 
-        self.schemas = new_validator.schemas;
-        self.schema_versions = new_validator.schema_versions;
+        // Swap the caches atomically
+        *self.schema_cache.write() = new_validator.schema_cache.read().clone();
+        *self.schema_lookup.write() = new_validator.schema_lookup.read().clone();
 
-        let new_count = self.schemas.len();
-        debug!(
+        let new_count = self.schema_count();
+        info!(
             old_count = old_count,
             new_count = new_count,
             "Reloaded schemas from database"
@@ -220,7 +349,7 @@ pub enum ValidationResult {
     /// No schema specified for the event
     NoSchema,
     /// Schema not found
-    SchemaNotFound { schema_id: sinex_ulid::Ulid },
+    SchemaNotFound { schema_id: sinex_types::ulid::Ulid },
     /// Event is invalid
     Invalid { errors: Vec<String> },
 }

@@ -413,7 +413,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                                 // Only leader processes events
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
-                                    sinex_core_types::SinexError::service(format!(
+                                    sinex_types::SinexError::service(format!(
                                         "Satellite error: {}",
                                         e
                                     ))

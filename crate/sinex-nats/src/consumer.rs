@@ -14,10 +14,10 @@ use async_nats::jetstream::{
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core_types::RawEvent;
+use sinex_db::models::Event;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info};
 
 /// Consumer configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -164,7 +164,7 @@ impl NatsConsumer {
     /// Start consuming messages
     pub async fn start<F, Fut>(&mut self, handler: F) -> Result<()>
     where
-        F: Fn(RawEvent, Message) -> Fut + Send + Sync + 'static,
+        F: Fn(Event, Message) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let consumer = self
@@ -217,7 +217,7 @@ impl NatsConsumer {
                                 .map(|v| v.as_str());
 
                             // Deserialize event
-                            match serde_json::from_slice::<RawEvent>(&msg.payload) {
+                            match serde_json::from_slice::<Event>(&msg.payload) {
                                 Ok(event) => {
                                     // Process the event
                                     match handler(event, msg.clone()).await {
@@ -294,9 +294,9 @@ impl NatsConsumer {
         &mut self,
         batch_size: usize,
         handler: F,
-    ) -> Result<Vec<RawEvent>>
+    ) -> Result<Vec<Event>>
     where
-        F: Fn(Vec<RawEvent>) -> Fut,
+        F: Fn(Vec<Event>) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
         let consumer = self
@@ -319,7 +319,7 @@ impl NatsConsumer {
         while let Some(msg) = messages.next().await {
             match msg {
                 Ok(message) => {
-                    match serde_json::from_slice::<RawEvent>(&message.payload) {
+                    match serde_json::from_slice::<Event>(&message.payload) {
                         Ok(event) => {
                             events.push(event);
                             jet_messages.push(message);

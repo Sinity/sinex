@@ -5,37 +5,37 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_events::RawEvent;
+use sinex_db::repositories::DbPoolExt;
+use sinex_db::models::{Event, RawEvent, RpcContentResponsePayload, RpcError};
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
         BatchProcessingResult, EventBatchProcessor, RedisStreamConsumer,
-        EventFilter as StreamEventFilter,
-    },
+        EventFilter as StreamEventFilter},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteError, SatelliteResult,
-};
+        StreamProcessorContext, TimeHorizon},
+    SatelliteError, SatelliteResult};
 use sinex_services::ContentService;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
 
+// Helper function to reduce error verbosity
+fn missing_field(field: &str) -> SatelliteError {
+    SatelliteError::General(anyhow::anyhow!("Missing {}", field))
+}
+
 /// Content Service as a unified StatefulStreamProcessor
 pub struct ContentServiceProcessor {
     context: Option<StreamProcessorContext>,
-    service: Option<Arc<ContentService>>,
-}
+    service: Option<Arc<ContentService>>}
 
 impl ContentServiceProcessor {
     pub fn new() -> Self {
         Self {
             context: None,
-            service: None,
-        }
+            service: None}
     }
 
     /// Handle content RPC request
@@ -51,8 +51,7 @@ impl ContentServiceProcessor {
             _ => Err(SatelliteError::General(anyhow::anyhow!(
                 "Unknown content method: {}",
                 method
-            ))),
-        }
+            )))}
     }
 
     async fn handle_store_blob(
@@ -63,7 +62,7 @@ impl ContentServiceProcessor {
         let content = params
             .get("content")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| SatelliteError::General(anyhow::anyhow!("Missing content")))?;
+            .ok_or_else(|| missing_field("content"))?;
 
         let filename = params
             .get("filename")
@@ -97,7 +96,7 @@ impl ContentServiceProcessor {
             .get("blob_id")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<Ulid>().ok())
-            .ok_or_else(|| SatelliteError::General(anyhow::anyhow!("Invalid or missing blob_id")))?;
+            .ok_or_else(|| missing_field("blob_id"))?;
 
         let (_metadata, content) = service
             .retrieve_large_content(blob_id)
@@ -124,7 +123,7 @@ impl ContentServiceProcessor {
             .get("blob_id")
             .and_then(|v| v.as_str())
             .and_then(|s| s.parse::<Ulid>().ok())
-            .ok_or_else(|| SatelliteError::General(anyhow::anyhow!("Invalid or missing blob_id")))?;
+            .ok_or_else(|| missing_field("blob_id"))?;
 
         let metadata = service
             .get_blob_metadata(blob_id)
@@ -159,15 +158,13 @@ impl EventBatchProcessor for ContentServiceProcessor {
                     Ok(response) => {
                         // Submit response as synthesis event
                         if let Some(ctx) = &self.context {
-                            let response_event = serde_json::json!({
-                                "request_id": event.payload.get("request_id"),
-                                "response": response,
-                                "service": "content"
-                            });
-
                             // Create response event
-                            let synthesis_event = sinex_events::EventFactory::new("rpc.content")
-                                .create_event("response", response_event);
+                            let synthesis_event = Event::from(RpcContentResponsePayload {
+                                request_id: event.payload.get("request_id").cloned(),
+                                response: Some(response),
+                                error: None,
+                                service: "content".to_string(),
+                            });
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -178,17 +175,15 @@ impl EventBatchProcessor for ContentServiceProcessor {
                         
                         // Submit error response
                         if let Some(ctx) = &self.context {
-                            let error_response = serde_json::json!({
-                                "request_id": event.payload.get("request_id"),
-                                "error": {
-                                    "code": -32603,
-                                    "message": format!("Content service error: {}", e)
-                                },
-                                "service": "content"
+                            let synthesis_event = Event::from(RpcContentResponsePayload {
+                                request_id: event.payload.get("request_id").cloned(),
+                                response: None,
+                                error: Some(RpcError {
+                                    code: -32603,
+                                    message: format!("Content service error: {}", e),
+                                }),
+                                service: "content".to_string(),
                             });
-
-                            let synthesis_event = sinex_events::EventFactory::new("rpc.content")
-                                .create_event("response", error_response);
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -205,8 +200,7 @@ impl EventBatchProcessor for ContentServiceProcessor {
             successful_ids,
             failed_ids,
             retry_ids: Vec::new(),
-            checkpoint_data: None,
-        })
+            checkpoint_data: None})
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
@@ -261,8 +255,7 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["redis-stream".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Historical { end_time } => {
                 info!("Processing historical content requests up to {}", end_time);
@@ -272,12 +265,10 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                 // Determine start time from checkpoint
                 let start_time = match from {
                     Checkpoint::Timestamp { timestamp, .. } => timestamp,
-                    _ => end_time - chrono::Duration::days(7),
-                };
+                    _ => end_time - chrono::Duration::days(7)};
 
                 // Query RPC request events
-                let event_repo = EventRepository::new(&ctx.db_pool);
-                let events = event_repo
+                let events = ctx.db_pool.events()
                     .get_events_by_type_and_time_range(
                         "rpc.content",
                         "request",
@@ -309,8 +300,7 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["postgresql".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Snapshot => {
                 // No snapshot mode for content service
@@ -322,8 +312,7 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["snapshot".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: vec!["Content service does not support snapshot mode".to_string()],
-                })
+                    warnings: vec!["Content service does not support snapshot mode".to_string()]})
             }
         }
     }

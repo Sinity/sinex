@@ -4,7 +4,7 @@ use chrono::Utc;
 use sinex_events::{
     ClipboardCopiedPayload, EventEnvelope, TypedClipboardEventBuilder, TypedRawEvent,
 };
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 
 #[test]
 fn test_typed_clipboard_event_builder() {

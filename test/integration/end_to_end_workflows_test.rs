@@ -30,7 +30,7 @@ use sinex_satellite_sdk::{
 };
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{events, generators, satellite_test_utils};
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};

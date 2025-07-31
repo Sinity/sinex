@@ -16,7 +16,7 @@
 //! ## Basic usage (adds function name and module path):
 //! ```rust
 //! use sinex_macros::with_context;
-//! use sinex_error::{SinexError, Result};
+//! use sinex_types::error::{SinexError, Result};
 //!
 //! #[with_context]
 //! fn read_config() -> Result<String> {
@@ -39,7 +39,7 @@
 //! ```rust
 //! event_registry! {
 //!     sources {
-//!         FILESYSTEM => sources::FS,
+//!         FILESYSTEM => sinex_events::sources::FS,
 //!         SHELL => "shell",
 //!     }
 //!     
@@ -69,7 +69,9 @@ mod auto_metrics;
 // mod config_struct; // REMOVED: Used ValidationChain which is being replaced
 mod database_helpers;
 mod error_context;
+mod event_payload;
 mod event_registry;
+mod id_types;
 mod satellite_helpers;
 mod stream_processor;
 mod typed_event_envelope;
@@ -114,7 +116,7 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
 ///
 /// event_registry! {
 ///     sources {
-///         FILESYSTEM => sources::FS,
+///         FILESYSTEM => sinex_events::sources::FS,
 ///         SHELL => "shell",
 ///     }
 ///     
@@ -397,4 +399,45 @@ pub fn auto_resource_metrics(attr: TokenStream, item: TokenStream) -> TokenStrea
 #[proc_macro_attribute]
 pub fn auto_satellite_metrics(attr: TokenStream, item: TokenStream) -> TokenStream {
     auto_metrics::auto_satellite_metrics(attr, item)
+}
+
+/// Macro for defining strongly-typed ID types based on ULID
+///
+/// Generates a newtype struct around ulid::Ulid with all necessary trait implementations.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::define_id_type;
+///
+/// define_id_type!(EventId);
+/// define_id_type!(CheckpointId);
+/// define_id_type!(MaterialId);
+/// ```
+#[proc_macro]
+pub fn define_id_type(input: TokenStream) -> TokenStream {
+    id_types::define_id_type(input)
+}
+
+/// Derive macro for EventPayload trait
+///
+/// Automatically implements EventPayload trait with SOURCE and EVENT_TYPE constants.
+///
+/// # Examples
+///
+/// ```rust
+/// use sinex_macros::EventPayload;
+/// use serde::{Serialize, Deserialize};
+/// use schemars::JsonSchema;
+///
+/// #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+/// #[event_payload(source = "fs-watcher", event_type = "file.created")]
+/// pub struct FileCreatedPayload {
+///     pub path: String,
+///     pub size: u64,
+/// }
+/// ```
+#[proc_macro_derive(EventPayload, attributes(event_payload))]
+pub fn derive_event_payload(input: TokenStream) -> TokenStream {
+    event_payload::derive_event_payload_impl(input)
 }

@@ -6,25 +6,51 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
-use sinex_error::SinexError;
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_core_types::event_constants::{sources as typed_sources, types as typed_types};
-use sinex_events::{EventFactory, RawEvent, event_types, sources};
+use sinex_types::error::SinexError;
+use std::time::Duration;
+use sinex_db::models::{Event, EventSource, EventType, CanonicalCommandPayload};
+use sinex_db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
         BatchProcessingResult, EventBatchProcessor, RedisStreamConsumer,
-        EventFilter as StreamEventFilter,
-    },
+        EventFilter as StreamEventFilter},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteError, SatelliteResult,
-};
-use sinex_ulid::Ulid;
+        StreamProcessorContext, TimeHorizon},
+    SatelliteError, SatelliteResult};
+use sinex_types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+
+// Helper trait for extracting values from JSON
+trait JsonExtractor {
+    fn get_string(&self, key: &str) -> Option<String>;
+    fn get_i32(&self, key: &str) -> Option<i32>;
+    fn get_i64(&self, key: &str) -> Option<i64>;
+    fn get_datetime(&self, key: &str) -> Option<DateTime<Utc>>;
+}
+
+impl JsonExtractor for Value {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.get(key)?.as_str().map(Into::into)
+    }
+    
+    fn get_i32(&self, key: &str) -> Option<i32> {
+        self.get(key)?.as_i64().map(|v| v as i32)
+    }
+    
+    fn get_i64(&self, key: &str) -> Option<i64> {
+        self.get(key)?.as_i64()
+    }
+    
+    fn get_datetime(&self, key: &str) -> Option<DateTime<Utc>> {
+        self.get(key)?
+            .as_str()?
+            .parse::<DateTime<Utc>>()
+            .ok()
+    }
+}
 
 /// Command data extracted from terminal events
 #[derive(Debug, Clone)]
@@ -38,14 +64,12 @@ struct CommandData {
     user: Option<String>,
     session_id: Option<String>,
     environment_hash: Option<String>,
-    source_events: Vec<Ulid>,
-}
+    source_events: Vec<Ulid>}
 
 /// Terminal Command Canonicalizer as a unified StatefulStreamProcessor
 pub struct TerminalCommandCanonicalizer {
     context: Option<StreamProcessorContext>,
-    deduplication_window_secs: i64,
-}
+    deduplication_window_secs: i64}
 
 impl TerminalCommandCanonicalizer {
     pub fn new() -> Self {
@@ -66,7 +90,6 @@ impl TerminalCommandCanonicalizer {
         let start_time = timestamp - Duration::seconds(window_secs);
         let end_time = timestamp + Duration::seconds(window_secs);
 
-        let event_repo = EventRepository::new(pool);
         
         // Search for canonical command events within the time window
         let events = event_repo
@@ -103,8 +126,7 @@ impl TerminalCommandCanonicalizer {
             "shell.history.bash" | "shell.history.zsh" | "shell.history.fish" => {
                 payload.get("command")?.as_str()?.to_string()
             }
-            _ => return None,
-        };
+            _ => return None};
 
         // Skip empty commands
         if command.trim().is_empty() {
@@ -113,19 +135,15 @@ impl TerminalCommandCanonicalizer {
 
         Some(CommandData {
             command,
-            working_directory: payload.get("working_directory").and_then(|v| v.as_str()).map(String::from),
-            exit_code: payload.get("exit_code").and_then(|v| v.as_i64()).map(|v| v as i32),
-            duration_ms: payload.get("duration_ms").and_then(|v| v.as_i64()),
+            working_directory: payload.get_string("working_directory"),
+            exit_code: payload.get_i32("exit_code"),
+            duration_ms: payload.get_i64("duration_ms"),
             start_time: event.ts_orig,
-            end_time: payload.get("end_time")
-                .and_then(|v| v.as_str())
-                .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&Utc)),
-            user: payload.get("user").and_then(|v| v.as_str()).map(String::from),
-            session_id: payload.get("session_id").and_then(|v| v.as_str()).map(String::from),
-            environment_hash: payload.get("environment_hash").and_then(|v| v.as_str()).map(String::from),
-            source_events: vec![event.id],
-        })
+            end_time: payload.get_datetime("end_time"),
+            user: payload.get_string("user"),
+            session_id: payload.get_string("session_id"),
+            environment_hash: payload.get_string("environment_hash"),
+            source_events: vec![event.id]})
     }
 
     /// Create a canonical command synthesis event
@@ -134,27 +152,21 @@ impl TerminalCommandCanonicalizer {
             SatelliteError::General(anyhow::anyhow!("Context not initialized"))
         })?;
 
-        let payload = json!({
-            "command": command_data.command,
-            "working_directory": command_data.working_directory,
-            "exit_code": command_data.exit_code,
-            "duration_ms": command_data.duration_ms,
-            "start_time": command_data.start_time,
-            "end_time": command_data.end_time,
-            "user": command_data.user,
-            "session_id": command_data.session_id,
-            "environment_hash": command_data.environment_hash,
-            "source_events": command_data.source_events.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-            "enrichment_history": []
-        });
-
         // Create synthesis event
-        let mut event = EventFactory::new("canonical.terminal")
-            .create_event("command.canonical", payload);
-        
-        // Set source event IDs for provenance
-        event.source_event_ids = Some(command_data.source_events.clone());
-        event.host = ctx.host.clone();
+        let event = Event::from(CanonicalCommandPayload {
+            command: command_data.command.clone(),
+            working_directory: command_data.working_directory.clone(),
+            exit_code: command_data.exit_code,
+            duration_ms: command_data.duration_ms,
+            start_time: command_data.start_time,
+            end_time: command_data.end_time,
+            user: command_data.user.clone(),
+            session_id: command_data.session_id.clone(),
+            environment_hash: command_data.environment_hash.clone(),
+            source_events: command_data.source_events.iter().map(|id| id.to_string()).collect(),
+            enrichment_history: vec![],
+        })
+        .with_source_event_ids(command_data.source_events.clone());
 
         Ok(event)
     }
@@ -196,7 +208,7 @@ impl EventBatchProcessor for TerminalCommandCanonicalizer {
         let mut failed_ids = Vec::new();
 
         for event in events {
-            let event_id = event.id.to_string();
+            let event_id = event.id.map(|id| id.to_string()).unwrap_or_else(|| "unknown".into());
 
             // Extract command data
             let command_data = match self.extract_command_data(&event) {
@@ -255,8 +267,7 @@ impl EventBatchProcessor for TerminalCommandCanonicalizer {
             successful_ids,
             failed_ids,
             retry_ids: Vec::new(),
-            checkpoint_data: None,
-        })
+            checkpoint_data: None})
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
@@ -304,8 +315,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["redis-stream".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Historical { end_time } => {
                 info!("Processing historical terminal commands up to {}", end_time);
@@ -315,16 +325,14 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                 // Determine start time
                 let start_time = match from {
                     Checkpoint::Timestamp { timestamp, .. } => timestamp,
-                    _ => end_time - Duration::days(7),
-                };
+                    _ => end_time - Duration::days(7)};
 
                 // Query all terminal command events
                 let mut all_events = Vec::new();
                 
                 for source in &["shell.kitty", "shell.atuin", "shell.history.bash", 
                                "shell.history.zsh", "shell.history.fish"] {
-                    let event_repo = EventRepository::new(&ctx.db_pool);
-                    let events = event_repo
+                    let events = ctx.db_pool.events()
                         .get_events_by_type_and_time_range(
                             source,
                             typed_types::shell::COMMAND_EXECUTED.as_str(),
@@ -362,8 +370,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["postgresql".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Snapshot => {
                 // No snapshot mode for canonicalizer
@@ -375,8 +382,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                     processor_stats: HashMap::new(),
                     successful_targets: Vec::new(),
                     failed_targets: HashMap::new(),
-                    warnings: vec!["Terminal command canonicalizer does not support snapshot mode".to_string()],
-                })
+                    warnings: vec!["Terminal command canonicalizer does not support snapshot mode".to_string()]})
             }
         }
     }

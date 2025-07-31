@@ -1,8 +1,10 @@
-use crate::repositories::common::{db_error, DbResult, Repository};
+use crate::models::Event;
+use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
+use crate::schema::ProcessorCheckpoints;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sinex_core_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-use sinex_core_types::ids::{CheckpointId, EventId};
+use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_types::Id;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 /// Checkpoint repository for database operations
@@ -20,14 +22,18 @@ impl<'a> Repository<'a> for CheckpointRepository<'a> {
     }
 }
 
-/// Checkpoint record structure
+impl<'a> EnhancedRepository<'a> for CheckpointRepository<'a> {
+    type Table = ProcessorCheckpoints;
+}
+
+/// Checkpoint record from database
 #[derive(Debug, FromRow)]
-pub struct Checkpoint {
-    pub id: CheckpointId,
+pub struct CheckpointRecord {
+    pub id: Id<CheckpointRecord>,
     pub processor_name: ProcessorName,
     pub consumer_group: ConsumerGroup,
     pub consumer_name: ConsumerName,
-    pub last_processed_id: Option<EventId>,
+    pub last_processed_id: Option<Id<Event>>,
     pub last_processed_ts: Option<DateTime<Utc>>,
     pub processed_count: i64,
     pub checkpoint_data: Option<JsonValue>,
@@ -38,21 +44,89 @@ pub struct Checkpoint {
     pub updated_at: DateTime<Utc>,
 }
 
-/// New checkpoint input structure
+/// Checkpoint to create
 #[derive(Debug)]
-pub struct NewCheckpoint {
+pub struct Checkpoint {
     pub processor_name: ProcessorName,
     pub consumer_group: Option<ConsumerGroup>,
     pub consumer_name: Option<ConsumerName>,
-    pub last_processed_id: Option<EventId>,
+    pub last_processed_id: Option<Id<Event>>,
     pub last_processed_ts: Option<DateTime<Utc>>,
     pub checkpoint_data: Option<JsonValue>,
     pub state_data: Option<JsonValue>,
 }
 
+impl Checkpoint {
+    /// Create a new checkpoint for a processor
+    pub fn new(processor_name: impl Into<ProcessorName>) -> Self {
+        Checkpoint {
+            processor_name: processor_name.into(),
+            consumer_group: None,
+            consumer_name: None,
+            last_processed_id: None,
+            last_processed_ts: None,
+            checkpoint_data: None,
+            state_data: None,
+        }
+    }
+
+    /// Create a checkpoint for a specific consumer
+    pub fn consumer(
+        processor_name: impl Into<ProcessorName>,
+        consumer_group: impl Into<ConsumerGroup>,
+        consumer_name: impl Into<ConsumerName>,
+    ) -> Self {
+        Checkpoint {
+            processor_name: processor_name.into(),
+            consumer_group: Some(consumer_group.into()),
+            consumer_name: Some(consumer_name.into()),
+            last_processed_id: None,
+            last_processed_ts: None,
+            checkpoint_data: None,
+            state_data: None,
+        }
+    }
+
+    /// Fluent method to set consumer group
+    pub fn with_consumer_group(mut self, group: impl Into<ConsumerGroup>) -> Self {
+        self.consumer_group = Some(group.into());
+        self
+    }
+
+    /// Fluent method to set consumer name
+    pub fn with_consumer_name(mut self, name: impl Into<ConsumerName>) -> Self {
+        self.consumer_name = Some(name.into());
+        self
+    }
+
+    /// Fluent method to set last processed event ID
+    pub fn with_last_processed_id(mut self, id: Id<Event>) -> Self {
+        self.last_processed_id = Some(id);
+        self
+    }
+
+    /// Fluent method to set last processed timestamp
+    pub fn with_last_processed_ts(mut self, ts: DateTime<Utc>) -> Self {
+        self.last_processed_ts = Some(ts);
+        self
+    }
+
+    /// Fluent method to set checkpoint data
+    pub fn with_checkpoint_data(mut self, data: JsonValue) -> Self {
+        self.checkpoint_data = Some(data);
+        self
+    }
+
+    /// Fluent method to set state data
+    pub fn with_state_data(mut self, data: JsonValue) -> Self {
+        self.state_data = Some(data);
+        self
+    }
+}
+
 impl<'a> CheckpointRepository<'a> {
-    pub async fn insert(&self, checkpoint: NewCheckpoint) -> DbResult<Checkpoint> {
-        let id = CheckpointId::new();
+    pub async fn insert(&self, checkpoint: Checkpoint) -> DbResult<CheckpointRecord> {
+        let id = Id::<Checkpoint>::new();
         let consumer_group = checkpoint
             .consumer_group
             .unwrap_or_else(|| ConsumerGroup::new("default"));
@@ -61,7 +135,7 @@ impl<'a> CheckpointRepository<'a> {
             .unwrap_or_else(|| ConsumerName::new("default"));
 
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
@@ -70,11 +144,11 @@ impl<'a> CheckpointRepository<'a> {
                 $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: EventId",
+                last_processed_id as "last_processed_id: Id<Event>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -101,16 +175,16 @@ impl<'a> CheckpointRepository<'a> {
     pub async fn get_by_processor(
         &self,
         processor_name: &ProcessorName,
-    ) -> DbResult<Option<Checkpoint>> {
+    ) -> DbResult<Option<CheckpointRecord>> {
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             SELECT 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: EventId",
+                last_processed_id as "last_processed_id: Id<Event>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -136,16 +210,16 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-    ) -> DbResult<Option<Checkpoint>> {
+    ) -> DbResult<Option<CheckpointRecord>> {
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             SELECT 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: EventId",
+                last_processed_id as "last_processed_id: Id<Event>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -173,15 +247,15 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_id: Option<EventId>,
+        last_processed_id: Option<Id<Event>>,
         last_processed_ts: Option<DateTime<Utc>>,
         checkpoint_data: Option<JsonValue>,
         state_data: Option<JsonValue>,
         increment_count: bool,
-    ) -> DbResult<Checkpoint> {
+    ) -> DbResult<CheckpointRecord> {
         if increment_count {
             sqlx::query_as!(
-                Checkpoint,
+                CheckpointRecord,
                 r#"
                 UPDATE core.processor_checkpoints 
                 SET 
@@ -196,11 +270,11 @@ impl<'a> CheckpointRepository<'a> {
                   AND consumer_group = $2 
                   AND consumer_name = $3
                 RETURNING 
-                    id as "id: CheckpointId",
+                    id as "id: Id<CheckpointRecord>",
                     processor_name as "processor_name!: ProcessorName",
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
-                    last_processed_id as "last_processed_id: EventId",
+                    last_processed_id as "last_processed_id: Id<Event>",
                     last_processed_ts,
                     processed_count as "processed_count!",
                     checkpoint_data,
@@ -223,7 +297,7 @@ impl<'a> CheckpointRepository<'a> {
             .map_err(|e| db_error(e, "update checkpoint"))
         } else {
             sqlx::query_as!(
-                Checkpoint,
+                CheckpointRecord,
                 r#"
                 UPDATE core.processor_checkpoints 
                 SET 
@@ -237,11 +311,11 @@ impl<'a> CheckpointRepository<'a> {
                   AND consumer_group = $2 
                   AND consumer_name = $3
                 RETURNING 
-                    id as "id: CheckpointId",
+                    id as "id: Id<CheckpointRecord>",
                     processor_name as "processor_name!: ProcessorName",
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
-                    last_processed_id as "last_processed_id: EventId",
+                    last_processed_id as "last_processed_id: Id<Event>",
                     last_processed_ts,
                     processed_count as "processed_count!",
                     checkpoint_data,
@@ -270,15 +344,15 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_id: Option<EventId>,
+        last_processed_id: Option<Id<Event>>,
         last_processed_ts: Option<DateTime<Utc>>,
         checkpoint_data: Option<JsonValue>,
         state_data: Option<JsonValue>,
-    ) -> DbResult<Checkpoint> {
-        let id = CheckpointId::new();
+    ) -> DbResult<CheckpointRecord> {
+        let id = Id::<Checkpoint>::new();
 
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
@@ -296,11 +370,11 @@ impl<'a> CheckpointRepository<'a> {
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: EventId",
+                last_processed_id as "last_processed_id: Id<Event>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -349,19 +423,19 @@ impl<'a> CheckpointRepository<'a> {
         consumer_group: Option<&ConsumerGroup>,
         stale_before: Option<DateTime<Utc>>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Checkpoint>> {
+    ) -> DbResult<Vec<CheckpointRecord>> {
         // Build a dynamic query based on the filters
         // For simplicity, we'll use multiple query variants
         match (processor_name, consumer_group, stale_before, limit) {
             (None, None, None, None) => sqlx::query_as!(
-                Checkpoint,
+                CheckpointRecord,
                 r#"
                     SELECT 
-                        id as "id: CheckpointId",
+                        id as "id: Id<CheckpointRecord>",
                         processor_name as "processor_name!: ProcessorName",
                         consumer_group as "consumer_group!: ConsumerGroup",
                         consumer_name as "consumer_name!: ConsumerName",
-                        last_processed_id as "last_processed_id: EventId",
+                        last_processed_id as "last_processed_id: Id<Event>",
                         last_processed_ts,
                         processed_count as "processed_count!",
                         checkpoint_data,
@@ -378,14 +452,14 @@ impl<'a> CheckpointRepository<'a> {
             .await
             .map_err(|e| db_error(e, "list checkpoints")),
             (None, None, None, Some(limit)) => sqlx::query_as!(
-                Checkpoint,
+                CheckpointRecord,
                 r#"
                     SELECT 
-                        id as "id: CheckpointId",
+                        id as "id: Id<CheckpointRecord>",
                         processor_name as "processor_name!: ProcessorName",
                         consumer_group as "consumer_group!: ConsumerGroup",
                         consumer_name as "consumer_name!: ConsumerName",
-                        last_processed_id as "last_processed_id: EventId",
+                        last_processed_id as "last_processed_id: Id<Event>",
                         last_processed_ts,
                         processed_count as "processed_count!",
                         checkpoint_data,
@@ -407,14 +481,14 @@ impl<'a> CheckpointRepository<'a> {
                 // For other combinations, use a simple default query
                 // In a real implementation, you'd build this dynamically
                 sqlx::query_as!(
-                    Checkpoint,
+                    CheckpointRecord,
                     r#"
                     SELECT 
-                        id as "id: CheckpointId",
+                        id as "id: Id<CheckpointRecord>",
                         processor_name as "processor_name!: ProcessorName",
                         consumer_group as "consumer_group!: ConsumerGroup",
                         consumer_name as "consumer_name!: ConsumerName",
-                        last_processed_id as "last_processed_id: EventId",
+                        last_processed_id as "last_processed_id: Id<Event>",
                         last_processed_ts,
                         processed_count as "processed_count!",
                         checkpoint_data,
@@ -441,15 +515,15 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_id: Option<EventId>,
+        last_processed_id: Option<Id<Event>>,
         last_processed_ts: Option<DateTime<Utc>>,
         checkpoint_data: Option<JsonValue>,
         state_data: Option<JsonValue>,
-    ) -> DbResult<Checkpoint> {
-        let id = CheckpointId::new();
+    ) -> DbResult<CheckpointRecord> {
+        let id = Id::<Checkpoint>::new();
 
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
@@ -467,11 +541,11 @@ impl<'a> CheckpointRepository<'a> {
                 last_activity = NOW(),
                 updated_at = NOW()
             RETURNING 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: EventId",
+                last_processed_id as "last_processed_id: Id<Event>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -493,5 +567,44 @@ impl<'a> CheckpointRepository<'a> {
         .fetch_one(&mut **tx)
         .await
         .map_err(|e| db_error(e, "upsert checkpoint with tx"))
+    }
+}
+
+/// Extension trait for Checkpoint terminal methods
+pub trait CheckpointExt {
+    /// Insert the checkpoint in the database
+    async fn insert(self, pool: &PgPool) -> DbResult<CheckpointRecord>;
+
+    /// Upsert the checkpoint in the database
+    async fn upsert(self, pool: &PgPool) -> DbResult<CheckpointRecord>;
+}
+
+impl CheckpointExt for Checkpoint {
+    async fn insert(self, pool: &PgPool) -> DbResult<CheckpointRecord> {
+        CheckpointRepository::new(pool).insert(self).await
+    }
+
+    async fn upsert(self, pool: &PgPool) -> DbResult<CheckpointRecord> {
+        let processor_name = self.processor_name.clone();
+        let consumer_group = self
+            .consumer_group
+            .clone()
+            .unwrap_or_else(|| ConsumerGroup::new("default"));
+        let consumer_name = self
+            .consumer_name
+            .clone()
+            .unwrap_or_else(|| ConsumerName::new("default"));
+
+        CheckpointRepository::new(pool)
+            .upsert(
+                &processor_name,
+                &consumer_group,
+                &consumer_name,
+                self.last_processed_id,
+                self.last_processed_ts,
+                self.checkpoint_data,
+                self.state_data,
+            )
+            .await
     }
 }

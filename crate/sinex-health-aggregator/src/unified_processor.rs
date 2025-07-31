@@ -8,49 +8,25 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_events::{EventFactory, RawEvent};
-use sinex_events::constants::{event_types, sources};
+use sinex_db::repositories::DbPoolExt;
+use sinex_db::models::{Event, RawEvent, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
         BatchProcessingResult, EventBatchProcessor, RedisConsumerConfig, RedisStreamConsumer,
-        EventFilter as StreamEventFilter,
-    },
+        EventFilter as StreamEventFilter},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteError, SatelliteResult,
-};
+        StreamProcessorContext, TimeHorizon},
+    SatelliteError, SatelliteResult};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-/// Health status enumeration
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HealthStatus {
-    Healthy,
-    Degraded,
-    Failed,
-    Missing,
-}
+// Use HealthStatus and ComponentHealth from sinex_events
+use sinex_events::{HealthStatus, ComponentHealth};
 
-/// Component health information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComponentHealth {
-    pub service_name: String,
-    pub status: HealthStatus,
-    pub last_heartbeat: DateTime<Utc>,
-    pub uptime_seconds: Option<i64>,
-    pub memory_usage_mb: Option<i32>,
-    pub events_processed: Option<i64>,
-    pub version: Option<String>,
-    pub git_hash: Option<String>,
-}
-
-/// System-wide health summary
+/// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemHealthSummary {
     pub overall_status: HealthStatus,
@@ -60,8 +36,7 @@ pub struct SystemHealthSummary {
     pub missing_components: u32,
     pub total_components: u32,
     pub last_updated: DateTime<Utc>,
-    pub components: HashMap<String, ComponentHealth>,
-}
+    pub components: HashMap<String, ComponentHealth>}
 
 /// Health Aggregator as a unified StatefulStreamProcessor
 pub struct HealthAggregator {
@@ -69,8 +44,7 @@ pub struct HealthAggregator {
     expected_components: Vec<String>,
     aggregation_window: Duration,
     component_health: Arc<Mutex<HashMap<String, ComponentHealth>>>,
-    last_summary_time: DateTime<Utc>,
-}
+    last_summary_time: DateTime<Utc>}
 
 impl HealthAggregator {
     pub fn new() -> Self {
@@ -117,8 +91,7 @@ impl HealthAggregator {
                 git_hash: payload
                     .get("git_hash")
                     .and_then(|v| v.as_str())
-                    .map(String::from),
-            };
+                    .map(String::from)};
 
             let mut health_map = self.component_health.lock().await;
             health_map.insert(service_name, health);
@@ -146,8 +119,7 @@ impl HealthAggregator {
             missing_components: 0,
             total_components: self.expected_components.len() as u32,
             last_updated: now,
-            components: health_map.clone(),
-        };
+            components: health_map.clone()};
 
         // Check each expected component
         for expected in &self.expected_components {
@@ -173,12 +145,16 @@ impl HealthAggregator {
         }
 
         // Create synthesis event
-        let event = EventFactory::new()
-            .source(sources::HEALTH_AGGREGATOR)
-            .event_type(event_types::satellites::SYSTEM_HEALTH_SUMMARY)
-            .host(&self.context.as_ref().unwrap().host)
-            .payload(serde_json::to_value(&summary)?)
-            .build();
+        let event = Event::from(SystemHealthSummaryPayload {
+            overall_status: summary.overall_status,
+            healthy_components: summary.healthy_components,
+            degraded_components: summary.degraded_components,
+            failed_components: summary.failed_components,
+            missing_components: summary.missing_components,
+            total_components: summary.total_components,
+            last_updated: summary.last_updated,
+            components: summary.components,
+        });
 
         info!(
             healthy = summary.healthy_components,
@@ -231,15 +207,13 @@ impl EventBatchProcessor for HealthAggregator {
             successful_ids,
             failed_ids,
             retry_ids: Vec::new(),
-            checkpoint_data: None,
-        })
+            checkpoint_data: None})
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
         Some(json!({
             "last_summary_time": self.last_summary_time.to_rfc3339(),
-            "component_count": self.component_health.lock().await.len(),
-        }))
+            "component_count": self.component_health.lock().await.len()}))
     }
 }
 
@@ -265,7 +239,9 @@ impl StatefulStreamProcessor for HealthAggregator {
                 // Real-time processing from Redis Stream
                 info!("Starting continuous health monitoring from Redis Stream");
                 
-                let ctx = self.context.as_ref().unwrap();
+                let ctx = self.context.as_ref().ok_or_else(|| {
+                    SatelliteError::Processing("Health aggregator context not initialized".to_string())
+                })?;
                 let mut redis_consumer = RedisStreamConsumer::from_context(
                     ctx.redis_client.clone(),
                     "health-aggregator".to_string(),
@@ -285,8 +261,7 @@ impl StatefulStreamProcessor for HealthAggregator {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["redis-stream".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Historical { end_time } => {
                 // Query historical events from PostgreSQL
@@ -295,7 +270,9 @@ impl StatefulStreamProcessor for HealthAggregator {
                     end_time
                 );
 
-                let ctx = self.context.as_ref().unwrap();
+                let ctx = self.context.as_ref().ok_or_else(|| {
+                    SatelliteError::Processing("Health aggregator context not initialized".to_string())
+                })?;
                 
                 // Determine start time from checkpoint
                 let start_time = match from {
@@ -309,8 +286,7 @@ impl StatefulStreamProcessor for HealthAggregator {
                 };
 
                 // Query events
-                let event_repo = EventRepository::new(&ctx.db_pool);
-                let events = event_repo
+                let events = ctx.db_pool.events()
                     .get_events_by_type_and_time_range(
                         "journald",
                         "satellite.heartbeat",
@@ -342,8 +318,7 @@ impl StatefulStreamProcessor for HealthAggregator {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["postgresql".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Snapshot => {
                 // Generate immediate health snapshot
@@ -364,8 +339,7 @@ impl StatefulStreamProcessor for HealthAggregator {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["snapshot".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
         }
     }
@@ -381,8 +355,7 @@ impl StatefulStreamProcessor for HealthAggregator {
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         Ok(Checkpoint::Timestamp {
             timestamp: self.last_summary_time,
-            metadata: self.get_checkpoint_data().await,
-        })
+            metadata: self.get_checkpoint_data().await})
     }
 }
 

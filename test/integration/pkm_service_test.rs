@@ -23,7 +23,7 @@ use sinex_db::{
 use sinex_services::pkm::PkmService;
 use sinex_test_utils::generators;
 use sinex_test_utils::prelude::*;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::{HashMap, HashSet};
 
 // =============================================================================

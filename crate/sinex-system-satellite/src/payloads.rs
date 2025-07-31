@@ -1,4 +1,4 @@
-//! Enhanced payload structures for system events
+//! Payload structures for system events
 //!
 //! This module provides comprehensive payload structures for D-Bus signals,
 //! sinex-events-system implementation.
@@ -156,7 +156,7 @@ pub struct MountEventPayload {
 // Journal Event Payloads
 // ============================================================================
 
-/// Enhanced systemd journal entry event with rich metadata
+/// Systemd journal entry event with rich metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalEntryPayload {
     /// Journal cursor for this entry (unique identifier)
@@ -216,7 +216,7 @@ pub struct JournalSyncPayload {
 // Configuration Structures
 // ============================================================================
 
-/// Enhanced D-Bus configuration with filtering and specialization
+/// D-Bus configuration with filtering and specialization
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbusConfig {
     /// Monitor session bus
@@ -262,7 +262,7 @@ impl Default for DbusConfig {
     }
 }
 
-/// Enhanced journal configuration with historical import
+/// Journal configuration with historical import
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JournalConfig {
     /// Follow journal in real-time

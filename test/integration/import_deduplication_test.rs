@@ -15,7 +15,7 @@ use sinex_test_utils::prelude::*;
 use chrono::{TimeZone, Utc};
 use sinex_annex::{AnnexConfig, BlobManager};
 use sinex_core_types::CoreError;
-use sinex_events::EventFactory;
+use sinex_db::models::EventFactory;
 use sinex_satellite_sdk::{ScanArgs, ScanReport};
 use std::collections::HashMap;
 use std::fs;

@@ -206,7 +206,8 @@ impl ConfigCompatibilityTester {
     /// Create a new configuration compatibility tester
     pub async fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
-            sinex_error::SinexError::io("temp_directory").with_context("source", e.to_string())
+            sinex_types::error::SinexError::io("temp_directory")
+                .with_context("source", e.to_string())
         })?;
 
         let mut tester = Self {
@@ -836,7 +837,7 @@ impl ConfigCompatibilityTester {
             fs::write(&config_path, &component.config_file_content)
                 .await
                 .map_err(|e| {
-                    sinex_error::SinexError::io(config_path.display().to_string())
+                    sinex_types::error::SinexError::io(config_path.display().to_string())
                         .with_context("source", e.to_string())
                 })?;
         }
@@ -1117,7 +1118,7 @@ pub fn generate_compatibility_report(results: &[CompatibilityResult]) -> String 
     let total_scenarios = results.len();
     let successful_scenarios = results.iter().filter(|r| r.overall_success).count();
 
-    report.push_str(&format!("## Summary\n\n"));
+    report.push_str("## Summary\n\n");
     report.push_str(&format!("- Total scenarios tested: {}\n", total_scenarios));
     report.push_str(&format!(
         "- Successful scenarios: {}\n",

@@ -2,8 +2,10 @@
 
 use anyhow::{Context, Result};
 use serde_json::{json, Value};
+use sinex_db::models::Entity;
+use sinex_db::models::Event;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
-use sinex_ulid::Ulid;
+use sinex_types::{ulid::Ulid, Id};
 
 // Analytics handlers
 
@@ -46,6 +48,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .get("event_id")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<Ulid>().ok())
+        .map(Id::<Event>::from_ulid)
         .context("Invalid or missing event_id")?;
 
     let content = params
@@ -111,12 +114,14 @@ pub async fn handle_link_entities(service: &PkmService, params: Value) -> Result
         .get("from_entity_id")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<Ulid>().ok())
+        .map(Id::<Entity>::from_ulid)
         .context("Invalid or missing from_entity_id")?;
 
     let to_entity_id = params
         .get("to_entity_id")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<Ulid>().ok())
+        .map(Id::<Entity>::from_ulid)
         .context("Invalid or missing to_entity_id")?;
 
     let relationship_type = params

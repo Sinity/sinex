@@ -3,7 +3,7 @@
 //! Captures terminal scrollback content with chunking and git-annex integration
 
 use serde_json::json;
-use sinex_events::{EventFactory, RawEvent};
+use sinex_db::models::{Event, ShellOutputCapturedPayload};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -338,7 +338,7 @@ impl ScrollbackWatcher {
     async fn process_window(
         &mut self,
         window: WindowState,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         // Get scrollback content
         let scrollback = match self.get_window_scrollback(window.id, true).await {
@@ -404,26 +404,28 @@ impl ScrollbackWatcher {
         };
 
         // Create event
-        let payload = json!({
-            "window_id": window.id,
-            "terminal_type": "kitty",
-            "cwd": window.cwd,
-            "window_title": window.title,
-            "scrollback_text": scrollback_text,
-            "scrollback_chunks": scrollback_chunks,
-            "git_annex_path": git_annex_path,
-            "git_annex_key": git_annex_key,
-            "scrollback_lines": scrollback.line_count,
-            "scrollback_size_bytes": scrollback.size_bytes,
-            "is_chunked": is_chunked,
-            "chunk_count": chunk_count,
-            "includes_screen": true,
-            "has_ansi_codes": scrollback.has_ansi_codes,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
+        let event = Event::from(ShellOutputCapturedPayload {
+            window_id: window.id.to_string(),
+            terminal_type: "kitty".to_string(),
+            cwd: window.cwd.clone(),
+            window_title: window.title.clone(),
+            scrollback_text,
+            scrollback_chunks: scrollback_chunks.map(|chunks| {
+                chunks
+                    .into_iter()
+                    .map(|v| v.as_str().unwrap_or("").to_string())
+                    .collect()
+            }),
+            git_annex_path,
+            git_annex_key,
+            scrollback_lines: scrollback.line_count,
+            scrollback_size_bytes: scrollback.size_bytes as usize,
+            is_chunked,
+            chunk_count: chunk_count.map(|c| c as usize),
+            includes_screen: true,
+            has_ansi_codes: scrollback.has_ansi_codes,
+            timestamp: chrono::Utc::now().to_rfc3339(),
         });
-
-        let factory = EventFactory::new(sinex_events::sources::SHELL_SCROLLBACK);
-        let event = factory.create_event("output.captured", payload);
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -448,7 +450,7 @@ impl ScrollbackWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         info!("Starting scrollback event streaming");
 

@@ -207,7 +207,11 @@ use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde_json::{json, Value as JsonValue};
-use sinex_events::{EventFactory, EventSender};
+use sinex_events::{
+    ComponentResourceUsagePayload, ErrorsSummaryPayload, Event, EventSender,
+    EventsProcessedPayload, OperationPerformancePayload, SystemResourcesPayload,
+};
+use sinex_types::domain::EventType;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -406,69 +410,104 @@ impl TelemetryAccumulator {
             }
 
             let mut events = Vec::new();
-            let factory = EventFactory::new("sinex.telemetry");
+            // Will create events using schemaless builder
 
             // Emit events.processed telemetry
             if !state.event_counts.is_empty() {
-                events.push(factory.create_event(
-                    "events.processed",
-                    json!({
-                        "component": self.component,
-                        "period_seconds": period_seconds,
-                        "count": state.event_counts.values().sum::<u64>(),
-                        "by_type": state.event_counts.clone(),
-                        "latency_ms": calculate_percentiles(&state.event_latencies),
-                    }),
-                ));
+                // Need to prepare data for the typed payload
+                let total_events = state.event_counts.values().sum::<u64>();
+                let processing_rate = if period_seconds > 0 {
+                    total_events as f64 / period_seconds as f64
+                } else {
+                    0.0
+                };
+
+                // Build events_per_source map (we only have component name)
+                let mut events_per_source = HashMap::new();
+                events_per_source.insert(self.component.clone(), total_events);
+
+                // The event_counts map has event types as keys
+                let events_per_type = state.event_counts.clone();
+
+                events.push(Event::from(EventsProcessedPayload {
+                    time_range_seconds: period_seconds,
+                    total_events,
+                    events_per_source,
+                    events_per_type,
+                    processing_rate,
+                }));
             }
 
             // Emit operation performance telemetry
             for (operation, latencies) in &state.operation_latencies {
                 if !latencies.is_empty() {
-                    events.push(factory.create_event(
-                        "operation.performance",
-                        json!({
-                            "component": self.component,
-                            "operation": operation,
-                            "period_seconds": period_seconds,
-                            "count": latencies.len(),
-                            "duration_ms": calculate_percentiles(latencies),
-                        }),
-                    ));
+                    // Calculate average duration
+                    let avg_duration = latencies.iter().sum::<f64>() / latencies.len() as f64;
+
+                    // Create metrics map from percentiles
+                    let percentiles = calculate_percentiles(latencies);
+                    let mut metrics = HashMap::new();
+                    metrics.insert("component".to_string(), json!(self.component));
+                    metrics.insert("period_seconds".to_string(), json!(period_seconds));
+                    metrics.insert("count".to_string(), json!(latencies.len()));
+                    metrics.insert("duration_ms".to_string(), percentiles);
+
+                    events.push(Event::from(OperationPerformancePayload {
+                        operation_name: operation.clone(),
+                        duration_ms: avg_duration as u64,
+                        items_processed: latencies.len() as u64,
+                        success: true,
+                        error: None,
+                        metrics,
+                    }));
                 }
             }
 
             // Emit resource usage telemetry
             if !state.memory_samples.is_empty() {
-                events.push(factory.create_event(
-                    "resource.usage",
-                    json!({
-                        "component": self.component,
-                        "period_seconds": period_seconds,
-                        "memory_mb": {
-                            "current": state.memory_samples.last().copied().unwrap_or(0.0),
-                            "avg": calculate_average(&state.memory_samples),
-                            "peak": state.memory_samples.iter().fold(0.0_f64, |a, &b| a.max(b)),
-                        },
-                        "cpu_percent": {
-                            "avg": calculate_average(&state.cpu_samples),
-                            "peak": state.cpu_samples.iter().fold(0.0_f64, |a, &b| a.max(b)),
-                        },
-                    }),
-                ));
+                let memory_mb = json!({
+                    "current": state.memory_samples.last().copied().unwrap_or(0.0),
+                    "avg": calculate_average(&state.memory_samples),
+                    "peak": state.memory_samples.iter().fold(0.0_f64, |a, &b| a.max(b)),
+                });
+
+                let cpu_percent = json!({
+                    "avg": calculate_average(&state.cpu_samples),
+                    "peak": state.cpu_samples.iter().fold(0.0_f64, |a, &b| a.max(b)),
+                });
+
+                events.push(Event::from(ComponentResourceUsagePayload {
+                    component: self.component.clone(),
+                    period_seconds,
+                    memory_mb,
+                    cpu_percent,
+                }));
             }
 
             // Emit error telemetry
             if !state.error_counts.is_empty() {
-                events.push(factory.create_event(
-                    "errors.summary",
-                    json!({
-                        "component": self.component,
-                        "period_seconds": period_seconds,
-                        "total_errors": state.error_counts.values().sum::<u64>(),
-                        "by_type": state.error_counts.clone(),
-                    }),
-                ));
+                let total_errors = state.error_counts.values().sum::<u64>();
+                let error_rate = if period_seconds > 0 {
+                    total_errors as f64 / period_seconds as f64
+                } else {
+                    0.0
+                };
+
+                // Build errors_by_severity map (we don't have severity info, so use "error")
+                let mut errors_by_severity = HashMap::new();
+                errors_by_severity.insert("error".to_string(), total_errors);
+
+                // Build errors_by_component map
+                let mut errors_by_component = HashMap::new();
+                errors_by_component.insert(self.component.clone(), total_errors);
+
+                events.push(Event::from(ErrorsSummaryPayload {
+                    time_range_seconds: period_seconds,
+                    total_errors,
+                    errors_by_severity,
+                    errors_by_component,
+                    error_rate,
+                }));
             }
 
             // Reset state for next period
@@ -577,30 +616,18 @@ impl SystemTelemetryEmitter {
     ///
     /// This collects current system metrics and emits them as a telemetry event.
     pub async fn emit_system_resources(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let factory = EventFactory::new("sinex.telemetry");
-
         // TODO: Implement actual system resource collection using sysinfo crate
         // For now, emit placeholder data
-        let event = factory.create_event(
-            "system.resources",
-            json!({
-                "period_seconds": 60,
-                "cpu": {
-                    "user_percent": 0.0,
-                    "system_percent": 0.0,
-                    "idle_percent": 100.0,
-                },
-                "memory": {
-                    "used_mb": 0,
-                    "available_mb": 0,
-                    "total_mb": 0,
-                },
-                "disk_io": {
-                    "read_mb_per_sec": 0.0,
-                    "write_mb_per_sec": 0.0,
-                },
-            }),
-        );
+        let event = Event::from(SystemResourcesPayload {
+            cpu_usage_percent: 0.0,
+            memory_usage_bytes: 0,
+            memory_total_bytes: 0,
+            disk_usage_bytes: 0,
+            disk_total_bytes: 0,
+            open_file_descriptors: 0,
+            network_bytes_sent: 0,
+            network_bytes_received: 0,
+        });
 
         self.event_sender.send(event).await?;
         Ok(())
@@ -745,7 +772,7 @@ mod tests {
         // Verify event content
         for event in &events {
             ctx.assert("event structure")
-                .eq(&event.source, &"sinex.telemetry".to_string())?;
+                .eq(&event.source.as_str(), &"sinex.telemetry")?;
 
             match event.event_type.as_str() {
                 "events.processed" => {
@@ -848,7 +875,7 @@ mod tests {
 
         // Verify second batch doesn't contain first batch data
         for event in &second_batch {
-            if event.event_type == "events.processed" {
+            if event.event_type.as_str() == "events.processed" {
                 ctx.assert("events reset").that(
                     !event.payload["by_type"]
                         .as_object()
@@ -856,7 +883,7 @@ mod tests {
                         .contains_key("event.one"),
                     "Should not contain first batch events",
                 )?;
-            } else if event.event_type == "errors.summary" {
+            } else if event.event_type.as_str() == "errors.summary" {
                 ctx.assert("errors reset").that(
                     !event.payload["by_type"]
                         .as_object()
@@ -955,7 +982,7 @@ mod tests {
         // Should have received events
         let mut received = false;
         while let Ok(event) = rx.try_recv() {
-            if event.event_type == "events.processed" {
+            if event.event_type == EventType::new("events.processed") {
                 received = true;
                 ctx.assert("background emission")
                     .eq(&event.payload["component"], &json!("background-test"))?;
@@ -986,8 +1013,8 @@ mod tests {
         let event = rx.recv().await.unwrap();
 
         ctx.assert("system telemetry")
-            .eq(&event.source, &"sinex.telemetry".to_string())?
-            .eq(&event.event_type, &"system.resources".to_string())?;
+            .eq(&event.source.as_str(), &"sinex.telemetry")?
+            .eq(&event.event_type, &EventType::new("system.resources"))?;
 
         let payload = &event.payload;
         ctx.assert("system payload")
@@ -1024,7 +1051,7 @@ mod tests {
         // Verify
         let mut found_operation = false;
         while let Ok(event) = rx.try_recv() {
-            if event.event_type == "operation.performance" {
+            if event.event_type == EventType::new("operation.performance") {
                 found_operation = true;
                 ctx.assert("global telemetry recording").eq(
                     &event.payload["operation"],

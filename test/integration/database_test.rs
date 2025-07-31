@@ -17,11 +17,12 @@
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use sinex_db::queries::{CheckpointQueries, EventQueries};
+use sinex_db::repositories::DbPoolExt;
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
 use sinex_events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{self, assertions, events, generators, schema_test_utils};
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -34,8 +35,7 @@ struct CheckpointRecord {
     pub consumer_group: String,
     pub last_processed_id: Option<String>,
     pub state_data: Option<serde_json::Value>,
-    pub processed_count: i64,
-}
+    pub processed_count: i64}
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS
@@ -286,7 +286,6 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> anyhow::Result<()> {
 
         // Insert with specific timestamp by creating ULID from timestamp
         let event_id = Ulid::from_datetime(*ts);
-        let repo = EventRepository::new(&pool);
         let new_event = NewEvent {
             source: EventSource::new(&event.source),
             event_type: EventType::new(&event.event_type),
@@ -300,9 +299,8 @@ async fn test_timescale_chunk_creation(ctx: TestContext) -> anyhow::Result<()> {
             source_material_offset_start: None,
             source_material_offset_end: None,
             anchor_byte: None,
-            associated_blob_ids: None,
-        };
-        repo.insert(new_event).await?;
+            associated_blob_ids: None};
+        pool.events().insert(new_event).await?;
     }
 
     // Get new chunk count
@@ -446,8 +444,7 @@ async fn test_json_schema_registration(ctx: TestContext) -> anyhow::Result<()> {
     use sinex_db::queries::SchemaQueries;
     #[derive(sqlx::FromRow)]
     struct SchemaRecord {
-        json_schema_definition: serde_json::Value,
-    }
+        json_schema_definition: serde_json::Value}
     let schema_record: SchemaRecord = SchemaQueries::get_by_id(schema_id)
         .fetch_one(ctx.pool())
         .await?;
@@ -760,8 +757,7 @@ async fn test_checkpoint_persistence(ctx: TestContext) -> anyhow::Result<()> {
         consumer_group: String,
         last_processed_id: Option<String>,
         state_data: Option<serde_json::Value>,
-        processed_count: i64,
-    }
+        processed_count: i64}
     let checkpoint: CheckpointRecord = sqlx::query_as!(
         CheckpointRecord,
         r#"
@@ -1162,8 +1158,7 @@ async fn test_connection_pool_max_connections(ctx: TestContext) -> anyhow::Resul
                     tokio::time::sleep(StdDuration::from_millis(100)).await;
                     Ok((i, start.elapsed()))
                 }
-                Err(e) => Err((i, e)),
-            }
+                Err(e) => Err((i, e))}
         });
         handles.push(handle);
     }

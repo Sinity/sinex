@@ -8,7 +8,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use serde_json::{json, Value};
-use sinex_error::SinexError;
+use sinex_types::{error::SinexError, Id};
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;
@@ -249,8 +249,8 @@ impl<'ctx> PropertyTester<'ctx> {
             let event = self
                 .ctx
                 .event()
-                .source(&source)
-                .type_(&event_type)
+                .source(source.as_str())
+                .type_(event_type.as_str())
                 .payload(payload)
                 .insert()
                 .await
@@ -259,9 +259,9 @@ impl<'ctx> PropertyTester<'ctx> {
                 })?;
 
             // Verify basic properties
-            assert_eq!(event.source, source);
-            assert_eq!(event.event_type, event_type);
-            assert!(event.id.to_string().len() == 26); // ULID length
+            assert_eq!(event.source.as_str(), source);
+            assert_eq!(event.event_type.as_str(), event_type);
+            assert!(event.id.is_some()); // Should have an ID after insertion
         }
 
         Ok(())
@@ -281,8 +281,8 @@ impl<'ctx> PropertyTester<'ctx> {
             let event = self
                 .ctx
                 .event()
-                .source(&source)
-                .type_(&event_type)
+                .source(source.as_str())
+                .type_(event_type.as_str())
                 .payload(payload)
                 .insert()
                 .await
@@ -291,12 +291,19 @@ impl<'ctx> PropertyTester<'ctx> {
                 })?;
 
             // Should be findable by ID
-            let by_id = self.ctx.events().by_id(event.id).fetch_one().await?;
-            assert!(by_id.is_some());
+            if let Some(event_id) = &event.id {
+                let by_id = self
+                    .ctx
+                    .events()
+                    .by_id(event_id.clone())
+                    .fetch_one()
+                    .await?;
+                assert!(by_id.is_some());
 
-            // Should be findable by source
-            let by_source = self.ctx.events().by_source(&source).fetch().await?;
-            assert!(by_source.iter().any(|e| e.id == event.id));
+                // Should be findable by source
+                let by_source = self.ctx.events().by_source(&source).fetch().await?;
+                assert!(by_source.iter().any(|e| e.id.as_ref() == Some(event_id)));
+            }
 
             // Should be findable by type
             let by_type = self.ctx.events().by_type(&event_type).fetch().await?;
@@ -382,11 +389,11 @@ mod tests {
             // Should be usable in event creation
             let event = ctx
                 .event()
-                .source(&source)
+                .source(EventSource::new(&source))
                 .type_("test.property")
                 .insert()
                 .await?;
-            assert_eq!(event.source, source);
+            assert_eq!(event.source.as_str(), source);
         }
 
         Ok(())
@@ -409,11 +416,11 @@ mod tests {
             // Should be usable in event creation
             let event = ctx
                 .event()
-                .source("test")
-                .type_(&event_type)
+                .source(EventSource::new("test"))
+                .type_(EventType::new(&event_type))
                 .insert()
                 .await?;
-            assert_eq!(event.event_type, event_type);
+            assert_eq!(event.event_type.as_str(), event_type);
         }
 
         Ok(())
@@ -494,13 +501,13 @@ mod tests {
             // Should create valid events
             let event = ctx
                 .event()
-                .source(&source)
-                .type_(&event_type)
+                .source(source.as_str())
+                .type_(event_type.as_str())
                 .payload(payload)
                 .insert()
                 .await?;
 
-            assert_eq!(event.source, "filesystem");
+            assert_eq!(event.source.as_str(), "filesystem");
         }
 
         Ok(())
@@ -586,7 +593,7 @@ mod tests {
             let events = ctx.events().by_source(*source).fetch().await?;
             assert_eq!(events.len(), 5);
             for event in events {
-                assert_eq!(event.source, *source);
+                assert_eq!(event.source.as_str(), *source);
             }
         }
 

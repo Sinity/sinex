@@ -4,13 +4,15 @@
 //! - Processor checkpoints (tracking progress of event processing)
 //! - Operations log (audit trail of system operations)
 
-use super::checkpoints::{Checkpoint, NewCheckpoint};
-use super::common::{db_error, DbResult, Repository};
+use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
+use super::common::{db_error, DbResult, EnhancedRepository, Repository};
+use crate::models::Event;
+use crate::schema::OperationsLog;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_core_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-use sinex_core_types::ids::{CheckpointId, EventId, OperationId};
+use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_types::Id;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
@@ -97,7 +99,7 @@ impl std::fmt::Display for OperationType {
 /// Operation log entry matching core.operations_log
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Operation {
-    pub operation_id: OperationId,
+    pub id: Id<Operation>,
     pub operation_ts: DateTime<Utc>,
     pub operation_type: String,
     pub operator: String,
@@ -159,6 +161,10 @@ impl<'a> Repository<'a> for StateRepository<'a> {
     }
 }
 
+impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
+    type Table = OperationsLog;
+}
+
 // Note: Removed TransactionSupport implementation due to lifetime complexity.
 // Use the transaction methods directly on StateRepositoryTx instead.
 
@@ -166,15 +172,15 @@ impl<'a> StateRepository<'a> {
     // ===== Checkpoint Methods (from CheckpointRepository) =====
 
     /// Save a checkpoint for a processor
-    pub async fn save_checkpoint(&self, checkpoint: NewCheckpoint) -> DbResult<Checkpoint> {
-        let id = CheckpointId::new();
+    pub async fn save_checkpoint(&self, checkpoint: CheckpointInput) -> DbResult<CheckpointRecord> {
+        let id = Id::<CheckpointRecord>::new();
         let consumer_group = checkpoint
             .consumer_group
             .unwrap_or_else(|| "default".into());
         let consumer_name = checkpoint.consumer_name.unwrap_or_else(|| "default".into());
 
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
@@ -192,11 +198,11 @@ impl<'a> StateRepository<'a> {
                 updated_at = NOW(),
                 checkpoint_version = core.processor_checkpoints.checkpoint_version + 1
             RETURNING 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: EventId",
+                last_processed_id as "last_processed_id?: Id<Event>",
                 last_processed_ts,
                 processed_count,
                 checkpoint_data,
@@ -221,16 +227,16 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Get checkpoint for a specific processor
-    pub async fn get_checkpoint(&self, processor_name: &str) -> DbResult<Option<Checkpoint>> {
+    pub async fn get_checkpoint(&self, processor_name: &str) -> DbResult<Option<CheckpointRecord>> {
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             SELECT 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: EventId",
+                last_processed_id as "last_processed_id?: Id<Event>",
                 last_processed_ts,
                 processed_count,
                 checkpoint_data,
@@ -250,16 +256,16 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Get all checkpoints
-    pub async fn get_all_checkpoints(&self) -> DbResult<Vec<Checkpoint>> {
+    pub async fn get_all_checkpoints(&self) -> DbResult<Vec<CheckpointRecord>> {
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             SELECT 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: EventId",
+                last_processed_id as "last_processed_id?: Id<Event>",
                 last_processed_ts,
                 processed_count,
                 checkpoint_data,
@@ -295,7 +301,7 @@ impl<'a> StateRepository<'a> {
 
     /// Log an operation
     pub async fn log_operation(&self, operation: NewOperation) -> DbResult<Operation> {
-        let id = OperationId::new();
+        let id = Id::<Operation>::new();
 
         let result = sqlx::query_as!(
             Operation,
@@ -308,7 +314,7 @@ impl<'a> StateRepository<'a> {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -342,12 +348,12 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Get operation by ID
-    pub async fn get_operation(&self, id: &OperationId) -> DbResult<Option<Operation>> {
+    pub async fn get_operation(&self, id: &Id<Operation>) -> DbResult<Option<Operation>> {
         sqlx::query_as!(
             Operation,
             r#"
             SELECT 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -375,7 +381,7 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -410,7 +416,7 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -448,7 +454,7 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -486,7 +492,7 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -524,7 +530,7 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -834,8 +840,8 @@ impl<'a> StateRepository<'a> {
         event_type: &str,
         host: &str,
         payload: JsonValue,
-    ) -> DbResult<EventId> {
-        let id = EventId::new();
+    ) -> DbResult<Id<Event>> {
+        let id = Id::<Event>::new();
 
         sqlx::query!(
             r#"
@@ -885,8 +891,8 @@ impl<'a> StateRepository<'a> {
         processor_name: &str,
         _processed_count: i64,
         state_data: JsonValue,
-    ) -> DbResult<CheckpointId> {
-        let checkpoint = NewCheckpoint {
+    ) -> DbResult<Id<CheckpointRecord>> {
+        let checkpoint = CheckpointInput {
             processor_name: processor_name.into(),
             consumer_group: Some("test".into()),
             consumer_name: Some("test".into()),
@@ -901,10 +907,10 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Delete test checkpoint
-    pub async fn delete_test_checkpoint(&self, checkpoint_id: CheckpointId) -> DbResult<bool> {
+    pub async fn delete_test_checkpoint(&self, id: Id<CheckpointRecord>) -> DbResult<bool> {
         let result = sqlx::query!(
             "DELETE FROM core.processor_checkpoints WHERE id = $1",
-            *checkpoint_id.as_ulid() as _
+            *id.as_ulid() as _
         )
         .execute(self.pool)
         .await
@@ -981,15 +987,18 @@ pub struct StateRepositoryTx<'a> {
 
 impl<'a> StateRepositoryTx<'a> {
     /// Save checkpoint within transaction
-    pub async fn save_checkpoint(&mut self, checkpoint: NewCheckpoint) -> DbResult<Checkpoint> {
-        let id = CheckpointId::new();
+    pub async fn save_checkpoint(
+        &mut self,
+        checkpoint: CheckpointInput,
+    ) -> DbResult<CheckpointRecord> {
+        let id = Id::<CheckpointRecord>::new();
         let consumer_group = checkpoint
             .consumer_group
             .unwrap_or_else(|| "default".into());
         let consumer_name = checkpoint.consumer_name.unwrap_or_else(|| "default".into());
 
         sqlx::query_as!(
-            Checkpoint,
+            CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
                 id, processor_name, consumer_group, consumer_name,
@@ -1007,11 +1016,11 @@ impl<'a> StateRepositoryTx<'a> {
                 updated_at = NOW(),
                 checkpoint_version = core.processor_checkpoints.checkpoint_version + 1
             RETURNING 
-                id as "id: CheckpointId",
+                id as "id: Id<CheckpointRecord>",
                 processor_name as "processor_name: ProcessorName",
                 consumer_group as "consumer_group: ConsumerGroup",
                 consumer_name as "consumer_name: ConsumerName",
-                last_processed_id as "last_processed_id?: EventId",
+                last_processed_id as "last_processed_id?: Id<Event>",
                 last_processed_ts,
                 processed_count,
                 checkpoint_data,
@@ -1037,7 +1046,7 @@ impl<'a> StateRepositoryTx<'a> {
 
     /// Log operation within transaction
     pub async fn log_operation(&mut self, operation: NewOperation) -> DbResult<Operation> {
-        let id = OperationId::new();
+        let id = Id::<Operation>::new();
 
         let result = sqlx::query_as!(
             Operation,
@@ -1050,7 +1059,7 @@ impl<'a> StateRepositoryTx<'a> {
                 $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
             )
             RETURNING 
-                operation_id as "operation_id: OperationId",
+                operation_id as "id: Id<Operation>",
                 operation_ts,
                 operation_type,
                 operator,
@@ -1112,7 +1121,7 @@ pub struct ProcessorHealthSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct CheckpointGap {
     pub processor_name: String,
-    pub last_processed_id: Option<EventId>,
+    pub last_processed_id: Option<Id<Event>>,
     pub processed_count: Option<i64>,
     pub last_activity: Option<DateTime<Utc>>,
     pub events_after_checkpoint: Option<i64>,
@@ -1156,20 +1165,21 @@ pub struct SystemHealthReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_core_types::event_constants::sources;
+    use crate::repositories::DbPoolExt;
+
     use sinex_test_utils::prelude::*;
 
     #[sinex_test]
     async fn test_checkpoint_operations(ctx: TestContext) -> Result<()> {
-        let repo = StateRepository::new(ctx.pool());
+        let repo = ctx.pool().state();
 
         // Create a checkpoint
-        let event_id = EventId::new();
-        let checkpoint = NewCheckpoint {
+        let id = Id::<Event>::new();
+        let checkpoint = CheckpointInput {
             processor_name: "test-processor".into(),
             consumer_group: None,
             consumer_name: None,
-            last_processed_id: Some(event_id),
+            last_processed_id: Some(id),
             last_processed_ts: Some(Utc::now()),
             checkpoint_data: Some(serde_json::json!({ "batch_size": 100 })),
             state_data: None,
@@ -1180,16 +1190,11 @@ mod tests {
         assert_eq!(saved.checkpoint_version, 1);
 
         // Update the checkpoint
-        let new_event_id = EventId::new();
-        let update = NewCheckpoint {
-            processor_name: "test-processor".into(),
-            consumer_group: None,
-            consumer_name: None,
-            last_processed_id: Some(new_event_id),
-            last_processed_ts: Some(Utc::now()),
-            checkpoint_data: Some(serde_json::json!({ "batch_size": 200 })),
-            state_data: None,
-        };
+        let new_event_id = Id::<Event>::new();
+        let update = CheckpointInput::new("test-processor")
+            .with_last_processed_id(new_event_id)
+            .with_last_processed_ts(Utc::now())
+            .with_checkpoint_data(serde_json::json!({ "batch_size": 200 }));
 
         let updated = repo.save_checkpoint(update).await?;
         assert_eq!(updated.processor_name.as_ref(), "test-processor");
@@ -1213,16 +1218,16 @@ mod tests {
 
     #[sinex_test]
     async fn test_operation_logging(ctx: TestContext) -> Result<()> {
-        let repo = StateRepository::new(ctx.pool());
+        let repo = ctx.pool().state();
 
         // Log a successful operation
         let operation = NewOperation {
             operation_type: OperationType::EventIngested,
             performed_by: "ingestd".to_string(),
             target_type: Some("events".to_string()),
-            target_id: Some(EventId::new().to_string()),
+            target_id: Some(Id::<Event>::new().to_string()),
             description: "Ingested event from fs-watcher".to_string(),
-            metadata: Some(serde_json::json!({ "source": sources::FS_WATCHER.as_str() })),
+            metadata: Some(serde_json::json!({ "source": "fs-watcher" })),
             result: OperationResult::Success,
             error_message: None,
             duration_ms: Some(15),
@@ -1272,7 +1277,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_operation_statistics(ctx: TestContext) -> Result<()> {
-        let repo = StateRepository::new(ctx.pool());
+        let repo = ctx.pool().state();
 
         // Log various operations
         let operations = vec![

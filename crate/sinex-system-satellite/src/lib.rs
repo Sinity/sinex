@@ -9,8 +9,6 @@
 //! This module provides the unified StatefulStreamProcessor architecture from Part 16.
 
 mod dbus_watcher;
-mod enhanced_dbus_watcher;
-mod enhanced_journal_watcher;
 mod journal_watcher;
 mod payloads;
 mod systemd_watcher;
@@ -20,15 +18,13 @@ mod udev_watcher;
 pub mod unified_processor;
 
 pub use dbus_watcher::DbusWatcher;
-pub use enhanced_dbus_watcher::EnhancedDbusWatcher;
-pub use enhanced_journal_watcher::EnhancedJournalWatcher;
 pub use journal_watcher::JournalWatcher;
 pub use payloads::*;
 pub use systemd_watcher::{SystemdConfig, SystemdWatcher};
 pub use udev_watcher::UdevWatcher;
 
 // Re-export for convenience
-pub use sinex_events::RawEvent;
+pub use sinex_db::models::Event;
 
 // Re-export the new unified processor as the primary interface
 pub use unified_processor::{
@@ -52,9 +48,9 @@ pub struct SystemConfig {
     pub journal_timeout_secs: u64,
     /// systemd configuration
     pub systemd_config: SystemdConfig,
-    /// Enhanced D-Bus configuration
+    /// D-Bus configuration
     pub dbus_config: DbusConfig,
-    /// Enhanced journal configuration
+    /// Journal configuration
     pub journal_config: JournalConfig,
 }
 

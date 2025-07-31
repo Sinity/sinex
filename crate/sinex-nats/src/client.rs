@@ -108,12 +108,12 @@ impl NatsClient {
     }
 
     /// Get the inner NATS client
-    pub async fn client(&self) -> tokio::sync::RwLockReadGuard<Client> {
+    pub async fn client(&self) -> tokio::sync::RwLockReadGuard<'_, Client> {
         self.inner.read().await
     }
 
     /// Get a mutable reference to the inner NATS client
-    pub async fn client_mut(&self) -> tokio::sync::RwLockWriteGuard<Client> {
+    pub async fn client_mut(&self) -> tokio::sync::RwLockWriteGuard<'_, Client> {
         self.inner.write().await
     }
 

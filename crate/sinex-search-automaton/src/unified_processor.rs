@@ -90,7 +90,7 @@ impl StatefulStreamProcessor for SearchProcessor {
 impl ExplorationProvider for SearchProcessor {
     fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
         Ok(SourceState {
-            description: "Search processor - processes search requests".to_string(),
+            description: "Search processor - processes search requests".into(),
             last_updated: Utc::now(),
             total_items: Some(0),
             metadata: HashMap::new(),
@@ -117,7 +117,7 @@ impl ExplorationProvider for SearchProcessor {
             sinex_total: 0,
             missing_items: Vec::new(),
             coverage_percentage: 100.0,
-            recommendations: vec!["Search processor is operational".to_string()],
+            recommendations: vec!["Search processor is operational".into()],
         })
     }
 

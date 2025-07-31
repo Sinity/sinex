@@ -5,7 +5,7 @@
 //! - Record various metrics
 //! - Query telemetry events from the database
 
-use sinex_events::EventSender;
+use sinex_db::models::EventSender;
 use sinex_telemetry::{
     init_metrics, set_global_telemetry, SystemTelemetryEmitter, TelemetryAccumulator,
 };
@@ -146,7 +146,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     init_metrics().await;
 
     // Create event channel (in real usage, this would connect to ingestd)
-    let (tx, mut rx) = mpsc::channel::<sinex_events::RawEvent>(100);
+    let (tx, mut rx) = mpsc::channel::<sinex_events::Event>(100);
 
     // Set up system telemetry
     let system_emitter = SystemTelemetryEmitter::new(tx.clone());

@@ -30,7 +30,8 @@
 //! - Metadata includes dimensions, duration, command
 
 use serde_json::json;
-use sinex_events::{EventFactory, RawEvent};
+use sinex_db::models::Event;
+use sinex_events::{AsciinemaSessionEndedPayload, AsciinemaSessionStartedPayload};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -303,10 +304,7 @@ end
         Ok(integration_code)
     }
 
-    async fn scan_recordings(
-        &mut self,
-        tx: &mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn scan_recordings(&mut self, tx: &mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
         let pattern = self.recordings_dir.join(&self.file_pattern);
         let pattern_str = pattern.to_string_lossy();
 
@@ -338,7 +336,7 @@ end
     async fn process_recording_file(
         &mut self,
         path: &PathBuf,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         let metadata = fs::metadata(path).await.map_err(|e| {
             sinex_satellite_sdk::SatelliteError::Processing(format!(
@@ -358,7 +356,7 @@ end
             }
 
             // New active recording
-            let session_id = sinex_ulid::Ulid::new().to_string();
+            let session_id = sinex_types::ulid::Ulid::new().to_string();
             self.active_sessions.insert(
                 path.clone(),
                 RecordingSession {
@@ -386,23 +384,33 @@ end
                     }
                 };
 
-                let payload = json!({
-                    "session_id": session_id,
-                    "command": header.command.unwrap_or_else(|| "unknown".to_string()),
-                    "title": header.title,
-                    "env": header.env.unwrap_or_default(),
-                    "timestamp": if let Some(ts) = header.timestamp {
+                let event = Event::from(AsciinemaSessionStartedPayload {
+                    session_id: session_id.clone(),
+                    terminal_type: "asciinema".to_string(),
+                    terminal_id: path.to_string_lossy().to_string(),
+                    cwd: header
+                        .env
+                        .as_ref()
+                        .and_then(|env| env.get("PWD"))
+                        .map(|v| v.as_str())
+                        .unwrap_or("/")
+                        .to_string(),
+                    command: header.command,
+                    environment: serde_json::to_value(header.env.clone().unwrap_or_default())
+                        .unwrap(),
+                    dimensions: json!({
+                        "width": header.width,
+                        "height": header.height
+                    }),
+                    start_time: if let Some(ts) = header.timestamp {
                         chrono::DateTime::from_timestamp(ts as i64, 0)
                             .unwrap_or_else(chrono::Utc::now)
                             .to_rfc3339()
                     } else {
                         chrono::Utc::now().to_rfc3339()
                     },
-                    "recording_file": path.clone(),
+                    recording_file: path.to_string_lossy().to_string(),
                 });
-
-                let factory = EventFactory::new(sinex_events::sources::SHELL_ASCIINEMA);
-                let event = factory.create_event("session.started", payload);
 
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
@@ -433,18 +441,18 @@ end
                         // Emit session ended event
                         let duration = chrono::Utc::now().signed_duration_since(start_time);
 
-                        let payload = json!({
-                            "session_id": session_id.clone(),
-                            "exit_code": 0, // Would need to parse from recording
-                            "duration_secs": duration.num_milliseconds() as f64 / 1000.0,
-                            "recording_file": path.clone(),
-                            "file_size_bytes": file_size,
-                            "git_annex_path": null, // Would be set if using git-annex
-                            "git_annex_key": null,
+                        let event = Event::from(AsciinemaSessionEndedPayload {
+                            session_id: session_id.clone(),
+                            terminal_type: "asciinema".to_string(),
+                            terminal_id: path.to_string_lossy().to_string(),
+                            end_time: chrono::Utc::now().to_rfc3339(),
+                            duration_seconds: duration.num_milliseconds() as f64 / 1000.0,
+                            event_count: 0, // Would need to count from recording
+                            recording_file: path.to_string_lossy().to_string(),
+                            file_size_bytes: Some(file_size),
+                            git_annex_path: None,
+                            git_annex_key: None,
                         });
-
-                        let factory = EventFactory::new(sinex_events::sources::SHELL_ASCIINEMA);
-                        let event = factory.create_event("session.ended", payload);
 
                         if tx.send(event).is_err() {
                             warn!("Event channel closed");
@@ -530,7 +538,7 @@ end
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         info!("Starting recording event streaming");
 

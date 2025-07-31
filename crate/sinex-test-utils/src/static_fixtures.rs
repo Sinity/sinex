@@ -46,7 +46,7 @@ use crate::fixture_generator::{DatasetConfig, FixtureGenerator};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use sinex_core_types::{DbPool, SinexError};
+use sinex_types::{DbPool, SinexError};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

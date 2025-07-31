@@ -42,6 +42,9 @@ figment = { workspace = true }
 jsonschema.workspace = true
 validator = { workspace = true }
 
+# Concurrency
+parking_lot = "0.12"
+
 # Networking
 tokio-stream = { workspace = true, features = ["net"] }
 
@@ -49,19 +52,20 @@ tokio-stream = { workspace = true, features = ["net"] }
 chrono.workspace = true
 uuid.workspace = true
 
+# Cryptography
+sha2.workspace = true
+hex.workspace = true
+
 # System
 sd-notify.workspace = true
 gethostname.workspace = true
 
 # Local dependencies
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-types = { path = "../sinex-types" }
 sinex-db = { path = "../sinex-db" }
-sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 sinex-telemetry = { path = "../sinex-telemetry" }
-sinex-validation = { path = "../sinex-validation" }
 
 [build-dependencies]
 tonic-build.workspace = true

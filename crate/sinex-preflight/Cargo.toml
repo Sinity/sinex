@@ -40,10 +40,8 @@ url = "2.5"
 toml = "0.8"
 
 # Path dependencies
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-types = { path = "../sinex-types" }
 sinex-db = { path = "../sinex-db" }
-sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
 
 [dev-dependencies]

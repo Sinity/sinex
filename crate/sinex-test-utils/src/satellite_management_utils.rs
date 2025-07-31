@@ -2,7 +2,7 @@
 // Provides test handles for satellites, ingestd, and automata
 
 use crate::prelude::*;
-use sinex_core_types::DbPool;
+use sinex_types::DbPool;
 use tokio::process::Child;
 
 // Re-export StreamMessage for convenience

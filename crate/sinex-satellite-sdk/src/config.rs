@@ -374,7 +374,7 @@ fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
-    use sinex_validation::validate_path;
+    use sinex_types::validate_path;
 
     validate_path(path)
         .map(|_| ())
@@ -382,7 +382,7 @@ fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_work_dir(path: &PathBuf) -> Result<(), validator::ValidationError> {
-    use sinex_validation::validate_path;
+    use sinex_types::validate_path;
 
     let path_str = path
         .to_str()

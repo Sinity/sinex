@@ -5,7 +5,7 @@ use crate::proto::{
     RawEvent as ProtoRawEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
-use sinex_events::RawEvent;
+use sinex_db::models::Event;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tracing::{debug, error, warn};
 
@@ -35,7 +35,7 @@ impl IngestClient {
     }
 
     /// Send a single event to ingestd
-    pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String> {
+    pub async fn ingest_event(&mut self, event: &Event) -> SatelliteResult<String> {
         let proto_event = self.convert_to_proto(event)?;
 
         let request = tonic::Request::new(proto_event);
@@ -53,7 +53,7 @@ impl IngestClient {
     }
 
     /// Send a batch of events to ingestd
-    pub async fn ingest_batch(&mut self, events: &[RawEvent]) -> SatelliteResult<BatchResult> {
+    pub async fn ingest_batch(&mut self, events: &[Event]) -> SatelliteResult<BatchResult> {
         if events.is_empty() {
             return Ok(BatchResult {
                 success: true,
@@ -107,14 +107,14 @@ impl IngestClient {
         })
     }
 
-    /// Convert RawEvent to protobuf format
-    fn convert_to_proto(&self, event: &RawEvent) -> SatelliteResult<ProtoRawEvent> {
+    /// Convert Event to protobuf format
+    fn convert_to_proto(&self, event: &Event) -> SatelliteResult<ProtoRawEvent> {
         let payload_json = serde_json::to_string(&event.payload)?;
 
         Ok(ProtoRawEvent {
-            source: event.source.clone(),
-            event_type: event.event_type.clone(),
-            host: event.host.clone(),
+            source: event.source.as_str().to_string(),
+            event_type: event.event_type.as_str().to_string(),
+            host: event.host.as_str().to_string(),
             payload: payload_json,
             schema_name: Some(
                 event
@@ -124,7 +124,7 @@ impl IngestClient {
                     .unwrap_or_default(),
             ),
             schema_version: Some("1.0.0".to_string()), // Default version since we only have schema_id
-            blob_id: None, // No blob_id field in current RawEvent structure
+            blob_id: None, // No blob_id field in current Event structure
         })
     }
 }
@@ -150,7 +150,7 @@ pub struct HealthStatus {
 /// Helper for batching events before sending
 pub struct EventBatcher {
     client: IngestClient,
-    batch: Vec<RawEvent>,
+    batch: Vec<Event>,
     batch_size: usize,
     timeout: tokio::time::Duration,
     last_flush: tokio::time::Instant,
@@ -169,7 +169,7 @@ impl EventBatcher {
     }
 
     /// Add an event to the batch, flushing if necessary
-    pub async fn add_event(&mut self, event: RawEvent) -> SatelliteResult<Option<BatchResult>> {
+    pub async fn add_event(&mut self, event: Event) -> SatelliteResult<Option<BatchResult>> {
         self.batch.push(event);
 
         // Check if we should flush

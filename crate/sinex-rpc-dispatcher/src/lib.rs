@@ -53,7 +53,7 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
             final_checkpoint: Checkpoint::None,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::new(),
-            successful_targets: vec!["rpc".to_string()],
+            successful_targets: vec!["rpc".into()],
             failed_targets: Vec::new(),
             warnings: Vec::new(),
         })

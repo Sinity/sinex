@@ -8,8 +8,8 @@ use crate::{
 use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
-use sinex_core_types::RawEvent;
-use sinex_ulid::Ulid;
+use sinex_db::models::{Event, Provenance};
+use sinex_types::ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
@@ -51,32 +51,37 @@ impl NatsPublisher {
     }
 
     /// Publish a raw event
-    pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
-        let subject = StreamManager::event_subject(&event.source, &event.event_type);
+    pub async fn publish_event(&self, event: &Event) -> Result<PublishAck> {
+        let subject =
+            StreamManager::event_subject(event.source.as_str(), event.event_type.as_str());
 
         // Create headers
         let mut headers = HeaderMap::new();
-        headers.insert("Sinex-Event-Id", event.id.to_string());
-        headers.insert("Sinex-Source", event.source.clone());
-        headers.insert("Sinex-Event-Type", event.event_type.clone());
-        headers.insert("Sinex-Host", event.host.clone());
+        if let Some(id) = &event.id {
+            headers.insert("Sinex-Event-Id", id.to_string());
+        }
+        headers.insert("Sinex-Source", event.source.as_str().to_string());
+        headers.insert("Sinex-Event-Type", event.event_type.as_str().to_string());
+        headers.insert("Sinex-Host", event.host.as_str().to_string());
         headers.insert("Sinex-Timestamp", event.ts_ingest.to_rfc3339());
 
-        // Add source event IDs if present
-        if let Some(source_event_ids) = &event.source_event_ids {
-            if !source_event_ids.is_empty() {
-                let ids = source_event_ids
-                    .iter()
-                    .map(|id| id.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",");
-                headers.insert("Sinex-Source-Event-Ids", ids);
+        // Add provenance information if present
+        if let Some(provenance) = &event.provenance {
+            match provenance {
+                Provenance::Events(ids) => {
+                    if !ids.is_empty() {
+                        let ids_str = ids
+                            .iter()
+                            .map(|id| id.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        headers.insert("Sinex-Source-Event-Ids", ids_str);
+                    }
+                }
+                Provenance::Material { id, .. } => {
+                    headers.insert("Sinex-Source-Material-Id", id.to_string());
+                }
             }
-        }
-
-        // Add source material ID if present
-        if let Some(material_id) = &event.source_material_id {
-            headers.insert("Sinex-Source-Material-Id", material_id.to_string());
         }
 
         // Serialize event to JSON
@@ -270,10 +275,7 @@ impl NatsPublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        client::NatsClient,
-        config::{JetStreamConfig, NatsConfig},
-    };
+    use crate::{client::NatsClient, config::NatsConfig};
 
     #[tokio::test]
     #[ignore] // Requires NATS server

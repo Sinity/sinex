@@ -6,8 +6,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sinex_events::{services, EventFactory};
+use sinex_events::{
+    Event, JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
+    SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -25,7 +27,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::{EnhancedDbusWatcher, EnhancedJournalWatcher, SystemdWatcher, UdevWatcher};
+use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 
 // Import the existing SystemConfig from the parent module
 pub use crate::SystemConfig;
@@ -93,8 +95,8 @@ pub struct SystemProcessor {
     config: SystemConfig,
 
     /// Individual watchers (initialized during operation)
-    dbus_watcher: Option<EnhancedDbusWatcher>,
-    journal_watcher: Option<EnhancedJournalWatcher>,
+    dbus_watcher: Option<DbusWatcher>,
+    journal_watcher: Option<JournalWatcher>,
     udev_watcher: Option<UdevWatcher>,
     systemd_watcher: Option<SystemdWatcher>,
 
@@ -204,16 +206,16 @@ impl SystemProcessor {
         // Initialize D-Bus watcher
         if self.config.dbus_enabled {
             info!(
-                "Initializing enhanced D-Bus watcher for buses: {} (stub)",
+                "Initializing D-Bus watcher for buses: {} (stub)",
                 self.config.dbus_buses
             );
-            info!("✅ Enhanced D-Bus watcher initialized (stub)");
+            info!("✅ D-Bus watcher initialized (stub)");
         }
 
         // Initialize Journal watcher
         if self.config.journal_enabled {
-            info!("Initializing enhanced journal watcher (stub)");
-            info!("✅ Enhanced journal watcher initialized (stub)");
+            info!("Initializing journal watcher (stub)");
+            info!("✅ Journal watcher initialized (stub)");
         }
 
         // Initialize udev watcher
@@ -245,17 +247,13 @@ impl SystemProcessor {
             info!("System monitoring context available");
 
             // Create a sample event to show the interface works
-            let factory = EventFactory::new(services::SYSTEM_SATELLITE);
-            let sample_event = factory.create_event(
-                "system.monitoring_started",
-                json!({
-                    "dbus_enabled": self.config.dbus_enabled,
-                    "journal_enabled": self.config.journal_enabled,
-                    "udev_enabled": self.config.udev_enabled,
-                    "systemd_enabled": self.config.systemd_enabled,
-                    "start_time": Utc::now()
-                }),
-            );
+            let sample_event = Event::from(SystemMonitoringStartedPayload {
+                dbus_enabled: self.config.dbus_enabled,
+                journal_enabled: self.config.journal_enabled,
+                udev_enabled: self.config.udev_enabled,
+                systemd_enabled: self.config.systemd_enabled,
+                start_time: Utc::now(),
+            });
 
             context.emit_event(sample_event).await?;
         }
@@ -278,15 +276,11 @@ impl SystemProcessor {
         if let Some(ref context) = self.context {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
-                let factory = EventFactory::new(services::SYSTEM_SATELLITE);
-                let event = factory.create_event(
-                    "journal.historical",
-                    json!({
-                        "source": "journal",
-                        "scan_type": "historical",
-                        "note": "Journal can provide historical entries"
-                    }),
-                );
+                let event = Event::from(JournaldHistoricalPayload {
+                    source: "journal".to_string(),
+                    scan_type: "historical".to_string(),
+                    note: "Journal can provide historical entries".to_string(),
+                });
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -294,15 +288,11 @@ impl SystemProcessor {
 
             // systemd can provide unit state history
             if self.config.systemd_enabled && emit_events {
-                let factory = EventFactory::new(services::SYSTEM_SATELLITE);
-                let event = factory.create_event(
-                    "systemd.historical",
-                    json!({
-                        "source": "systemd",
-                        "scan_type": "historical",
-                        "note": "systemd can provide unit state history"
-                    }),
-                );
+                let event = Event::from(SystemdUnitsHistoricalPayload {
+                    source: "systemd".to_string(),
+                    scan_type: "historical".to_string(),
+                    note: "systemd can provide unit state history".to_string(),
+                });
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -310,15 +300,11 @@ impl SystemProcessor {
 
             // D-Bus and udev are typically real-time only
             if (self.config.dbus_enabled || self.config.udev_enabled) && emit_events {
-                let factory = EventFactory::new(services::SYSTEM_SATELLITE);
-                let event = factory.create_event(
-                    "realtime_sources.historical", 
-                    json!({
-                        "sources": ["dbus", "udev"],
-                        "scan_type": "historical",
-                        "note": "D-Bus and udev are typically real-time sources with limited historical data"
-                    })
-                );
+                let event = Event::from(UdevDeviceHistoricalPayload {
+                    sources: vec!["dbus".to_string(), "udev".to_string()],
+                    scan_type: "historical".to_string(),
+                    note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
+                });
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -335,7 +321,7 @@ impl Default for SystemProcessor {
     }
 }
 
-#[sinex_macros::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=system"])]
+#[sinex_satellite_sdk::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=system"])]
 #[async_trait]
 impl StatefulStreamProcessor for SystemProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
@@ -459,18 +445,14 @@ impl StatefulStreamProcessor for SystemProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let factory = EventFactory::new(services::SYSTEM_SATELLITE);
-                        let snapshot_event = factory.create_event(
-                            "system.snapshot",
-                            json!({
-                                "active_watchers": active_watchers,
-                                "dbus_enabled": self.config.dbus_enabled,
-                                "journal_enabled": self.config.journal_enabled,
-                                "udev_enabled": self.config.udev_enabled,
-                                "systemd_enabled": self.config.systemd_enabled,
-                                "snapshot_time": Utc::now()
-                            }),
-                        );
+                        let snapshot_event = Event::from(SystemSnapshotPayload {
+                            active_watchers,
+                            dbus_enabled: self.config.dbus_enabled,
+                            journal_enabled: self.config.journal_enabled,
+                            udev_enabled: self.config.udev_enabled,
+                            systemd_enabled: self.config.systemd_enabled,
+                            snapshot_time: Utc::now(),
+                        });
 
                         context.emit_event(snapshot_event).await?;
                     }

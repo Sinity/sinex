@@ -20,12 +20,13 @@
 //! ## Using function helpers:
 //!
 //! ```rust,no_run
-//! use sinex_db::prelude::*;
+//! use crate::prelude::*;
+//! use sinex_db::models::Event;
 //!
-//! # async fn example(pool: &DbPool) -> DbResult<()> {
+//! # async fn example(pool: &DbPool) -> SinexResult<()> {
 //! // Simple query with automatic error context
 //! let event_id = Ulid::new();
-//! let event: RawEvent = query_one(pool, "SELECT * FROM core.events WHERE event_id = $1", ulid_to_uuid(event_id), "get event by id").await?;
+//! let event: Event = query_one(pool, "SELECT * FROM core.events WHERE event_id = $1", ulid_to_uuid(event_id), "get event by id").await?;
 //! # Ok(())
 //! # }
 //! ```
@@ -33,9 +34,9 @@
 //! ## Transaction helpers:
 //!
 //! ```ignore
-//! use sinex_db::prelude::*;
+//! use crate::prelude::*;
 //!
-//! # async fn example(pool: &DbPool) -> DbResult<()> {
+//! # async fn example(pool: &DbPool) -> SinexResult<()> {
 //! // Simple transaction with automatic rollback on error
 //! let result = with_transaction(pool, |tx| async move {
 //!     // Your transactional operations here
@@ -66,7 +67,7 @@
 //! ## ULID conversion helpers:
 //!
 //! ```rust,no_run
-//! use sinex_db::prelude::*;
+//! use crate::prelude::*;
 //!
 //! # fn example() {
 //! let ulid = Ulid::new();
@@ -79,49 +80,31 @@
 //! ```
 
 use crate::{DbPool, DbPoolRef};
-use sinex_core_types::{retry, timeouts};
-use sinex_ulid::Ulid;
+use sinex_types::error::{Result as SinexResult, SinexError};
+use sinex_types::ulid::Ulid;
+use sinex_types::{retry, timeouts};
 use sqlx::{Error as SqlxError, Postgres, Transaction};
 use std::future::Future;
 use std::time::Duration;
-use thiserror::Error;
 use tokio::time::sleep;
 use tracing::warn;
 
-/// Database operation error type
-#[derive(Error, Debug)]
-pub enum DbError {
-    #[error("Database error: {context}: {source}")]
-    Query { context: String, source: SqlxError },
-
-    #[error("Database timeout: {context}")]
-    Timeout { context: String },
-
-    #[error("Transaction error: {0}")]
-    Transaction(String),
-}
-
-/// Convert sqlx errors to DbError with context
-pub fn db_error(err: SqlxError, context: &str) -> DbError {
-    DbError::Query {
-        context: context.to_string(),
-        source: err,
+/// Convert sqlx errors to SinexError with context
+pub fn db_error(err: SqlxError, context: &str) -> SinexError {
+    match err {
+        SqlxError::RowNotFound => SinexError::not_found(context.to_string()),
+        SqlxError::Database(db_err) => {
+            if db_err.is_unique_violation() {
+                SinexError::database(format!("{}: unique constraint violation", context))
+            } else if db_err.is_foreign_key_violation() {
+                SinexError::database(format!("{}: foreign key violation", context))
+            } else {
+                SinexError::database(format!("{}: {}", context, db_err))
+            }
+        }
+        _ => SinexError::database(format!("{}: {}", context, err)),
     }
 }
-
-/// Result type using DbError
-pub type DbResult<T> = std::result::Result<T, DbError>;
-
-/// Convert DbError to SinexError
-impl From<DbError> for sinex_core_types::SinexError {
-    fn from(err: DbError) -> Self {
-        sinex_core_types::SinexError::database(err.to_string())
-    }
-}
-
-// ===== Removed Query Execution Helpers =====
-// These were unused abstractions that added complexity without value.
-// Use sqlx::query! macros directly instead.
 
 // ===== Transaction Helpers =====
 
@@ -145,10 +128,10 @@ impl Default for RetryConfig {
 }
 
 /// Execute a function within a transaction with automatic rollback on error
-pub async fn with_transaction<F, Fut, T>(pool: &DbPool, f: F) -> DbResult<T>
+pub async fn with_transaction<F, Fut, T>(pool: &DbPool, f: F) -> SinexResult<T>
 where
     F: FnOnce(&mut Transaction<'static, Postgres>) -> Fut,
-    Fut: Future<Output = DbResult<T>>,
+    Fut: Future<Output = SinexResult<T>>,
 {
     let mut tx = pool
         .begin()
@@ -174,10 +157,10 @@ pub async fn with_retry_transaction<F, Fut, T>(
     pool: &DbPool,
     config: RetryConfig,
     f: F,
-) -> DbResult<T>
+) -> SinexResult<T>
 where
     F: Fn(&mut Transaction<'static, Postgres>) -> Fut,
-    Fut: Future<Output = DbResult<T>>,
+    Fut: Future<Output = SinexResult<T>>,
 {
     let mut attempts = 0;
     let mut delay = config.initial_delay;
@@ -212,21 +195,12 @@ where
 }
 
 /// Check if a database error is retryable (deadlock, serialization failure)
-pub fn is_retryable_db_error(err: &DbError) -> bool {
-    match err {
-        DbError::Query { source, .. } => {
-            let msg = source.to_string();
-            msg.contains("deadlock detected")
-                || msg.contains("could not serialize access")
-                || msg.contains("transaction rollback")
-        }
-        _ => false,
-    }
+pub fn is_retryable_db_error(err: &SinexError) -> bool {
+    let msg = err.to_string();
+    msg.contains("deadlock detected")
+        || msg.contains("could not serialize access")
+        || msg.contains("transaction rollback")
 }
-
-// ===== Removed Common Query Patterns =====
-// Removed insert_and_return, update_where, delete_where - barely used abstractions.
-// Use sqlx::query! macros directly for better type safety and clarity.
 
 /// Check if a record exists
 pub async fn exists(
@@ -234,7 +208,7 @@ pub async fn exists(
     table: &str,
     where_clause: &str,
     context: &str,
-) -> DbResult<bool> {
+) -> SinexResult<bool> {
     let query = format!(
         "SELECT EXISTS(SELECT 1 FROM {} WHERE {})",
         table, where_clause
@@ -254,7 +228,7 @@ pub async fn count(
     table: &str,
     where_clause: Option<&str>,
     context: &str,
-) -> DbResult<i64> {
+) -> SinexResult<i64> {
     let query = match where_clause {
         Some(clause) => format!("SELECT COUNT(*) FROM {} WHERE {}", table, clause),
         None => format!("SELECT COUNT(*) FROM {}", table),
@@ -268,38 +242,115 @@ pub async fn count(
     Ok(result.0)
 }
 
-// ===== ULID Conversion Helpers =====
+// ===== Unified ULID/UUID Database Integration =====
+//
+// This section provides a comprehensive API for ULID/UUID conversions at database boundaries.
+// PostgreSQL stores ULIDs as UUIDs for efficiency, so we need seamless conversion.
 
-/// Convert ULID to UUID for database storage
-pub fn ulid_to_uuid(ulid: Ulid) -> sqlx::types::Uuid {
-    sqlx::types::Uuid::from_bytes(*ulid.to_uuid().as_bytes())
+use sqlx::types::Uuid as SqlxUuid;
+
+/// Convert ULID to PostgreSQL UUID type (primary conversion function)
+#[inline]
+pub fn ulid_to_uuid(ulid: Ulid) -> SqlxUuid {
+    SqlxUuid::from_bytes(*ulid.to_uuid().as_bytes())
 }
 
-/// Convert UUID from database to ULID
-pub fn uuid_to_ulid(uuid: sqlx::types::Uuid) -> Ulid {
+/// Convert PostgreSQL UUID to ULID (primary conversion function)
+#[inline]
+pub fn uuid_to_ulid(uuid: SqlxUuid) -> Ulid {
     Ulid::from_uuid(uuid::Uuid::from_bytes(*uuid.as_bytes()))
 }
 
-/// Helper trait for ULID arrays
+// Shorter aliases for common use
+pub use ulid_to_uuid as to_db;
+pub use uuid_to_ulid as from_db;
+
+/// Extension trait for ULID types to provide database conversions
+pub trait UlidExt: Sized {
+    /// Convert to database UUID representation
+    fn to_db(&self) -> SqlxUuid;
+
+    /// Convert an optional ULID to optional database UUID
+    fn to_db_opt(opt: Option<Self>) -> Option<SqlxUuid>;
+}
+
+impl UlidExt for Ulid {
+    #[inline]
+    fn to_db(&self) -> SqlxUuid {
+        ulid_to_uuid(*self)
+    }
+
+    #[inline]
+    fn to_db_opt(opt: Option<Self>) -> Option<SqlxUuid> {
+        opt.map(|ulid| ulid.to_db())
+    }
+}
+
+/// Extension trait for database UUID types to provide ULID conversions
+pub trait DbUuidExt {
+    /// Convert from database UUID to ULID
+    fn to_ulid(self) -> Ulid;
+}
+
+impl DbUuidExt for SqlxUuid {
+    #[inline]
+    fn to_ulid(self) -> Ulid {
+        uuid_to_ulid(self)
+    }
+}
+
+/// Helper trait for ULID collections
 pub trait UlidArrayExt {
-    fn to_uuid_vec(&self) -> Vec<sqlx::types::Uuid>;
-}
-
-impl UlidArrayExt for &[Ulid] {
-    fn to_uuid_vec(&self) -> Vec<sqlx::types::Uuid> {
-        self.iter().map(|&id| ulid_to_uuid(id)).collect()
+    fn to_uuid_vec(&self) -> Vec<SqlxUuid>;
+    fn to_db_vec(&self) -> Vec<SqlxUuid> {
+        self.to_uuid_vec()
     }
 }
 
-impl UlidArrayExt for Vec<Ulid> {
-    fn to_uuid_vec(&self) -> Vec<sqlx::types::Uuid> {
-        self.iter().map(|&id| ulid_to_uuid(id)).collect()
+impl<T: AsRef<[Ulid]>> UlidArrayExt for T {
+    fn to_uuid_vec(&self) -> Vec<SqlxUuid> {
+        self.as_ref().iter().map(|&id| ulid_to_uuid(id)).collect()
     }
 }
 
-// ===== Removed Macro Helpers =====
-// Removed bind_ulid! and bind_optional_ulid! macros - never used.
-// Use ulid_to_uuid() function directly for explicit, readable code.
+/// Extension trait for collections of database UUIDs
+pub trait DbUuidCollectionExt {
+    /// Convert collection of database UUIDs to ULIDs
+    fn to_ulid_vec(self) -> Vec<Ulid>;
+}
+
+impl DbUuidCollectionExt for Vec<SqlxUuid> {
+    fn to_ulid_vec(self) -> Vec<Ulid> {
+        self.into_iter().map(uuid_to_ulid).collect()
+    }
+}
+
+impl DbUuidCollectionExt for Option<Vec<SqlxUuid>> {
+    fn to_ulid_vec(self) -> Vec<Ulid> {
+        self.map(|v| v.to_ulid_vec()).unwrap_or_default()
+    }
+}
+
+/// Convenience functions for common optional patterns
+#[inline]
+pub fn opt_to_db(ulid: Option<Ulid>) -> Option<SqlxUuid> {
+    ulid.map(ulid_to_uuid)
+}
+
+#[inline]
+pub fn opt_from_db(uuid: Option<SqlxUuid>) -> Option<Ulid> {
+    uuid.map(uuid_to_ulid)
+}
+
+#[inline]
+pub fn opt_vec_to_db(ulids: Option<Vec<Ulid>>) -> Option<Vec<SqlxUuid>> {
+    ulids.map(|v| v.to_uuid_vec())
+}
+
+#[inline]
+pub fn opt_vec_from_db(uuids: Option<Vec<SqlxUuid>>) -> Option<Vec<Ulid>> {
+    uuids.map(|v| v.to_ulid_vec())
+}
 
 #[cfg(test)]
 mod tests {
@@ -343,14 +394,15 @@ mod tests {
     #[sinex_test]
     async fn test_is_retryable_db_error_function_exists(ctx: TestContext) -> anyhow::Result<()> {
         // Test that timeout errors are not retryable
-        let timeout_err = DbError::Timeout {
-            context: "test timeout".to_string(),
-        };
+        let timeout_err = SinexError::timeout("test timeout");
         assert!(!is_retryable_db_error(&timeout_err));
 
-        // Test that transaction errors are not retryable by default
-        let tx_err = DbError::Transaction("test".to_string());
-        assert!(!is_retryable_db_error(&tx_err));
+        // Test that general database errors are not retryable by default
+        let db_err = SinexError::database("test database error");
+        assert!(!is_retryable_db_error(&db_err));
+
+        // Note: To properly test retryable errors, we'd need to create a SinexError
+        // with a message containing the specific strings we check for
         Ok(())
     }
 }

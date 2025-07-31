@@ -5,8 +5,8 @@
 
 use once_cell::sync::Lazy;
 use redis::{Client, Connection, RedisResult, Value};
-use sinex_error::{Result, SinexError};
-use sinex_ulid::Ulid;
+use sinex_types::error::{Result, SinexError};
+use sinex_types::ulid::Ulid;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};

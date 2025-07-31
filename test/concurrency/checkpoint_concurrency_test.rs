@@ -730,6 +730,6 @@ async fn update_checkpoint_atomic(
     Ok(result.rows_affected() > 0)
 }
 
-use sinex_error::{Error, ErrorContext};
-use sinex_ulid::Ulid;
+use sinex_types::error::{Error, ErrorContext};
+use sinex_types::ulid::Ulid;
 use sqlx::PgPool;

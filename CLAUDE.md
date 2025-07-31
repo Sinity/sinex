@@ -4,20 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🏗️ Repository Overview
 
-Sinex is a comprehensive event-driven data capture system that records everything happening on a computer for later analysis. The system uses a distributed satellite-based architecture where independent services capture events and feed them into a central PostgreSQL + TimescaleDB data substrate via Redis Streams.
+Sinex is a comprehensive event-driven data capture system that records everything happening on a computer for later analysis. The system uses a distributed satellite-based architecture where independent services capture events and feed them into a central PostgreSQL + TimescaleDB data substrate via NATS JetStream.
 
-**Core Architecture**: Satellites → ingestd → Event Substrate → Redis Streams → Automata → Query Interface
+**Core Architecture**: Satellites → ingestd → Event Substrate → NATS JetStream → Automata → Query Interface
 
 ## 🚀 Essential Development Commands
 
 ### Environment Setup
+
 ```bash
 # Enter development shell (always run first)
 nix develop
 
 # Apply database migrations
 just migrate
-# or manually: sqlx migrate run
 
 # Verify workspace builds
 just check
@@ -27,31 +27,11 @@ just check
 just setup-fast
 ```
 
-### Build Performance Optimizations
-The project is optimized for fast edit-compile-edit development cycles:
-
-- **Incremental compilation**: Enabled for fast rebuilds (better than sccache for development)
-- **mold linker**: Fast linking for improved build times
-- **24 cores parallel compilation**: Maximum parallelism for faster builds
-- **Smart checking**: Only check crates with changes using `just qcs`
-- **No git watching**: build.rs won't trigger rebuilds on every git operation
-
-Check performance:
-- **No changes**: ~0.27s with `just qc`
-- **Single crate**: ~0.67s with `just qcc sinex-db`
-- **Smart check**: ~0.2-0.7s with `just qcs` (only changed crates)
-
 ### Testing (Hierarchical by Speed)
+
 ```bash
 # Fast development feedback (~30s)
 just test-fast               # Unit + property tests only
-
-# Individual test categories
-just test-unit               # Unit tests (~5s)
-just test-integration        # Integration tests (~30s)
-just test-system            # System/E2E tests (~2min)
-just test-property          # Property-based tests (~1min)
-just test-adversarial       # Security/chaos tests (~3min)
 
 # Full test suite
 just test-all               # Complete suite including VM tests (~10-15min)
@@ -59,12 +39,10 @@ just test-all               # Complete suite including VM tests (~10-15min)
 # Test specific packages
 just test-pkg sinex-db      # Test specific crate
 just test-individual integration::database_test  # Specific test file
-
-# Watch tests during development
-just watch-fast             # Re-run fast tests on file changes
 ```
 
 ### Database Operations
+
 ```bash
 # Database connection
 just psql                   # Connect to dev database
@@ -79,6 +57,7 @@ just db-setup              # Setup test database
 ```
 
 ### Code Quality
+
 ```bash
 # Pre-commit workflow
 just pre-commit            # fmt + lint + check + fast tests
@@ -91,6 +70,7 @@ just check-all             # Check all targets including tests
 ```
 
 ### Running Services
+
 ```bash
 # Core services
 just ingestd               # Start central ingestion daemon
@@ -114,6 +94,7 @@ just query 50             # Query 50 recent events
 ## 🏛️ Architecture Overview
 
 ### Satellite Architecture
+
 Sinex uses a satellite constellation pattern where independent services communicate via gRPC and Redis Streams:
 
 - **Satellites**: Independent event capture services
@@ -125,48 +106,47 @@ Sinex uses a satellite constellation pattern where independent services communic
 ### Key Technical Patterns
 
 **Event-Driven Design**:
+
 - All events stored immutably in `core.events` table
 - ULID primary keys for time-ordered, distributed-safe IDs
 - JSON Schema validation via pg_jsonschema
 - Comprehensive provenance tracking via source_event_ids
 
 **Satellite Services**:
+
 - Each satellite runs as independent systemd service
 - Dual-mode operation: sensor (real-time) and scanner (batch)
 - StatefulStreamProcessor interface for consistency
 - gRPC communication with automatic reconnection
+- Services configured via NixOS modules in `nixos/`
 
 **Testing Architecture**:
+
 - Parallel test execution with database pool isolation
-- Hierarchical test organization: unit → integration → system → adversarial
 - Property-based testing with proptest
 - VM tests for NixOS integration validation
+- VM tests validate full system integration
 
 ## 📁 Project Structure
 
 ### Workspace Organization
+
 ```
 crate/
-├── sinex-core-*           # Core libraries (types, utils, runtime, fs)
-├── sinex-db/              # Database layer with query builders
-├── sinex-satellite-sdk/   # SDK for building satellites
-├── sinex-ingestd/         # Central ingestion daemon
-├── sinex-gateway/         # API gateway service
-├── sinex-*-satellite/     # Event source satellites
-├── sinex-*-automaton/     # Processing satellites
-└── sinex-test-utils/      # Shared testing infrastructure
+  [TODO]
 ```
 
 ### Key Directories
-- `migrations/` - Database schema migrations (numbered sequentially)
-- `test/` - Comprehensive test suites organized by category
+
+- `test/` - Comprehensive test suite organized by category
 - `cli/` - Python query interface (exo.py)
 - `nixos/` - NixOS module for system deployment
-- `spec/` - Documentation and specifications
+- `docs/` - Documentation and specifications
 
 ## 🧪 Testing Strategy
 
 ### Test Categories & Runtime
+
 - **Unit Tests** (~5s): Isolated component testing
 - **Integration Tests** (~30s): Database and satellite integration
 - **System Tests** (~2min): End-to-end pipeline validation
@@ -175,11 +155,13 @@ crate/
 - **VM Tests** (~5-15min): Full NixOS deployment testing
 
 ### Database Testing
+
 - Automated 64-database pool with PostgreSQL advisory locks
 - Parallel execution optimized for fast feedback
 - Comprehensive test data factories in sinex-test-utils
 
 ### Test Execution
+
 ```bash
 # Development workflow
 just test-dev              # Quick cycle: db-setup + test-fast
@@ -204,6 +186,7 @@ just ai-errors-json
 ```
 
 ### Development Commands
+
 ```bash
 # Compilation checks (optimized for speed)
 just qc                    # Full workspace check (~2-3s)
@@ -221,11 +204,13 @@ just warnings             # Show compilation warnings
 ```
 
 **Understanding Smart Commands**:
+
 - `qcs` only checks crates with git changes - fast but won't show errors from unchanged crates
 - `qcc <crate>` checks one crate - useful when focusing on specific area
 - `qc` checks everything - use when you need to see all errors across workspace
 
 **Development Strategy**:
+
 1. Start with `just qc` to see all errors
 2. Use `just qcs` for fast iteration while fixing
 3. Run `just qc` again before committing to ensure nothing missed
@@ -238,7 +223,6 @@ cargo build --timings
 
 # View report at: target/cargo-timings/cargo-timing.html
 ```
-
 
 ### Development Workflow
 
@@ -253,6 +237,7 @@ just dev                   # fmt + check + test-fast
 ```
 
 ### Working with Database Changes
+
 ```bash
 # After schema changes
 just migrate               # Apply migrations
@@ -261,6 +246,7 @@ git add .sqlx/            # MUST commit SQLX cache
 ```
 
 ### Working with Satellites
+
 ```bash
 # Test satellite in scanner mode
 cargo run --bin sinex-fs-watcher -- scan /path/to/scan
@@ -273,6 +259,7 @@ cargo test --test satellite_architecture_test
 ```
 
 ### Performance Optimization
+
 ```bash
 # Coverage analysis
 just coverage-html         # Generate HTML coverage report
@@ -284,58 +271,22 @@ just test-performance      # Load and stress tests
 cargo build --release      # Optimized builds
 ```
 
-## ⚠️ Critical Requirements
-
-### SQLX Cache Management
-- **ALWAYS** run `just sqlx-prepare` after database schema changes
-- **MUST** commit `.sqlx/` directory - Nix builds fail without it
-- Verify with `just sqlx-check` before pushing
-
-### NixOS Integration
-- All development happens in `nix develop` shell
-- Services configured via NixOS modules in `nixos/`
-- VM tests validate full system integration
-
-### Zero-Warning Policy
-- Clippy configured to treat all warnings as errors
-- Use `just lint` to enforce before committing
-- Fix warnings with `just fix-warnings` when possible
-
-### Test Quality Standards
-- All features require comprehensive test coverage
-- Property tests for complex logic (use proptest)
-- Integration tests for database operations
-- System tests for end-to-end workflows
-
 ## 🔍 Debugging & Troubleshooting
 
 ### Common Issues
+
 - **Database connection failed**: Ensure PostgreSQL is running via nix develop
 - **SQLX offline errors**: Run `just sqlx-prepare` and commit `.sqlx/`
-- **Flaky tests**: Use `just test-reliable` with limited parallelism
 - **Compilation errors**: Check `compilation.log` via `just errors`
-- **Rust ICE (rustc-ice-*.txt files)**: Run `cargo clean` to fix incremental compilation issues
-  - Cranelift backend can cause ICEs; stable config in `.cargo/config.toml`
-  - Experimental cranelift config saved in `.cargo/config-cranelift.toml`
 
 ### Debugging Commands
+
 ```bash
 just errors                # Show compilation errors
 just warnings              # Show compilation warnings
 just recent-changes        # Show recent git changes for context
 ```
 
-### Performance Analysis
-```bash
-just test-parallel-stats   # Test execution statistics
-just coverage-fast         # Fast test coverage analysis
-```
+# Da Plan: @docs/REFACTORING_PLAN_4.md
 
-## 📊 Success Criteria
-
-- All tests pass in under 2 minutes for fast feedback
-- Zero clippy warnings/errors
-- SQLX cache is up to date for Nix builds
-- Database migrations apply cleanly
-- Satellite services start and communicate properly
-- Integration tests validate end-to-end workflows
+(followed by docs/REFACTORING_REDUX.md)

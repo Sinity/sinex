@@ -5,11 +5,7 @@ use crate::{
     config::JetStreamConfig,
     error::{NatsError, Result},
 };
-use async_nats::jetstream::{
-    self,
-    consumer::{pull::Config as PullConfig, PullConsumer},
-    Context,
-};
+use async_nats::jetstream::{self, consumer::PullConsumer, Context};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
@@ -47,7 +43,7 @@ impl JetStream {
     }
 
     /// Get the JetStream context
-    pub async fn context(&self) -> tokio::sync::RwLockReadGuard<Context> {
+    pub async fn context(&self) -> tokio::sync::RwLockReadGuard<'_, Context> {
         self.context.read().await
     }
 

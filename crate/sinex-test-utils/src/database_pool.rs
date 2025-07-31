@@ -70,8 +70,8 @@
 
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use sinex_core_types::{timeouts, DbPool};
-use sinex_error::{Result, SinexError};
+use sinex_types::error::{Result, SinexError};
+use sinex_types::{timeouts, DbPool};
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
@@ -1055,8 +1055,8 @@ mod tests {
                     let db = acquire_test_database().await?;
 
                     // Each should have clean database
-                    use sinex_db::count_events;
-                    let count = count_events(db.pool()).await?;
+                    use sinex_db::repositories::DbPoolExt;
+                    let count = db.pool().events().count_all().await?;
                     assert_eq!(count, 0, "Database {} should be clean", i);
 
                     // Hold the database for a bit to ensure concurrency
@@ -1093,6 +1093,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_database_cleanup_on_drop() -> Result<()> {
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{EventSource, EventType, HostName};
+
         let db_name;
 
         {
@@ -1100,30 +1104,18 @@ mod tests {
             db_name = db.name().to_string();
 
             // Insert test data
-            use sinex_core_types::domain::{EventSource, EventType, HostName};
-            use sinex_db::repositories::{EventRepository, NewEvent, Repository};
 
-            let repo = EventRepository::new(db.pool());
-            let new_event = NewEvent {
-                source: EventSource::new("test"),
-                event_type: EventType::new("test.event"),
-                host: HostName::new("test-host"),
-                payload: serde_json::json!({}),
-                ts_orig: None,
-                ingestor_version: None,
-                payload_schema_id: None,
-                source_event_ids: None,
-                source_material_id: None,
-                source_material_offset_start: None,
-                source_material_offset_end: None,
-                anchor_byte: None,
-                associated_blob_ids: None,
-            };
-            repo.insert(new_event).await?;
+            let repo = db.pool.events();
+            let event = Event::builder()
+                .source(EventSource::new("test"))
+                .event_type(EventType::new("test.event"))
+                .host(HostName::new("test-host"))
+                .payload(serde_json::json!({}))
+                .build();
+            repo.insert(event).await?;
 
             // Verify data exists
-            use sinex_db::count_events;
-            let count = count_events(db.pool()).await?;
+            let count = db.pool().events().count_all().await?;
             assert_eq!(count, 1);
         } // db is dropped here
 
@@ -1135,8 +1127,7 @@ mod tests {
 
         if db2.name() == db_name {
             // If we got the same database, it should be clean
-            use sinex_db::count_events;
-            let count = count_events(db2.pool()).await?;
+            let count = db2.pool().events().count_all().await?;
             assert_eq!(count, 0, "Reused database should be cleaned");
         }
 
@@ -1200,34 +1191,26 @@ mod tests {
         let db = acquire_test_database().await?;
 
         // Insert data with foreign key relationships
-        use sinex_core_types::domain::{EventSource, EventType, HostName};
-        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{EventSource, EventType, HostName};
 
-        let repo = EventRepository::new(db.pool());
-        let new_event = NewEvent {
-            source: EventSource::new("test"),
-            event_type: EventType::new("test"),
-            host: HostName::new("test"),
-            payload: serde_json::json!({}),
-            ts_orig: None,
-            ingestor_version: None,
-            payload_schema_id: None,
-            source_event_ids: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
-        };
-        let event = repo.insert(new_event).await?;
+        let repo = db.pool.events();
+        let event_to_insert = Event::builder()
+            .source(EventSource::new("test"))
+            .event_type(EventType::new("test"))
+            .host(HostName::new("test"))
+            .payload(serde_json::json!({}))
+            .build();
+        let event = repo.insert(event_to_insert).await?;
 
         // Add annotation
         sqlx::query(
             "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator) 
              VALUES ($1, $2, 'test', '{}'::jsonb, 'test-user')"
         )
-        .bind(sinex_ulid::Ulid::new().to_uuid())
-        .bind(event.id.to_uuid())
+        .bind(sinex_types::ulid::Ulid::new().to_uuid())
+        .bind(event.id.expect("Event must have an ID").to_uuid())
         .execute(db.pool())
         .await?;
 
@@ -1235,8 +1218,7 @@ mod tests {
         db.force_cleanup().await?;
 
         // Everything should be gone
-        use sinex_db::count_events;
-        let event_count = count_events(db.pool()).await?;
+        let event_count = db.pool().events().count_all().await?;
         let annotation_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM core.event_annotations")
                 .fetch_one(db.pool())
@@ -1270,32 +1252,25 @@ mod tests {
                 let db = acquire_test_database().await?;
 
                 // Do some work
-                use sinex_core_types::domain::{EventSource, EventType, HostName};
-                use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+                use sinex_db::models::Event;
+                use sinex_db::repositories::DbPoolExt;
+                use sinex_types::domain::{EventSource, EventType, HostName};
 
-                let repo = EventRepository::new(db.pool());
+                let repo = db.pool.events();
                 for _j in 0..5 {
-                    let new_event = NewEvent {
-                        source: EventSource::new(&format!("task_{}", i)),
-                        event_type: EventType::new("stress.test"),
-                        host: HostName::new("test"),
-                        payload: serde_json::json!({}),
-                        ts_orig: None,
-                        ingestor_version: None,
-                        payload_schema_id: None,
-                        source_event_ids: None,
-                        source_material_id: None,
-                        source_material_offset_start: None,
-                        source_material_offset_end: None,
-                        anchor_byte: None,
-                        associated_blob_ids: None,
-                    };
-                    repo.insert(new_event).await?;
+                    let event = Event::builder()
+                        .source(EventSource::new(&format!("task_{}", i)))
+                        .event_type(EventType::new("stress.test"))
+                        .host(HostName::new("test"))
+                        .payload(serde_json::json!({}))
+                        .build();
+                    repo.insert(event).await?;
                 }
 
                 // Verify isolation
-                let repo = EventRepository::new(db.pool());
-                let count = repo.count_by_source(&format!("task_{}", i)).await?;
+                let repo = db.pool.events();
+                let source = sinex_types::domain::EventSource::new(&format!("task_{}", i));
+                let count = repo.count_by_source(&source).await?;
 
                 assert_eq!(count, 5);
 
@@ -1453,26 +1428,18 @@ mod benches {
         let pool = db.pool();
 
         // Insert test data
-        use sinex_core_types::domain::{EventSource, EventType, HostName};
-        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{EventSource, EventType, HostName};
 
-        let repo = EventRepository::new(pool);
+        let repo = pool.events();
         for i in 0..100 {
-            let new_event = NewEvent {
-                source: EventSource::new("bench"),
-                event_type: EventType::new("test"),
-                host: HostName::new("host"),
-                payload: serde_json::json!({"index": i}),
-                ts_orig: None,
-                ingestor_version: None,
-                payload_schema_id: None,
-                source_event_ids: None,
-                source_material_id: None,
-                source_material_offset_start: None,
-                source_material_offset_end: None,
-                anchor_byte: None,
-                associated_blob_ids: None,
-            };
+            let new_event = Event::builder()
+                .source(EventSource::new("bench"))
+                .event_type(EventType::new("test"))
+                .host(HostName::new("host"))
+                .payload(serde_json::json!({"index": i}))
+                .build();
             repo.insert(new_event).await?;
         }
 
@@ -1508,26 +1475,18 @@ mod benches {
 
         // Insert some varied data
         let pool = db.pool();
-        use sinex_core_types::domain::{EventSource, EventType, HostName};
-        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{EventSource, EventType, HostName};
 
-        let repo = EventRepository::new(pool);
+        let repo = pool.events();
         for i in 0..50 {
-            let new_event = NewEvent {
-                source: EventSource::new(&format!("source_{}", i % 10)),
-                event_type: EventType::new("test"),
-                host: HostName::new("bench"),
-                payload: serde_json::json!({}),
-                ts_orig: None,
-                ingestor_version: None,
-                payload_schema_id: None,
-                source_event_ids: None,
-                source_material_id: None,
-                source_material_offset_start: None,
-                source_material_offset_end: None,
-                anchor_byte: None,
-                associated_blob_ids: None,
-            };
+            let new_event = Event::builder()
+                .source(EventSource::new(&format!("source_{}", i % 10)))
+                .event_type(EventType::new("test"))
+                .host(HostName::new("bench"))
+                .payload(serde_json::json!({}))
+                .build();
             repo.insert(new_event).await?;
         }
 

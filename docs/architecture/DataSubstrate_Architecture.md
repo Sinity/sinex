@@ -367,7 +367,7 @@ CREATE TABLE example (
 
 **Rust Integration:**
 ```rust
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 
 // Generate new ULID
 let id = Ulid::new();

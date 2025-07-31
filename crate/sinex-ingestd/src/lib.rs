@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod figment_config;
+pub mod schema_sync;
 pub mod service;
 pub mod validator;
 
@@ -39,8 +40,8 @@ pub enum IngestdError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
-    #[error("Database helper error: {0}")]
-    DatabaseHelper(#[from] sinex_db::query_helpers::DbError),
+    #[error("Sinex error: {0}")]
+    Sinex(#[from] sinex_types::SinexError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
@@ -69,8 +70,8 @@ impl From<IngestdError> for tonic::Status {
             IngestdError::Serialization(e) => {
                 tonic::Status::new(Code::InvalidArgument, format!("Serialization error: {}", e))
             }
-            IngestdError::DatabaseHelper(e) => {
-                tonic::Status::new(Code::Internal, format!("Database helper error: {}", e))
+            IngestdError::Sinex(e) => {
+                tonic::Status::new(Code::Internal, format!("Sinex error: {}", e))
             }
             IngestdError::Io(e) => tonic::Status::new(Code::Internal, format!("IO error: {}", e)),
         }

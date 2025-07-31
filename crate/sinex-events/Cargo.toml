@@ -25,9 +25,9 @@ sqlx = { workspace = true }
 
 # IDs
 uuid = { workspace = true }
-sinex-ulid = { path = "../sinex-ulid", features = ["schema"] }
 
-# Note: Avoiding sinex-core dependency to prevent circular deps
+# Core types with domain strings
+sinex-types = { path = "../sinex-types" }
 
 # System utilities
 gethostname = { workspace = true }
@@ -41,10 +41,23 @@ tracing = { workspace = true }
 # Builder pattern
 bon = { workspace = true }
 
-[features]
-default = []
+# Macros
+sinex-macros = { path = "../sinex-macros", optional = true }
 
-[[bin]]
-name = "generate-schemas"
-path = "src/bin/generate-schemas.rs"
-required-features = []
+# Lazy initialization
+once_cell = { workspace = true }
+
+# Build-time registry
+inventory = { workspace = true }
+
+[features]
+default = ["sqlx", "macros"]
+sqlx = ["sinex-types/sqlx"]
+macros = ["dep:sinex-macros"]
+
+# Temporarily disabled due to compilation issues
+# [[bin]]
+# name = "generate-schemas"
+# path = "src/bin/generate_schemas.rs"
+# required-features = []
+

@@ -1,6 +1,7 @@
 //! # Sinex Telemetry Library
 //!
 //! A comprehensive telemetry and metrics library for the Sinex event-driven data capture system.
+//!
 //! This library implements a hybrid approach that combines real-time Prometheus metrics with
 //! long-term telemetry event storage.
 //!
@@ -160,6 +161,13 @@
 //!     self.flush_telemetry().await?;
 //! }
 //! ```
+
+// Re-export metrics macros
+#[cfg(feature = "macros")]
+pub use sinex_macros::{
+    auto_db_metrics, auto_event_metrics, auto_metrics, auto_resource_metrics,
+    auto_satellite_metrics,
+};
 
 pub mod instrumentation;
 pub mod metrics;

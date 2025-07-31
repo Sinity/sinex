@@ -4,21 +4,18 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_events::RawEvent;
+use sinex_db::repositories::DbPoolExt;
+use sinex_db::models::{Event, RawEvent, RpcPkmResponsePayload, RpcError};
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
         BatchProcessingResult, EventBatchProcessor, RedisStreamConsumer,
-        EventFilter as StreamEventFilter,
-    },
+        EventFilter as StreamEventFilter},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteError, SatelliteResult,
-};
+        StreamProcessorContext, TimeHorizon},
+    SatelliteError, SatelliteResult};
 use sinex_services::PkmService;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -26,15 +23,13 @@ use tracing::{info, warn};
 /// PKM Service as a unified StatefulStreamProcessor
 pub struct PkmServiceProcessor {
     context: Option<StreamProcessorContext>,
-    service: Option<Arc<PkmService>>,
-}
+    service: Option<Arc<PkmService>>}
 
 impl PkmServiceProcessor {
     pub fn new() -> Self {
         Self {
             context: None,
-            service: None,
-        }
+            service: None}
     }
 
     /// Handle PKM RPC request
@@ -52,8 +47,7 @@ impl PkmServiceProcessor {
             _ => Err(SatelliteError::General(anyhow::anyhow!(
                 "Unknown PKM method: {}",
                 method
-            ))),
-        }
+            )))}
     }
 
     async fn handle_create_note(
@@ -260,19 +254,13 @@ impl EventBatchProcessor for PkmServiceProcessor {
                     Ok(response) => {
                         // Submit response as synthesis event
                         if let Some(ctx) = &self.context {
-                            let response_event = serde_json::json!({
-                                "request_id": event.payload.get("request_id"),
-                                "response": response,
-                                "service": "pkm"
-                            });
-
                             // Create response event
-                            let synthesis_event = sinex_events::EventFactory::new()
-                                .source("rpc.pkm")
-                                .event_type("response")
-                                .host(&ctx.host)
-                                .payload(response_event)
-                                .build();
+                            let synthesis_event = Event::from(RpcPkmResponsePayload {
+                                request_id: event.payload.get("request_id").cloned(),
+                                response: Some(response),
+                                error: None,
+                                service: "pkm".to_string(),
+                            });
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -283,21 +271,15 @@ impl EventBatchProcessor for PkmServiceProcessor {
                         
                         // Submit error response
                         if let Some(ctx) = &self.context {
-                            let error_response = serde_json::json!({
-                                "request_id": event.payload.get("request_id"),
-                                "error": {
-                                    "code": -32603,
-                                    "message": format!("PKM service error: {}", e)
-                                },
-                                "service": "pkm"
+                            let synthesis_event = Event::from(RpcPkmResponsePayload {
+                                request_id: event.payload.get("request_id").cloned(),
+                                response: None,
+                                error: Some(RpcError {
+                                    code: -32603,
+                                    message: format!("PKM service error: {}", e),
+                                }),
+                                service: "pkm".to_string(),
                             });
-
-                            let synthesis_event = sinex_events::EventFactory::new()
-                                .source("rpc.pkm")
-                                .event_type("response")
-                                .host(&ctx.host)
-                                .payload(error_response)
-                                .build();
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -314,8 +296,7 @@ impl EventBatchProcessor for PkmServiceProcessor {
             successful_ids,
             failed_ids,
             retry_ids: Vec::new(),
-            checkpoint_data: None,
-        })
+            checkpoint_data: None})
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
@@ -372,8 +353,7 @@ impl StatefulStreamProcessor for PkmServiceProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["redis-stream".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Historical { end_time } => {
                 // Query historical events from PostgreSQL
@@ -391,8 +371,7 @@ impl StatefulStreamProcessor for PkmServiceProcessor {
                 };
 
                 // Query RPC request events
-                let event_repo = EventRepository::new(&ctx.db_pool);
-                let events = event_repo
+                let events = ctx.db_pool.events()
                     .get_events_by_type_and_time_range(
                         "rpc.pkm",
                         "request",
@@ -424,8 +403,7 @@ impl StatefulStreamProcessor for PkmServiceProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["postgresql".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: Vec::new(),
-                })
+                    warnings: Vec::new()})
             }
             TimeHorizon::Snapshot => {
                 // No snapshot mode for PKM service
@@ -437,8 +415,7 @@ impl StatefulStreamProcessor for PkmServiceProcessor {
                     processor_stats: HashMap::new(),
                     successful_targets: vec!["snapshot".to_string()],
                     failed_targets: HashMap::new(),
-                    warnings: vec!["PKM service does not support snapshot mode".to_string()],
-                })
+                    warnings: vec!["PKM service does not support snapshot mode".to_string()]})
             }
         }
     }

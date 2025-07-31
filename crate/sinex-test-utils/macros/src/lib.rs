@@ -410,6 +410,10 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
 
 #[proc_macro_attribute]
 pub fn sinex_bench(attr: TokenStream, item: TokenStream) -> TokenStream {
+    // When building tests (not benchmarks), just remove the function entirely
+    // by returning it wrapped in #[cfg(all(test, feature = "bench"))]
+    // This prevents divan errors during test compilation
+
     let input = parse_macro_input!(item as ItemFn);
     let fn_name = &input.sig.ident;
 

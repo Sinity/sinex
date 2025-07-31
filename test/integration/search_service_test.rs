@@ -8,7 +8,7 @@ use serde_json::json;
 use sinex_events::{event_types, services, EventFactory};
 use sinex_services::{SearchQuery, SearchService};
 use sinex_test_utils::prelude::*;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 
 /// Helper to create test events with specific content
 async fn create_test_event(

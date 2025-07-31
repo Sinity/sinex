@@ -22,8 +22,7 @@
 //! - Validated JSON command structure
 
 use regex::Regex;
-use serde_json::json;
-use sinex_events::{EventFactory, RawEvent};
+use sinex_db::models::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::path::Path;
@@ -312,7 +311,7 @@ impl KittyWatcher {
     async fn process_window_commands(
         &mut self,
         window: &KittyWindow,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         let window_id = window.id.to_string();
 
@@ -336,17 +335,14 @@ impl KittyWatcher {
             if process_changed {
                 let previous_process = self.process_states.get(&window_id).cloned();
 
-                let process_payload = json!({
-                    "kitty_window_id": window_id.clone(),
-                    "kitty_tab_id": window.parent_tab_id.clone(),
-                    "previous_process": previous_process,
-                    "current_process": current_process_info.clone(),
-                    "change_timestamp": chrono::Utc::now().to_rfc3339(),
-                    "working_directory": window.cwd.clone(),
+                let process_event = Event::from(sinex_events::KittyProcessChangedPayload {
+                    kitty_window_id: window_id.clone(),
+                    kitty_tab_id: window.parent_tab_id.clone(),
+                    previous_process: previous_process.map(|p| serde_json::to_value(p).unwrap()),
+                    current_process: serde_json::to_value(current_process_info.clone()).unwrap(),
+                    change_timestamp: chrono::Utc::now().to_rfc3339(),
+                    working_directory: window.cwd.clone(),
                 });
-
-                let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-                let process_event = factory.create_event("process.changed", process_payload);
 
                 if tx.send(process_event).is_err() {
                     warn!("Event channel closed");
@@ -377,23 +373,20 @@ impl KittyWatcher {
 
                 if let Some(command_text) = extracted_command {
                     // Create command completion event with both command and output
-                    let completion_payload = json!({
-                        "command": command_text.clone(),
-                        "command_output": last_output.clone(),
-                        "working_directory": window.cwd.clone(),
-                        "kitty_window_id": window_id.clone(),
-                        "kitty_tab_id": window_state.tab_id.clone(),
-                        "exit_status": window.last_cmd_exit_status,
-                        "execution_time_ms": null, // Requires tracking command start times
-                        "output_size_bytes": last_output.len() as u64,
-                        "output_line_count": last_output.lines().count() as u32,
-                        "shell_integration_used": true,
-                        "completion_timestamp": chrono::Utc::now().to_rfc3339(),
-                    });
+                    // Create command completion event
 
-                    let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
                     let completion_event =
-                        factory.create_event("command.completed", completion_payload);
+                        Event::from(sinex_events::KittyCommandCompletedPayload {
+                            command: command_text.clone(),
+                            working_directory: window.cwd.clone().unwrap_or_default(),
+                            exit_status: window.last_cmd_exit_status.unwrap_or(0),
+                            duration_ms: 0, // TODO: Requires tracking command start times
+                            shell_pid: 0,   // TODO: Get actual shell PID
+                            kitty_window_id: window_id.clone(),
+                            kitty_tab_id: window_state.tab_id.clone(),
+                            output_lines: Some(last_output.lines().count() as u32),
+                            error_output: None, // TODO: Separate stderr capture
+                        });
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
@@ -434,7 +427,7 @@ impl KittyWatcher {
     async fn process_tab_focus_changes(
         &mut self,
         tabs: Vec<(String, String, u32, bool)>,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -445,17 +438,16 @@ impl KittyWatcher {
                 let previous_tab_id = self.last_focused_tab.clone();
 
                 // Emit tab focused event
-                let tab_focused_payload = json!({
-                    "kitty_tab_id": focused_tab_id.clone(),
-                    "kitty_window_id": "unknown",
-                    "tab_title": title.clone(),
-                    "tab_index": *index,
-                    "previous_tab_id": previous_tab_id,
-                    "focus_timestamp": timestamp,
-                });
+                // Create tab focused event
 
-                let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-                let tab_focused_event = factory.create_event("tab.focused", tab_focused_payload);
+                let tab_focused_event = Event::from(sinex_events::KittyTabFocusedPayload {
+                    kitty_tab_id: focused_tab_id.clone(),
+                    kitty_window_id: "unknown".to_string(),
+                    tab_title: title.clone(),
+                    tab_index: *index as usize,
+                    previous_tab_id: previous_tab_id,
+                    focus_timestamp: timestamp,
+                });
 
                 if tx.send(tab_focused_event).is_err() {
                     warn!("Event channel closed");
@@ -473,7 +465,7 @@ impl KittyWatcher {
     async fn capture_incremental_scrollback(
         &mut self,
         window: &KittyWindow,
-        tx: &mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         let window_id = window.id.to_string();
 
@@ -497,15 +489,14 @@ impl KittyWatcher {
                 .map(|s| s.to_string())
                 .collect();
 
-            let incremental_payload = json!({
-                "kitty_window_id": window_id.clone(),
-                "new_lines": new_lines,
-                "line_start_offset": previous_line_count,
-                "capture_timestamp": chrono::Utc::now().to_rfc3339(),
-            });
+            // Create content streamed event
 
-            let factory = EventFactory::new(sinex_events::sources::SHELL_KITTY);
-            let scrollback_event = factory.create_event("content.streamed", incremental_payload);
+            let scrollback_event = Event::from(sinex_events::KittyContentStreamedPayload {
+                kitty_window_id: window_id.clone(),
+                new_lines: new_lines,
+                line_start_offset: previous_line_count as usize,
+                capture_timestamp: chrono::Utc::now().to_rfc3339(),
+            });
 
             if tx.send(scrollback_event).is_err() {
                 warn!("Event channel closed");
@@ -529,7 +520,7 @@ impl KittyWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         if self.socket_path.is_none() {
             warn!("No Kitty socket available, skipping Kitty event streaming");

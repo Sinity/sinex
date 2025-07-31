@@ -1,5 +1,5 @@
 use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use sinex_test_utils::mocks::EventSourceContext;
 use sinex_test_utils::resources;
 use sinex_test_utils::timing_optimization::{EventCounter, TestSynchronizer};

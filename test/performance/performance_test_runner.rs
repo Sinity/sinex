@@ -12,7 +12,7 @@ use redis::cmd;
 use serde_json::json;
 use sinex_db::queries::{EventQueries, CheckpointQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use sinex_satellite_sdk::RedisStreamClient;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};

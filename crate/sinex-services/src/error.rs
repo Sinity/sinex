@@ -1,7 +1,6 @@
 //! Service layer error types
 
-use sinex_db::repositories::DbResult;
-use sinex_error::SinexError;
+use sinex_types::error::SinexError;
 use thiserror::Error;
 
 pub type ServiceResult<T> = Result<T, ServiceError>;

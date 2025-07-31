@@ -25,7 +25,7 @@
 //! let blob_id = source_material_registry.create_in_flight().await?;
 //!
 //! // 2. Emit events immediately with provenance
-//! let event = RawEvent {
+//! let event = Event {
 //!     source_material_id: Some(blob_id),
 //!     // ... events flow in real-time
 //! };
@@ -54,10 +54,10 @@
 //! - **Network Streams**: Process packets in real-time, finalize on connection close
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
-use sinex_db::repositories::{Repository, SourceMaterialRepository};
+use sinex_db::models::Event;
+use sinex_db::repositories::DbPoolExt;
 use sinex_db::SqlxPgPool as PgPool;
-use sinex_events::RawEvent;
-use sinex_ulid::Ulid;
+use sinex_types::{ulid::Ulid, Id};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
@@ -88,7 +88,7 @@ impl StageAsYouGoContext {
         source_uri: Option<&str>,
         initial_metadata: serde_json::Value,
     ) -> SatelliteResult<Ulid> {
-        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+        let source_material_repo = self.db_pool.source_materials();
         let result = source_material_repo
             .register_in_flight(material_type, source_uri, initial_metadata)
             .await
@@ -99,15 +99,13 @@ impl StageAsYouGoContext {
                 ))
             })?;
 
-        let blob_id = result.id.as_ulid();
-
         info!(
-            blob_id = %blob_id,
+            blob_id = %result.id,
             material_type = material_type,
             "Registered in-flight source material"
         );
 
-        Ok(blob_id)
+        Ok(result.id.into())
     }
 
     /// Create and send an event with attached source material reference
@@ -116,15 +114,17 @@ impl StageAsYouGoContext {
     /// provenance tracking via the source_material_id field.
     pub async fn emit_event_with_provenance(
         &self,
-        mut event: RawEvent,
+        mut event: Event,
         source_material_id: Ulid,
         offset_start: Option<i64>,
         offset_end: Option<i64>,
     ) -> SatelliteResult<String> {
-        // Attach source material ID to the event
-        event.source_material_id = Some(source_material_id);
-        event.source_material_offset_start = offset_start;
-        event.source_material_offset_end = offset_end;
+        // Attach source material provenance to the event
+        event.provenance = Some(sinex_events::Provenance::Material {
+            id: source_material_id.into(),
+            offset_start,
+            offset_end,
+        });
 
         // Add source material reference to payload metadata if not already present
         if let Some(obj) = event.payload.as_object_mut() {
@@ -153,7 +153,7 @@ impl StageAsYouGoContext {
     /// processed, update the source material record with complete information.
     pub async fn finalize_source_material(
         &self,
-        blob_id: Ulid,
+        id: Ulid,
         content: &[u8],
         mime_type: Option<&str>,
         encoding: Option<&str>,
@@ -166,10 +166,10 @@ impl StageAsYouGoContext {
             None
         };
 
-        let source_material_repo = SourceMaterialRepository::new(&self.db_pool);
+        let source_material_repo = self.db_pool.source_materials();
         source_material_repo
             .finalize_in_flight(
-                blob_id,
+                Id::<sinex_db::repositories::SourceMaterialRecord>::from_ulid(id),
                 content.len() as i64,
                 checksum,
                 mime_type,
@@ -180,13 +180,13 @@ impl StageAsYouGoContext {
             .map_err(|e| {
                 SatelliteError::General(anyhow::anyhow!(
                     "Failed to finalize source material {}: {}",
-                    blob_id,
+                    id,
                     e
                 ))
             })?;
 
         info!(
-            blob_id = %blob_id,
+            blob_id = %id,
             size_bytes = content.len(),
             "Finalized source material with content details"
         );
@@ -226,14 +226,22 @@ pub struct StageAsYouGoResult {
 }
 
 /// Example implementation for a log file processor
+///
+/// Usage:
+/// ```ignore
+/// let processor = LogFileStageProcessor::new(context, "nginx");
+/// ```
 pub struct LogFileStageProcessor {
     context: StageAsYouGoContext,
-    source: String,
+    log_source: String, // "nginx", "apache", "syslog", etc.
 }
 
 impl LogFileStageProcessor {
-    pub fn new(context: StageAsYouGoContext, source: String) -> Self {
-        Self { context, source }
+    pub fn new(context: StageAsYouGoContext, log_source: impl Into<String>) -> Self {
+        Self {
+            context,
+            log_source: log_source.into(),
+        }
     }
 }
 
@@ -271,17 +279,16 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             let offset_end = offset_start + line.len() as i64;
 
             // Create event for this log line
-            let event = sinex_events::EventFactory::new(&self.source).create_event(
-                "log.line",
-                serde_json::json!({
-                    "line": line,
-                    "line_number": line_num + 1,
-                    "offset_start": offset_start,
-                    "offset_end": offset_end,
-                    "source_material_id": source_material_id.to_string(),
-                    "source_uri": source_uri,
-                }),
-            );
+            use sinex_events::LogLinePayload;
+            let event = Event::from(LogLinePayload {
+                line: line.to_string(),
+                line_number: (line_num + 1) as u64,
+                log_source: self.log_source.clone(),
+                log_file: source_uri.unwrap_or("unknown").to_string(),
+                offset_start,
+                offset_end,
+                source_material_id: source_material_id.to_string(),
+            });
 
             // Emit with provenance
             let event_id = self

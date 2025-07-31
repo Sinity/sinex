@@ -11,10 +11,10 @@
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_core_types::domain::{
-    ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName,
-};
-use sinex_db::repositories::{CheckpointRepository, EventRepository, Repository};
+use sinex_db::models::Event;
+use sinex_db::repositories::DbPoolExt;
+use sinex_types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
+use sinex_types::Id;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -161,10 +161,9 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
     let mut has_warnings = false;
     let mut has_failures = false;
 
-    let event_repo = EventRepository::new(pool);
-
     // CREATE: Insert a test event
-    let inserted_event = event_repo
+    let inserted_event = pool
+        .events()
         .insert_test_event(
             &test_source,
             &test_event_type,
@@ -173,27 +172,34 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
         .await
         .context("Failed to insert test event")?;
 
-    let inserted_id = inserted_event.id;
+    let inserted_id = inserted_event
+        .id
+        .context("Inserted event should have an ID")?;
+
+    // Store ID for reuse (workaround for Copy trait issue)
+    let event_id = inserted_id.clone();
 
     // READ: Query the test event
-    let read_event = event_repo
-        .get_by_id(inserted_id.into())
+    let read_event = pool
+        .events()
+        .get_by_id(inserted_id)
         .await
         .context("Failed to read test event")?
         .context("Test event not found after insert")?;
 
-    if read_event.source != test_source.to_string() {
+    if read_event.source != test_source {
         bail!(
             "Read event source mismatch: got {}, expected {}",
-            read_event.source,
-            test_source
+            read_event.source.as_str(),
+            test_source.as_str()
         );
     }
 
     // UPDATE: Modify the test event payload
-    let updated = event_repo
+    let updated = pool
+        .events()
         .update_test_event(
-            inserted_id.into(),
+            event_id.clone(),
             json!({"test": "crud_operations", "operation": "update", "modified": true}),
         )
         .await
@@ -205,8 +211,9 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
     }
 
     // DELETE: Remove the test event
-    let deleted = event_repo
-        .delete_test_event(inserted_id.into())
+    let deleted = pool
+        .events()
+        .delete_test_event(event_id.clone())
         .await
         .context("Failed to delete test event")?;
 
@@ -216,8 +223,9 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
     }
 
     // Verify deletion
-    let verify_result = event_repo
-        .get_by_id(inserted_id.into())
+    let verify_result = pool
+        .events()
+        .get_by_id(event_id.clone())
         .await
         .context("Failed to verify deletion")?;
 
@@ -227,7 +235,7 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
     }
 
     Ok(json!({
-        "insert": { "success": true, "event_id": inserted_id.to_string() },
+        "insert": { "success": true, "event_id": event_id.to_string() },
         "read": { "success": true, "source_verified": true },
         "update": { "success": !has_warnings },
         "delete": { "success": !has_failures },
@@ -237,12 +245,11 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
 
 /// Test transaction operations
 async fn test_transactions(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
-    let event_repo = EventRepository::new(pool);
-
     // Test committed transaction
-    let mut tx = pool.begin().await.context("Failed to begin transaction")?;
+    let tx = pool.begin().await.context("Failed to begin transaction")?;
 
-    let committed_event = event_repo
+    let committed_event = pool
+        .events()
         .insert_test_event(
             &EventSource::new("sinex-preflight-tx-test"),
             &EventType::new("verification.transaction_test"),
@@ -254,18 +261,23 @@ async fn test_transactions(pool: &PgPool, messages: &mut Vec<String>) -> Result<
     tx.commit().await.context("Failed to commit transaction")?;
 
     // Verify committed transaction exists
-    let verify_commit = event_repo
-        .get_by_id(committed_event.id.into())
+    let committed_id = committed_event
+        .id
+        .context("Committed event should have an ID")?;
+    let verify_commit = pool
+        .events()
+        .get_by_id(Id::<Event>::from(committed_id))
         .await?
         .is_some();
 
     // Test rollback
-    let mut tx_rollback = pool
+    let tx_rollback = pool
         .begin()
         .await
         .context("Failed to begin rollback transaction")?;
 
-    let _rollback_event = event_repo
+    let _rollback_event = pool
+        .events()
         .insert_test_event(
             &EventSource::new("sinex-preflight-tx-test"),
             &EventType::new("verification.transaction_test"),
@@ -280,7 +292,7 @@ async fn test_transactions(pool: &PgPool, messages: &mut Vec<String>) -> Result<
         .context("Failed to rollback transaction")?;
 
     // Cleanup committed event
-    event_repo
+    pool.events()
         .cleanup_test_events(
             &EventSource::new("sinex-preflight-tx-test"),
             &EventType::new("verification.transaction_test"),
@@ -305,8 +317,8 @@ async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -
     for i in 0..concurrent_count {
         let pool_clone = pool.clone();
         join_set.spawn(async move {
-            let event_repo = EventRepository::new(&pool_clone);
-            event_repo
+            pool_clone
+                .events()
                 .insert_test_event(
                     &EventSource::new("sinex-preflight-concurrent-test"),
                     &EventType::new("verification.concurrent_test"),
@@ -328,8 +340,7 @@ async fn test_concurrent_operations(pool: &PgPool, messages: &mut Vec<String>) -
     }
 
     // Cleanup test events
-    let event_repo = EventRepository::new(pool);
-    event_repo
+    pool.events()
         .cleanup_test_events(
             &EventSource::new("sinex-preflight-concurrent-test"),
             &EventType::new("verification.concurrent_test"),
@@ -454,7 +465,6 @@ async fn test_database_extensions(pool: &PgPool, messages: &mut Vec<String>) -> 
 /// Verify event pipeline
 async fn verify_event_pipeline(_messages: &mut Vec<String>) -> Result<Value> {
     let pool = get_test_pool().await?;
-    let event_repo = EventRepository::new(&pool);
 
     // Test rapid event ingestion
     let event_count = 100;
@@ -462,7 +472,7 @@ async fn verify_event_pipeline(_messages: &mut Vec<String>) -> Result<Value> {
 
     // Simulate rapid event ingestion
     for i in 0..event_count {
-        event_repo
+        pool.events()
             .insert_test_event(
                 &EventSource::new("sinex-preflight-pipeline-test"),
                 &EventType::new("verification.ingestion_test"),
@@ -480,13 +490,14 @@ async fn verify_event_pipeline(_messages: &mut Vec<String>) -> Result<Value> {
     let ingestion_duration = start_time.elapsed();
 
     // Verify all events were inserted
-    let inserted_count = event_repo
+    let inserted_count = pool
+        .events()
         .count_by_source(&EventSource::new("sinex-preflight-pipeline-test"))
         .await
         .context("Failed to count inserted events")?;
 
     // Cleanup test events
-    event_repo
+    pool.events()
         .cleanup_test_events_by_source(&EventSource::new("sinex-preflight-pipeline-test"))
         .await
         .ok(); // Ignore cleanup errors
@@ -512,7 +523,6 @@ async fn verify_event_pipeline(_messages: &mut Vec<String>) -> Result<Value> {
 /// Verify service integration
 async fn verify_service_integration(_messages: &mut Vec<String>) -> Result<Value> {
     let pool = get_test_pool().await?;
-    let checkpoint_repo = CheckpointRepository::new(&pool);
 
     // Check if processor_checkpoints table exists
     let table_exists = sqlx::query!(
@@ -535,7 +545,8 @@ async fn verify_service_integration(_messages: &mut Vec<String>) -> Result<Value
     let consumer_group = ConsumerGroup::new("test-group");
     let consumer_name = ConsumerName::new("test-consumer");
 
-    let checkpoint = checkpoint_repo
+    let checkpoint = pool
+        .checkpoints()
         .upsert(
             &processor_name,
             &consumer_group,
@@ -549,7 +560,7 @@ async fn verify_service_integration(_messages: &mut Vec<String>) -> Result<Value
         .context("Failed to insert test checkpoint")?;
 
     // Clean up test checkpoint
-    checkpoint_repo
+    pool.checkpoints()
         .delete(&processor_name, &consumer_group, &consumer_name)
         .await
         .ok();
@@ -577,7 +588,6 @@ async fn get_test_pool() -> Result<PgPool> {
 pub async fn verify_performance_baseline() -> Result<(VerificationStatus, Value, Vec<String>)> {
     let mut messages = Vec::new();
     let pool = get_test_pool().await?;
-    let event_repo = EventRepository::new(&pool);
 
     // Baseline query performance
     let iterations = 10;
@@ -586,7 +596,7 @@ pub async fn verify_performance_baseline() -> Result<(VerificationStatus, Value,
     for _ in 0..iterations {
         let query_start = Instant::now();
 
-        event_repo
+        pool.events()
             .count_all()
             .await
             .context("Performance test query failed")?;

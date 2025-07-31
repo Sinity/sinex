@@ -278,7 +278,7 @@ mod tests {
 
         // Load config (this would normally load from file + env)
         // For testing, we'll just create a default and imagine env vars were applied
-        let mut config = IngestdFigmentConfig::default();
+        let config = IngestdFigmentConfig::default();
 
         // In real usage, IngestdFigmentConfig::load() would pick up these env vars
         // For now, just verify our structure is correct

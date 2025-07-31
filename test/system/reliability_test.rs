@@ -20,11 +20,11 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use sinex_events::EventFactory;
+use sinex_db::models::EventFactory;
 use sinex_test_utils::database_pool::acquire_test_database;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================
@@ -198,7 +198,8 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()
             .ok(); // Ignore errors if table doesn't exist
 
             // Try to run migrations with corrupted state
-            let migration_result = sqlx::migrate!("./migrations").run(pool).await;
+            // Note: Using sinex_db's migration system now
+            let migration_result = sinex_db::run_migrations(pool).await;
 
             match migration_result {
                 Ok(()) => {

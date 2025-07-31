@@ -425,7 +425,7 @@ async fn test_event_type_enumeration(_ctx: TestContext) -> anyhow::Result<()> {
 async fn test_typed_raw_event_conversion(_ctx: TestContext) -> anyhow::Result<()> {
     use chrono::Utc;
     use sinex_events::strongly_typed_events::*;
-    use sinex_ulid::Ulid;
+    use sinex_types::ulid::Ulid;
 
     // Create a typed event
     let payload = FileCreatedPayload {
@@ -475,7 +475,7 @@ async fn test_typed_raw_event_conversion(_ctx: TestContext) -> anyhow::Result<()
 async fn test_event_envelope_type_safety(_ctx: TestContext) -> anyhow::Result<()> {
     use chrono::Utc;
     use sinex_events::strongly_typed_events::*;
-    use sinex_ulid::Ulid;
+    use sinex_types::ulid::Ulid;
 
     // Create typed events and envelopes
     let file_payload = FileCreatedPayload {

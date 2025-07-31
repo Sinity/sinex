@@ -6,7 +6,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::json;
-use sinex_events::EventFactory;
+use sinex_db::models::Event;
+use sinex_events::DocumentIngestedPayload;
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -16,7 +17,7 @@ use sinex_satellite_sdk::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
     },
-    SatelliteResult,
+    SatelliteError, SatelliteResult,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -39,7 +40,9 @@ impl DocumentProcessor {
 
     /// Process a file using stage-as-you-go pattern for real-time provenance
     async fn process_file(&self, file_path: &Path) -> SatelliteResult<()> {
-        let ctx = self.context.as_ref().unwrap();
+        let ctx = self.context.as_ref().ok_or_else(|| {
+            SatelliteError::Processing("Document ingestor context not initialized".to_string())
+        })?;
 
         if let Some(ref stage_context) = self.stage_context {
             // Use stage-as-you-go pattern for immediate provenance
@@ -76,18 +79,13 @@ impl DocumentProcessor {
                 .await?;
 
             // Step 2: Create and emit document.ingested event with provenance
-            let event = EventFactory::new(&ctx.service_name).create_event(
-                "document.ingested",
-                json!({
-                    "file_path": file_path.to_string_lossy(),
-                    "source_material_id": source_material_id.to_string(),
-                    "material_type": material_type,
-                    "mime_type": mime_type,
-                    "file_size_bytes": content.len(),
-                    "source_uri": source_uri,
-                    "processed_at": Utc::now(),
-                }),
-            );
+            let event = Event::from(DocumentIngestedPayload {
+                file_path: file_path.to_string_lossy().into_owned(),
+                source_material_id: source_material_id.to_string(),
+                size_bytes: content.len() as u64,
+                mime_type: Some(mime_type.clone()),
+                encoding: None, // TODO: Detect encoding
+            });
 
             stage_context
                 .emit_event_with_provenance(
@@ -127,15 +125,15 @@ impl DocumentProcessor {
 /// Determine material type from MIME type
 fn determine_material_type(mime_type: &str) -> String {
     match mime_type {
-        t if t.starts_with("text/") => "document.text".to_string(),
-        t if t.starts_with("image/") => "document.image".to_string(),
-        t if t.starts_with("audio/") => "document.audio".to_string(),
-        t if t.starts_with("video/") => "document.video".to_string(),
-        "application/pdf" => "document.pdf".to_string(),
-        t if t.contains("markdown") => "document.markdown".to_string(),
-        t if t.contains("json") => "document.json".to_string(),
-        t if t.contains("xml") => "document.xml".to_string(),
-        _ => "document.binary".to_string(),
+        t if t.starts_with("text/") => "document.text".into(),
+        t if t.starts_with("image/") => "document.image".into(),
+        t if t.starts_with("audio/") => "document.audio".into(),
+        t if t.starts_with("video/") => "document.video".into(),
+        "application/pdf" => "document.pdf".into(),
+        t if t.contains("markdown") => "document.markdown".into(),
+        t if t.contains("json") => "document.json".into(),
+        t if t.contains("xml") => "document.xml".into(),
+        _ => "document.binary".into(),
     }
 }
 

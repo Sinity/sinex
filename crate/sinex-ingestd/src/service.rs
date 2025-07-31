@@ -11,14 +11,11 @@ use crate::{
     IngestdError, IngestdResult,
 };
 use redis::{AsyncCommands, Client as RedisClient};
-use sinex_core_types::domain::{EventSource, EventType, HostName};
-use sinex_db::{
-    repositories::{EventRepository, NewEvent, Repository},
-    RawEvent as EventRecord,
-};
-use sinex_events::RawEvent;
+use sinex_db::models::Event;
+use sinex_db::repositories::DbPoolExt;
 use sinex_telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
-use sinex_ulid::Ulid;
+use sinex_types::domain::{EventSource, EventType, HostName};
+use sinex_types::ulid::Ulid;
 use sqlx::PgPool;
 use std::{
     str::FromStr,
@@ -44,7 +41,7 @@ pub struct IngestService {
     validator: Arc<Mutex<EventValidator>>,
     stats: Arc<IngestStats>,
     shutdown_flag: Arc<AtomicBool>,
-    event_buffer: Arc<Mutex<Vec<RawEvent>>>,
+    event_buffer: Arc<Mutex<Vec<Event>>>,
     last_flush: Arc<Mutex<SystemTime>>,
     telemetry: Option<Arc<TelemetryAccumulator>>,
 }
@@ -75,6 +72,25 @@ impl IngestService {
 
         // Initialize event validator
         let validator = if let Some(ref pool) = db_pool {
+            // First, synchronize schemas from codebase to database
+            if !config.dry_run {
+                match crate::schema_sync::synchronize_schemas(pool).await {
+                    Ok(sync_result) => {
+                        info!(
+                            discovered = sync_result.discovered,
+                            created = sync_result.created,
+                            updated = sync_result.updated,
+                            unchanged = sync_result.unchanged,
+                            "Schema synchronization completed"
+                        );
+                    }
+                    Err(e) => {
+                        error!("Failed to synchronize schemas: {}", e);
+                        // Continue anyway - we can still use existing schemas
+                    }
+                }
+            }
+
             EventValidator::load_schemas_from_db(pool, config.validate_schemas).await?
         } else {
             EventValidator::new(false)
@@ -316,7 +332,7 @@ impl IngestService {
 
     /// Flush events to database and Redis (static version for use in tasks)
     async fn flush_events_static(
-        event_buffer: &Arc<Mutex<Vec<RawEvent>>>,
+        event_buffer: &Arc<Mutex<Vec<Event>>>,
         last_flush: &Arc<Mutex<SystemTime>>,
         config: &IngestdConfig,
         db_pool: Option<&PgPool>,
@@ -376,31 +392,16 @@ impl IngestService {
     /// This implements the unified events table architecture:
     /// - All events go to core.events
     /// - Raw events have source_event_ids = NULL, synthesis events have source_event_ids populated
-    async fn batch_write_to_db(pool: &PgPool, events: &[RawEvent]) -> IngestdResult<()> {
+    async fn batch_write_to_db(pool: &PgPool, events: &[Event]) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
         }
 
         // Insert all events into core.events table
-        let repo = EventRepository::new(pool);
 
         for event in events {
-            let new_event = NewEvent {
-                source: EventSource::new(&event.source),
-                event_type: EventType::new(&event.event_type),
-                host: HostName::new(&event.host),
-                payload: event.payload.clone(),
-                ts_orig: event.ts_orig,
-                ingestor_version: event.ingestor_version.clone(),
-                payload_schema_id: event.payload_schema_id,
-                source_event_ids: event.source_event_ids.clone(),
-                source_material_id: None,
-                source_material_offset_start: None,
-                source_material_offset_end: None,
-                anchor_byte: None,
-                associated_blob_ids: None,
-            };
-            repo.insert(new_event).await?;
+            // Events are already in the correct format, just clone and insert
+            pool.events().insert(event.clone()).await?;
         }
 
         debug!("Successfully wrote {} events to core.events", events.len());
@@ -415,7 +416,7 @@ impl IngestService {
     async fn batch_publish_to_redis(
         client: &RedisClient,
         _config: &IngestdConfig,
-        events: &[RawEvent],
+        events: &[Event],
     ) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
@@ -430,10 +431,17 @@ impl IngestService {
         for event in events {
             let event_data = serde_json::to_string(event)?;
             let fields = [
-                ("event_id", event.id.to_string()),
-                ("source", event.source.clone()),
-                ("event_type", event.event_type.clone()),
-                ("host", event.host.clone()),
+                (
+                    "event_id",
+                    event
+                        .id
+                        .as_ref()
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| Ulid::new().to_string()),
+                ),
+                ("source", event.source.to_string()),
+                ("event_type", event.event_type.to_string()),
+                ("host", event.host.to_string()),
                 ("data", event_data),
                 ("timestamp", event.ts_ingest.to_rfc3339()),
             ];
@@ -446,7 +454,7 @@ impl IngestService {
     }
 
     /// Add event to buffer
-    async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
+    async fn add_event_to_buffer(&self, event: Event) -> IngestdResult<()> {
         let event_type = event.event_type.clone();
         let start = std::time::Instant::now();
 
@@ -542,8 +550,8 @@ impl IngestServiceTrait for IngestServiceImpl {
     ) -> Result<Response<IngestResponse>, Status> {
         let proto_event = request.into_inner();
 
-        // Convert proto event to RawEvent
-        let raw_event = match self.proto_to_raw_event(proto_event).await {
+        // Convert proto event to Event
+        let raw_event = match self.proto_to_event(proto_event).await {
             Ok(event) => event,
             Err(e) => {
                 self.service
@@ -576,7 +584,11 @@ impl IngestServiceTrait for IngestServiceImpl {
             }));
         }
 
-        let event_id = raw_event.id.to_string();
+        let event_id = raw_event
+            .id
+            .as_ref()
+            .map(|id| id.to_string())
+            .unwrap_or_else(|| "unknown".into());
 
         // Add to buffer
         if let Err(e) = self.service.add_event_to_buffer(raw_event).await {
@@ -623,7 +635,7 @@ impl IngestServiceTrait for IngestServiceImpl {
         let mut failed_count = 0;
 
         for proto_event in batch.events {
-            match self.proto_to_raw_event(proto_event).await {
+            match self.proto_to_event(proto_event).await {
                 Ok(raw_event) => {
                     // Validate event
                     let validation_result = {
@@ -632,7 +644,11 @@ impl IngestServiceTrait for IngestServiceImpl {
                     };
 
                     if validation_result.should_accept() {
-                        let event_id = raw_event.id.to_string();
+                        let event_id = raw_event
+                            .id
+                            .as_ref()
+                            .map(|id| id.to_string())
+                            .unwrap_or_else(|| "unknown".into());
                         event_ids.push(event_id);
 
                         if let Err(e) = self.service.add_event_to_buffer(raw_event).await {
@@ -697,41 +713,39 @@ impl IngestServiceTrait for IngestServiceImpl {
 }
 
 impl IngestServiceImpl {
-    /// Convert protobuf event to RawEvent
-    async fn proto_to_raw_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
+    /// Convert protobuf event to Event
+    async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<Event> {
         // Validate and parse JSON payload
-        let payload = sinex_validation::validate_json(&proto.payload)
+        let payload = sinex_types::validate_json(&proto.payload)
             .map_err(|e| IngestdError::Validation(format!("Invalid JSON payload: {}", e)))?;
 
-        let _blob_id = if let Some(blob_id_str) = proto.blob_id {
-            Some(
+        let _blob_id = proto
+            .blob_id
+            .map(|blob_id_str| {
                 Ulid::from_str(&blob_id_str)
-                    .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))?,
-            )
-        } else {
-            None
+                    .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))
+            })
+            .transpose()?;
+
+        // Look up schema ID from our in-memory cache
+        let schema_id = {
+            let validator = self.service.validator.lock().await;
+            validator
+                .get_schema_id(&proto.source, &proto.event_type)
+                .and_then(|id_str| Ulid::from_str(&id_str).ok())
         };
 
-        Ok(RawEvent {
-            id: Ulid::new(),
-            source: proto.source,
-            event_type: proto.event_type,
-            host: proto.host,
-            payload,
-            payload_schema_id: proto
-                .schema_name
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .and_then(|s| Ulid::from_str(s).ok()),
-            ts_orig: None,
-            ingestor_version: Some("0.4.2".to_string()),
-            ts_ingest: chrono::Utc::now(),
-            source_event_ids: None, // gRPC events are always raw events
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
+        let builder = Event::builder()
+            .source(EventSource::new(proto.source))
+            .event_type(EventType::new(proto.event_type))
+            .host(HostName::new(proto.host))
+            .payload(payload)
+            .ingestor_version("0.4.2".to_string());
+
+        Ok(if let Some(id) = schema_id {
+            builder.payload_schema_id(id).build()
+        } else {
+            builder.build()
         })
     }
 }

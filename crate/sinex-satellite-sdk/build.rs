@@ -20,10 +20,10 @@ fn generate_version_info() {
     let commit_count = get_commit_count().unwrap_or(0);
 
     // Get short commit hash for build metadata
-    let commit_hash = get_commit_hash().unwrap_or_else(|| "unknown".to_string());
+    let commit_hash = get_commit_hash().unwrap_or_else(|| "unknown".into());
 
     // Get current branch
-    let branch = get_current_branch().unwrap_or_else(|| "unknown".to_string());
+    let branch = get_current_branch().unwrap_or_else(|| "unknown".into());
 
     // Check if working directory is dirty
     let is_dirty = is_working_directory_dirty();

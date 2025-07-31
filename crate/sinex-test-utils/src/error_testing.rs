@@ -5,8 +5,8 @@
 
 use crate::prelude::*;
 use serde_json::Value;
-use sinex_core_types::RawEvent;
-use sinex_error::SinexError;
+use sinex_db::models::Event;
+use sinex_types::error::SinexError;
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext
@@ -170,11 +170,12 @@ impl<'ctx> ValidationTester<'ctx> {
         payload: Value,
         expected_error: &str,
     ) -> Result<(), SinexError> {
+        use sinex_types::domain::{EventSource, EventType};
         let result = self
             .ctx
             .event()
-            .source(source)
-            .type_(event_type)
+            .source(EventSource::new(source))
+            .type_(EventType::new(event_type))
             .payload(payload)
             .insert()
             .await;
@@ -189,11 +190,12 @@ impl<'ctx> ValidationTester<'ctx> {
         source: &str,
         event_type: &str,
         payload: Value,
-    ) -> Result<RawEvent, SinexError> {
+    ) -> Result<Event, SinexError> {
+        use sinex_types::domain::{EventSource, EventType};
         self.ctx
             .event()
-            .source(source)
-            .type_(event_type)
+            .source(EventSource::new(source))
+            .type_(EventType::new(event_type))
             .payload(payload)
             .insert()
             .await
@@ -484,8 +486,8 @@ mod tests {
             .test_valid_payload("test", "validation", json!({"valid": "payload"}))
             .await?;
 
-        assert_eq!(event.source, "test");
-        assert_eq!(event.event_type, "validation");
+        assert_eq!(event.source.as_str(), "test");
+        assert_eq!(event.event_type.as_str(), "validation");
 
         Ok(())
     }
@@ -688,7 +690,7 @@ mod tests {
         let event = validator
             .test_valid_payload("filesystem", "file.created", valid_fs_event)
             .await?;
-        assert_eq!(event.source, "filesystem");
+        assert_eq!(event.source.as_str(), "filesystem");
 
         // Test invalid filesystem event
         let invalid_fs_event = json!({

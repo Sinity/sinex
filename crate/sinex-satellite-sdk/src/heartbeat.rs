@@ -6,7 +6,7 @@
 //! by the health aggregator automaton.
 
 use serde::{Deserialize, Serialize};
-use sinex_core_utils::CoordinationPrimitive;
+use sinex_types::utils::CoordinationPrimitive;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::time::{interval, Duration};

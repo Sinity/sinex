@@ -1,0 +1,68 @@
+[package]
+name = "sinex-types"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core dependencies for error handling and basic types
+thiserror = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+sqlx = { workspace = true, optional = true }
+sinex-macros = { path = "../sinex-macros", optional = true }
+
+# ULID dependencies (merged from sinex-ulid)
+ulid = { workspace = true }
+rand = { workspace = true }
+proptest = { workspace = true, optional = true }
+schemars = { workspace = true, optional = true }
+
+# For strongly-typed IDs
+paste = "1.0"
+uuid = { workspace = true }
+
+# Removed sinex-events to break circular dependency
+
+# Validation dependencies
+regex = { workspace = true }
+url = { workspace = true }
+jsonschema = { workspace = true }
+validator = { workspace = true }
+lazy_static = "1.5"
+
+# For error types
+displaydoc = "0.2"
+indexmap = { version = "2.0", features = ["serde"] }
+color-eyre = { workspace = true }
+serde_path_to_error = { workspace = true }
+gethostname = { workspace = true }
+
+# For async types
+tokio = { workspace = true }
+async-trait = { workspace = true }
+
+# For error handling
+anyhow = { workspace = true }
+
+# Utils dependencies (merged from sinex-utils)
+bon = { workspace = true }
+blake3 = { workspace = true }
+rusqlite = { workspace = true }
+tokio-retry = { workspace = true }
+tracing = { workspace = true }
+notify = { workspace = true }
+
+[features]
+default = ["sqlx"]
+sqlx = ["dep:sqlx"]
+arbitrary = ["dep:proptest"]
+schema = ["dep:schemars"]
+macros = ["dep:sinex-macros"]
+
+[dev-dependencies]
+tempfile = { workspace = true }
+sinex-test-utils = { path = "../sinex-test-utils" }

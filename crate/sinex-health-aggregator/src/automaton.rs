@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sinex_events::{RawEvent, EventFactory};
-use sinex_events::constants::{event_types, sources, services};
+use sinex_db::models::{Event, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
@@ -14,41 +12,14 @@ use sinex_satellite_sdk::{
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
-/// Health status enumeration
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HealthStatus {
-    Healthy,
-    Degraded,
-    Failed,
-    Missing,
-}
+// Use HealthStatus from the payload module
+type HealthStatus = PayloadHealthStatus;
 
-/// Component health information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ComponentHealth {
-    pub service_name: String,
-    pub status: HealthStatus,
-    pub last_heartbeat: DateTime<Utc>,
-    pub uptime_seconds: Option<i64>,
-    pub memory_usage_mb: Option<i32>,
-    pub events_processed: Option<i64>,
-    pub version: Option<String>,
-    pub git_hash: Option<String>,
-}
+// Use ComponentHealth from the payload module
+// (already imported above)
 
-/// System-wide health summary
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SystemHealthSummary {
-    pub overall_status: HealthStatus,
-    pub healthy_components: u32,
-    pub degraded_components: u32,
-    pub failed_components: u32,
-    pub missing_components: u32,
-    pub total_components: u32,
-    pub last_updated: DateTime<Utc>,
-    pub components: HashMap<String, ComponentHealth>,
-}
+// Use SystemHealthSummaryPayload from the payload module
+type SystemHealthSummary = SystemHealthSummaryPayload;
 
 /// Health aggregator automaton that processes satellite heartbeat events
 /// and generates system health summary synthesis events
@@ -198,7 +169,8 @@ impl HealthAggregatorAutomaton {
             HealthStatus::Healthy
         };
 
-        let summary = SystemHealthSummary {
+        // Create synthesis event with typed payload
+        let mut synthesis_event = Event::from(SystemHealthSummaryPayload {
             overall_status,
             healthy_components: healthy_count,
             degraded_components: degraded_count,
@@ -207,12 +179,8 @@ impl HealthAggregatorAutomaton {
             total_components,
             last_updated: now,
             components: updated_components,
-        };
-
-        // Create synthesis event
-        let factory = EventFactory::new(services::HEALTH_AGGREGATOR);
-        let mut synthesis_event = factory.create_event(event_types::sinex::SYSTEM_HEALTH_SUMMARY, json!(summary));
-        synthesis_event.ts_orig = Some(now);
+        });
+        synthesis_event = synthesis_event.with_ts_orig(Some(now));
 
         info!(
             overall_status = ?overall_status,
@@ -239,7 +207,9 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
         &mut self,
         event: HotlogAutomatonEvent,
     ) -> SatelliteResult<ProcessingResult> {
-        let _ctx = self.context.as_ref().unwrap();
+        let _ctx = self.context.as_ref().ok_or_else(|| {
+            SatelliteError::Processing("Health aggregator context not initialized".to_string())
+        })?;
 
         // Process heartbeat events and maintain component health state
         if let Some(component_health) = self.process_heartbeat_event(&event)? {
@@ -273,7 +243,9 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
         &mut self,
         events: Vec<HotlogAutomatonEvent>,
     ) -> SatelliteResult<Vec<ProcessingResult>> {
-        let ctx = self.context.as_ref().unwrap();
+        let ctx = self.context.as_ref().ok_or_else(|| {
+            SatelliteError::Processing("Health aggregator context not initialized".to_string())
+        })?;
         let mut results = Vec::new();
         let mut components_in_batch = HashMap::new();
 
@@ -312,11 +284,11 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
         vec![
             // Listen for satellite heartbeat events from journald
             EventFilter::new(
-                Some(sources::JOURNALD.to_string()),
+                Some(sinex_events::sources::JOURNALD.to_string()),
                 Some("satellite.heartbeat".to_string()),
             ),
             // Also listen for any sinex system events that might be relevant
-            EventFilter::new(Some(sources::SINEX.to_string()), None),
+            EventFilter::new(Some(sinex_events::sources::SINEX.to_string()), None),
         ]
     }
 

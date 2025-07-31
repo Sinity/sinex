@@ -355,7 +355,7 @@ mod tests {
                 events_processed: events_processed as u64,
                 duration: std::time::Duration::from_secs(1),
                 final_checkpoint: Checkpoint::Internal {
-                    event_id: sinex_ulid::Ulid::new(),
+                    event_id: sinex_types::ulid::Ulid::new(),
                     message_count: events_processed as u64,
                 },
                 time_range: None,

@@ -9,8 +9,8 @@
 
 use sinex_test_utils::prelude::*;
 use sinex_db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_events::EventFactory;
+use sinex_db::repositories::{ DbPoolExt, Repository};
+use sinex_db::models::EventFactory;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tokio::time::sleep;
@@ -68,8 +68,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> anyhow::Res
     );
 
     // Cleanup
-    let repo = EventRepository::new(pool);
-    repo.delete_by_source("test.ulid_ordering").await?;
+    pool.events().delete_by_source("test.ulid_ordering").await?;
 
     Ok(())
 }
@@ -209,8 +208,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> anyhow::R
     );
 
     // Cleanup
-    let repo = EventRepository::new(pool);
-    repo.delete_by_source("test.concurrent_ulid").await?;
+    pool.events().delete_by_source("test.concurrent_ulid").await?;
 
     Ok(())
 }
@@ -324,8 +322,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> anyhow::Result<
     );
 
     // Cleanup
-    let repo = EventRepository::new(pool);
-    repo.delete_by_source("test.db_ordering").await?;
+    pool.events().delete_by_source("test.db_ordering").await?;
 
     Ok(())
 }
@@ -384,8 +381,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> anyhow::Result<()> {
         include_deep_validation: false,
         validate_checkpoints: false,
         validate_ulid_ordering: true,
-        validate_schemas: false,
-    };
+        validate_schemas: false};
 
     let results = integrity_tester.run_integrity_tests(config).await?;
 
@@ -400,8 +396,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> anyhow::Result<()> {
     }
 
     // Cleanup
-    let repo = EventRepository::new(pool);
-    repo.delete_by_source("test.clock_skew").await?;
+    pool.events().delete_by_source("test.clock_skew").await?;
 
     Ok(())
 }
@@ -515,8 +510,7 @@ async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> anyhow::Re
     );
 
     // Cleanup
-    let repo = EventRepository::new(pool);
-    repo.delete_by_source("test.ulid_performance").await?;
+    pool.events().delete_by_source("test.ulid_performance").await?;
 
     Ok(())
 }

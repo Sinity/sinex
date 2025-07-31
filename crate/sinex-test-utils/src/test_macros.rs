@@ -56,7 +56,7 @@ macro_rules! parameterized {
 
             // Add context to any errors
             result.map_err(|e| {
-                ::sinex_error::SinexError::unknown(format!(
+                ::sinex_types::error::SinexError::unknown(format!(
                     "{}: {}", case_name, e
                 ))
             })?;

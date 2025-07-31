@@ -6,7 +6,7 @@ use syn::{parse_macro_input, Ident};
 
 pub fn define_id_type(input: TokenStream) -> TokenStream {
     let type_name = parse_macro_input!(input as Ident);
-    
+
     let output = quote! {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
         #[serde(transparent)]

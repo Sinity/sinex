@@ -29,9 +29,11 @@ use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
-use sinex_core_types::{DbPool, SinexError};
-use sinex_events::{event_types, sources, EventFactory};
-use sinex_ulid::Ulid;
+use sinex_db::models::{Event, EventPayload, EventSource, EventType};
+use sinex_db::DbPoolExt;
+use sinex_events::{ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload};
+use sinex_types::ulid::Ulid;
+use sinex_types::{DbPool, SinexError};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -365,23 +367,26 @@ async fn create_user_session_fixture(
     let mut event_ids = Vec::new();
 
     // Create filesystem events
-    let factory = EventFactory::new(sources::FS);
     for i in 0..event_count / 3 {
-        let event = factory
-            .filesystem()
-            .path(&format!("/home/{}/documents/file_{}.txt", user_id, i))
-            .created()
-            .build();
+        let event = Event::from(FileCreatedPayload {
+            path: format!("/home/{}/documents/file_{}.txt", user_id, i),
+            size: 0,
+            created_at: Utc::now(),
+            permissions: None,
+        });
 
-        let inserted = sinex_db::insert_event_with_validator(pool, &event, None)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to insert event")
-                    .with_source(e)
-                    .with_context("event_type", event.event_type.clone())
-                    .with_context("fixture", "user_session")
-            })?;
-        event_ids.push(inserted.id);
+        let inserted = pool.events().insert(event).await.map_err(|e| {
+            SinexError::database("Failed to insert event")
+                .with_source(e)
+                .with_context("fixture", "user_session")
+        })?;
+        event_ids.push(
+            inserted
+                .id
+                .expect("Inserted event must have ID")
+                .as_ulid()
+                .clone(),
+        );
     }
 
     // Create terminal events
@@ -394,42 +399,62 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let factory = EventFactory::new(sources::SHELL_KITTY);
-        let event = factory
-            .terminal()
-            .command(cmd)
-            .success()
-            .duration_ms(100 + i as u64 * 10)
-            .build();
+        let event = Event::from(KittyCommandCompletedPayload {
+            command: cmd.to_string(),
+            working_directory: format!("/home/{}/projects", user_id),
+            exit_status: 0,
+            duration_ms: 100 + i as u64 * 10,
+            shell_pid: 1000 + i as u32,
+            kitty_window_id: "window_1".to_string(),
+            kitty_tab_id: "tab_1".to_string(),
+            output_lines: Some(10),
+            error_output: None,
+        });
 
-        let inserted = sinex_db::insert_event_with_validator(pool, &event, None)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to insert event")
-                    .with_source(e)
-                    .with_context("event_type", event.event_type.clone())
-                    .with_context("fixture", "user_session")
-            })?;
-        event_ids.push(inserted.id);
+        let inserted = pool.events().insert(event).await.map_err(|e| {
+            SinexError::database("Failed to insert event")
+                .with_source(e)
+                .with_context("fixture", "user_session")
+        })?;
+        event_ids.push(
+            inserted
+                .id
+                .expect("Inserted event must have ID")
+                .as_ulid()
+                .clone(),
+        );
     }
 
     // Create clipboard events
     for i in 0..event_count / 3 {
-        let factory = EventFactory::new(sources::CLIPBOARD);
-        let event = factory
-            .clipboard()
-            .text(&format!("Clipboard content {}", i))
-            .build();
+        let text = format!("Clipboard content {}", i);
+        let event = Event::from(ClipboardCopiedPayload {
+            operation: "copy".to_string(),
+            content_type: "text/plain".to_string(),
+            content_size: text.len(),
+            text_preview: Some(text.clone()),
+            file_count: None,
+            file_paths: None,
+            source_app: Some("test_app".to_string()),
+            window_title: Some("Test Window".to_string()),
+            content_hash: format!("hash_{}", i),
+            original_hash: None,
+            annex_key: None,
+            blob_id: None,
+        });
 
-        let inserted = sinex_db::insert_event_with_validator(pool, &event, None)
-            .await
-            .map_err(|e| {
-                SinexError::database("Failed to insert event")
-                    .with_source(e)
-                    .with_context("event_type", event.event_type.clone())
-                    .with_context("fixture", "user_session")
-            })?;
-        event_ids.push(inserted.id);
+        let inserted = pool.events().insert(event).await.map_err(|e| {
+            SinexError::database("Failed to insert event")
+                .with_source(e)
+                .with_context("fixture", "user_session")
+        })?;
+        event_ids.push(
+            inserted
+                .id
+                .expect("Inserted event must have ID")
+                .as_ulid()
+                .clone(),
+        );
     }
 
     // Create checkpoint if needed
@@ -518,25 +543,39 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
     // Create events that would fail validation
     let invalid_events = vec![
         (
-            EventFactory::new("").create_event("test", json!({})),
+            Event::schemaless()
+                .source(EventSource::from(""))
+                .event_type(EventType::from("test"))
+                .payload(json!({}))
+                .build(),
             "Empty source",
         ),
         (
-            EventFactory::new("test").create_event("", json!({})),
+            Event::schemaless()
+                .source(EventSource::from("test"))
+                .event_type(EventType::from(""))
+                .payload(json!({}))
+                .build(),
             "Empty event type",
         ),
         (
-            EventFactory::new("test").create_event("test.event", json!(null)),
+            Event::schemaless()
+                .source(EventSource::from("test"))
+                .event_type(EventType::from("test.event"))
+                .payload(json!(null))
+                .build(),
             "Null payload",
         ),
     ];
 
     for (event, error_msg) in invalid_events {
         // Try to insert and capture the error
-        match sinex_db::insert_event_with_validator(pool, &event, None).await {
+        match pool.events().insert(event).await {
             Ok(inserted) => {
                 // If it somehow succeeded, track it for cleanup
-                invalid_event_ids.push(inserted.id);
+                if let Some(id) = inserted.id {
+                    invalid_event_ids.push(id.as_ulid().clone());
+                }
             }
             Err(e) => {
                 error_messages.push(format!("{}: {}", error_msg, e));
@@ -587,18 +626,24 @@ async fn create_performance_dataset_fixture(
 ) -> Result<PerformanceDatasetFixture> {
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
+    // Use source constants from payload types
+    use sinex_events::{
+        ClipboardCopiedPayload, FileCreatedPayload, HyprlandWindowFocusedPayload,
+        KittyCommandExecutedPayload,
+    };
+
     let sources = vec![
-        sources::FS.to_string(),
-        sources::SHELL_KITTY.to_string(),
-        sources::CLIPBOARD.to_string(),
-        sources::WM_HYPRLAND.to_string(),
+        FileCreatedPayload::SOURCE,
+        KittyCommandExecutedPayload::SOURCE,
+        ClipboardCopiedPayload::SOURCE,
+        HyprlandWindowFocusedPayload::SOURCE,
     ];
 
     let event_types = vec![
-        event_types::filesystem::FILE_CREATED.to_string(),
-        event_types::shell::COMMAND_EXECUTED.to_string(),
-        event_types::clipboard::COPIED.to_string(),
-        event_types::window_manager::WINDOW_FOCUSED.to_string(),
+        FileCreatedPayload::EVENT_TYPE,
+        KittyCommandExecutedPayload::EVENT_TYPE,
+        ClipboardCopiedPayload::EVENT_TYPE,
+        HyprlandWindowFocusedPayload::EVENT_TYPE,
     ];
 
     let mut event_ids = Vec::new();
@@ -613,15 +658,15 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let factory = EventFactory::new(source);
-        let mut event = factory.create_event(
-            event_type,
-            json!({
+        let event = Event::schemaless()
+            .source(source.clone())
+            .event_type(event_type.clone())
+            .payload(json!({
                 "index": i,
                 "data": "x".repeat(payload_size)
-            }),
-        );
-        event.ts_orig = Some(start_time + time_step * i as i32);
+            }))
+            .build()
+            .with_ts_orig(Some(start_time + time_step * i as i32));
         batch.push(event);
     }
 
@@ -629,14 +674,18 @@ async fn create_performance_dataset_fixture(
     let chunk_size = FIXTURE_CONFIG.batch_insert_size;
     for chunk in batch.chunks(chunk_size) {
         for event in chunk {
-            let inserted = sinex_db::insert_event_with_validator(pool, event, None)
-                .await
-                .map_err(|e| {
-                    SinexError::database("Failed to insert event")
-                        .with_source(e)
-                        .with_context("fixture", "user_session")
-                })?;
-            event_ids.push(inserted.id);
+            let inserted = pool.events().insert(event.clone()).await.map_err(|e| {
+                SinexError::database("Failed to insert event")
+                    .with_source(e)
+                    .with_context("fixture", "user_session")
+            })?;
+            event_ids.push(
+                inserted
+                    .id
+                    .expect("Inserted event must have ID")
+                    .as_ulid()
+                    .clone(),
+            );
         }
     }
 
@@ -644,7 +693,7 @@ async fn create_performance_dataset_fixture(
         event_count,
         event_ids,
         time_range: (start_time, end_time),
-        sources,
+        sources: sources.iter().map(|s| s.to_string()).collect(),
     })
 }
 
@@ -687,13 +736,13 @@ where
     let tx = ctx.pool().begin().await?;
 
     // Create some fixture data in the transaction
-    let factory = EventFactory::new(sources::FS);
-    let event = factory
-        .filesystem()
-        .path("/test/transaction/file.txt")
-        .created()
-        .build();
-    let _record = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
+    let event = Event::from(FileCreatedPayload {
+        path: "/test/transaction/file.txt".to_string(),
+        size: 0,
+        created_at: Utc::now(),
+        permissions: None,
+    });
+    let _record = ctx.pool().events().insert(event).await?;
 
     let result = fixture_fn(tx).await?;
 
@@ -735,6 +784,8 @@ pub(crate) async fn pre_warmed_database(
 }
 
 async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
+    use sinex_types::domain::{EventSource, EventType};
+
     let event_count = 5000;
     let checkpoint_count = 10;
     let operation_count = 50;
@@ -745,14 +796,14 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let factory = EventFactory::new("performance_test");
-        let event = factory.create_event(
-            "test.event",
-            json!({
+        let event = Event::schemaless()
+            .source(EventSource::from("performance_test"))
+            .event_type(EventType::from("test.event"))
+            .payload(json!({
                 "index": i,
                 "data": "x".repeat(payload_size)
-            }),
-        );
+            }))
+            .build();
         batch.push(event);
     }
 
@@ -760,13 +811,11 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
         for event in chunk {
             let size = serde_json::to_string(&event.payload)?.len();
             total_size_bytes += size;
-            sinex_db::insert_event_with_validator(pool, event, None)
-                .await
-                .map_err(|e| {
-                    SinexError::database("Failed to insert event")
-                        .with_source(e)
-                        .with_context("fixture", "user_session")
-                })?;
+            pool.events().insert(event.clone()).await.map_err(|e| {
+                SinexError::database("Failed to insert event")
+                    .with_source(e)
+                    .with_context("fixture", "user_session")
+            })?;
         }
     }
 
@@ -1225,7 +1274,7 @@ mod tests {
                     "INSERT INTO core.events (id, source, event_type, host, payload) 
                      VALUES ($1, 'tx_test', 'test', 'test', '{}'::jsonb)",
                 )
-                .bind(sinex_ulid::Ulid::new().to_uuid())
+                .bind(sinex_types::ulid::Ulid::new().to_uuid())
                 .execute(&mut *tx)
                 .await?;
 
@@ -1281,29 +1330,37 @@ mod tests {
 
     #[sinex_test]
     async fn test_scenario_fixture_creation(ctx: TestContext) -> Result<()> {
-        // Create events using the event factory
-        let factory = EventFactory::new("scenario");
+        // Create events using the event API
         let mut event_ids = vec![];
 
         // Insert start event
-        let start = ctx
-            .insert_event(&factory.create_event("test.start", json!({})))
-            .await?;
-        event_ids.push(start.id);
+        let start_event = Event::schemaless()
+            .source(EventSource::from_static("test"))
+            .event_type(EventType::from_static("test.started"))
+            .payload(json!({}))
+            .build();
+        let start = ctx.insert_event(&start_event).await?;
+        event_ids.push(start.id.expect("Inserted event must have ID"));
 
         // Insert middle events
         for i in 0..5 {
-            let event = ctx
-                .insert_event(&factory.create_event("test.middle", json!({"index": i})))
-                .await?;
-            event_ids.push(event.id);
+            let middle_event = Event::schemaless()
+                .source(EventSource::from_static("test"))
+                .event_type(EventType::from_static("test.started"))
+                .payload(json!({"index": i}))
+                .build();
+            let event = ctx.insert_event(&middle_event).await?;
+            event_ids.push(event.id.expect("Inserted event must have ID"));
         }
 
         // Insert end event
-        let end = ctx
-            .insert_event(&factory.create_event("test.end", json!({})))
-            .await?;
-        event_ids.push(end.id);
+        let end_event = Event::schemaless()
+            .source(EventSource::from_static("test"))
+            .event_type(EventType::from_static("test.completed"))
+            .payload(json!({}))
+            .build();
+        let end = ctx.insert_event(&end_event).await?;
+        event_ids.push(end.id.expect("Inserted event must have ID"));
 
         assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
 

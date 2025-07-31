@@ -17,8 +17,7 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_events::constants::sources;
-use sinex_events::EventFactory;
+use sinex_db::models::Event;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tokio::fs;
@@ -101,30 +100,40 @@ impl FilesystemProcessor {
             }
 
             if emit_events {
-                let factory = EventFactory::new(sources::FS);
+                use std::os::unix::fs::PermissionsExt;
+
                 let event = if metadata.is_file() {
-                    factory.create_event(
-                        "file.discovered",
-                        serde_json::json!({
-                            "path": entry_path.to_string_lossy(),
-                            "size": metadata.len(),
-                            "modified": metadata.modified().ok().map(|t| {
-                                let dt: DateTime<Utc> = t.into();
-                                dt
-                            })
-                        }),
-                    )
+                    let modified_time = metadata
+                        .modified()
+                        .ok()
+                        .map(|t| {
+                            let dt: DateTime<Utc> = t.into();
+                            dt
+                        })
+                        .unwrap_or_else(Utc::now);
+
+                    Event::from(sinex_events::FileDiscoveredPayload {
+                        path: entry_path.to_string_lossy().to_string(),
+                        size: metadata.len(),
+                        modified_at: modified_time,
+                        permissions: Some(metadata.permissions().mode()),
+                    })
+                    .with_ts_orig(Some(chrono::Utc::now()))
                 } else if metadata.is_dir() {
-                    factory.create_event(
-                        "dir.discovered",
-                        serde_json::json!({
-                            "path": entry_path.to_string_lossy(),
-                            "modified": metadata.modified().ok().map(|t| {
-                                let dt: DateTime<Utc> = t.into();
-                                dt
-                            })
-                        }),
-                    )
+                    let modified_time = metadata
+                        .modified()
+                        .ok()
+                        .map(|t| {
+                            let dt: DateTime<Utc> = t.into();
+                            dt
+                        })
+                        .unwrap_or_else(Utc::now);
+
+                    Event::from(sinex_events::DirDiscoveredPayload {
+                        path: entry_path.to_string_lossy().to_string(),
+                        modified_at: modified_time,
+                    })
+                    .with_ts_orig(Some(chrono::Utc::now()))
                 } else {
                     continue;
                 };

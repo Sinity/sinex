@@ -41,6 +41,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "aliasable"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "250f629c0161ad8107cf89319e990051fae62832fd343083bea452d93e2205fd"
+
+[[package]]
 name = "allocator-api2"
 version = "0.2.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -60,12 +66,6 @@ checksum = "819e7219dbd41043ac279b19830f2efc897156490d7fd6ea916720117ee66311"
 dependencies = [
  "libc",
 ]
-
-[[package]]
-name = "anes"
-version = "0.1.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b46cbb362ab8752921c97e041f5e366ee6297bd428a31275b9fcf1e380f7299"
 
 [[package]]
 name = "anstream"
@@ -537,12 +537,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cast"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37b2a672a2cb129a2e41c10b1224bb368f9f37a2b16b612598138befd7b37eb5"
-
-[[package]]
 name = "cc"
 version = "1.2.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -576,33 +570,6 @@ dependencies = [
  "serde",
  "wasm-bindgen",
  "windows-link",
-]
-
-[[package]]
-name = "ciborium"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "42e69ffd6f0917f5c029256a24d0161db17cea3997d185db0d35926308770f0e"
-dependencies = [
- "ciborium-io",
- "ciborium-ll",
- "serde",
-]
-
-[[package]]
-name = "ciborium-io"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05afea1e0a06c9be33d539b876f1ce3692f4afea2cb41f740e7743225ed1c757"
-
-[[package]]
-name = "ciborium-ll"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57663b653d948a338bfb3eeba9bb2fd5fcfaecb9e199e87e1eda4d9e8b240fd9"
-dependencies = [
- "ciborium-io",
- "half",
 ]
 
 [[package]]
@@ -793,42 +760,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "criterion"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2b12d017a929603d80db1831cd3a24082f8137ce19c69e6447f54f5fc8d692f"
-dependencies = [
- "anes",
- "cast",
- "ciborium",
- "clap",
- "criterion-plot",
- "is-terminal",
- "itertools 0.10.5",
- "num-traits",
- "once_cell",
- "oorandom",
- "plotters",
- "rayon",
- "regex",
- "serde",
- "serde_derive",
- "serde_json",
- "tinytemplate",
- "walkdir",
-]
-
-[[package]]
-name = "criterion-plot"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6b50826342786a51a89e2da3a28f1c32b06e387201bc2d19791f622c673706b1"
-dependencies = [
- "cast",
- "itertools 0.10.5",
-]
-
-[[package]]
 name = "crossbeam-channel"
 version = "0.5.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -870,12 +801,6 @@ name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0a5c400df2834b80a4c3327b3aad3a4c4cd4de0629063962b03235697506a28"
-
-[[package]]
-name = "crunchy"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "crypto-common"
@@ -1245,12 +1170,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fastcdc"
-version = "3.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf51ceb43e96afbfe4dd5c6f6082af5dfd60e220820b8123792d61963f2ce6bc"
-
-[[package]]
 name = "fastrand"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1569,16 +1488,6 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
-]
-
-[[package]]
-name = "half"
-version = "2.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "459196ed295495a68f7d7fe1d84f6c4b7ff0e21fe3017b2f283c6fac3ad803c9"
-dependencies = [
- "cfg-if",
- "crunchy",
 ]
 
 [[package]]
@@ -2055,6 +1964,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "inventory"
+version = "0.3.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ab08d7cd2c5897f2c949e5383ea7c7db03fb19130ffcfbf7eda795137ae3cb83"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.7.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2072,17 +1990,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "469fb0b9cefa57e3ef31275ee7cacb78f2fdca44e4765491884a2b119d4eb130"
 
 [[package]]
-name = "is-terminal"
-version = "0.4.16"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e04d7f318608d35d4b61ddd75cbdaee86b023ebe2bd5a66ee0915f0bf93095a9"
-dependencies = [
- "hermit-abi",
- "libc",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2095,15 +2002,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1082f0c48f143442a1ac6122f67e360ceee130b967af4d50996e5154a45df46"
 dependencies = [
  "nom",
-]
-
-[[package]]
-name = "itertools"
-version = "0.10.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fd2260e829bddf4cb6ea802289de2f86d6a7a690192fbe91b3f46e0f2c8473"
-dependencies = [
- "either",
 ]
 
 [[package]]
@@ -2713,12 +2611,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4895175b425cb1f87721b59f0f286c2092bd4af812243672510e1ac53e2e0ad"
 
 [[package]]
-name = "oorandom"
-version = "11.1.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
-
-[[package]]
 name = "openssl-probe"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2729,6 +2621,39 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "ordered-float"
+version = "4.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7bb71e1b3fa6ca1c61f383464aaf2bb0e2f8e772a1f01d486832464de363b951"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "ouroboros"
+version = "0.18.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1e0f050db9c44b97a94723127e6be766ac5c340c48f2c4bb3ffa11713744be59"
+dependencies = [
+ "aliasable",
+ "ouroboros_macro",
+ "static_assertions",
+]
+
+[[package]]
+name = "ouroboros_macro"
+version = "0.18.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c7028bdd3d43083f6d8d4d5187680d0d3560d54df4cc9d752005268b41e64d0"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro2",
+ "proc-macro2-diagnostics",
+ "quote",
+ "syn 2.0.104",
+]
 
 [[package]]
 name = "overload"
@@ -2885,34 +2810,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
-name = "plotters"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aeb6f403d7a4911efb1e33402027fc44f29b5bf6def3effcc22d7bb75f2b747"
-dependencies = [
- "num-traits",
- "plotters-backend",
- "plotters-svg",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
-name = "plotters-backend"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "df42e13c12958a16b3f7f4386b9ab1f3e7933914ecea48da7139435263a4172a"
-
-[[package]]
-name = "plotters-svg"
-version = "0.3.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51bae2ac328883f7acdfea3d66a7c35751187f870bc81f94563733a154d7a670"
-dependencies = [
- "plotters-backend",
-]
-
-[[package]]
 name = "polling"
 version = "3.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2998,6 +2895,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "version_check",
+]
+
+[[package]]
+name = "proc-macro-error-attr2"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96de42df36bb9bba5542fe9f1a054b8cc87e172759a1868aa05c1f3acc89dfc5"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
+
+[[package]]
+name = "proc-macro-error2"
+version = "2.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11ec05c52be0a07b08061f7dd003e7d7092e0472bc731b4af7bb1ef876109802"
+dependencies = [
+ "proc-macro-error-attr2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -3101,7 +3020,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
  "heck 0.5.0",
- "itertools 0.12.1",
+ "itertools",
  "log",
  "multimap",
  "once_cell",
@@ -3121,7 +3040,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools",
  "proc-macro2",
  "quote",
  "syn 2.0.104",
@@ -3644,16 +3563,120 @@ dependencies = [
 ]
 
 [[package]]
-name = "sea-query"
-version = "0.31.1"
+name = "sea-bae"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4fd043b8117af233e221f73e3ea8dfbc8e8c3c928017c474296db45c649105c"
+checksum = "f694a6ab48f14bc063cfadff30ab551d3c7e46d8f81836c51989d548f44a2a25"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro-error2",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
+]
+
+[[package]]
+name = "sea-orm"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "34963b2d68331ef5fbc8aa28a53781471c15f90ba1ad4f2689d21ce8b9a9d1f1"
+dependencies = [
+ "async-stream",
+ "async-trait",
+ "futures-util",
+ "log",
+ "ouroboros",
+ "sea-orm-macros",
+ "sea-query 0.32.6",
+ "sea-query-binder",
+ "serde",
+ "sqlx",
+ "strum",
+ "thiserror 2.0.12",
+ "tracing",
+ "url",
+]
+
+[[package]]
+name = "sea-orm-cli"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "edc17cb2b24e93fc1d56de7751a12222f2303c06e83ed4d7a1e929e39f30c7d7"
+dependencies = [
+ "chrono",
+ "clap",
+ "dotenvy",
+ "glob",
+ "regex",
+ "sea-schema",
+ "sqlx",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+]
+
+[[package]]
+name = "sea-orm-macros"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a489127c872766445b4e28f846825f89a076ac3af2591d1365503a68f93e974c"
+dependencies = [
+ "heck 0.5.0",
+ "proc-macro2",
+ "quote",
+ "sea-bae",
+ "syn 2.0.104",
+ "unicode-ident",
+]
+
+[[package]]
+name = "sea-orm-migration"
+version = "1.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "695e830a1332a4e3e57b5972eee00574a36060e1938afca7041a524e0955d5ba"
+dependencies = [
+ "async-trait",
+ "clap",
+ "dotenvy",
+ "sea-orm",
+ "sea-orm-cli",
+ "sea-schema",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "sea-query"
+version = "0.30.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4166a1e072292d46dc91f31617c2a1cdaf55a8be4b5c9f4bf2ba248e3ac4999b"
 dependencies = [
  "chrono",
  "inherent",
  "sea-query-derive",
  "serde_json",
  "uuid",
+]
+
+[[package]]
+name = "sea-query"
+version = "0.32.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64c91783d1514b99754fc6a4079081dcc2c587dadbff65c48c7f62297443536a"
+dependencies = [
+ "inherent",
+ "ordered-float",
+ "sea-query-derive",
+]
+
+[[package]]
+name = "sea-query-binder"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b0019f47430f7995af63deda77e238c17323359af241233ec768aba1faea7608"
+dependencies = [
+ "sea-query 0.32.6",
+ "sqlx",
 ]
 
 [[package]]
@@ -3668,6 +3691,31 @@ dependencies = [
  "quote",
  "syn 2.0.104",
  "thiserror 2.0.12",
+]
+
+[[package]]
+name = "sea-schema"
+version = "0.16.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2239ff574c04858ca77485f112afea1a15e53135d3097d0c86509cef1def1338"
+dependencies = [
+ "futures",
+ "sea-query 0.32.6",
+ "sea-query-binder",
+ "sea-schema-derive",
+ "sqlx",
+]
+
+[[package]]
+name = "sea-schema-derive"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "debdc8729c37fdbf88472f97fd470393089f997a909e535ff67c544d18cfccf0"
+dependencies = [
+ "heck 0.4.1",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.104",
 ]
 
 [[package]]
@@ -3893,6 +3941,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "sinex"
+version = "0.4.2"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "futures",
+ "serde",
+ "serde_json",
+ "sinex-annex",
+ "sinex-db",
+ "sinex-events",
+ "sinex-nats",
+ "sinex-preflight",
+ "sinex-satellite-sdk",
+ "sinex-services",
+ "sinex-telemetry",
+ "sinex-test-utils",
+ "sinex-types",
+ "sqlx",
+ "thiserror 2.0.12",
+ "tokio",
+ "tracing",
+ "ulid",
+ "uuid",
+]
+
+[[package]]
 name = "sinex-analytics-automaton"
 version = "0.1.0"
 dependencies = [
@@ -3903,12 +3979,10 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-satellite-sdk",
  "sinex-services",
- "sinex-ulid",
+ "sinex-types",
  "tokio",
  "tower 0.5.2",
  "tower-http 0.5.2",
@@ -3926,11 +4000,9 @@ dependencies = [
  "gethostname 0.4.3",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
- "sinex-ulid",
+ "sinex-types",
  "sqlx",
  "tempfile",
  "tokio",
@@ -3938,36 +4010,6 @@ dependencies = [
  "tracing",
  "uuid",
  "which",
-]
-
-[[package]]
-name = "sinex-channel"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "serde",
- "serde_json",
- "sinex-error",
- "sinex-events",
- "sinex-ulid",
- "tokio",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
-name = "sinex-config"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "figment",
- "regex",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.12",
- "toml",
- "validator",
 ]
 
 [[package]]
@@ -3981,98 +4023,13 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-annex",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-satellite-sdk",
  "sinex-services",
- "sinex-ulid",
+ "sinex-types",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "sinex-core-fs"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "bon",
- "chrono",
- "notify",
- "serde",
- "serde_json",
- "sinex-core-types",
- "sinex-error",
- "sinex-events",
- "tempfile",
- "tokio",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
-name = "sinex-core-runtime"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "serde",
- "serde_json",
- "sinex-core-types",
- "sinex-error",
- "sinex-events",
- "sinex-validation",
- "tempfile",
- "tokio",
- "tokio-test",
- "tracing",
-]
-
-[[package]]
-name = "sinex-core-types"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "lazy_static",
- "paste",
- "serde",
- "serde_json",
- "sinex-error",
- "sinex-events",
- "sinex-ulid",
- "sinex-validation",
- "sqlx",
- "tempfile",
- "thiserror 2.0.12",
- "tokio",
- "uuid",
-]
-
-[[package]]
-name = "sinex-core-utils"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "blake3",
- "bon",
- "chrono",
- "fastcdc",
- "rand 0.8.5",
- "rusqlite",
- "serde",
- "serde_json",
- "sinex-core-types",
- "sinex-error",
- "sinex-validation",
- "sqlx",
- "tempfile",
- "tokio",
- "tokio-retry",
- "tracing",
 ]
 
 [[package]]
@@ -4080,23 +4037,24 @@ name = "sinex-db"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "async-trait",
  "blake3",
  "bon",
  "chrono",
+ "futures",
  "gethostname 0.4.3",
  "jsonschema",
+ "num-traits",
  "once_cell",
- "sea-query",
+ "sea-orm-migration",
+ "sea-query 0.30.7",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
- "sinex-error",
+ "sinex-db-migration",
  "sinex-events",
  "sinex-macros",
  "sinex-test-utils",
- "sinex-ulid",
- "sinex-validation",
+ "sinex-types",
  "sqlx",
  "strum",
  "thiserror 2.0.12",
@@ -4106,6 +4064,16 @@ dependencies = [
  "urlencoding",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "sinex-db-migration"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "sea-orm-migration",
+ "sea-query 0.30.7",
+ "tokio",
 ]
 
 [[package]]
@@ -4124,15 +4092,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-annex",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
- "sinex-macros",
  "sinex-satellite-sdk",
  "sinex-telemetry",
- "sinex-ulid",
- "sinex-validation",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4154,33 +4118,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-db",
- "sinex-error",
  "sinex-events",
  "sinex-satellite-sdk",
- "sinex-ulid",
+ "sinex-types",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "sinex-error"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "chrono",
- "color-eyre",
- "criterion",
- "displaydoc",
- "gethostname 0.4.3",
- "indexmap 2.10.0",
- "serde",
- "serde_json",
- "serde_path_to_error",
- "sinex-test-utils",
- "sinex-ulid",
- "sqlx",
- "thiserror 2.0.12",
- "tokio",
 ]
 
 [[package]]
@@ -4192,10 +4134,13 @@ dependencies = [
  "bon",
  "chrono",
  "gethostname 0.4.3",
+ "inventory",
+ "once_cell",
  "schemars",
  "serde",
  "serde_json",
- "sinex-ulid",
+ "sinex-macros",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4219,15 +4164,11 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-events",
- "sinex-macros",
  "sinex-satellite-sdk",
  "sinex-telemetry",
  "sinex-test-utils",
- "sinex-ulid",
- "sinex-validation",
+ "sinex-types",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -4251,14 +4192,12 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-annex",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
  "sinex-satellite-sdk",
  "sinex-services",
  "sinex-telemetry",
- "sinex-ulid",
+ "sinex-types",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -4279,31 +4218,15 @@ dependencies = [
  "gethostname 0.4.3",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
  "sinex-satellite-sdk",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "sinex-identifiers"
-version = "0.4.2"
-dependencies = [
- "chrono",
- "schemars",
- "serde",
- "serde_json",
- "sinex-ulid",
- "sinex-validation",
- "sqlx",
- "thiserror 2.0.12",
- "uuid",
 ]
 
 [[package]]
@@ -4318,20 +4241,20 @@ dependencies = [
  "figment",
  "futures",
  "gethostname 0.4.3",
+ "hex",
  "jsonschema",
+ "parking_lot",
  "prost",
  "redis",
  "sd-notify",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
+ "sha2",
  "sinex-db",
  "sinex-events",
  "sinex-satellite-sdk",
  "sinex-telemetry",
- "sinex-ulid",
- "sinex-validation",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4375,9 +4298,9 @@ dependencies = [
  "humantime-serde",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-error",
- "sinex-ulid",
+ "sinex-db",
+ "sinex-events",
+ "sinex-types",
  "thiserror 2.0.12",
  "time",
  "tokio",
@@ -4395,13 +4318,11 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
  "sinex-satellite-sdk",
  "sinex-services",
- "sinex-ulid",
+ "sinex-types",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -4418,11 +4339,9 @@ dependencies = [
  "nix 0.28.0",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
- "sinex-ulid",
+ "sinex-types",
  "sqlx",
  "sysinfo 0.31.4",
  "tempfile",
@@ -4447,12 +4366,10 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
  "sinex-satellite-sdk",
- "sinex-ulid",
+ "sinex-types",
  "tokio",
  "tower 0.5.2",
  "tower-http 0.5.2",
@@ -4481,17 +4398,12 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "sinex-core-runtime",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
- "sinex-error",
  "sinex-events",
  "sinex-macros",
  "sinex-preflight",
  "sinex-telemetry",
- "sinex-ulid",
- "sinex-validation",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4515,34 +4427,13 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-satellite-sdk",
  "sinex-services",
- "sinex-ulid",
+ "sinex-types",
  "tokio",
  "tracing",
  "tracing-subscriber",
-]
-
-[[package]]
-name = "sinex-service-base"
-version = "0.4.2"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "gethostname 0.4.3",
- "serde",
- "serde_json",
- "sinex-ulid",
- "sinex-validation",
- "thiserror 2.0.12",
- "tokio",
- "toml",
- "tracing",
- "url",
 ]
 
 [[package]]
@@ -4556,12 +4447,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sinex-annex",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
- "sinex-error",
+ "sinex-events",
  "sinex-test-utils",
- "sinex-ulid",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4584,12 +4473,10 @@ dependencies = [
  "futures-util",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-events",
- "sinex-macros",
  "sinex-satellite-sdk",
  "sinex-telemetry",
+ "sinex-types",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
@@ -4614,14 +4501,11 @@ dependencies = [
  "rand 0.8.5",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
- "sinex-error",
  "sinex-events",
  "sinex-macros",
  "sinex-test-utils",
- "sinex-ulid",
+ "sinex-types",
  "sqlx",
  "syn 2.0.104",
  "sysinfo 0.30.13",
@@ -4644,13 +4528,10 @@ dependencies = [
  "clap",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
  "sinex-events",
- "sinex-macros",
  "sinex-satellite-sdk",
- "sinex-ulid",
+ "sinex-types",
  "sqlx",
  "thiserror 2.0.12",
  "tokio",
@@ -4676,17 +4557,15 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-events",
- "sinex-macros",
  "sinex-satellite-sdk",
  "sinex-telemetry",
- "sinex-ulid",
+ "sinex-types",
  "thiserror 2.0.12",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "which",
  "whoami",
 ]
 
@@ -4715,15 +4594,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sinex-channel",
- "sinex-core-types",
- "sinex-core-utils",
  "sinex-db",
- "sinex-error",
  "sinex-events",
  "sinex-satellite-sdk",
  "sinex-test-utils-macros",
- "sinex-ulid",
+ "sinex-types",
  "sqlx",
  "sysinfo 0.30.13",
  "tempfile",
@@ -4745,37 +4620,41 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-ulid"
-version = "0.4.2"
-dependencies = [
- "chrono",
- "lazy_static",
- "proptest",
- "rand 0.8.5",
- "schemars",
- "serde",
- "serde_json",
- "sqlx",
- "thiserror 2.0.12",
- "ulid",
- "uuid",
-]
-
-[[package]]
-name = "sinex-validation"
+name = "sinex-types"
 version = "0.4.2"
 dependencies = [
  "anyhow",
+ "async-trait",
+ "blake3",
+ "bon",
  "chrono",
+ "color-eyre",
+ "displaydoc",
+ "gethostname 0.4.3",
+ "indexmap 2.10.0",
  "jsonschema",
  "lazy_static",
+ "notify",
+ "paste",
+ "proptest",
+ "rand 0.8.5",
  "regex",
+ "rusqlite",
+ "schemars",
  "serde",
  "serde_json",
- "sinex-ulid",
+ "serde_path_to_error",
+ "sinex-macros",
+ "sinex-test-utils",
+ "sqlx",
+ "tempfile",
  "thiserror 2.0.12",
+ "tokio",
+ "tokio-retry",
  "tracing",
+ "ulid",
  "url",
+ "uuid",
  "validator",
 ]
 
@@ -5088,6 +4967,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
+name = "static_assertions"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a2eb9349b6444b326872e140eb1cf5e7c522154d69e7a0ffb0fb81c06b37543f"
+
+[[package]]
 name = "stringprep"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5337,16 +5222,6 @@ checksum = "5d4f6d1145dcb577acf783d4e601bc1d76a13337bb54e6233add580b07344c8b"
 dependencies = [
  "displaydoc",
  "zerovec",
-]
-
-[[package]]
-name = "tinytemplate"
-version = "1.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be4d6b5f19ff7664e8c98d03e2139cb510db9b0a60b55f8e8709b689d939b6bc"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]

@@ -2,12 +2,34 @@
 //!
 //! Monitors hardware device events via udev
 
-use serde_json::json;
-use sinex_events::{EventFactory, RawEvent};
+use sinex_events::{
+    Event, UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
+    UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
+};
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+// Macro to create udev events with common fields
+macro_rules! create_udev_event {
+    ($payload_type:ident, $action:expr, $device_path:expr, $device_type:expr,
+     $subsystem:expr, $devtype:expr, $vendor:expr, $model:expr, $serial:expr,
+     $properties:expr, $timestamp:expr) => {
+        Event::from($payload_type {
+            action: $action.to_string(),
+            device_path: $device_path.to_string(),
+            device_type: $device_type.to_string(),
+            subsystem: $subsystem,
+            devtype: $devtype,
+            vendor: $vendor,
+            model: $model,
+            serial: $serial,
+            properties: $properties,
+            timestamp: $timestamp,
+        })
+    };
+}
 
 /// udev watcher
 pub struct UdevWatcher {
@@ -32,15 +54,7 @@ impl UdevWatcher {
         device_path: &str,
         device_type: &str,
         properties: std::collections::HashMap<String, String>,
-    ) -> RawEvent {
-        let event_type = match action {
-            "add" => "device.connected",
-            "remove" => "device.disconnected",
-            "change" => "device.changed",
-            "bind" | "unbind" => "device.driver_changed",
-            _ => "device.other",
-        };
-
+    ) -> Event {
         // Extract common properties
         let subsystem = properties.get("SUBSYSTEM").cloned();
         let devtype = properties.get("DEVTYPE").cloned();
@@ -56,29 +70,79 @@ impl UdevWatcher {
             .get("ID_SERIAL_SHORT")
             .or_else(|| properties.get("ID_SERIAL"))
             .cloned();
+        let timestamp = chrono::Utc::now().to_rfc3339();
 
-        let payload = json!({
-            "action": action,
-            "device_path": device_path,
-            "device_type": device_type,
-            "subsystem": subsystem,
-            "devtype": devtype,
-            "vendor": vendor,
-            "model": model,
-            "serial": serial,
-            "properties": properties,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-        });
-
-        let factory = EventFactory::new(sinex_events::sources::UDEV);
-        factory.create_event(event_type, payload)
+        match action {
+            "add" => create_udev_event!(
+                UdevDeviceConnectedPayload,
+                action,
+                device_path,
+                device_type,
+                subsystem,
+                devtype,
+                vendor,
+                model,
+                serial,
+                properties,
+                timestamp
+            ),
+            "remove" => create_udev_event!(
+                UdevDeviceDisconnectedPayload,
+                action,
+                device_path,
+                device_type,
+                subsystem,
+                devtype,
+                vendor,
+                model,
+                serial,
+                properties,
+                timestamp
+            ),
+            "change" => create_udev_event!(
+                UdevDeviceChangedPayload,
+                action,
+                device_path,
+                device_type,
+                subsystem,
+                devtype,
+                vendor,
+                model,
+                serial,
+                properties,
+                timestamp
+            ),
+            "bind" | "unbind" => create_udev_event!(
+                UdevDeviceDriverChangedPayload,
+                action,
+                device_path,
+                device_type,
+                subsystem,
+                devtype,
+                vendor,
+                model,
+                serial,
+                properties,
+                timestamp
+            ),
+            _ => create_udev_event!(
+                UdevDeviceOtherPayload,
+                action,
+                device_path,
+                device_type,
+                subsystem,
+                devtype,
+                vendor,
+                model,
+                serial,
+                properties,
+                timestamp
+            ),
+        }
     }
 
     /// Monitor udev events using netlink socket (fallback implementation)
-    async fn monitor_udev_events(
-        &self,
-        tx: mpsc::UnboundedSender<RawEvent>,
-    ) -> SatelliteResult<()> {
+    async fn monitor_udev_events(&self, tx: mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
         info!("Starting udev event monitoring via filesystem polling");
 
         // Since libudev is disabled, we'll do periodic scanning of /sys/class
@@ -183,7 +247,7 @@ impl UdevWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         info!("Starting udev event streaming");
 

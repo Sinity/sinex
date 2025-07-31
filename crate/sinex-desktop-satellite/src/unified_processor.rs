@@ -6,8 +6,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sinex_events::{services, EventFactory};
+use sinex_events::{
+    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload, Event,
+    WindowManagerHistoricalPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -211,15 +213,11 @@ impl DesktopProcessor {
             info!("Desktop monitoring context available");
 
             // Create a sample event to show the interface works
-            let factory = EventFactory::new(services::DESKTOP_SATELLITE);
-            let sample_event = factory.create_event(
-                "desktop.monitoring_started",
-                json!({
-                    "clipboard_enabled": self.config.clipboard_enabled,
-                    "window_manager_enabled": self.config.window_manager_enabled,
-                    "start_time": Utc::now()
-                }),
-            );
+            let sample_event = Event::from(DesktopMonitoringStartedPayload {
+                clipboard_enabled: self.config.clipboard_enabled,
+                window_manager_enabled: self.config.window_manager_enabled,
+                start_time: Utc::now(),
+            });
 
             context.emit_event(sample_event).await?;
         }
@@ -243,31 +241,23 @@ impl DesktopProcessor {
         if let Some(ref context) = self.context {
             // Example: emit historical desktop state events
             if self.config.clipboard_enabled && emit_events {
-                let factory = EventFactory::new(services::DESKTOP_SATELLITE);
-                let event = factory.create_event(
-                    "clipboard.historical",
-                    json!({
-                        "source": "clipboard",
-                        "scan_type": "historical",
-                        "note": "Limited historical data available for desktop events"
-                    }),
-                );
+                let event = Event::from(ClipboardHistoricalPayload {
+                    source: "clipboard".to_string(),
+                    scan_type: "historical".to_string(),
+                    note: "Limited historical data available for desktop events".to_string(),
+                });
 
                 context.emit_event(event).await?;
                 event_count += 1;
             }
 
             if self.config.window_manager_enabled && emit_events {
-                let factory = EventFactory::new(services::DESKTOP_SATELLITE);
-                let event = factory.create_event(
-                    "wm.historical",
-                    json!({
-                        "source": "window_manager",
-                        "wm_type": self.config.window_manager_type,
-                        "scan_type": "historical",
-                        "note": "Limited historical data available for window manager events"
-                    }),
-                );
+                let event = Event::from(WindowManagerHistoricalPayload {
+                    source: "window_manager".to_string(),
+                    wm_type: self.config.window_manager_type.clone(),
+                    scan_type: "historical".to_string(),
+                    note: "Limited historical data available for window manager events".to_string(),
+                });
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -284,7 +274,7 @@ impl Default for DesktopProcessor {
     }
 }
 
-#[sinex_macros::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=desktop"])]
+#[sinex_satellite_sdk::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=desktop"])]
 #[async_trait]
 impl StatefulStreamProcessor for DesktopProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
@@ -392,16 +382,12 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let factory = EventFactory::new(services::DESKTOP_SATELLITE);
-                        let snapshot_event = factory.create_event(
-                            "desktop.snapshot",
-                            json!({
-                                "active_watchers": active_watchers,
-                                "clipboard_enabled": self.config.clipboard_enabled,
-                                "window_manager_enabled": self.config.window_manager_enabled,
-                                "snapshot_time": Utc::now()
-                            }),
-                        );
+                        let snapshot_event = Event::from(DesktopSnapshotPayload {
+                            active_watchers,
+                            clipboard_enabled: self.config.clipboard_enabled,
+                            window_manager_enabled: self.config.window_manager_enabled,
+                            snapshot_time: Utc::now(),
+                        });
 
                         context.emit_event(snapshot_event).await?;
                     }

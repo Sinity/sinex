@@ -11,7 +11,7 @@
 // Transformed from 22 verbose ULID tests + many event tests into concise property tests
 
 use proptest::prelude::*;
-use sinex_error::{CoreError, Result as CoreResult, ResultExt};
+use sinex_types::error::{CoreError, Result as CoreResult, ResultExt};
 use sinex_events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::property_helpers::*;
@@ -66,7 +66,7 @@ sinex_proptest_sync! {
         let ulid_str = ulid.to_string();
         let parsed = Ulid::from_string(&ulid_str);
         prop_assert!(parsed.is_ok(), "ULID string should parse successfully");
-        prop_assert_eq!(parsed.unwrap(), ulid, "Parsed ULID should match original");
+        prop_assert_eq!(parsed?, ulid, "Parsed ULID should match original");
     }
 }
 
@@ -87,7 +87,7 @@ property_suite! {
         },
         supports_roundtrip: |ulid| {
             let str = ulid.to_string();
-            let parsed = Ulid::from_string(&str).unwrap();
+            let parsed = Ulid::from_string(&str)?;
             assert_eq!(parsed, ulid);
         }
     }
@@ -325,7 +325,7 @@ sinex_proptest_sync! {
 
 regression_test! {
     name: ulid_string_format_regression,
-    input: Ulid::from_string("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
+    input: Ulid::from_string("01ARZ3NDEKTSV4RRFFQ69G5FAV").expect("Valid test ULID"),
     test: |ulid| {
         assert_eq!(ulid.to_string().len(), 26);
         assert_eq!(ulid.to_string(), "01ARZ3NDEKTSV4RRFFQ69G5FAV");
@@ -476,7 +476,7 @@ mod event_property_tests {
                 assert_eq!(event.id.to_string().len(), 26);
             },
             has_timestamps: |event| {
-                assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).unwrap());
+                assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).expect("Valid epoch timestamp"));
             },
             has_required_fields: |event| {
                 assert!(!event.source.is_empty());

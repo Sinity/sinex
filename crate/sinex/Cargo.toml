@@ -1,0 +1,69 @@
+[package]
+name = "sinex"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core dependencies (always included)
+sinex-types = { path = "../sinex-types" }
+sinex-events = { path = "../sinex-events" }
+
+# Optional dependencies
+sinex-db = { path = "../sinex-db", optional = true }
+sinex-telemetry = { path = "../sinex-telemetry", optional = true }
+sinex-preflight = { path = "../sinex-preflight", optional = true }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk", optional = true }
+sinex-nats = { path = "../sinex-nats", optional = true }
+sinex-services = { path = "../sinex-services", optional = true }
+sinex-annex = { path = "../sinex-annex", optional = true }
+sinex-test-utils = { path = "../sinex-test-utils", optional = true }
+
+# External re-exports - core
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ulid = { workspace = true }
+
+# External re-exports - conditional
+sqlx = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+async-trait = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+
+[features]
+default = ["standard"]
+core = []  # Just types and events
+standard = [
+    "dep:sinex-db", 
+    "dep:sinex-telemetry", 
+    "dep:sinex-preflight",
+    "dep:sqlx",
+    "dep:tokio",
+    "dep:async-trait",
+    "dep:tracing",
+    "dep:anyhow",
+    "dep:thiserror",
+    "dep:futures",
+    "dep:uuid",
+    "sinex-types/sqlx"
+]
+satellite = ["standard", "dep:sinex-satellite-sdk", "dep:sinex-nats"]
+services = ["standard", "dep:sinex-services"]
+annex = ["standard", "dep:sinex-annex"]
+test = ["standard", "dep:sinex-test-utils"]
+full = ["satellite", "services", "annex", "test"]
+# Enable macros throughout the ecosystem
+macros = [
+    "sinex-types/macros",
+    "sinex-events/macros",
+    "sinex-db?/macros",
+    "sinex-telemetry?/macros",
+    "sinex-satellite-sdk?/macros"
+]

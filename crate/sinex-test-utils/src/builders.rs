@@ -8,17 +8,13 @@ use crate::prelude::*;
 use bon::Builder;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_core_types::{DbPool, RawEvent};
 use sinex_db;
-use sinex_events::EventFactory;
-use sinex_ulid::Ulid;
+use sinex_db::models::{Event, EventSource, EventType};
+use sinex_db::DbPool;
+use sinex_types::{ulid::Ulid, Id};
 
 // Re-export only necessary production builders from sinex-events
 // These are used by tests that need to create events directly
-pub(crate) use sinex_events::event_builders::*;
-
-// Additional type aliases for test compatibility
-pub(crate) type HyprlandEventType = WindowManagerEventType;
 
 /// Generic event builder that can create any type of event
 #[derive(Builder)]
@@ -27,89 +23,72 @@ pub(crate) struct GenericEventBuilder {
     event_type: String,
     #[builder(default = serde_json::json!({}))]
     payload: serde_json::Value,
-    #[builder(default)]
     timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl GenericEventBuilder {
-    pub fn build(self) -> sinex_core_types::RawEvent {
-        let factory = EventFactory::new(&self.source);
-        factory.create_event(&self.event_type, self.payload)
+    pub fn build(self) -> Event {
+        use sinex_types::domain::{EventSource, EventType};
+        Event::schemaless()
+            .source(EventSource::new(&self.source))
+            .event_type(EventType::new(&self.event_type))
+            .payload(self.payload)
+            .build()
     }
 
     // Terminal-specific methods
     pub fn command(mut self, cmd: impl Into<String>) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["command"] = serde_json::json!(cmd.into());
-        self.payload = Some(payload);
+        self.payload["command"] = serde_json::json!(cmd.into());
         self
     }
 
     pub fn success(mut self) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["exit_status"] = serde_json::json!(0);
-        self.payload = Some(payload);
+        self.payload["exit_status"] = serde_json::json!(0);
         self
     }
 
     pub fn duration_ms(mut self, ms: u64) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["execution_time_ms"] = serde_json::json!(ms);
-        self.payload = Some(payload);
+        self.payload["execution_time_ms"] = serde_json::json!(ms);
         self
     }
 
     // Agent-specific methods
     pub fn name(mut self, name: impl Into<String>) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["agent_name"] = serde_json::json!(name.into());
-        self.payload = Some(payload);
+        self.payload["agent_name"] = serde_json::json!(name.into());
         self
     }
 
     pub fn heartbeat(mut self) -> Self {
         self.event_type = "automaton.heartbeat".to_string();
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["status"] = serde_json::json!("running");
-        self.payload = Some(payload);
+        self.payload["status"] = serde_json::json!("running");
         self
     }
 
     pub fn startup(mut self) -> Self {
         self.event_type = "automaton.startup".to_string();
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["status"] = serde_json::json!("starting");
-        self.payload = Some(payload);
+        self.payload["status"] = serde_json::json!("starting");
         self
     }
 
     pub fn error(mut self, error_msg: impl Into<String>) -> Self {
         self.event_type = "automaton.error".to_string();
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["error_message"] = serde_json::json!(error_msg.into());
-        payload["status"] = serde_json::json!("error");
-        self.payload = Some(payload);
+        self.payload["error_message"] = serde_json::json!(error_msg.into());
+        self.payload["status"] = serde_json::json!("error");
         self
     }
 
     pub fn uptime_seconds(mut self, seconds: u64) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["uptime_seconds"] = serde_json::json!(seconds);
-        self.payload = Some(payload);
+        self.payload["uptime_seconds"] = serde_json::json!(seconds);
         self
     }
 
     pub fn version(mut self, version: impl Into<String>) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["version"] = serde_json::json!(version.into());
-        self.payload = Some(payload);
+        self.payload["version"] = serde_json::json!(version.into());
         self
     }
 
     pub fn events_processed(mut self, count: u64) -> Self {
-        let mut payload = self.payload.unwrap_or_else(|| serde_json::json!({}));
-        payload["events_processed_session"] = serde_json::json!(count);
-        self.payload = Some(payload);
+        self.payload["events_processed_session"] = serde_json::json!(count);
         self
     }
 }
@@ -121,7 +100,7 @@ pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
-    last_processed_id: Option<Ulid>,
+    last_processed_id: Option<Id<Event>>,
     #[builder(default = 0)]
     processed_count: i64,
     state_data: Option<JsonValue>,
@@ -152,7 +131,7 @@ impl TestCheckpointBuilder {
 
     /// Set the last processed ID
     pub fn with_last_processed(mut self, id: Ulid) -> Self {
-        self.last_processed_id = Some(id);
+        self.last_processed_id = Some(Id::<Event>::from_ulid(id));
         self
     }
 
@@ -182,8 +161,8 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_core_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-        use sinex_db::repositories::{CheckpointRepository, Repository};
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
 
         let processor_name = ProcessorName::new(&self.processor_name);
         let group = ConsumerGroup::new(
@@ -197,14 +176,12 @@ impl TestCheckpointBuilder {
                 .unwrap_or_else(|| format!("{}-consumer", self.processor_name)),
         );
 
-        let checkpoint_repo = CheckpointRepository::new(&pool);
-        checkpoint_repo
+        pool.checkpoints()
             .upsert(
                 &processor_name,
                 &group,
                 &consumer,
-                self.last_processed_id
-                    .map(|id| sinex_core_types::ids::EventId::from_ulid(id)),
+                self.last_processed_id,
                 Some(Utc::now()),
                 self.checkpoint_data,
                 self.state_data,
@@ -219,7 +196,7 @@ impl TestCheckpointBuilder {
 #[derive(Debug, Builder)]
 pub(crate) struct TestScenarioBuilder {
     #[builder(default = Vec::new())]
-    events: Vec<RawEvent>,
+    events: Vec<Event>,
     #[builder(default = Vec::new())]
     checkpoints: Vec<TestCheckpointBuilder>,
     pool: Option<DbPool>,
@@ -232,22 +209,22 @@ impl TestScenarioBuilder {
     }
 
     /// Add an event to the scenario
-    pub fn with_event(mut self, event: RawEvent) -> Self {
+    pub fn with_event(mut self, event: Event) -> Self {
         self.events.push(event);
         self
     }
 
     /// Add multiple events from the same source
     pub fn with_events_from_source(mut self, source: &str, event_type: &str, count: usize) -> Self {
-        let factory = EventFactory::new(source);
         for i in 0..count {
-            let event = factory.create_event(
-                event_type,
-                json!({
+            let event = Event::schemaless()
+                .source(EventSource::from(source))
+                .event_type(EventType::from(event_type))
+                .payload(json!({
                     "index": i,
                     "batch": true
-                }),
-            );
+                }))
+                .build();
             self.events.push(event);
         }
         self
@@ -261,11 +238,12 @@ impl TestScenarioBuilder {
 
     /// Execute the scenario
     pub async fn execute(self, pool: &DbPool) -> Result<Vec<Ulid>> {
+        use sinex_db::DbPoolExt;
         // Insert all events
         let mut event_ids = Vec::new();
         for event in self.events {
-            let inserted = sinex_db::insert_event_with_validator(pool, &event, None).await?;
-            event_ids.push(inserted.id);
+            let inserted = pool.events().insert(event).await?;
+            event_ids.push(inserted.id.expect("Inserted event must have ID").into());
         }
 
         // Insert all checkpoints

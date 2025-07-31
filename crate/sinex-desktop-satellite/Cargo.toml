@@ -45,13 +45,9 @@ gethostname = "0.4"
 sqlx = { workspace = true }
 
 # Local dependencies
-sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk", features = ["macros"] }
+sinex-types = { path = "../sinex-types" }
 sinex-events = { path = "../sinex-events" }
 sinex-annex = { path = "../sinex-annex" }
 sinex-db = { path = "../sinex-db" }
-sinex-ulid = { path = "../sinex-ulid" }
-sinex-macros = { path = "../sinex-macros" }
 sinex-telemetry = { path = "../sinex-telemetry" }
-sinex-validation = { path = "../sinex-validation" }

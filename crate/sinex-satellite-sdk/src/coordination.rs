@@ -9,9 +9,9 @@
 
 use crate::version::{SatelliteInstance, SatelliteVersion};
 use serde::{Deserialize, Serialize};
-use sinex_core_types::{DbPool, Result, SinexError};
-use sinex_core_utils::CoordinationPrimitive;
 use sinex_db::distributed_locking::{DistributedCoordination, LeadershipGuard};
+use sinex_types::utils::CoordinationPrimitive;
+use sinex_types::{DbPool, Result, SinexError};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};
@@ -170,10 +170,12 @@ impl SatelliteCoordination {
             .try_become_leader(&self.instance.service_name)
             .await?
         {
+            let instance_uuid = uuid::Uuid::parse_str(&self.instance.instance_id)
+                .map_err(|e| SinexError::validation(format!("Invalid instance UUID: {}", e)))?;
             let leadership = LeadershipGuard::new(
                 lock_guard,
                 self.instance.service_name.clone(),
-                self.instance.instance_id.clone(),
+                instance_uuid,
             );
 
             // Record leadership in database

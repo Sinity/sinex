@@ -82,6 +82,7 @@ mod history;
 mod kitty;
 mod recording;
 mod scrollback;
+mod shell_detection;
 
 // New unified processor module
 pub mod unified_processor;
@@ -97,4 +98,4 @@ pub use recording::RecordingWatcher;
 pub use scrollback::ScrollbackWatcher;
 
 // Re-export for convenience
-pub use sinex_events::RawEvent;
+pub use sinex_db::models::Event;

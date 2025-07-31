@@ -44,8 +44,8 @@
 //! Custom fixtures can be loaded by name from the `fixtures/datasets/` directory.
 
 use crate::Result;
-use sinex_core_types::DbPool;
-use sinex_error::SinexError;
+use sinex_types::error::SinexError;
+use sinex_types::DbPool;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -438,30 +438,20 @@ mod tests {
         let pool = db.pool();
 
         // Insert some test data
-        use sinex_core_types::domain::{EventSource, EventType, HostName};
-        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{EventSource, EventType, HostName};
 
-        let repo = EventRepository::new(pool);
-        let new_event = NewEvent {
-            source: EventSource::new("test"),
-            event_type: EventType::new("test.event"),
-            host: HostName::new("test-host"),
-            payload: serde_json::json!({}),
-            ts_orig: None,
-            ingestor_version: None,
-            payload_schema_id: None,
-            source_event_ids: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
-        };
-        repo.insert(new_event).await?;
+        let new_event = Event::builder()
+            .source(EventSource::new("test"))
+            .event_type(EventType::new("test.event"))
+            .host(HostName::new("test-host"))
+            .payload(serde_json::json!({}))
+            .build();
+        pool.events().insert(new_event).await?;
 
         // Verify data exists
-        use sinex_db::count_events;
-        let count = count_events(pool).await?;
+        let count = pool.events().count_all().await?;
         assert_eq!(count, 1);
 
         // Reset database
@@ -482,26 +472,17 @@ mod tests {
         verify_clean_state(pool).await?;
 
         // Add data
-        use sinex_core_types::domain::{EventSource, EventType, HostName};
-        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
+        use sinex_types::domain::{EventSource, EventType, HostName};
 
-        let repo = EventRepository::new(pool);
-        let new_event = NewEvent {
-            source: EventSource::new("test"),
-            event_type: EventType::new("test"),
-            host: HostName::new("test"),
-            payload: serde_json::json!({}),
-            ts_orig: None,
-            ingestor_version: None,
-            payload_schema_id: None,
-            source_event_ids: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
-        };
-        repo.insert(new_event).await?;
+        let new_event = Event::builder()
+            .source(EventSource::new("test"))
+            .event_type(EventType::new("test"))
+            .host(HostName::new("test"))
+            .payload(serde_json::json!({}))
+            .build();
+        pool.events().insert(new_event).await?;
 
         // Should fail verification
         assert!(verify_clean_state(pool).await.is_err());
@@ -581,7 +562,7 @@ mod benches {
     //             None,
     //             None,
     //         )
-    //         .fetch_one::<sinex_core_types::RawEvent>(ctx.pool())
+    //         .fetch_one::<sinex_types::RawEvent>(ctx.pool())
     //         .await?;
 
     //         // Add annotation
@@ -589,7 +570,7 @@ mod benches {
     //             "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator)
     //              VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')"
     //         )
-    //         .bind(sinex_ulid::Ulid::new().to_uuid())
+    //         .bind(sinex_types::ulid::Ulid::new().to_uuid())
     //         .bind(event.id.to_uuid())
     //         .execute(ctx.pool())
     //         .await?;
@@ -599,9 +580,6 @@ mod benches {
     //     reset_database(ctx.pool()).await?;
     //     Ok(())
     // }
-
-    // Benchmark fixture loading
-    // Removed bench_load_fixture as it tests non-existent fixtures
 
     // All benchmarks below commented out - they need async support in sinex_bench macro
 
@@ -642,7 +620,7 @@ mod benches {
     //              VALUES ($1, $2, $3, '{}'::jsonb)"
     //         )
     //         .bind(format!("satellite_{}", i % 3))
-    //         .bind(sinex_ulid::Ulid::new().to_uuid())
+    //         .bind(sinex_types::ulid::Ulid::new().to_uuid())
     //         .bind(i as i64 * 10)
     //         .execute(ctx.pool())
     //         .await?;

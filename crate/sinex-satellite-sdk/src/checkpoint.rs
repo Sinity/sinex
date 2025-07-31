@@ -39,12 +39,9 @@
 
 use crate::{stream_processor::Checkpoint, SatelliteError, SatelliteResult};
 use serde::{Deserialize, Serialize};
-use sinex_core_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-use sinex_db::{
-    repositories::{CheckpointRepository, NewCheckpoint, Repository},
-    SqlxPgPool as PgPool,
-};
-use sinex_ulid::Ulid;
+use sinex_db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
+use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_types::ulid::Ulid;
 use tracing::{debug, info, warn};
 
 // Database record structures for query results
@@ -267,15 +264,15 @@ impl CheckpointManager {
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
-        let checkpoint_repo = CheckpointRepository::new(&self.pool);
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        let checkpoint_result = checkpoint_repo
+        let checkpoint_result = self
+            .pool
+            .checkpoints()
             .get_by_processor_and_consumer(&processor_name, &consumer_group, &consumer_name)
-            .await
-            .map_err(|e| SatelliteError::Database(e.to_string()))?;
+            .await?;
 
         let checkpoint = if let Some(row) = checkpoint_result {
             debug!(
@@ -363,27 +360,28 @@ impl CheckpointManager {
             serde_json::to_value(&state.checkpoint).map_err(SatelliteError::Serialization)?;
 
         let last_processed_id = match &state.checkpoint {
-            Checkpoint::Stream { message_id, .. } => message_id.parse::<sinex_ulid::Ulid>().ok(),
+            Checkpoint::Stream { message_id, .. } => {
+                message_id.parse::<sinex_types::ulid::Ulid>().ok()
+            }
             _ => None,
         };
 
-        let checkpoint_repo = CheckpointRepository::new(&self.pool);
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
         let consumer_name = ConsumerName::new(&self.consumer_name);
 
-        checkpoint_repo
+        self.pool
+            .checkpoints()
             .upsert(
                 &processor_name,
                 &consumer_group,
                 &consumer_name,
-                last_processed_id.map(|id| sinex_core_types::ids::EventId::from_ulid(id)),
+                last_processed_id.map(|id| sinex_types::Id::<sinex_events::Event>::from_ulid(id)),
                 Some(state.last_activity),
                 Some(checkpoint_data),
                 state.data.clone(),
             )
-            .await
-            .map_err(|e| SatelliteError::Database(e.to_string()))?;
+            .await?;
 
         debug!(
             processor = %self.processor_name,

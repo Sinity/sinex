@@ -5,7 +5,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sinex_events::RawEvent;
+use sinex_db::models::Event;
 use std::collections::HashMap;
 use tokio::time::Duration;
 use tracing::{debug, error, info};
@@ -46,7 +46,7 @@ impl EventFilter {
     }
 
     /// Check if an event matches this filter
-    pub fn matches(&self, event: &RawEvent) -> bool {
+    pub fn matches(&self, event: &Event) -> bool {
         // If no filters specified, match everything
         if self.sources.is_empty() && self.event_types.is_empty() {
             return true;
@@ -56,9 +56,12 @@ impl EventFilter {
         let source_match = self.sources.is_empty()
             || self.sources.iter().any(|pattern| {
                 if pattern.ends_with('*') {
-                    event.source.starts_with(&pattern[..pattern.len() - 1])
+                    event
+                        .source
+                        .as_str()
+                        .starts_with(&pattern[..pattern.len() - 1])
                 } else {
-                    event.source == *pattern
+                    event.source.as_str() == *pattern
                 }
             });
 
@@ -66,9 +69,12 @@ impl EventFilter {
         let event_type_match = self.event_types.is_empty()
             || self.event_types.iter().any(|pattern| {
                 if pattern.ends_with('*') {
-                    event.event_type.starts_with(&pattern[..pattern.len() - 1])
+                    event
+                        .event_type
+                        .as_str()
+                        .starts_with(&pattern[..pattern.len() - 1])
                 } else {
-                    event.event_type == *pattern
+                    event.event_type.as_str() == *pattern
                 }
             });
 
@@ -143,10 +149,8 @@ impl Default for BatchProcessingResult {
 #[async_trait]
 pub trait EventBatchProcessor: Send + Sync {
     /// Process a batch of events
-    async fn process_batch(
-        &mut self,
-        events: Vec<RawEvent>,
-    ) -> SatelliteResult<BatchProcessingResult>;
+    async fn process_batch(&mut self, events: Vec<Event>)
+        -> SatelliteResult<BatchProcessingResult>;
 
     /// Get the event filters for this processor
     fn event_filters(&self) -> Vec<EventFilter> {
@@ -264,10 +268,7 @@ impl RedisStreamConsumer {
     }
 
     /// Read a batch of events from the Redis Stream
-    async fn read_batch(
-        &self,
-        conn: &mut redis::aio::Connection,
-    ) -> SatelliteResult<Vec<RawEvent>> {
+    async fn read_batch(&self, conn: &mut redis::aio::Connection) -> SatelliteResult<Vec<Event>> {
         let result: Vec<redis::Value> = redis::cmd("XREADGROUP")
             .arg("GROUP")
             .arg(&self.config.group_name)
@@ -309,8 +310,8 @@ impl RedisStreamConsumer {
         Ok(events)
     }
 
-    /// Parse a Redis Stream message into a RawEvent
-    fn parse_message(&self, msg_parts: &[redis::Value]) -> SatelliteResult<Option<RawEvent>> {
+    /// Parse a Redis Stream message into an Event
+    fn parse_message(&self, msg_parts: &[redis::Value]) -> SatelliteResult<Option<Event>> {
         if msg_parts.len() < 2 {
             return Ok(None);
         }
@@ -336,12 +337,12 @@ impl RedisStreamConsumer {
             // Parse the event JSON from the "event" field
             if let Some(event_json) = field_map.get("event") {
                 // First validate the JSON structure
-                let validated_json = sinex_validation::validate_json(event_json).map_err(|e| {
+                let validated_json = sinex_types::validate_json(event_json).map_err(|e| {
                     SatelliteError::General(anyhow::anyhow!("Invalid event JSON: {}", e))
                 })?;
 
                 // Then deserialize the validated JSON
-                let event: RawEvent = serde_json::from_value(validated_json)
+                let event: Event = serde_json::from_value(validated_json)
                     .map_err(|e| SatelliteError::Serialization(e))?;
                 return Ok(Some(event));
             }

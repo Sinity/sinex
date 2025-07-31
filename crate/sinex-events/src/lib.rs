@@ -3,42 +3,34 @@
 //! This crate provides the fundamental event types and builders used throughout
 //! the Sinex system, extracted from sinex-core for focused responsibility.
 
-pub mod constants;
-pub mod event_builders;
-pub mod raw_event;
-pub mod strongly_typed_events;
+// Re-export event-related macros
+#[cfg(feature = "macros")]
+pub use sinex_macros::{event_registry, typed_event_envelope, EventPayload};
+
+pub mod blanket_impls;
+pub mod event_payload;
+pub mod payloads;
+pub mod schema_registry;
+pub mod version;
+
+#[cfg(test)]
+pub mod test_helpers;
 
 // Re-export core event types
-pub use raw_event::{JsonValue, OptionalTimestamp, RawEvent, Timestamp};
+pub use event_payload::{EventPayload, JsonValue, OptionalTimestamp, Timestamp};
+pub use sinex_types::domain::{EventSource, EventType};
 
-// Re-export event builders
-pub use event_builders::{
-    ClipboardContentType, ClipboardEventBuilder, EventFactory, FileOperation,
-    FilesystemEventBuilder, SystemEventBuilder, TerminalEventBuilder, WindowManagerEventBuilder,
-    WindowManagerEventType,
-};
+// Re-export payloads
+pub use payloads::*;
 
-// Re-export strongly typed events
-pub use strongly_typed_events::{
-    typed_event_channel, AtuinEntryPayload, ClipboardCopiedPayload, ClipboardSelectedPayload,
-    CommandCompletedPayload, CommandExecutedPayload, CommandImportedPayload, DirCreatedPayload,
-    DirDeletedPayload, EnforcedTypedEventSource, EventEnvelope, FileCreatedPayload,
-    FileDeletedPayload, FileModifiedPayload, FileMovedPayload, JournalEntryPayload,
-    ProcessHeartbeatPayload, ProcessShutdownPayload, ProcessStartedPayload, ScanCompletedPayload,
-    ScanStartedPayload, SensorActivatedPayload, SensorDeactivatedPayload, SessionEndedPayload,
-    SessionStartedPayload, SystemStatePayload, TypedClipboardEventBuilder, TypedEventBuilder,
-    TypedEventError, TypedEventPipelineAdapter, TypedEventReceiver, TypedEventResult,
-    TypedEventSender, TypedFilesystemEventBuilder, TypedRawEvent, TypedTerminalEventBuilder,
-    TypedToJsonAdapter, WindowClosedPayload, WindowFocusedPayload, WindowOpenedPayload,
-    WorkspaceSwitchedPayload,
-};
+// Re-export version utilities
+pub use version::{VersionRegistry, Versioned};
 
-// Re-export all constants for convenient access
-pub use constants::{config, event_types, git_annex, paths, services, sources, test_constants};
+// Re-export schema registry initialization
+pub use schema_registry::{initialize_schema_cache, preload_schemas};
 
-// Common type aliases
-pub type EventSender = tokio::sync::mpsc::Sender<RawEvent>;
-pub type EventReceiver = tokio::sync::mpsc::Receiver<RawEvent>;
+// Note: Event type has been moved to sinex-db as it's fundamentally a database type
+// Event sender/receiver types should be defined where Event is used
 
 // Agent status and error types
 use serde::{Deserialize, Serialize};

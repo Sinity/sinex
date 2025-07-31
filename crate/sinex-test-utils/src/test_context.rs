@@ -179,10 +179,12 @@ use crate::redis_pool::{acquire_test_redis, TestRedis};
 use crate::Result;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value};
-use sinex_core_types::RawEvent;
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_error::SinexError;
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_db::models::Event;
+use sinex_db::models::EventPayload;
+use sinex_db::DbPoolExt;
+use sinex_types::domain::{EventSource, EventType, HostName};
+use sinex_types::error::SinexError;
+use sinex_types::{Id, Ulid};
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -197,7 +199,7 @@ pub struct TestContext {
     db: TestDatabase,
     test_name: String,
     start_time: Instant,
-    created_events: Arc<Mutex<Vec<sinex_ulid::Ulid>>>,
+    created_events: Arc<Mutex<Vec<sinex_types::ulid::Ulid>>>,
     redis_cleanup_keys: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
@@ -226,7 +228,7 @@ impl TestContext {
     }
 
     /// Get database pool (for fixture creation)
-    pub fn pool(&self) -> &sinex_core_types::DbPool {
+    pub fn pool(&self) -> &sinex_types::DbPool {
         self.db.pool()
     }
 
@@ -260,8 +262,12 @@ impl TestContext {
     }
 
     /// Insert event directly (internal use)
-    pub(crate) async fn insert_event_internal(&self, event: &RawEvent) -> Result<RawEvent> {
-        let inserted = sinex_db::insert_event_with_validator(self.pool(), event, None)
+    pub(crate) async fn insert_event_internal(&self, event: &Event) -> Result<Event> {
+        use sinex_db::DbPoolExt;
+        let inserted = self
+            .pool()
+            .events()
+            .insert(event.clone())
             .await
             .map_err(|e| {
                 SinexError::database("Failed to insert event")
@@ -269,7 +275,9 @@ impl TestContext {
                     .with_context("event_type", &event.event_type)
                     .with_context("source", &event.source)
             })?;
-        self.created_events.lock().await.push(inserted.id);
+        if let Some(id) = &inserted.id {
+            self.created_events.lock().await.push(id.as_ulid().clone());
+        }
         Ok(inserted)
     }
 
@@ -291,13 +299,13 @@ impl TestContext {
     pub async fn wait_for_event_count(&self, expected: usize) -> Result<()> {
         let timeout_secs = DEFAULT_TIMEOUT.as_secs();
 
-        sinex_core_utils::wait_for_condition_adaptive(
+        sinex_types::utils::wait_for_condition_adaptive(
             || async {
-                let count =
-                    self.events().count().await.map_err(|e| {
-                        SinexError::database("Failed to count events").with_source(e)
-                    })? as usize;
-                Ok(count >= expected)
+                self.events()
+                    .count()
+                    .await
+                    .map(|count| count as usize >= expected)
+                    .map_err(|e| SinexError::database(e.to_string()))
             },
             timeout_secs,
             &format!("event count >= {}", expected),
@@ -314,18 +322,9 @@ impl TestContext {
     {
         let timeout_secs = DEFAULT_TIMEOUT.as_secs();
 
-        sinex_core_utils::wait_for_condition_adaptive(
-            || async {
-                match condition().await {
-                    Ok(result) => Ok(result),
-                    Err(e) => Err(SinexError::unknown(e.to_string())),
-                }
-            },
-            timeout_secs,
-            "custom test condition",
-        )
-        .await
-        .map_err(|e| SinexError::timeout(format!("Wait condition failed: {}", e)))
+        sinex_types::utils::wait_for_condition_adaptive(condition, timeout_secs, "custom condition")
+            .await
+            .map_err(|e| SinexError::timeout(format!("Wait condition failed: {}", e)))
     }
 
     // ===== ASSERTION HELPERS =====
@@ -348,8 +347,12 @@ impl TestContext {
     }
 
     /// Assert event with ID exists
-    pub async fn assert_event_exists(&self, id: sinex_ulid::Ulid) -> Result<()> {
-        let event = self.events().by_id(id).fetch_one().await?;
+    pub async fn assert_event_exists(&self, id: sinex_types::ulid::Ulid) -> Result<()> {
+        let event = self
+            .events()
+            .by_id(Id::<Event>::from_ulid(id))
+            .fetch_one()
+            .await?;
         if event.is_none() {
             return Err(SinexError::not_found(format!("Event not found: {}", id)));
         }
@@ -376,12 +379,12 @@ impl TestContext {
     }
 
     /// Insert a pre-built event
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<RawEvent> {
+    pub async fn insert_event(&self, event: &Event) -> Result<Event> {
         self.insert_event_internal(event).await
     }
 
     /// Insert multiple pre-built events
-    pub async fn insert_events(&self, events: &[RawEvent]) -> Result<Vec<RawEvent>> {
+    pub async fn insert_events(&self, events: &[Event]) -> Result<Vec<Event>> {
         let mut inserted = Vec::with_capacity(events.len());
         for event in events {
             inserted.push(self.insert_event_internal(event).await?);
@@ -421,7 +424,7 @@ impl TestContext {
     }
 
     /// Create schema-validated event builder
-    pub fn validated_event(&self, schema_id: sinex_ulid::Ulid) -> ValidatedEventBuilder<'_> {
+    pub fn validated_event(&self, schema_id: sinex_types::ulid::Ulid) -> ValidatedEventBuilder<'_> {
         ValidatedEventBuilder::new(self, schema_id)
     }
 
@@ -504,17 +507,20 @@ impl TestContext {
     {
         // Use the existing wait_for_condition with adaptive timeout
         let timeout_secs = timeout.as_secs().max(1);
-        sinex_core_utils::wait_for_condition_adaptive(
-            || async { Ok(condition().await) },
+        sinex_types::utils::wait_for_condition_adaptive(
+            || async {
+                let result = condition().await;
+                Ok(result)
+            },
             timeout_secs,
-            "wait_until condition",
+            "wait until condition",
         )
         .await
         .map_err(|e| SinexError::timeout(format!("Wait condition failed: {}", e)))
     }
 
     /// Assert two events are equivalent (replaces assert_event_eq! macro)
-    pub fn assert_event_eq(&self, actual: &RawEvent, expected: &RawEvent) -> Result<()> {
+    pub fn assert_event_eq(&self, actual: &Event, expected: &Event) -> Result<()> {
         if actual.source != expected.source {
             return Err(SinexError::validation(format!(
                 "Event sources differ: expected '{}', got '{}'",
@@ -545,7 +551,7 @@ impl TestContext {
     /// Assert events match patterns (replaces assert_events_match! macro)
     pub fn assert_events_match(
         &self,
-        events: &[RawEvent],
+        events: &[Event],
         patterns: &[(String, String)],
     ) -> Result<()> {
         if events.len() != patterns.len() {
@@ -557,17 +563,21 @@ impl TestContext {
         }
 
         for (i, (event, pattern)) in events.iter().zip(patterns.iter()).enumerate() {
-            if event.source != pattern.0 {
+            if event.source.as_str() != pattern.0 {
                 return Err(SinexError::validation(format!(
                     "Event {} source mismatch: expected '{}', got '{}'",
-                    i, pattern.0, event.source
+                    i,
+                    pattern.0,
+                    event.source.as_str()
                 )));
             }
 
-            if event.event_type != pattern.1 {
+            if event.event_type.as_str() != pattern.1 {
                 return Err(SinexError::validation(format!(
                     "Event {} type mismatch: expected '{}', got '{}'",
-                    i, pattern.1, event.event_type
+                    i,
+                    pattern.1,
+                    event.event_type.as_str()
                 )));
             }
         }
@@ -905,8 +915,8 @@ impl<'ctx> ChannelTestUtils<'ctx> {
     /// Test basic send/receive functionality with error context
     pub async fn test_basic_send_receive<T>(
         &self,
-        sender: &impl sinex_channel::ChannelSenderExt<T>,
-        receiver: &mut impl sinex_channel::ChannelReceiverExt<T>,
+        sender: &impl crate::channel_helpers::ChannelSenderExt<T>,
+        receiver: &mut impl crate::channel_helpers::ChannelReceiverExt<T>,
         test_value: T,
         test_name: &str,
     ) -> Result<()>
@@ -923,7 +933,7 @@ impl<'ctx> ChannelTestUtils<'ctx> {
     /// Test channel backpressure management
     pub async fn test_backpressure_management<T>(
         &self,
-        sender: &impl sinex_channel::ChannelSenderExt<T>,
+        sender: &impl crate::channel_helpers::ChannelSenderExt<T>,
         test_items: Vec<T>,
         expected_timeout: std::time::Duration,
     ) -> Result<()>
@@ -994,16 +1004,13 @@ impl<'ctx> DeploymentTestUtils<'ctx> {
             .await
             .map_err(|e| SinexError::unknown(format!("Failed to create deployment tester: {}", e)))
     }
-
-    // Removed unimplemented test_environment_compatibility method.
-    // This functionality should be implemented when deployment scenario testing is actually needed.
 }
 
 /// Fluent event builder with schema validation
 pub struct EventBuilder<'ctx> {
     ctx: &'ctx TestContext,
-    source: Option<String>,
-    event_type: Option<String>,
+    source: Option<EventSource>,
+    event_type: Option<EventType>,
     payload: Value,
     timestamp: Option<DateTime<Utc>>,
 }
@@ -1020,13 +1027,13 @@ impl<'ctx> EventBuilder<'ctx> {
     }
 
     /// Set event source
-    pub fn source(mut self, source: impl Into<String>) -> Self {
+    pub fn source(mut self, source: impl Into<EventSource>) -> Self {
         self.source = Some(source.into());
         self
     }
 
     /// Set event type
-    pub fn type_(mut self, event_type: impl Into<String>) -> Self {
+    pub fn type_(mut self, event_type: impl Into<EventType>) -> Self {
         self.event_type = Some(event_type.into());
         self
     }
@@ -1064,42 +1071,49 @@ impl<'ctx> EventBuilder<'ctx> {
 
     /// Domain-specific builder for filesystem events
     pub fn filesystem(mut self) -> FilesystemEventBuilder<'ctx> {
-        self.source = Some(sources::FS.to_string());
+        use sinex_events::FileCreatedPayload;
+        self.source = Some(FileCreatedPayload::SOURCE);
         FilesystemEventBuilder { inner: self }
     }
 
     /// Domain-specific builder for terminal events  
     pub fn terminal(mut self) -> TerminalEventBuilder<'ctx> {
-        self.source = Some(sources::SHELL_KITTY.to_string());
+        use sinex_events::KittyCommandExecutedPayload;
+        self.source = Some(KittyCommandExecutedPayload::SOURCE);
         TerminalEventBuilder { inner: self }
     }
 
     /// Domain-specific builder for agent events
     pub fn agent(mut self) -> AgentEventBuilder<'ctx> {
-        self.source = Some(sources::SINEX.to_string());
+        // TODO: Need to create agent payload types first
+        use sinex_types::domain::EventSource;
+        self.source = Some(EventSource::from_static("sinex"));
         AgentEventBuilder { inner: self }
     }
 
     /// Domain-specific builder for clipboard events
     pub fn clipboard(mut self) -> ClipboardEventBuilder<'ctx> {
-        self.source = Some(sources::CLIPBOARD.to_string());
+        use sinex_events::ClipboardCopiedPayload;
+        self.source = Some(ClipboardCopiedPayload::SOURCE);
         ClipboardEventBuilder { inner: self }
     }
 
     /// Domain-specific builder for window manager events
     pub fn window(mut self) -> WindowEventBuilder<'ctx> {
-        self.source = Some(sources::WM_HYPRLAND.to_string());
+        use sinex_events::HyprlandWindowFocusedPayload;
+        self.source = Some(HyprlandWindowFocusedPayload::SOURCE);
         WindowEventBuilder { inner: self }
     }
 
     /// Domain-specific builder for system events
     pub fn system(mut self) -> SystemEventBuilder<'ctx> {
-        self.source = Some(sources::SYSTEMD.to_string());
+        use sinex_events::SystemdUnitStartedPayload;
+        self.source = Some(SystemdUnitStartedPayload::SOURCE);
         SystemEventBuilder { inner: self }
     }
 
     /// Build event without inserting (like old TestEventBuilder)
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         let source = self
             .source
             .ok_or_else(|| SinexError::validation("Source required"))?;
@@ -1107,8 +1121,11 @@ impl<'ctx> EventBuilder<'ctx> {
             .event_type
             .ok_or_else(|| SinexError::validation("Event type required"))?;
 
-        let factory = EventFactory::new(&source);
-        let mut event = factory.create_event(&event_type, self.payload);
+        let mut event = Event::schemaless()
+            .source(source.clone())
+            .event_type(event_type.clone())
+            .payload(self.payload)
+            .build();
 
         if let Some(ts) = self.timestamp {
             event.ts_orig = Some(ts);
@@ -1118,45 +1135,38 @@ impl<'ctx> EventBuilder<'ctx> {
     }
 
     /// Build and insert event with validation (most common case)
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         let ctx = self.ctx;
         let event = self.build()?;
         ctx.insert_event_internal(&event).await
     }
 
     /// Build and insert event without validation (for error testing)
-    pub async fn insert_direct(self) -> Result<RawEvent> {
+    pub async fn insert_direct(self) -> Result<Event> {
         // Use direct query path (bypasses validation like TestQueries)
-        let host = gethostname::gethostname().to_string_lossy().to_string();
-        use sinex_db::repositories::{EventRepository, NewEvent, Repository};
+        let host = HostName::new(gethostname::gethostname().to_string_lossy().to_string());
+        use sinex_db::models::Event;
+        use sinex_db::repositories::DbPoolExt;
 
-        let repo = EventRepository::new(self.ctx.pool());
-        let new_event = NewEvent {
-            source: sinex_core_types::domain::EventSource::new(
-                &self.source.unwrap_or_else(|| "test".to_string()),
-            ),
-            event_type: sinex_core_types::domain::EventType::new(
-                &self.event_type.unwrap_or_else(|| "test.event".to_string()),
-            ),
-            host: sinex_core_types::domain::HostName::new(&host),
-            payload: self.payload,
-            ts_orig: self.timestamp,
-            ingestor_version: None,
-            payload_schema_id: None,
-            source_event_ids: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            anchor_byte: None,
-            associated_blob_ids: None,
-        };
-        let event = repo.insert(new_event).await?;
-
-        Ok(event)
+        let repo = self.ctx.pool().events();
+        let new_event = Event::builder()
+            .source(
+                self.source
+                    .unwrap_or_else(|| EventSource::new("test".to_string())),
+            )
+            .event_type(
+                self.event_type
+                    .unwrap_or_else(|| EventType::new("test.event".to_string())),
+            )
+            .host(host)
+            .payload(self.payload)
+            .ts_orig(self.timestamp)
+            .build();
+        repo.insert(new_event).await
     }
 
     /// Build and insert multiple copies of this event
-    pub async fn insert_batch(self, count: usize) -> Result<Vec<RawEvent>> {
+    pub async fn insert_batch(self, count: usize) -> Result<Vec<Event>> {
         let ctx = self.ctx;
         let base_event = self.build()?;
         let mut events = Vec::with_capacity(count);
@@ -1168,7 +1178,7 @@ impl<'ctx> EventBuilder<'ctx> {
                 map.insert("batch_index".to_string(), json!(i));
             }
             // Generate new ULID for each event
-            event.id = sinex_ulid::Ulid::new();
+            event.id = Some(Id::<Event>::new());
 
             let inserted = ctx.insert_event_internal(&event).await?;
             events.push(inserted);
@@ -1210,29 +1220,32 @@ impl<'ctx> FilesystemEventBuilder<'ctx> {
 
     /// File created event (uses standard filesystem.file.created event type)
     pub fn created(mut self) -> Self {
-        self.inner.event_type = Some(event_types::filesystem::FILE_CREATED.to_string());
+        use sinex_events::FileCreatedPayload;
+        self.inner.event_type = Some(FileCreatedPayload::EVENT_TYPE);
         self
     }
 
     /// File modified event (uses standard filesystem.file.modified event type)
     pub fn modified(mut self) -> Self {
-        self.inner.event_type = Some(event_types::filesystem::FILE_MODIFIED.to_string());
+        use sinex_events::FileModifiedPayload;
+        self.inner.event_type = Some(FileModifiedPayload::EVENT_TYPE);
         self
     }
 
     /// File deleted event (uses standard filesystem.file.deleted event type)
     pub fn deleted(mut self) -> Self {
-        self.inner.event_type = Some(event_types::filesystem::FILE_DELETED.to_string());
+        use sinex_events::FileDeletedPayload;
+        self.inner.event_type = Some(FileDeletedPayload::EVENT_TYPE);
         self
     }
 
     /// Build event
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         self.inner.build()
     }
 
     /// Build and insert
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         self.inner.insert().await
     }
 }
@@ -1245,8 +1258,9 @@ pub struct TerminalEventBuilder<'ctx> {
 impl<'ctx> TerminalEventBuilder<'ctx> {
     /// Set command (uses standard shell.command.executed event type)
     pub fn command(mut self, cmd: impl Into<String>) -> Self {
+        use sinex_events::KittyCommandExecutedPayload;
         self.inner.payload["command"] = json!(cmd.into());
-        self.inner.event_type = Some(event_types::shell::COMMAND_EXECUTED.to_string());
+        self.inner.event_type = Some(KittyCommandExecutedPayload::EVENT_TYPE);
         self
     }
 
@@ -1287,12 +1301,12 @@ impl<'ctx> TerminalEventBuilder<'ctx> {
     }
 
     /// Build event
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         self.inner.build()
     }
 
     /// Build and insert  
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         self.inner.insert().await
     }
 }
@@ -1335,21 +1349,24 @@ impl<'ctx> AgentEventBuilder<'ctx> {
 
     /// Heartbeat event
     pub fn heartbeat(mut self) -> Self {
-        self.inner.event_type = Some("processor.heartbeat".to_string());
+        use sinex_events::ProcessHeartbeatPayload;
+        self.inner.event_type = Some(ProcessHeartbeatPayload::EVENT_TYPE);
         self.inner.payload["status"] = json!("running");
         self
     }
 
     /// Startup event
     pub fn startup(mut self) -> Self {
-        self.inner.event_type = Some("processor.startup".to_string());
+        use sinex_events::ProcessStartedPayload;
+        self.inner.event_type = Some(ProcessStartedPayload::EVENT_TYPE);
         self.inner.payload["status"] = json!("starting");
         self
     }
 
     /// Error event
     pub fn error(mut self, error_msg: impl Into<String>) -> Self {
-        self.inner.event_type = Some("processor.error".to_string());
+        use sinex_events::AutomatonErrorPayload;
+        self.inner.event_type = Some(AutomatonErrorPayload::EVENT_TYPE);
         self.inner.payload["status"] = json!("error");
         self.inner.payload["error_message"] = json!(error_msg.into());
         self
@@ -1362,12 +1379,12 @@ impl<'ctx> AgentEventBuilder<'ctx> {
     }
 
     /// Build event
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         self.inner.build()
     }
 
     /// Build and insert
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         self.inner.insert().await
     }
 }
@@ -1377,8 +1394,8 @@ pub struct EventQuery<'ctx> {
     ctx: &'ctx TestContext,
     source_filter: Option<String>,
     type_filter: Option<String>,
-    id_filter: Option<sinex_ulid::Ulid>,
-    ids_filter: Option<Vec<sinex_ulid::Ulid>>,
+    id_filter: Option<Id<Event>>,
+    ids_filter: Option<Vec<Id<Event>>>,
     after_filter: Option<DateTime<Utc>>,
     limit_value: Option<i64>,
     offset_value: Option<i64>,
@@ -1411,13 +1428,13 @@ impl<'ctx> EventQuery<'ctx> {
     }
 
     /// Filter by ID
-    pub fn by_id(mut self, id: sinex_ulid::Ulid) -> Self {
+    pub fn by_id(mut self, id: Id<Event>) -> Self {
         self.id_filter = Some(id);
         self
     }
 
     /// Filter by multiple IDs
-    pub fn by_ids(mut self, ids: Vec<sinex_ulid::Ulid>) -> Self {
+    pub fn by_ids(mut self, ids: Vec<Id<Event>>) -> Self {
         self.ids_filter = Some(ids);
         self
     }
@@ -1441,8 +1458,8 @@ impl<'ctx> EventQuery<'ctx> {
     }
 
     /// Fetch all matching events
-    pub async fn fetch(self) -> Result<Vec<RawEvent>> {
-        let repo = EventRepository::new(self.ctx.pool());
+    pub async fn fetch(self) -> Result<Vec<Event>> {
+        let repo = self.ctx.pool().events();
 
         // Handle single ID filter
         if let Some(id) = self.id_filter {
@@ -1463,35 +1480,34 @@ impl<'ctx> EventQuery<'ctx> {
 
         // Handle other filters
         if let Some(source) = self.source_filter {
+            let event_source = sinex_types::domain::EventSource::new(&source);
             repo.get_by_source(
-                &source,
-                self.limit_value.unwrap_or(100),
-                self.offset_value.unwrap_or(0),
+                &event_source,
+                Some(self.limit_value.unwrap_or(100) as i64),
+                Some(self.offset_value.unwrap_or(0) as i64),
             )
             .await
             .map_err(Into::into)
         } else if let Some(event_type) = self.type_filter {
+            let event_type_typed = sinex_types::domain::EventType::new(&event_type);
             repo.get_by_event_type(
-                &event_type,
-                self.limit_value.unwrap_or(100),
-                self.offset_value.unwrap_or(0),
+                &event_type_typed,
+                Some(self.limit_value.unwrap_or(100) as i64),
+                Some(self.offset_value.unwrap_or(0) as i64),
             )
             .await
             .map_err(Into::into)
         } else {
-            repo.get_recent(
-                self.limit_value.unwrap_or(100),
-                self.offset_value.unwrap_or(0),
-            )
-            .await
-            .map_err(Into::into)
+            repo.get_recent(self.limit_value.unwrap_or(100) as i64)
+                .await
+                .map_err(Into::into)
         }
     }
 
     /// Fetch single event
-    pub async fn fetch_one(self) -> Result<Option<RawEvent>> {
+    pub async fn fetch_one(self) -> Result<Option<Event>> {
         if let Some(id) = self.id_filter {
-            let repo = EventRepository::new(self.ctx.pool());
+            let repo = self.ctx.pool().events();
             repo.get_by_id(id).await.map_err(Into::into)
         } else {
             let mut results = self.limit(1).fetch().await?;
@@ -1501,12 +1517,16 @@ impl<'ctx> EventQuery<'ctx> {
 
     /// Count matching events
     pub async fn count(self) -> Result<i64> {
-        let repo = EventRepository::new(self.ctx.pool());
+        let repo = self.ctx.pool().events();
 
         if let Some(source) = self.source_filter {
-            repo.count_by_source(&source).await.map_err(Into::into)
+            let event_source = sinex_types::domain::EventSource::new(&source);
+            repo.count_by_source(&event_source)
+                .await
+                .map_err(Into::into)
         } else if let Some(event_type) = self.type_filter {
-            repo.count_by_event_type(&event_type)
+            let event_type_typed = sinex_types::domain::EventType::new(&event_type);
+            repo.count_by_event_type(&event_type_typed)
                 .await
                 .map_err(Into::into)
         } else {
@@ -1520,7 +1540,7 @@ pub struct CheckpointBuilder<'ctx> {
     ctx: &'ctx TestContext,
     processor_name: Option<String>,
     processed_count: Option<i64>,
-    last_event_id: Option<sinex_ulid::Ulid>,
+    last_event_id: Option<sinex_types::ulid::Ulid>,
     status: Option<String>,
     metadata: Option<serde_json::Value>,
 }
@@ -1550,7 +1570,7 @@ impl<'ctx> CheckpointBuilder<'ctx> {
     }
 
     /// Set last processed event ID
-    pub fn last_event_id(mut self, id: sinex_ulid::Ulid) -> Self {
+    pub fn last_event_id(mut self, id: sinex_types::ulid::Ulid) -> Self {
         self.last_event_id = Some(id);
         self
     }
@@ -1568,11 +1588,11 @@ impl<'ctx> CheckpointBuilder<'ctx> {
     }
 
     /// Insert checkpoint
-    pub async fn insert(self) -> Result<sinex_ulid::Ulid> {
+    pub async fn insert(self) -> Result<sinex_types::ulid::Ulid> {
         let processor_name = self
             .processor_name
             .unwrap_or_else(|| "test-processor".to_string());
-        let checkpoint_id = sinex_ulid::Ulid::new();
+        let checkpoint_id = sinex_types::ulid::Ulid::new();
 
         sqlx::query!(
             r#"
@@ -1580,11 +1600,11 @@ impl<'ctx> CheckpointBuilder<'ctx> {
                 (id, processor_name, consumer_group, consumer_name, last_processed_id, processed_count, created_at, updated_at)
             VALUES ($1, $2, $3, $4, $5, $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             "#,
-            checkpoint_id as sinex_ulid::Ulid,
+            checkpoint_id as sinex_types::ulid::Ulid,
             processor_name,
             "default",
             "default",
-            self.last_event_id as Option<sinex_ulid::Ulid>,
+            self.last_event_id as Option<sinex_types::ulid::Ulid>,
             self.processed_count.unwrap_or(0)
         )
         .execute(self.ctx.pool())
@@ -1610,13 +1630,13 @@ pub struct CheckpointRecord {
 
 impl CheckpointRecord {
     /// Get ID as ULID
-    pub fn ulid_id(&self) -> sinex_ulid::Ulid {
-        sinex_ulid::Ulid::from(self.id)
+    pub fn ulid_id(&self) -> sinex_types::ulid::Ulid {
+        sinex_types::ulid::Ulid::from(self.id)
     }
 
     /// Get last processed ID as ULID
-    pub fn ulid_last_processed_id(&self) -> Option<sinex_ulid::Ulid> {
-        self.last_processed_id.map(sinex_ulid::Ulid::from)
+    pub fn ulid_last_processed_id(&self) -> Option<sinex_types::ulid::Ulid> {
+        self.last_processed_id.map(sinex_types::ulid::Ulid::from)
     }
 }
 
@@ -1720,20 +1740,29 @@ impl<'ctx> SchemaTestUtils<'ctx> {
         source: &str,
         event_type: &str,
         schema: Value,
-    ) -> Result<sinex_ulid::Ulid> {
+    ) -> Result<sinex_types::ulid::Ulid> {
         // Store schema in database using sinex_schemas.event_payload_schemas table
         let schema_name = format!("test_{}_{}", source, event_type.replace(".", "_"));
         let schema_version = "1.0.0";
 
+        // Compute content hash
+        let schema_text = serde_json::to_string(&schema)
+            .map_err(|e| SinexError::database(format!("Failed to serialize schema: {}", e)))?;
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(&schema_text);
+        let content_hash = format!("{:x}", hasher.finalize());
+
         let result = sqlx::query!(
             r#"
             INSERT INTO sinex_schemas.event_payload_schemas 
-                (schema_name, schema_version, schema_content, event_types, description, is_active)
+                (schema_name, schema_version, schema_content, event_types, description, is_active, source, event_type, content_hash)
             VALUES 
-                ($1, $2, $3, $4, $5, true)
-            ON CONFLICT (schema_name, schema_version) 
+                ($1, $2, $3, $4, $5, true, $6, $7, $8)
+            ON CONFLICT (source, event_type, schema_version) 
             DO UPDATE SET 
                 schema_content = EXCLUDED.schema_content,
+                content_hash = EXCLUDED.content_hash,
                 updated_at = NOW()
             RETURNING id::text as "id!: String"
             "#,
@@ -1742,13 +1771,16 @@ impl<'ctx> SchemaTestUtils<'ctx> {
             schema,
             &vec![event_type.to_string()],
             format!("Test schema for {} events", event_type),
+            source,
+            event_type,
+            content_hash,
         )
         .fetch_one(self.ctx.pool())
         .await
         .map_err(|e| SinexError::database(format!("Failed to register schema: {}", e)))?;
 
         // Parse the returned ID back to ULID
-        let returned_id = sinex_ulid::Ulid::from_str(&result.id)
+        let returned_id = sinex_types::ulid::Ulid::from_str(&result.id)
             .map_err(|e| SinexError::database(format!("Invalid ULID returned: {}", e)))?;
 
         Ok(returned_id)
@@ -1781,7 +1813,7 @@ impl<'ctx> SchemaTestUtils<'ctx> {
     }
 
     /// Validate event and return detailed error if invalid
-    pub async fn validate(&self, event: &RawEvent, schema_id: sinex_ulid::Ulid) -> Result<()> {
+    pub async fn validate(&self, event: &Event, schema_id: sinex_types::ulid::Ulid) -> Result<()> {
         // Fetch the schema directly and validate using json_matches_schema
         let schema_result = sqlx::query!(
             r#"
@@ -1829,7 +1861,11 @@ impl<'ctx> SchemaTestUtils<'ctx> {
     }
 
     /// Assert that event validates successfully
-    pub async fn assert_valid(&self, event: &RawEvent, schema_id: sinex_ulid::Ulid) -> Result<()> {
+    pub async fn assert_valid(
+        &self,
+        event: &Event,
+        schema_id: sinex_types::ulid::Ulid,
+    ) -> Result<()> {
         self.validate(event, schema_id).await.map_err(|e| {
             SinexError::validation(format!(
                 "Expected event to be valid but validation failed: {}",
@@ -1841,8 +1877,8 @@ impl<'ctx> SchemaTestUtils<'ctx> {
     /// Assert that event validation fails
     pub async fn assert_invalid(
         &self,
-        event: &RawEvent,
-        schema_id: sinex_ulid::Ulid,
+        event: &Event,
+        schema_id: sinex_types::ulid::Ulid,
     ) -> Result<()> {
         match self.validate(event, schema_id).await {
             Ok(()) => Err(SinexError::validation(
@@ -1856,12 +1892,12 @@ impl<'ctx> SchemaTestUtils<'ctx> {
 /// Validated event builder - ensures schema validation before insertion
 pub struct ValidatedEventBuilder<'ctx> {
     ctx: &'ctx TestContext,
-    schema_id: sinex_ulid::Ulid,
+    schema_id: sinex_types::ulid::Ulid,
     event_builder: EventBuilder<'ctx>,
 }
 
 impl<'ctx> ValidatedEventBuilder<'ctx> {
-    fn new(ctx: &'ctx TestContext, schema_id: sinex_ulid::Ulid) -> Self {
+    fn new(ctx: &'ctx TestContext, schema_id: sinex_types::ulid::Ulid) -> Self {
         Self {
             ctx,
             schema_id,
@@ -1870,13 +1906,13 @@ impl<'ctx> ValidatedEventBuilder<'ctx> {
     }
 
     /// Set event source
-    pub fn source(mut self, source: impl Into<String>) -> Self {
+    pub fn source(mut self, source: impl Into<EventSource>) -> Self {
         self.event_builder = self.event_builder.source(source);
         self
     }
 
     /// Set event type
-    pub fn type_(mut self, event_type: impl Into<String>) -> Self {
+    pub fn type_(mut self, event_type: impl Into<EventType>) -> Self {
         self.event_builder = self.event_builder.type_(event_type);
         self
     }
@@ -1888,14 +1924,14 @@ impl<'ctx> ValidatedEventBuilder<'ctx> {
     }
 
     /// Build event with validation
-    pub async fn build(self) -> Result<RawEvent> {
+    pub async fn build(self) -> Result<Event> {
         let event = self.event_builder.build()?;
         self.ctx.schema().validate(&event, self.schema_id).await?;
         Ok(event)
     }
 
     /// Build and insert event with validation
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         let ctx = self.ctx;
         let event = self.build().await?;
         ctx.insert_event_internal(&event).await
@@ -1903,19 +1939,21 @@ impl<'ctx> ValidatedEventBuilder<'ctx> {
 
     /// Filesystem-specific builder (uses production constants)
     pub fn filesystem(mut self) -> Self {
+        use sinex_events::FileCreatedPayload;
         self.event_builder = self
             .event_builder
-            .source(sources::FS)
-            .type_(event_types::filesystem::FILE_CREATED);
+            .source(FileCreatedPayload::SOURCE)
+            .type_(FileCreatedPayload::EVENT_TYPE);
         self
     }
 
     /// Terminal-specific builder (uses production constants)  
     pub fn terminal(mut self) -> Self {
+        use sinex_events::KittyCommandExecutedPayload;
         self.event_builder = self
             .event_builder
-            .source(sources::SHELL_KITTY)
-            .type_(event_types::shell::COMMAND_EXECUTED);
+            .source(KittyCommandExecutedPayload::SOURCE)
+            .type_(KittyCommandExecutedPayload::EVENT_TYPE);
         self
     }
 }
@@ -1969,7 +2007,7 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Event-specific equality with field-by-field comparison
-    pub fn event_eq(self, actual: &RawEvent, expected: &RawEvent) -> Result<Self> {
+    pub fn event_eq(self, actual: &Event, expected: &Event) -> Result<Self> {
         // Check each field individually for better error messages
         if actual.source != expected.source {
             return Err(SinexError::validation(format!(
@@ -2000,9 +2038,11 @@ impl<'ctx> ContextualAssert<'ctx> {
     }
 
     /// Assert that event insertion succeeds
-    pub async fn event_inserts(self, event: &RawEvent) -> Result<sinex_ulid::Ulid> {
+    pub async fn event_inserts(self, event: &Event) -> Result<Id<Event>> {
         match self.ctx.insert_event_internal(event).await {
-            Ok(inserted) => Ok(inserted.id),
+            Ok(inserted) => inserted
+                .id
+                .ok_or_else(|| SinexError::validation("Inserted event has no ID")),
             Err(e) => Err(SinexError::validation(format!(
                 "Event insertion failed in '{}': {} (source: {}, type: {})",
                 self.context, e, event.source, event.event_type,
@@ -2122,23 +2162,26 @@ impl<'ctx> ClipboardEventBuilder<'ctx> {
 
     /// Clipboard copy event
     pub fn copied(mut self) -> Self {
-        self.inner.event_type = Some("clipboard.copied".to_string());
+        use sinex_events::ClipboardCopiedPayload;
+        self.inner.event_type = Some(ClipboardCopiedPayload::EVENT_TYPE);
         self
     }
 
     /// Clipboard paste event
     pub fn pasted(mut self) -> Self {
-        self.inner.event_type = Some("clipboard.pasted".to_string());
+        // TODO: Create ClipboardPastedPayload when needed
+        use sinex_types::domain::EventType;
+        self.inner.event_type = Some(EventType::from_static("clipboard.pasted"));
         self
     }
 
     /// Build event
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         self.inner.build()
     }
 
     /// Build and insert
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         self.inner.insert().await
     }
 }
@@ -2175,29 +2218,32 @@ impl<'ctx> WindowEventBuilder<'ctx> {
 
     /// Window focused event
     pub fn focused(mut self) -> Self {
-        self.inner.event_type = Some("window.focused".to_string());
+        use sinex_events::HyprlandWindowFocusedPayload;
+        self.inner.event_type = Some(HyprlandWindowFocusedPayload::EVENT_TYPE);
         self
     }
 
     /// Window created event
     pub fn created(mut self) -> Self {
-        self.inner.event_type = Some("window.created".to_string());
+        use sinex_events::HyprlandWindowOpenedPayload;
+        self.inner.event_type = Some(HyprlandWindowOpenedPayload::EVENT_TYPE);
         self
     }
 
     /// Window closed event
     pub fn closed(mut self) -> Self {
-        self.inner.event_type = Some("window.closed".to_string());
+        use sinex_events::HyprlandWindowClosedPayload;
+        self.inner.event_type = Some(HyprlandWindowClosedPayload::EVENT_TYPE);
         self
     }
 
     /// Build event
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         self.inner.build()
     }
 
     /// Build and insert
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         self.inner.insert().await
     }
 }
@@ -2228,35 +2274,41 @@ impl<'ctx> SystemEventBuilder<'ctx> {
 
     /// Service started event
     pub fn started(mut self) -> Self {
-        self.inner.event_type = Some("service.started".to_string());
+        use sinex_events::SystemdUnitStartedPayload;
+        self.inner.event_type = Some(SystemdUnitStartedPayload::EVENT_TYPE);
         self
     }
 
     /// Service stopped event
     pub fn stopped(mut self) -> Self {
-        self.inner.event_type = Some("service.stopped".to_string());
+        use sinex_events::SystemdUnitStoppedPayload;
+        self.inner.event_type = Some(SystemdUnitStoppedPayload::EVENT_TYPE);
         self
     }
 
     /// Service failed event
     pub fn failed(mut self) -> Self {
-        self.inner.event_type = Some("service.failed".to_string());
+        // TODO: Create SystemdUnitFailedPayload when needed
+        use sinex_types::domain::EventType;
+        self.inner.event_type = Some(EventType::from_static("unit.failed"));
         self
     }
 
     /// System boot event
     pub fn boot(mut self) -> Self {
-        self.inner.event_type = Some("system.boot".to_string());
+        // TODO: Create SystemBootPayload when needed
+        use sinex_types::domain::EventType;
+        self.inner.event_type = Some(EventType::from_static("system.boot"));
         self
     }
 
     /// Build event
-    pub fn build(self) -> Result<RawEvent> {
+    pub fn build(self) -> Result<Event> {
         self.inner.build()
     }
 
     /// Build and insert
-    pub async fn insert(self) -> Result<RawEvent> {
+    pub async fn insert(self) -> Result<Event> {
         self.inner.insert().await
     }
 }
@@ -2291,8 +2343,10 @@ mod tests {
             .await?;
 
         // Each context should only see its own event
-        ctx.assert_event_exists(event1.id).await?;
-        ctx2.assert_event_exists(event2.id).await?;
+        ctx.assert_event_exists(event1.id.expect("Event must have ID"))
+            .await?;
+        ctx2.assert_event_exists(event2.id.expect("Event must have ID"))
+            .await?;
 
         // First context should not see second context's event
         let ctx1_events = ctx.events().fetch().await?;
@@ -2326,8 +2380,8 @@ mod tests {
             .await?;
 
         // Verify all fields
-        assert_eq!(event.source, "test_source");
-        assert_eq!(event.event_type, "test.type");
+        assert_eq!(event.source.as_str(), "test_source");
+        assert_eq!(event.event_type.as_str(), "test.type");
         assert_eq!(event.payload["string"], json!("value"));
         assert_eq!(event.payload["number"], json!(42));
         assert_eq!(event.payload["boolean"], json!(true));
@@ -2350,8 +2404,9 @@ mod tests {
             .insert()
             .await?;
 
-        assert_eq!(fs_event.source, sources::FS);
-        assert_eq!(fs_event.event_type, event_types::filesystem::FILE_CREATED);
+        use sinex_events::FileCreatedPayload;
+        assert_eq!(fs_event.source, FileCreatedPayload::SOURCE);
+        assert_eq!(fs_event.event_type, FileCreatedPayload::EVENT_TYPE);
         assert_eq!(fs_event.payload["path"], json!("/test/file.txt"));
         assert_eq!(fs_event.payload["size"], json!(1024));
 
@@ -2366,8 +2421,12 @@ mod tests {
             .insert()
             .await?;
 
-        assert_eq!(term_event.source, sources::SHELL_KITTY);
-        assert_eq!(term_event.event_type, event_types::shell::COMMAND_EXECUTED);
+        use sinex_events::KittyCommandExecutedPayload;
+        assert_eq!(term_event.source, KittyCommandExecutedPayload::SOURCE);
+        assert_eq!(
+            term_event.event_type,
+            KittyCommandExecutedPayload::EVENT_TYPE
+        );
         assert_eq!(term_event.payload["command"], json!("ls -la"));
         assert_eq!(term_event.payload["exit_code"], json!(0));
 
@@ -2383,8 +2442,9 @@ mod tests {
             .insert()
             .await?;
 
-        assert_eq!(agent_event.source, sources::SINEX);
-        assert_eq!(agent_event.event_type, "processor.heartbeat");
+        use sinex_events::ProcessHeartbeatPayload;
+        assert_eq!(agent_event.source, ProcessHeartbeatPayload::SOURCE);
+        assert_eq!(agent_event.event_type, ProcessHeartbeatPayload::EVENT_TYPE);
         assert_eq!(agent_event.payload["agent_name"], json!("test-processor"));
         assert_eq!(agent_event.payload["version"], json!("1.0.0"));
 
@@ -2510,7 +2570,7 @@ mod tests {
         assert_eq!(events.len(), 5);
 
         // Test insert_events with pre-built events
-        let pre_built: Vec<RawEvent> = (0..3)
+        let pre_built: Vec<Event> = (0..3)
             .map(|i| {
                 ctx.event()
                     .source("pre_built")
@@ -2693,15 +2753,6 @@ mod tests {
 
         Ok(())
     }
-
-    // Removed test_context_provides_isolation - duplicate of test_contexts_are_isolated
-    // Removed test_context_tracks_event_count - functionality tested in other tests
-    // Removed test_context_timing_measurement - covered by test_timing_utilities
-
-    // Merged test_assertion_helpers and test_assertion_api into comprehensive test above
-
-    // Merged test_query_builder_chaining and test_query_builder_flexibility
-    // into test_query_builder_chains above
 
     #[sinex_test]
     async fn test_multiple_schemas(ctx: TestContext) -> Result<()> {
@@ -2908,7 +2959,7 @@ mod benches {
     //         .await?;
     //
     //     // Measure the count query
-    //     use sinex_db::repositories::{EventRepository, Repository};
+    //     use sinex_db::repositories::{DbPoolExt, EventRepository};
     //     let (count,) = EventQueries::count_all()
     //         .fetch_one::<(i64,)>(ctx.pool())
     //         .await?;
@@ -2921,7 +2972,7 @@ mod benches {
     //     ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
     //         .await?;
     //
-    //     use sinex_db::repositories::{EventRepository, Repository};
+    //     use sinex_db::repositories::{DbPoolExt, EventRepository};
     //     let events = EventQueries::get_recent(Some(10), None)
     //         .fetch_all::<sinex_db::events::EventRecord>(ctx.pool())
     //         .await?;
@@ -2934,7 +2985,7 @@ mod benches {
     //     ctx.query_bench(crate::static_fixtures::DatasetSize::Small)
     //         .await?;
     //
-    //     use sinex_db::repositories::{EventRepository, Repository};
+    //     use sinex_db::repositories::{DbPoolExt, EventRepository};
     //     let events = EventQueries::get_by_event_type("file.created".to_string(), Some(100), None)
     //         .fetch_all::<sinex_db::events::EventRecord>(ctx.pool())
     //         .await?;

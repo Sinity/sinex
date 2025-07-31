@@ -7,11 +7,9 @@ repository.workspace = true
 license.workspace = true
 
 [dependencies]
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-types = { path = "../sinex-types" }
 sinex-db = { path = "../sinex-db" }
 sinex-services = { path = "../sinex-services" }
-sinex-ulid = { path = "../sinex-ulid" }
 sinex-annex = { path = "../sinex-annex" }
 sinex-telemetry = { path = "../sinex-telemetry" }
 sinex-events = { path = "../sinex-events" }

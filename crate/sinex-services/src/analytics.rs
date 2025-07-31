@@ -1,10 +1,7 @@
 //! Analytics service for event analysis and insights
 
 use crate::error::ServiceResult;
-use sinex_db::{
-    repositories::{EventRepository, Repository, SourceActivity},
-    DbPool,
-};
+use sinex_db::{repositories::DbPoolExt, DbPool};
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
 use std::collections::HashMap;
@@ -26,11 +23,9 @@ impl AnalyticsService {
     ) -> ServiceResult<HashMap<String, i64>> {
         let mut result = HashMap::new();
 
-        let repo = EventRepository::new(&self.pool);
-
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = repo.get_source_activity(start).await?;
+                let rows = self.pool.events().get_source_activity(start).await?;
 
                 for row in rows {
                     // Filter by end time on client side
@@ -44,7 +39,7 @@ impl AnalyticsService {
             _ => {
                 // For all-time stats, use a timestamp far in the past
                 let very_old = DateTime::from_timestamp(0, 0).unwrap();
-                let rows = repo.get_source_activity(very_old).await?;
+                let rows = self.pool.events().get_source_activity(very_old).await?;
 
                 for row in rows {
                     result.insert(row.source, row.event_count);
@@ -65,16 +60,18 @@ impl AnalyticsService {
 
         match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let repo = EventRepository::new(&self.pool);
-                let rows = repo.count_by_type_in_range(start, end).await?;
+                let rows = self
+                    .pool
+                    .events()
+                    .count_by_type_in_range(start, end)
+                    .await?;
 
                 for row in rows {
                     result.insert(row.event_type, row.count);
                 }
             }
             _ => {
-                let repo = EventRepository::new(&self.pool);
-                let rows = repo.count_by_type_all_time().await?;
+                let rows = self.pool.events().count_by_type_all_time().await?;
 
                 for row in rows {
                     result.insert(row.event_type, row.count);
@@ -98,8 +95,9 @@ impl AnalyticsService {
             microseconds: interval_minutes as i64 * 60 * 1_000_000,
         };
 
-        let repo = EventRepository::new(&self.pool);
-        let rows = repo
+        let rows = self
+            .pool
+            .events()
             .get_events_over_time(start_time, end_time, interval)
             .await?;
 
@@ -115,10 +113,19 @@ impl AnalyticsService {
     ) -> ServiceResult<Vec<(String, i64)>> {
         let mut result = Vec::new();
 
-        let repo = EventRepository::new(&self.pool);
         let commands = match (start_time, end_time) {
-            (Some(start), Some(end)) => repo.top_commands(start, end, limit as i64).await?,
-            _ => repo.top_commands_all_time(limit as i64).await?,
+            (Some(start), Some(end)) => {
+                self.pool
+                    .events()
+                    .top_commands(start, end, limit as i64)
+                    .await?
+            }
+            _ => {
+                self.pool
+                    .events()
+                    .top_commands_all_time(limit as i64)
+                    .await?
+            }
         };
 
         for cmd_count in commands {
@@ -140,8 +147,11 @@ impl AnalyticsService {
             microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
         };
 
-        let repo = EventRepository::new(&self.pool);
-        let rows = repo.get_activity_heatmap(interval, limit as i64).await?;
+        let rows = self
+            .pool
+            .events()
+            .get_activity_heatmap(interval, limit as i64)
+            .await?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
     }

@@ -7,10 +7,8 @@
 
 use crate::prelude::*;
 use crate::Result;
-use sinex_core_types::DbPool;
-use sinex_core_utils::coordination::CoordinationPrimitive; // Use production primitives
-use sinex_db::repositories::{EventRepository, Repository};
-use sinex_error::SinexError;
+use sinex_db::repositories::DbPoolExt;
+use sinex_types::{utils::coordination::CoordinationPrimitive, DbPool, SinexError}; // Use production primitives from sinex-types
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -156,9 +154,11 @@ impl WaitHelpers {
         timeout_secs: u64,
     ) -> Result<usize> {
         let pool = pool.clone(); // Clone for closure
-        sinex_core_utils::wait_for_condition_adaptive(
+        sinex_types::utils::wait_for_condition_adaptive(
             || async {
-                let count = sinex_db::count_events(&pool)
+                let count = pool
+                    .events()
+                    .count_all()
                     .await
                     .map_err(|e| SinexError::database(e.to_string()))?
                     as usize;
@@ -177,7 +177,9 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let final_count = sinex_db::count_events(&pool)
+        let final_count = pool
+            .events()
+            .count_all()
             .await
             .map_err(|e| SinexError::database(e.to_string()))? as usize;
         Ok(final_count)
@@ -193,10 +195,10 @@ impl WaitHelpers {
         let pool = pool.clone(); // Clone for closure
         let source = source.to_string(); // Clone for closure
 
-        sinex_core_utils::wait_for_condition_adaptive(
+        sinex_types::utils::wait_for_condition_adaptive(
             || async {
-                let repo = EventRepository::new(&pool);
-                let count = repo.count_by_source(&source).await?;
+                let event_source = sinex_types::domain::EventSource::new(&source);
+                let count = pool.events().count_by_source(&event_source).await?;
                 Ok(count as usize >= expected_count)
             },
             timeout_secs,
@@ -213,8 +215,8 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let repo = EventRepository::new(&pool);
-        let final_count = repo.count_by_source(&source).await?;
+        let event_source = sinex_types::domain::EventSource::new(&source);
+        let final_count = pool.events().count_by_source(&event_source).await?;
         Ok(final_count as usize)
     }
 
@@ -224,7 +226,7 @@ impl WaitHelpers {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
     {
-        sinex_core_utils::wait_for_condition_adaptive(
+        sinex_types::utils::wait_for_condition_adaptive(
             || async { condition().await },
             timeout_secs,
             "custom test condition",
@@ -260,7 +262,7 @@ impl WaitHelpers {
             }));
         }
 
-        sinex_core_utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
+        sinex_types::utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
             .await
             .map_err(|e| {
                 SinexError::timeout("Multiple conditions wait failed")

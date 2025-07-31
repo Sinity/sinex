@@ -3,8 +3,10 @@
 // This module provides testing utilities for async channel patterns using the new
 // channel extension traits, backpressure management, and monitoring capabilities.
 
+use crate::channel_helpers::{
+    BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt,
+};
 use crate::prelude::*;
-use sinex_channel::{BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt};
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

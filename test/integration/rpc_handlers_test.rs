@@ -5,7 +5,7 @@
 // and JSON-RPC 2.0 specification compliance.
 
 use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use serde_json::{json, Value};
 use sinex_gateway::service_container::ServiceContainer;
 use sinex_gateway::handlers::{

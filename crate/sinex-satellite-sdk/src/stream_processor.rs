@@ -40,10 +40,10 @@ use crate::{
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_db::models::Event;
 use sinex_db::SqlxPgPool as PgPool;
-use sinex_events::RawEvent;
 use sinex_telemetry::telemetry::TelemetryAccumulator;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -125,7 +125,7 @@ impl TimeHorizon {
 /// # Examples
 /// ```
 /// use sinex_satellite_sdk::Checkpoint;
-/// use sinex_ulid::Ulid;
+/// use sinex_types::ulid::Ulid;
 /// use chrono::Utc;
 ///
 /// // External checkpoint for file position
@@ -281,10 +281,10 @@ impl Checkpoint {
 }
 
 /// Stream of events produced by scanning operations
-pub type EventStream = mpsc::UnboundedReceiver<RawEvent>;
+pub type EventStream = mpsc::UnboundedReceiver<Event>;
 
 /// Sender for events during scanning operations
-pub type EventSender = mpsc::UnboundedSender<RawEvent>;
+pub type EventSender = mpsc::UnboundedSender<Event>;
 
 /// Scan operation arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -396,8 +396,11 @@ impl std::fmt::Debug for StreamProcessorContext {
 
 impl StreamProcessorContext {
     /// Send an event through the event channel
-    #[sinex_macros::auto_event_metrics(event_type = "emit")]
-    pub async fn emit_event(&self, event: RawEvent) -> SatelliteResult<()> {
+    #[cfg_attr(
+        feature = "macros",
+        sinex_macros::auto_event_metrics(event_type = "emit")
+    )]
+    pub async fn emit_event(&self, event: Event) -> SatelliteResult<()> {
         let start = std::time::Instant::now();
         let event_type = event.event_type.clone();
 
@@ -429,7 +432,7 @@ impl StreamProcessorContext {
     }
 
     /// Send multiple events through the event channel
-    pub async fn emit_events(&self, events: Vec<RawEvent>) -> SatelliteResult<()> {
+    pub async fn emit_events(&self, events: Vec<Event>) -> SatelliteResult<()> {
         for event in events {
             self.emit_event(event).await?;
         }
@@ -444,8 +447,8 @@ impl StreamProcessorContext {
 /// data sources and processing logic.
 ///
 /// # Architecture
-/// - **Ingestors**: External World → RawEvent Stream (e.g., file watchers, log parsers)
-/// - **Automata**: RawEvent Stream → DerivedEvent Stream (e.g., command canonicalizers)
+/// - **Ingestors**: External World → Event Stream (e.g., file watchers, log parsers)
+/// - **Automata**: Event Stream → DerivedEvent Stream (e.g., command canonicalizers)
 ///
 /// # Implementation Notes
 /// - Implementations must be thread-safe (`Send + Sync`)
@@ -563,9 +566,9 @@ pub trait StatefulStreamProcessor: Send + Sync {
 /// Type of stream processor
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ProcessorType {
-    /// Ingestor: External World -> RawEvent Stream
+    /// Ingestor: External World -> Event Stream
     Ingestor,
-    /// Automaton: RawEvent Stream -> DerivedEvent Stream
+    /// Automaton: Event Stream -> DerivedEvent Stream
     Automaton,
 }
 
@@ -667,7 +670,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create event channel
-        let (event_sender, _event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        let (event_sender, _event_receiver) = mpsc::unbounded_channel::<Event>();
 
         // Create shutdown channel
         let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -687,7 +690,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(100);
+            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<Event>(100);
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();

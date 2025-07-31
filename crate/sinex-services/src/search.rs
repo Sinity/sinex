@@ -3,7 +3,7 @@
 use crate::error::ServiceResult;
 use serde::{Deserialize, Serialize};
 use sinex_db::DbPool;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use sqlx::types::chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

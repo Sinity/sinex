@@ -5,9 +5,9 @@
 
 use chrono::{DateTime, Utc};
 use sinex_db::{queries::checkpoints::CheckpointQueries, query_helpers::ulid_to_uuid};
-use sinex_error::{Error, ErrorContext};
+use sinex_types::error::{Error, ErrorContext};
 use sinex_test_utils::prelude::*;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use sqlx::PgPool;
 use std::str::FromStr;
 

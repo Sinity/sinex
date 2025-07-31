@@ -38,7 +38,7 @@ use crate::db_common;
 use anyhow::Result;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use sinex_core_types::DbPool;
+use sinex_types::DbPool;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

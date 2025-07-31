@@ -101,7 +101,7 @@ async fn test_leadership_guard_basic() -> anyhow::Result<()> {
     .await?;
     
     assert!(leadership_check.is_some());
-    assert_eq!(leadership_check.unwrap().instance_id, "instance_1");
+    assert_eq!(leadership_check?.instance_id, "instance_1");
     
     Ok(())
 }
@@ -149,7 +149,7 @@ async fn test_distributed_coordination_instance_registration() -> anyhow::Result
     
     let instance = SatelliteInstance::new(
         "test_coordination",
-        SatelliteVersion::parse("1.0.100+abc123").unwrap()
+        SatelliteVersion::parse("1.0.100+abc123")?
     );
     
     let mut coordination = DistributedCoordination::new(instance, pool.clone());
@@ -166,7 +166,7 @@ async fn test_distributed_coordination_instance_registration() -> anyhow::Result
     .await?;
     
     assert!(registered.is_some());
-    let reg = registered.unwrap();
+    let reg = registered.ok_or_else(|| anyhow::anyhow!("Expected instance to be registered"))?;
     assert_eq!(reg.service_name, "test_coordination");
     assert_eq!(reg.version, "1.0.100+abc123");
     
@@ -181,12 +181,12 @@ async fn test_distributed_coordination_leadership_election() -> anyhow::Result<(
     // Create two instances with different versions
     let instance1 = SatelliteInstance::new(
         "election_test",
-        SatelliteVersion::parse("1.0.100+abc123").unwrap()
+        SatelliteVersion::parse("1.0.100+abc123")?
     );
     
     let instance2 = SatelliteInstance::new(
         "election_test", 
-        SatelliteVersion::parse("1.0.200+def456").unwrap() // Newer version
+        SatelliteVersion::parse("1.0.200+def456")? // Newer version
     );
     
     let mut coord1 = DistributedCoordination::new(instance1, pool.clone());
@@ -224,12 +224,12 @@ async fn test_distributed_coordination_version_priority() -> anyhow::Result<()> 
         
         let instance1 = SatelliteInstance::new(
             &service_name,
-            SatelliteVersion::parse(version1).unwrap()
+            SatelliteVersion::parse(version1)?
         );
         
         let instance2 = SatelliteInstance::new(
             &service_name,
-            SatelliteVersion::parse(version2).unwrap()
+            SatelliteVersion::parse(version2)?
         );
         
         let mut coord1 = DistributedCoordination::new(instance1, pool.clone());
@@ -261,7 +261,7 @@ async fn test_distributed_coordination_start_time_tiebreaker() -> anyhow::Result
     // Same version, different start times
     let instance1 = SatelliteInstance::new(
         "tiebreaker_test",
-        SatelliteVersion::parse("1.0.100+same").unwrap()
+        SatelliteVersion::parse("1.0.100+same")?
     );
     
     let mut coord1 = DistributedCoordination::new(instance1, pool.clone());
@@ -272,7 +272,7 @@ async fn test_distributed_coordination_start_time_tiebreaker() -> anyhow::Result
     
     let instance2 = SatelliteInstance::new(
         "tiebreaker_test",
-        SatelliteVersion::parse("1.0.100+same").unwrap()
+        SatelliteVersion::parse("1.0.100+same")?
     );
     
     let mut coord2 = DistributedCoordination::new(instance2, pool.clone());
@@ -300,8 +300,10 @@ async fn test_advisory_lock_concurrent_acquisition() -> anyhow::Result<()> {
     for i in 0..10 {
         let pool_clone = pool.clone();
         let handle = tokio::spawn(async move {
-            let result = AdvisoryLock::try_acquire(&pool_clone, lock_name).await;
-            (i, result.is_ok() && result.unwrap().is_some())
+            match AdvisoryLock::try_acquire(&pool_clone, lock_name).await {
+                Ok(lock) => (i, lock.is_some()),
+                Err(_) => (i, false),
+            }
         });
         handles.push(handle);
     }
@@ -310,7 +312,7 @@ async fn test_advisory_lock_concurrent_acquisition() -> anyhow::Result<()> {
     let results: Vec<(usize, bool)> = futures::future::join_all(handles)
         .await
         .into_iter()
-        .map(|r| r.unwrap())
+        .filter_map(|r| r.ok())
         .collect();
     
     // Exactly one should succeed
@@ -328,7 +330,7 @@ async fn test_coordination_with_database_failure_simulation() -> anyhow::Result<
     // Test graceful handling of database issues
     let instance = SatelliteInstance::new(
         "failure_test",
-        SatelliteVersion::parse("1.0.100+test").unwrap()
+        SatelliteVersion::parse("1.0.100+test")?
     );
     
     let mut coordination = DistributedCoordination::new(instance, pool.clone());

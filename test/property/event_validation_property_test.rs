@@ -2,7 +2,7 @@ use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 // EventValidator doesn't exist, using ValidationChain instead
 use sinex_validation::ValidationChain;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use serde_json::Value;
 
 proptest! {
@@ -283,7 +283,7 @@ mod performance_tests {
         ) {
         // Property: Same invalid input should always produce same error
         if source.is_empty() || event_type.is_empty() {
-            use sinex_events::EventFactory;
+            use sinex_db::models::EventFactory;
             let factory = EventFactory::new(&source);
             let event1 = factory.create_event(&event_type, payload.clone());
             let event2 = factory.create_event(&event_type, payload);
@@ -396,7 +396,7 @@ test_concurrent_errors!(
     test_concurrent_validation_failures,
     5,
     |pool, task_id| async move {
-        use sinex_events::EventFactory;
+        use sinex_db::models::EventFactory;
         let factory = EventFactory::new("");
         let invalid_event = factory.create_event("invalid.type", serde_json::json!(null));
         

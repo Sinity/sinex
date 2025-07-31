@@ -5,7 +5,7 @@ These tests are preserved for reference but are commented out as they no longer 
 with the current codebase.
 
 use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use sinex_test_utils::timing_optimization::wait_helpers::wait_for_condition_or_timeout;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_core_types::{EventSource, EventSourceContext};

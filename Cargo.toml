@@ -1,17 +1,14 @@
 [workspace]
 members = [
-  "crate/sinex-ulid",
+  "crate/sinex",
   "crate/sinex-db",
+  "crate/sinex-db/migration",
   "crate/sinex-events",
-  "crate/sinex-validation",
-  "crate/sinex-service-base",
-  "crate/sinex-identifiers",
   "crate/sinex-annex",
   "crate/sinex-health-aggregator",
   "crate/sinex-preflight",
-  "crate/sinex-macros",
   "crate/sinex-services",
-  "crate/sinex-config",
+  "crate/sinex-macros",
   "crate/sinex-gateway",
   "crate/sinex-satellite-sdk",
   "crate/sinex-ingestd",
@@ -30,13 +27,12 @@ members = [
   "crate/sinex-content-automaton",
   "crate/sinex-rpc-dispatcher",
   # New consolidated crates (replacing sinex-core split)
-  "crate/sinex-core-types",
-  "crate/sinex-core-utils",
-  "crate/sinex-core-runtime",
-  "crate/sinex-core-fs",
+  "crate/sinex-types",
   "crate/sinex-telemetry",
   # Test infrastructure
   "crate/sinex-test-utils",
+  # Schema management - temporarily disabled due to compilation issues
+  # "crate/sinex-schema-manager",
 ]
 resolver = "2"
 
@@ -153,6 +149,13 @@ jsonschema = "0.17"
 validator = { version = "0.18", features = ["derive"] }
 figment = { version = "0.10.19", features = ["toml", "yaml", "json", "env"] }
 humantime-serde = "1.1"
+
+# Build-time registry
+inventory = "0.3"
+
+# Cryptography
+sha2 = "0.10"
+hex = "0.4"
 
 # Database (for Atuin integration)
 rusqlite = { version = "0.32.1", features = ["bundled"] }

@@ -1,13 +1,12 @@
 //! Personal Knowledge Management (PKM) service
 
 use crate::error::ServiceResult;
-use sinex_core_types::ids::{EntityId, EventId};
-use sinex_db::repositories::{
-    EntityType, EventRepository, KnowledgeGraphRepository, NewEntity, NewEntityRelation,
-    NewSourceMaterial, Repository, SourceMaterialRepository,
-};
+use sinex_db::models::Entity as DbEntity;
+use sinex_db::models::Event;
+use sinex_db::repositories::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
 use sinex_db::DbPool;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
+use sinex_types::Id;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -23,7 +22,7 @@ impl PkmService {
     /// Create a note annotation on an event with source material tracking
     pub async fn create_note(
         &self,
-        event_id: Ulid,
+        event_id: Id<Event>,
         content: &str,
         tags: Vec<String>,
         created_by: &str,
@@ -32,18 +31,12 @@ impl PkmService {
         let metadata = serde_json::json!({
             "tags": tags,
             "created_at": chrono::Utc::now().to_rfc3339(),
-            "source_material_id": source_material_id.map(|id| id.to_string()),
-        });
+            "source_material_id": source_material_id.map(|id| id.to_string())});
 
-        let event_repo = EventRepository::new(&self.pool);
-        let annotation = event_repo
-            .add_annotation(
-                EventId::from_ulid(event_id),
-                "note",
-                content,
-                metadata,
-                created_by,
-            )
+        let annotation = self
+            .pool
+            .events()
+            .add_annotation(event_id.clone(), "note", content, metadata, created_by)
             .await?;
 
         info!(
@@ -64,8 +57,12 @@ impl PkmService {
         created_by: &str,
     ) -> ServiceResult<Vec<Ulid>> {
         // Verify source material exists
-        let repo = SourceMaterialRepository::new(&self.pool);
-        let source_material = repo.get_by_id(source_material_id.into()).await?;
+
+        let source_material = self
+            .pool
+            .source_materials()
+            .get_by_id(source_material_id.into())
+            .await?;
 
         if source_material.is_none() {
             return Err(crate::error::ServiceError::NotFound(format!(
@@ -77,31 +74,24 @@ impl PkmService {
         let mut entity_ids = Vec::new();
 
         for (name, entity_type) in entities {
-            let kg_repo = KnowledgeGraphRepository::new(&self.pool);
-            let entity = kg_repo
-                .create_entity(NewEntity {
-                    entity_type: match entity_type.as_str() {
-                        "person" => EntityType::Person,
-                        "project" => EntityType::Project,
-                        "topic" => EntityType::Topic,
-                        "organization" => EntityType::Organization,
-                        "location" => EntityType::Location,
-                        "concept" => EntityType::Concept,
-                        "tool" => EntityType::Tool,
-                        "event" => EntityType::Event,
-                        _ => EntityType::Concept,
-                    },
-                    name,
-                    canonical_name: None,
-                    aliases: None,
-                    description: None,
-                    metadata: Some(serde_json::json!({
-                        "source_material_id": source_material_id.to_string(),
-                        "created_by": created_by,
-                        "extraction_method": "manual",
-                    })),
-                })
-                .await?;
+            let entity = match entity_type.as_str() {
+                "person" => CreateEntity::person(&name),
+                "project" => CreateEntity::project(&name),
+                "topic" => CreateEntity::topic(&name),
+                "organization" => CreateEntity::organization(&name),
+                "location" => CreateEntity::location(&name),
+                "concept" => CreateEntity::concept(&name),
+                "tool" => CreateEntity::tool(&name),
+                "event" => CreateEntity::event(&name),
+                _ => CreateEntity::concept(&name),
+            }
+            .with_metadata(serde_json::json!({
+                "source_material_id": source_material_id.to_string(),
+                "created_by": created_by,
+                "extraction_method": "manual"
+            }));
+
+            let entity = self.pool.knowledge_graph().create_entity(entity).await?;
 
             entity_ids.push(entity.id.as_ulid().clone());
         }
@@ -118,8 +108,8 @@ impl PkmService {
     /// Create relationships between entities with source material provenance
     pub async fn link_entities(
         &self,
-        from_entity_id: Ulid,
-        to_entity_id: Ulid,
+        from_entity_id: Id<DbEntity>,
+        to_entity_id: Id<DbEntity>,
         relationship_type: &str,
         properties: HashMap<String, serde_json::Value>,
         source_material_id: Option<Ulid>,
@@ -130,18 +120,17 @@ impl PkmService {
             metadata["source_material_id"] = serde_json::json!(sm_id.to_string());
         }
 
-        let kg_repo = KnowledgeGraphRepository::new(&self.pool);
-        let relationship = kg_repo
-            .create_relation(NewEntityRelation {
-                from_entity_id: EntityId::from_ulid(from_entity_id),
-                to_entity_id: EntityId::from_ulid(to_entity_id),
-                relation_type: relationship_type.to_string(),
-                strength: None,
-                metadata: Some(metadata),
-                valid_from: None,
-                valid_until: None,
-                created_from_event_id: None,
-            })
+        let relationship = self
+            .pool
+            .knowledge_graph()
+            .create_relation(
+                CreateEntityRelation::new(
+                    from_entity_id.clone(),
+                    to_entity_id.clone(),
+                    relationship_type,
+                )
+                .with_metadata(metadata),
+            )
             .await?;
 
         info!(
@@ -168,16 +157,24 @@ impl PkmService {
         // Calculate checksum
         let checksum = blake3::hash(content).to_hex().to_string();
 
-        // Check if already exists
-        let repo = SourceMaterialRepository::new(&self.pool);
-        let existing = repo.find_by_checksum(&checksum).await?;
+        // Check if blob already exists
+        let existing_blob = self.pool.blobs().find_by_blake3(&checksum).await?;
 
-        if let Some(existing) = existing {
-            debug!(
-                blob_id = %existing.id,
-                "Source material already exists with same checksum"
-            );
-            return Ok(existing.id.into());
+        if let Some(blob) = existing_blob {
+            // Check if there's a source material for this blob
+            let existing_material = self
+                .pool
+                .source_materials()
+                .find_by_blob_id(blob.id.unwrap())
+                .await?;
+
+            if let Some(material) = existing_material {
+                debug!(
+                    source_material_id = %material.id,
+                    "Source material already exists with same checksum"
+                );
+                return Ok(material.id.into());
+            }
         }
 
         // Create content preview (first 500 chars if text)
@@ -188,18 +185,30 @@ impl PkmService {
         };
 
         // Insert new source material
-        let new_material = NewSourceMaterial {
-            material_type: material_type.to_string(),
-            source_uri: source_uri.map(String::from),
-            file_size_bytes: Some(content.len() as i64),
-            checksum_blake3: Some(checksum),
-            mime_type: mime_type.map(String::from),
-            encoding: None, // encoding - could be detected
-            metadata: Some(metadata),
-            content_preview: Some(content_preview),
-            retention_policy: None,
+        let new_material = match material_type {
+            "file" => SourceMaterial::file(source_uri.unwrap_or("unknown")),
+            "stream" => SourceMaterial::stream(source_uri.unwrap_or("unknown")),
+            "blob" => SourceMaterial::blob(),
+            "blob.binary" => SourceMaterial::blob_binary(source_uri.unwrap_or("binary")),
+            "blob.text" => SourceMaterial::blob_text(source_uri.unwrap_or("text")),
+            _ => SourceMaterial::blob(),
+        }
+        .with_file_size(content.len() as i64)
+        .with_checksum(checksum)
+        .with_metadata(metadata)
+        .with_content_preview(content_preview);
+
+        let new_material = if let Some(mt) = mime_type {
+            new_material.with_mime_type(mt)
+        } else {
+            new_material
         };
-        let source_material = repo.register_material(new_material).await?;
+
+        let source_material = self
+            .pool
+            .source_materials()
+            .register_material(new_material)
+            .await?;
 
         info!(
             blob_id = %source_material.id,
@@ -218,8 +227,9 @@ impl PkmService {
         source_uri: Option<&str>,
         metadata: serde_json::Value,
     ) -> ServiceResult<Ulid> {
-        let repo = SourceMaterialRepository::new(&self.pool);
-        let source_material = repo
+        let source_material = self
+            .pool
+            .source_materials()
             .register_in_flight(material_type, source_uri, metadata)
             .await?;
 
@@ -235,7 +245,7 @@ impl PkmService {
     /// Finalize in-flight source material with actual content
     pub async fn finalize_in_flight_material(
         &self,
-        blob_id: Ulid,
+        id: Ulid,
         content: &[u8],
         mime_type: Option<&str>,
     ) -> ServiceResult<()> {
@@ -247,19 +257,20 @@ impl PkmService {
             None
         };
 
-        let repo = SourceMaterialRepository::new(&self.pool);
-        repo.finalize_in_flight(
-            blob_id.into(),
-            content.len() as i64,
-            checksum,
-            mime_type,
-            None, // encoding
-            content_preview,
-        )
-        .await?;
+        self.pool
+            .source_materials()
+            .finalize_in_flight(
+                id.into(),
+                content.len() as i64,
+                checksum,
+                mime_type,
+                None, // encoding
+                content_preview,
+            )
+            .await?;
 
         info!(
-            blob_id = %blob_id,
+            blob_id = %id,
             size_bytes = content.len(),
             "Finalized in-flight source material"
         );
@@ -273,8 +284,11 @@ impl PkmService {
         material_type: Option<&str>,
         limit: Option<i64>,
     ) -> ServiceResult<Vec<serde_json::Value>> {
-        let repo = SourceMaterialRepository::new(&self.pool);
-        let materials = repo.get_recent(limit.unwrap_or(50)).await?;
+        let materials = self
+            .pool
+            .source_materials()
+            .get_recent(limit.unwrap_or(50))
+            .await?;
 
         // Filter by material_type if specified
         let filtered_materials = if let Some(filter_type) = material_type {
@@ -297,8 +311,7 @@ impl PkmService {
                     "file_size_bytes": m.file_size_bytes,
                     "mime_type": m.mime_type,
                     "metadata": m.metadata,
-                    "content_preview": m.content_preview,
-                })
+                    "content_preview": m.content_preview})
             })
             .collect())
     }
@@ -309,8 +322,11 @@ impl PkmService {
         key: &str,
         value: serde_json::Value,
     ) -> ServiceResult<Vec<serde_json::Value>> {
-        let repo = SourceMaterialRepository::new(&self.pool);
-        let materials = repo.search_by_metadata(key, &value, None).await?;
+        let materials = self
+            .pool
+            .source_materials()
+            .search_by_metadata(key, &value, None)
+            .await?;
 
         Ok(materials
             .into_iter()
@@ -320,8 +336,7 @@ impl PkmService {
                     "material_type": m.material_type,
                     "source_uri": m.source_uri,
                     "ingestion_time": m.ingestion_time,
-                    "metadata": m.metadata,
-                })
+                    "metadata": m.metadata})
             })
             .collect())
     }

@@ -2,7 +2,7 @@
 
 use crate::{
     config::{DiscardPolicy, RetentionPolicy, StreamDefaults},
-    error::{NatsError, Result},
+    error::Result,
     jetstream::JetStream,
 };
 use async_nats::jetstream;

@@ -1,8 +1,9 @@
 use chrono::{DateTime, Utc};
+use sea_query::{Expr, PostgresQueryBuilder, Query};
 use serde_json::Value as JsonValue;
-use sinex_core_types::domain::{EventSource, EventType, HostName};
-use sinex_error::{Result as SinexResult, SinexError};
-use sinex_ulid::Ulid;
+use sinex_types::domain::{EventSource, EventType, HostName};
+use sinex_types::error::{Result as SinexResult, SinexError};
+use sinex_types::ulid::Ulid;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
@@ -72,4 +73,97 @@ pub trait TransactionSupport {
 
     /// Execute the operation within a transaction
     fn with_tx<'a>(self, tx: &'a mut Transaction<'_, Postgres>) -> Self::Item;
+}
+
+// Re-export TableDef from migration crate
+pub use sinex_db_migration::schema::TableDef;
+
+/// Enhanced repository trait with generic operations
+pub trait EnhancedRepository<'a>: Repository<'a> {
+    /// Associated table definition
+    type Table: TableDef;
+
+    /// Count all records in the table
+    async fn count_all(&self) -> DbResult<i64> {
+        let query = Query::select()
+            .expr(Expr::cust("COUNT(*)"))
+            .from(Self::Table::table_iden())
+            .to_string(PostgresQueryBuilder);
+
+        let result: (i64,) = sqlx::query_as(&query)
+            .fetch_one(self.pool())
+            .await
+            .map_err(|e| db_error(e, "Failed to count records"))?;
+
+        Ok(result.0)
+    }
+
+    /// Check if a record exists by primary key
+    async fn exists_by_id(&self, id: &Ulid) -> DbResult<bool> {
+        // Use a parameterized query with explicit ULID cast
+        let sql = format!(
+            "SELECT 1 FROM {}.{} WHERE {} = $1::ulid LIMIT 1",
+            Self::Table::schema_name(),
+            Self::Table::table_name(),
+            Self::Table::primary_key()
+        );
+
+        let uuid = ulid_to_uuid(id);
+        let result: Option<(i32,)> = sqlx::query_as(&sql)
+            .bind(uuid)
+            .fetch_optional(self.pool())
+            .await
+            .map_err(|e| db_error(e, "Failed to check existence"))?;
+
+        Ok(result.is_some())
+    }
+}
+
+/// Batch operations for repositories
+#[async_trait::async_trait]
+pub trait BatchRepository<'a, T>: Repository<'a>
+where
+    T: FromRow<'a, sqlx::postgres::PgRow> + Send + Unpin,
+{
+    /// Insert multiple records in a single transaction
+    async fn insert_batch(&self, records: Vec<T>) -> DbResult<Vec<Ulid>>;
+
+    /// Update multiple records in a single transaction
+    async fn update_batch(&self, records: Vec<(Ulid, T)>) -> DbResult<u64>;
+
+    /// Delete multiple records by IDs
+    async fn delete_batch(&self, ids: Vec<Ulid>) -> DbResult<u64>;
+}
+
+/// Transactional operations for repositories
+#[async_trait::async_trait]
+pub trait TransactionalRepository<'a>: Repository<'a> {
+    /// Execute a closure within a transaction
+    async fn with_transaction<F, R>(&self, f: F) -> DbResult<R>
+    where
+        F: for<'t> FnOnce(
+                &'t mut Transaction<'_, Postgres>,
+            ) -> futures::future::BoxFuture<'t, DbResult<R>>
+            + Send,
+        R: Send,
+    {
+        let mut tx = self
+            .pool()
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "Failed to begin transaction"))?;
+
+        match f(&mut tx).await {
+            Ok(result) => {
+                tx.commit()
+                    .await
+                    .map_err(|e| db_error(e, "Failed to commit transaction"))?;
+                Ok(result)
+            }
+            Err(e) => {
+                let _ = tx.rollback().await;
+                Err(e)
+            }
+        }
+    }
 }

@@ -2,9 +2,10 @@
 //!
 //! Watches shell history files (.bash_history, .zsh_history, fish_history) for new commands
 
-use notify::{Config, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use serde_json::json;
-use sinex_events::{EventFactory, RawEvent};
+use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
+use sinex_events::{
+    BashHistoricalCommandPayload, Event, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
+};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::fs;
@@ -153,31 +154,35 @@ impl HistoryWatcher {
         commands
     }
 
-    /// Convert command to RawEvent
-    fn command_to_event(&self, command: String, source_file: &PathBuf) -> RawEvent {
-        let (shell_type, source_name) = if source_file.to_string_lossy().contains("fish") {
-            ("fish", sinex_events::sources::SHELL_FISH_HISTORY)
-        } else if source_file.to_string_lossy().contains("zsh") {
-            ("zsh", sinex_events::sources::SHELL_ZSH_HISTFILE)
+    /// Convert command to Event
+    fn command_to_event(&self, command: String, source_file: &PathBuf) -> Event {
+        let source_file_str = source_file.to_string_lossy().to_string();
+
+        if source_file_str.contains("fish") {
+            Event::from(FishHistoricalCommandPayload {
+                command_string: command,
+                source_file: source_file_str,
+            })
+            .with_ts_orig(Some(chrono::Utc::now()))
+        } else if source_file_str.contains("zsh") {
+            Event::from(ZshHistoricalCommandPayload {
+                command_string: command,
+                source_file: source_file_str,
+            })
+            .with_ts_orig(Some(chrono::Utc::now()))
         } else {
-            ("bash", sinex_events::sources::SHELL_BASH_HISTFILE)
-        };
-
-        let payload = json!({
-            "command_string": command,
-            "shell_type": shell_type,
-            "source_file": source_file.to_string_lossy(),
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        });
-
-        let factory = EventFactory::new(source_name);
-        factory.create_event("command.hist", payload)
+            Event::from(BashHistoricalCommandPayload {
+                command_string: command,
+                source_file: source_file_str,
+            })
+            .with_ts_orig(Some(chrono::Utc::now()))
+        }
     }
 
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: mpsc::UnboundedSender<Event>,
     ) -> SatelliteResult<()> {
         info!(
             "Starting shell history event streaming for {} files",
@@ -185,10 +190,10 @@ impl HistoryWatcher {
         );
 
         // Set up file watcher
-        let (notify_tx, mut notify_rx) = mpsc::unbounded_channel::<Event>();
+        let (notify_tx, mut notify_rx) = mpsc::unbounded_channel::<NotifyEvent>();
 
         let mut watcher = RecommendedWatcher::new(
-            move |result: Result<Event, notify::Error>| match result {
+            move |result: Result<NotifyEvent, notify::Error>| match result {
                 Ok(event) => {
                     if let Err(e) = notify_tx.send(event) {
                         error!("Failed to send notify event: {}", e);

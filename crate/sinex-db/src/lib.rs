@@ -72,154 +72,65 @@
 //! 4. **Provenance First**: Every piece of data traceable to its origin
 //! 5. **Audit Everything**: System remembers not just what but why
 
+// Re-export database macros
+#[cfg(feature = "macros")]
+pub use sinex_macros::{db_query, db_transaction};
+
 pub mod models;
-// Re-export RawEvent from sinex-events for type unification
-pub use sinex_events::RawEvent;
-
-// Helper functions for backward compatibility
-pub async fn count_events(pool: DbPoolRef<'_>) -> Result<i64, crate::query_helpers::DbError> {
-    use crate::repositories::{EventRepository, Repository};
-    let repo = EventRepository::new(pool);
-    repo.count_all().await.map_err(|e| {
-        crate::query_helpers::db_error(sqlx::Error::Protocol(e.to_string()), "count_events")
-    })
-}
-
-pub async fn insert_event_with_validator(
-    pool: DbPoolRef<'_>,
-    event: &RawEvent,
-    _validator: Option<&()>, // Validator type not available yet
-) -> Result<RawEvent, crate::query_helpers::DbError> {
-    use crate::repositories::{EventRepository, NewEvent, Repository};
-    use sinex_core_types::domain::{EventSource, EventType, HostName};
-    use sinex_core_types::ids::{EventId, SchemaId};
-
-    let repo = EventRepository::new(pool);
-    let new_event = NewEvent {
-        source: EventSource::new(&event.source),
-        event_type: EventType::new(&event.event_type),
-        host: HostName::new(&event.host),
-        payload: event.payload.clone(),
-        ts_orig: event.ts_orig,
-        ingestor_version: event.ingestor_version.clone(),
-        payload_schema_id: event.payload_schema_id.map(|id| SchemaId::from(id)),
-        source_event_ids: event
-            .source_event_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(|id| EventId::from(*id)).collect()),
-        source_material_id: None,
-        source_material_offset_start: None,
-        source_material_offset_end: None,
-        anchor_byte: None,
-        associated_blob_ids: None,
-    };
-    repo.insert(new_event).await.map_err(|e| {
-        crate::query_helpers::db_error(
-            sqlx::Error::Protocol(e.to_string()),
-            "insert_event_with_validator",
-        )
-    })
-}
-// pub mod enhanced_queries; // Removed - superseded by *_correct modules
 pub mod pool;
-// Legacy queries removed - use repositories pattern instead
-// pub mod integrity; // TODO: Re-enable after query system migration
 pub mod query_helpers;
 pub mod sanitization;
 pub mod security;
-// pub mod validation; // TODO: Re-enable after query system migration
 
-// Legacy modules - re-enable after migrating to repository pattern
-// pub mod annotations; // TODO: Migrate to repository pattern
-// pub mod knowledge_graph; // TODO: Migrate to repository pattern
-
-// New centralized query system (legacy - will be removed)
+// Core modules
 pub mod constants;
 pub mod distributed_locking;
-// pub mod queries;
-// pub mod query_builder;
-// pub mod query_macros;
 
-// New repository pattern
+// Repository pattern - the new way to access data
 pub mod repositories;
 
 // Database schema definitions using SeaQuery
-pub mod schema;
-// pub mod schema_migrations;
+pub use sinex_db_migration::schema;
+pub mod schema_migrations;
+pub mod seaquery_helpers;
 
-// TODO: Re-enable query_system_test after migrating tests to repository pattern
-// #[cfg(test)]
-// pub mod query_system_test;
-
-// New API modules
-// pub mod annotations; // TODO: Re-enable after query system migration
-// pub mod knowledge_graph; // TODO: Re-enable after query system migration
-
-// Domain-specific query modules
-// pub mod events; // TODO: Re-enable after fixing dependencies
-
-// Re-export domain-specific query functions
-// pub use annotations::{
-//     create_annotation, delete_annotation, get_annotation_by_id, get_annotations_for_event,
-//     get_recent_annotations, update_annotation_content,
-// }; // TODO: Re-enable after query system migration
-// pub use events::{
-//     attach_blob_to_event, count_events, detach_blob_from_event, get_event_by_id,
-//     get_events_with_blobs, insert_event, insert_event_with_blob, insert_event_with_validator,
-//     EventRecord,
-// }; // TODO: Re-enable after query system migration
-// pub use knowledge_graph::{
-//     create_entity, create_relation, get_entities_by_type, get_entity_by_id, get_entity_relations,
-//     get_relation_by_id, search_entities,
-// }; // TODO: Re-enable after query system migration
-
-// Enhanced queries have been removed - functionality moved to domain modules
+// Migration support
+#[cfg(feature = "migration")]
+pub mod migration;
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
-    count, db_error, exists, is_retryable_db_error, ulid_to_uuid, uuid_to_ulid,
-    with_retry_transaction, with_transaction, DbError, DbResult, RetryConfig, UlidArrayExt,
+    count, db_error, exists, from_db, is_retryable_db_error, opt_from_db, opt_to_db,
+    opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid, with_retry_transaction,
+    with_transaction, DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
 };
 
-// Legacy query system removed - use repositories pattern instead
-// pub use query_builder::{QueryBuilder, QueryParam};
+// Re-export SeaQuery ULID helpers
+pub use seaquery_helpers::SeaQueryUlidExt;
 
 // Re-export repository pattern
 pub use repositories::{
-    Checkpoint, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters, NewCheckpoint,
-    NewEvent, NewSchema,
+    Checkpoint, DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters,
+    NewSchema,
 };
 
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
-    pub use crate::models::{
-        // New API models (now enabled)
-        CreateAnnotationInput,
-        CreateEntityInput,
-        CreateRelationInput,
-        Entity,
-        EntityRelation,
-        EventAnnotation,
-        EventPayloadSchema,
-    };
-    // Use domain-specific modules
-    // pub use crate::events::*; // TODO: Re-enable after query system migration
+    pub use crate::models::Event;
     pub use crate::query_helpers::{
-        db_error, ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbError,
-        DbResult, RetryConfig, UlidArrayExt,
+        db_error, from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db,
+        ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbUuidCollectionExt,
+        DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
     };
-    // New API services (now enabled)
-    // pub use crate::annotations::*; // TODO: Re-enable after query system migration
-    // pub use crate::knowledge_graph::*; // TODO: Re-enable after query system migration
+    pub use crate::seaquery_helpers::SeaQueryUlidExt;
     pub use crate::{DbPool, DbPoolRef, JsonValue, OptionalTimestamp, PoolConfig, Timestamp};
     // Re-export repository pattern in prelude
     pub use crate::repositories::{
-        Checkpoint, CheckpointRepository, EventRepository, EventSearchFilters, NewCheckpoint,
-        NewEvent, NewSchema, Repository,
+        Checkpoint, CheckpointRepository, DbPoolExt, EventRepository, EventSearchFilters,
+        NewSchema, Repository,
     };
     pub use anyhow::Result;
-    pub use sinex_events::RawEvent;
-    pub use sinex_ulid::Ulid;
+    pub use sinex_types::ulid::Ulid;
     pub use sqlx::{FromRow, Postgres, Transaction};
 }
 
@@ -240,7 +151,7 @@ pub type DbPoolRef<'a> = &'a PgPool;
 pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from sinex-ulid and add our own
-pub use sinex_ulid::Timestamp;
+pub use sinex_types::ulid::Timestamp;
 pub type OptionalTimestamp = Option<Timestamp>;
 pub type JsonValue = serde_json::Value;
 
@@ -418,11 +329,26 @@ pub async fn create_database_if_not_exists(database_url: &str) -> Result<()> {
 }
 
 /// Run database migrations
+///
+/// This uses the new sea-orm-migration system. The migration feature must be enabled
+/// in Cargo.toml to use this function.
+#[cfg(feature = "migration")]
 pub async fn run_migrations(pool: DbPoolRef<'_>) -> Result<()> {
-    sqlx::migrate!("../../migrations").run(pool).await?;
-
+    // Use the new migration system
+    migration::run_migrations(pool).await?;
     info!("Database migrations completed");
     Ok(())
+}
+
+/// Run database migrations (stub when migration feature is disabled)
+#[cfg(not(feature = "migration"))]
+pub async fn run_migrations(_pool: DbPoolRef<'_>) -> Result<()> {
+    Err(anyhow!(
+        "Database migration feature is not enabled. \
+         To enable migrations, add to your Cargo.toml:\n\
+         sinex-db = {{ version = \"*\", features = [\"migration\"] }}\n\n\
+         Or run migrations manually with: just migrate"
+    ))
 }
 
 #[cfg(test)]
@@ -430,33 +356,25 @@ mod tests {
     use super::*;
     use chrono::Utc;
     use serde_json::json;
-    use sinex_events::RawEvent;
+    use sinex_db::models::Event;
     use sinex_test_utils::prelude::*;
-    use sinex_ulid::Ulid;
+    use sinex_types::ulid::Ulid;
 
     #[sinex_test]
-    async fn test_raw_event_creation(ctx: TestContext) -> anyhow::Result<()> {
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test.source".to_string(),
-            event_type: "test_event".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "localhost".to_string(),
-            ingestor_version: Some("1.0.0".to_string()),
-            payload_schema_id: None,
-            payload: json!({"test": "data"}),
-            source_event_ids: None,
-            anchor_byte: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            associated_blob_ids: None,
-        };
+    async fn test_event_creation(ctx: TestContext) -> anyhow::Result<()> {
+        use sinex_types::domain::{EventSource, EventType, HostName};
 
-        assert_eq!(event.source, "test.source");
-        assert_eq!(event.event_type, "test_event");
-        assert_eq!(event.host, "localhost");
+        let event = Event::builder()
+            .source(EventSource::new("test.source"))
+            .event_type(EventType::new("test_event"))
+            .host(HostName::new("localhost"))
+            .payload(json!({"test": "data"}))
+            .ingestor_version("1.0.0".to_string())
+            .build();
+
+        assert_eq!(event.source.as_str(), "test.source");
+        assert_eq!(event.event_type.as_str(), "test_event");
+        assert_eq!(event.host.as_str(), "localhost");
         assert_eq!(event.ingestor_version, Some("1.0.0".to_string()));
         assert_eq!(event.payload["test"], "data");
         Ok(())
@@ -487,25 +405,16 @@ mod tests {
 
     #[sinex_test]
     async fn test_event_payload_json_handling(ctx: TestContext) -> anyhow::Result<()> {
+        use sinex_types::domain::{EventSource, EventType, HostName};
+
         // Test simple JSON payload
         let simple_payload = json!({"key": "value", "number": 42});
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "test".to_string(),
-            event_type: "test".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "localhost".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: simple_payload.clone(),
-            source_event_ids: None,
-            anchor_byte: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            associated_blob_ids: None,
-        };
+        let event = Event::builder()
+            .source(EventSource::new("test"))
+            .event_type(EventType::new("test"))
+            .host(HostName::new("localhost"))
+            .payload(simple_payload.clone())
+            .build();
 
         assert_eq!(event.payload["key"], "value");
         assert_eq!(event.payload["number"], 42);
@@ -522,23 +431,12 @@ mod tests {
             }
         });
 
-        let complex_event = RawEvent {
-            id: Ulid::new(),
-            source: "complex.test".to_string(),
-            event_type: "complex_event".to_string(),
-            ts_ingest: Utc::now(),
-            ts_orig: None,
-            host: "localhost".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: complex_payload,
-            source_event_ids: None,
-            anchor_byte: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            associated_blob_ids: None,
-        };
+        let complex_event = Event::builder()
+            .source(EventSource::new("complex.test"))
+            .event_type(EventType::new("complex_event"))
+            .host(HostName::new("localhost"))
+            .payload(complex_payload)
+            .build();
 
         assert_eq!(complex_event.payload["metadata"]["version"], "1.0");
         assert_eq!(complex_event.payload["data"]["items"][0], 1);
@@ -548,32 +446,22 @@ mod tests {
 
     #[sinex_test]
     async fn test_timestamp_handling(ctx: TestContext) -> anyhow::Result<()> {
+        use sinex_types::domain::{EventSource, EventType, HostName};
+
         let now = Utc::now();
         let past = now - chrono::Duration::seconds(3600); // 1 hour ago
 
-        let event = RawEvent {
-            id: Ulid::new(),
-            source: "timestamp.test".to_string(),
-            event_type: "timestamp_event".to_string(),
-            ts_ingest: now,
-            ts_orig: Some(past),
-            host: "localhost".to_string(),
-            ingestor_version: None,
-            payload_schema_id: None,
-            payload: json!({}),
-            source_event_ids: None,
-            anchor_byte: None,
-            source_material_id: None,
-            source_material_offset_start: None,
-            source_material_offset_end: None,
-            associated_blob_ids: None,
-        };
+        let event = Event::builder()
+            .source(EventSource::new("timestamp.test"))
+            .event_type(EventType::new("timestamp_event"))
+            .host(HostName::new("localhost"))
+            .ts_orig(Some(past))
+            .payload(json!({}))
+            .build();
 
-        // Test that ingestion timestamp is after original timestamp
-        assert!(event.ts_ingest > event.ts_orig.unwrap());
-
-        // Test that timestamps are properly set
-        assert_eq!(event.ts_ingest, now);
+        // Note: ts_ingest is set by the database, not in code
+        // We can only test ts_orig here
+        assert_eq!(event.ts_orig, Some(past));
         assert_eq!(event.ts_orig.unwrap(), past);
         Ok(())
     }

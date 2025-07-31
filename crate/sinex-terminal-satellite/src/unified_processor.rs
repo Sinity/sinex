@@ -6,9 +6,10 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sinex_events::{event_types, services, EventFactory};
-use sinex_macros::with_context;
+use sinex_events::{
+    Event, TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
+    TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -21,6 +22,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteResult,
 };
+use sinex_types::error::with_context;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -92,6 +94,9 @@ pub struct TerminalState {
     /// Atuin database status
     pub atuin_status: Option<AtuinStatus>,
 
+    /// Detected shell information
+    pub shell_info: Option<crate::shell_detection::ShellInfo>,
+
     /// Recent activity summary
     pub recent_activity: Vec<String>,
 }
@@ -129,6 +134,9 @@ pub struct TerminalProcessor {
     recording_watcher: Option<RecordingWatcher>,
     scrollback_watcher: Option<ScrollbackWatcher>,
 
+    /// Detected shell information
+    shell_info: Option<crate::shell_detection::ShellInfo>,
+
     /// Last captured terminal state for snapshots
     last_state: Option<TerminalState>,
 
@@ -147,6 +155,7 @@ impl TerminalProcessor {
             kitty_watcher: None,
             recording_watcher: None,
             scrollback_watcher: None,
+            shell_info: None,
             last_state: None,
             checkpoint_manager: None,
         }
@@ -162,6 +171,7 @@ impl TerminalProcessor {
             kitty_watcher: None,
             recording_watcher: None,
             scrollback_watcher: None,
+            shell_info: None,
             last_state: None,
             checkpoint_manager: None,
         }
@@ -244,6 +254,7 @@ impl TerminalProcessor {
             enabled_sources,
             history_file_status,
             atuin_status,
+            shell_info: self.shell_info.clone(),
             recent_activity: vec!["Terminal processor snapshot taken".to_string()],
         };
 
@@ -372,17 +383,31 @@ impl TerminalProcessor {
         if let Some(ref context) = self.context {
             info!("Terminal monitoring context available");
 
-            // Create a sample event to show the interface works
-            let factory = EventFactory::new(services::TERMINAL_SATELLITE);
-            let sample_event = factory.create_event(
-                "terminal.monitoring_started",
-                json!({
-                    "enabled_sources": self.config.enabled_sources,
-                    "start_time": Utc::now()
-                }),
-            );
+            // Emit monitoring started event with shell info
+            let mut monitoring_event = Event::from(TerminalMonitoringStartedPayload {
+                enabled_sources: self.config.enabled_sources.clone(),
+                start_time: Utc::now(),
+            });
 
-            context.emit_event(sample_event).await?;
+            // Add shell info to the event payload if available
+            if let Some(ref shell_info) = self.shell_info {
+                if let serde_json::Value::Object(ref mut map) = monitoring_event.payload {
+                    map.insert(
+                        "shell_type".to_string(),
+                        serde_json::json!(shell_info.shell_type),
+                    );
+                    map.insert(
+                        "shell_version".to_string(),
+                        serde_json::json!(shell_info.version),
+                    );
+                    map.insert(
+                        "shell_capabilities".to_string(),
+                        serde_json::json!(shell_info.capabilities),
+                    );
+                }
+            }
+
+            context.emit_event(monitoring_event).await?;
         }
 
         Ok(())
@@ -414,15 +439,12 @@ impl TerminalProcessor {
                 if let Some(ref atuin_path) = self.config.atuin_db_path {
                     if atuin_path.exists() && emit_events {
                         // Create a sample historical event
-                        let factory = EventFactory::new(services::TERMINAL_SATELLITE);
-                        let event = factory.create_event(
-                            event_types::shell::SHELL_COMMAND_HISTORICAL,
-                            json!({
-                                "source": "atuin",
-                                "db_path": atuin_path,
-                                "scan_type": "historical"
-                            }),
-                        );
+                        let event = Event::from(TerminalCommandHistoricalPayload {
+                            source: "atuin".to_string(),
+                            db_path: Some(atuin_path.clone()),
+                            file_path: None,
+                            scan_type: "historical".to_string(),
+                        });
 
                         context.emit_event(event).await?;
                         event_count += 1;
@@ -440,15 +462,11 @@ impl TerminalProcessor {
             {
                 for history_file in &self.config.history_files {
                     if history_file.exists() && emit_events {
-                        let factory = EventFactory::new(services::TERMINAL_SATELLITE);
-                        let event = factory.create_event(
-                            event_types::shell::SHELL_HISTORY_HISTORICAL,
-                            json!({
-                                "source": "history_file",
-                                "file_path": history_file,
-                                "scan_type": "historical"
-                            }),
-                        );
+                        let event = Event::from(TerminalHistoryHistoricalPayload {
+                            source: "history_file".to_string(),
+                            file_path: history_file.clone(),
+                            scan_type: "historical".to_string(),
+                        });
 
                         context.emit_event(event).await?;
                         event_count += 1;
@@ -467,7 +485,7 @@ impl Default for TerminalProcessor {
     }
 }
 
-#[sinex_macros::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=terminal"])]
+#[sinex_satellite_sdk::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=terminal"])]
 #[async_trait]
 impl StatefulStreamProcessor for TerminalProcessor {
     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
@@ -489,6 +507,30 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 Err(e) => {
                     warn!("Failed to parse terminal config, using defaults: {}", e);
                 }
+            }
+        }
+
+        // Detect shell environment to enhance configuration
+        match crate::shell_detection::detect_current_shell() {
+            Ok(shell_info) => {
+                info!(
+                    "Detected shell: {:?} (version: {:?})",
+                    shell_info.shell_type, shell_info.version
+                );
+
+                // Add shell-specific history file if not already in config
+                if let Some(ref history_path) = shell_info.history_path {
+                    if !self.config.history_files.contains(history_path) {
+                        info!("Adding detected history file: {}", history_path.display());
+                        self.config.history_files.push(history_path.clone());
+                    }
+                }
+
+                // Store shell info for later use
+                self.shell_info = Some(shell_info);
+            }
+            Err(e) => {
+                warn!("Failed to detect shell environment: {}", e);
             }
         }
 
@@ -587,15 +629,11 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let factory = EventFactory::new(services::TERMINAL_SATELLITE);
-                        let snapshot_event = factory.create_event(
-                            "terminal.snapshot",
-                            json!({
-                                "active_watchers": active_watchers,
-                                "enabled_sources": self.config.enabled_sources,
-                                "snapshot_time": Utc::now()
-                            }),
-                        );
+                        let snapshot_event = Event::from(TerminalSnapshotPayload {
+                            active_watchers,
+                            enabled_sources: self.config.enabled_sources.clone(),
+                            snapshot_time: Utc::now(),
+                        });
 
                         context.emit_event(snapshot_event).await?;
                     }

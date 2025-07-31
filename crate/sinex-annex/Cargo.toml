@@ -18,10 +18,8 @@ chrono.workspace = true
 gethostname.workspace = true
 
 # Internal dependencies
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
+sinex-types = { path = "../sinex-types" }
 sinex-db = { path = "../sinex-db" }
-sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
 
 [dev-dependencies]

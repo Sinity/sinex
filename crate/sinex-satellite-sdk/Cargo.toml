@@ -48,17 +48,12 @@ parking_lot = "0.12"
 blake3 = "1.5"
 
 # Local dependencies
-sinex-core-types = { path = "../sinex-core-types" }
-sinex-core-utils = { path = "../sinex-core-utils" }
-sinex-core-runtime = { path = "../sinex-core-runtime" }
+sinex-types = { path = "../sinex-types" }
 sinex-db = { path = "../sinex-db" }
-sinex-ulid = { path = "../sinex-ulid" }
 sinex-events = { path = "../sinex-events" }
-sinex-macros = { path = "../sinex-macros" }
+sinex-macros = { path = "../sinex-macros", optional = true }
 sinex-telemetry = { path = "../sinex-telemetry" }
-sinex-error = { path = "../sinex-error" }
 sinex-preflight = { path = "../sinex-preflight" }
-sinex-validation = { path = "../sinex-validation" }
 
 [build-dependencies]
 tonic-build = "0.11"
@@ -68,3 +63,4 @@ chrono = "0.4"
 default = []
 event-source = []
 automaton = []
+macros = ["dep:sinex-macros"]
