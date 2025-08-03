@@ -255,22 +255,20 @@ in
             ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pg_jsonschema;" || true
             ${pkgs.postgresql}/bin/psql "$DATABASE_URL" -c "CREATE EXTENSION IF NOT EXISTS pgx_ulid;" || true
             
-            # Check current schema version
-            CURRENT_VERSION=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "SELECT version FROM _sqlx_migrations ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "0")
+            # Check current schema version from sea-orm migrations table
+            CURRENT_VERSION=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "SELECT version FROM seaql_migrations ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "none")
             echo "Current schema version: $CURRENT_VERSION"
             
-            # Run migrations (these were pre-verified by preflight)
-            if [ -d "${cfg.database.migration.directory}" ]; then
-              echo "Running database migrations..."
-              if ! ${cfg.database.migration.package}/bin/sqlx migrate run --source "${cfg.database.migration.directory}"; then
-                echo "ERROR: Database migration failed!" >&2
-                exit 1
-              fi
-              
-              # Verify new version
-              NEW_VERSION=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "SELECT version FROM _sqlx_migrations ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "0")
-              echo "New schema version: $NEW_VERSION"
+            # Run migrations using sea-orm migration binary
+            echo "Running database migrations..."
+            if ! ${cfg.database.migration.package}/bin/${cfg.database.migration.binary} up; then
+              echo "ERROR: Database migration failed!" >&2
+              exit 1
             fi
+            
+            # Verify new version
+            NEW_VERSION=$(${pkgs.postgresql}/bin/psql "$DATABASE_URL" -t -c "SELECT version FROM seaql_migrations ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "none")
+            echo "New schema version: $NEW_VERSION"
             
             # Test database connectivity with actual query
             echo "Testing database connectivity..."

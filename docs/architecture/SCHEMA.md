@@ -96,7 +96,7 @@ Registry of event processors (ingestors and automata). Tracks which processor in
 ### core.entities
 Knowledge graph nodes representing canonical concepts. Part of the implemented entity system (not obsolete).
 
-**Implementation Status**: ✅ Exists in migration 00000000000002_create_core_tables.sql
+**Implementation Status**: ✅ Exists in migration m20240101_000001_core_infrastructure
 
 - **id**: ULID (PK)
 - **type**: TEXT - Entity type (people, projects, technologies, organizations, etc.)
@@ -168,7 +168,7 @@ Audit trail for administrative operations.
 ### core.satellite_instances
 Registry of active satellite services. Used for monitoring and coordination.
 
-**Implementation Status**: ✅ Implemented in migration 00000000000008
+**Implementation Status**: ✅ Implemented in migration m20240101_000001_core_infrastructure
 
 - **instance_id**: TEXT (PK) - Unique instance identifier
 - **satellite_name**: TEXT - Type of satellite (fs-watcher, terminal, etc.)
@@ -187,7 +187,7 @@ Registry of active satellite services. Used for monitoring and coordination.
 ### core.satellite_signals
 Control signals for satellite coordination. Enables command and control of satellite fleet.
 
-**Implementation Status**: ✅ Implemented in migration 00000000000008
+**Implementation Status**: ✅ Implemented in migration m20240101_000001_core_infrastructure
 
 - **signal_id**: ULID (PK)
 - **signal_type**: TEXT - CHECK IN ('scan_request', 'control', 'config_update')
@@ -330,7 +330,7 @@ Hierarchical tagging system.
 ### metrics.sinex_metrics
 System telemetry data. Stores Prometheus-style metrics for internal observability.
 
-**Implementation Status**: ✅ Implemented in migration 00000000000006
+**Implementation Status**: ✅ Implemented in migration m20240101_000001_core_infrastructure
 
 - **metric_id**: ULID (PK)
 - **metric_ts**: TIMESTAMPTZ - Metric timestamp
@@ -402,18 +402,29 @@ Caches validation results for performance. Reduces repeated validation overhead 
 
 ## Migration History
 
-The database schema has evolved through several migrations:
+The database schema is organized into three comprehensive migrations using the sea-orm-migration system:
 
-1. **00000000000001_create_schemas.sql**: Schema creation and pgx_ulid
-2. **00000000000002_create_core_tables.sql**: Core event storage, entities, knowledge management
-3. **00000000000003_create_schema_registry.sql**: Schema registry
-4. **00000000000004_create_artifact_tables.sql**: Artifact tables
-5. **00000000000005_create_analytics_views.sql**: Analytics views
-6. **00000000000006_create_helper_functions.sql**: Helper functions
-7. **00000000000007_create_raw_source_material_registry.sql**: Source material tracking
-8. **00000000000008_satellite_coordination.sql**: Service coordination
-9. **00000000000009_create_llm_embeddings_infrastructure.sql**: AI/LLM infrastructure
-10. **00000000000010_add_ulid_indices.sql**: Performance optimizations
+1. **m20240101_000001_core_infrastructure**: Complete core infrastructure
+   - PostgreSQL extensions (uuid-ossp, TimescaleDB, pg_jsonschema, ULID)
+   - All database schemas (core, raw, audit, sinex_schemas, metrics)
+   - Core tables with all columns from the start
+   - Schema validation infrastructure with content hashing
+   - All indexes and constraints
+   - Updated_at triggers
+
+2. **m20240102_000002_functions_and_views**: All functions and analytics
+   - Query helper functions (get_recent_events, search_events, etc.)
+   - Analytics materialized views for metrics
+   - Schema management functions
+   - Entity relationship queries
+   - Test data generation utilities
+
+3. **m20240103_000003_advanced_features**: LLM and advanced capabilities
+   - Complete LLM infrastructure (models, prompts, interactions)
+   - Vector embeddings for semantic search
+   - Event annotations and clustering
+   - Data retention policies
+   - Processing pipeline definitions
 
 ## Key Design Patterns
 
@@ -470,7 +481,7 @@ The database schema has evolved through several migrations:
   - docs/roadmap/features/database-encryption-pgsodium.md - Field-level encryption
 - **Operations**:
   - crate/sinex-db/src/queries/ - Query builders and database interface
-  - migrations/ - SQL migration files with detailed schema definitions
+  - crate/sinex-db/migration/src/ - Sea-ORM migration definitions
 
 ## Schema Validation
 

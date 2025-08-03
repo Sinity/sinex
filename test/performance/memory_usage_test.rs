@@ -7,7 +7,7 @@
 use serde_json::json;
 use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -157,7 +157,7 @@ impl MemoryMetrics {
 
 /// Test memory usage during event processing
 #[sinex_test]
-async fn test_event_processing_memory_usage(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_processing_memory_usage(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
 
@@ -226,7 +226,7 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> anyhow::Result<
 
 /// Test memory usage under concurrent processing
 #[sinex_test]
-async fn test_concurrent_memory_usage(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_memory_usage(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(MemoryMetrics::new()));
 
@@ -348,7 +348,7 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test memory usage with large payloads
 #[sinex_test]
-async fn test_large_payload_memory_usage(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_large_payload_memory_usage(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
 
@@ -440,7 +440,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test memory usage during stress conditions
 #[sinex_test]
-async fn test_memory_stress_conditions(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_memory_stress_conditions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
 
@@ -574,7 +574,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test memory usage with database connection pools
 #[sinex_test]
-async fn test_connection_pool_memory_usage(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_connection_pool_memory_usage(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = MemoryMetrics::new();
 

@@ -15,7 +15,7 @@ use sinex_test_utils::prelude::*;
 use uuid::Uuid;
 
 #[sinex_test]
-async fn test_corrupt_payload_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_corrupt_payload_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Insert events with various payload corruption scenarios
@@ -114,7 +114,7 @@ async fn test_corrupt_payload_detection(ctx: TestContext) -> anyhow::Result<()> 
 }
 
 #[sinex_test]
-async fn test_invalid_ulid_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_invalid_ulid_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Test ULID validation with various invalid scenarios
@@ -213,7 +213,7 @@ async fn test_invalid_ulid_detection(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_foreign_key_integrity(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_foreign_key_integrity(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Create a valid event first
@@ -296,7 +296,7 @@ async fn test_foreign_key_integrity(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_encoding_corruption_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_encoding_corruption_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Create events with various encoding issues
@@ -358,7 +358,7 @@ async fn test_encoding_corruption_detection(ctx: TestContext) -> anyhow::Result<
 }
 
 #[sinex_test]
-async fn test_large_scale_corruption_scan(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_large_scale_corruption_scan(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Create a mix of valid and corrupt events
@@ -462,7 +462,7 @@ async fn test_large_scale_corruption_scan(ctx: TestContext) -> anyhow::Result<()
 }
 
 #[sinex_test]
-async fn test_corruption_recovery_suggestions(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_corruption_recovery_suggestions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Create events that will trigger specific recovery suggestions
@@ -531,7 +531,7 @@ async fn test_corruption_recovery_suggestions(ctx: TestContext) -> anyhow::Resul
 }
 
 #[sinex_test]
-async fn test_checkpoint_data_corruption(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_data_corruption(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
 
     // Create some checkpoints with potentially corrupt data

@@ -3,7 +3,7 @@ use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use std::sync::Barrier;
 use std::thread;
 

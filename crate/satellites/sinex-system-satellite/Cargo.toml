@@ -1,0 +1,50 @@
+[package]
+name = "sinex-system-satellite"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinex-system-satellite"
+path = "src/main.rs"
+
+[dependencies]
+camino = { workspace = true }
+mimalloc = { workspace = true }
+# Core dependencies
+anyhow.workspace = true
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+futures = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+serde.workspace = true
+serde_json.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# System integration
+dirs.workspace = true
+
+# D-Bus - real-time signal subscription
+dbus = "0.9"
+dbus-tokio = "0.7"
+futures-util = "0.3"
+
+# udev for hardware events (optional - can be disabled)
+# libudev = "0.3"  # Disabled due to Nix environment compatibility
+
+# systemd integration (using external commands instead of systemd crate)
+# systemd = "0.10"  # Disabled due to Nix environment compatibility
+
+# Journal (using journalctl command)
+
+# Local dependencies
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
+sinex-types = { path = "../../lib/sinex-types" }
+sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }

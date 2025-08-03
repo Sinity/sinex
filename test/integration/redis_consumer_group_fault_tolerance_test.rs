@@ -18,7 +18,7 @@ use tokio::time::{sleep, timeout};
 
 /// Test Redis Consumer Group recovery after consumer crash
 #[sinex_test]
-async fn test_consumer_crash_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_crash_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:consumer:crash:stream";
     let group_name = "crash-test-group";
@@ -180,7 +180,7 @@ async fn test_consumer_crash_recovery(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test consumer group scaling with message distribution
 #[sinex_test]
-async fn test_consumer_group_scaling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_group_scaling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:scaling:stream";
     let group_name = "scaling-test-group";
@@ -316,7 +316,7 @@ async fn test_consumer_group_scaling(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test consumer group timeout and redelivery
 #[sinex_test]
-async fn test_consumer_timeout_redelivery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_timeout_redelivery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:timeout:stream";
     let group_name = "timeout-test-group";
@@ -424,7 +424,7 @@ async fn test_consumer_timeout_redelivery(ctx: TestContext) -> anyhow::Result<()
 
 /// Test consumer group state consistency under concurrent operations
 #[sinex_test]
-async fn test_consumer_group_state_consistency(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_group_state_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:consistency:stream";
     let group_name = "consistency-test-group";
@@ -571,7 +571,7 @@ async fn test_consumer_group_state_consistency(ctx: TestContext) -> anyhow::Resu
 
 /// Test consumer group failure recovery with checkpointing
 #[sinex_test]
-async fn test_consumer_group_checkpoint_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_group_checkpoint_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:checkpoint:stream";
     let group_name = "checkpoint-test-group";
@@ -727,7 +727,7 @@ async fn test_consumer_group_checkpoint_recovery(ctx: TestContext) -> anyhow::Re
 
 /// Test handling of duplicate consumer names and group management
 #[sinex_test]
-async fn test_consumer_group_management(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_group_management(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut redis_client = ctx.redis().await?;
     let stream_key = "test:management:stream";
     let group_name = "management-test-group";

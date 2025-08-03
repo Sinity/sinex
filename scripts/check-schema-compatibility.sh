@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
+# Schema compatibility check script for CI
+# 
+# This script verifies that schema changes are backward compatible
+# and validates version migrations
+
 set -euo pipefail
-
-# Script to check schema backward compatibility
-# Usage: ./scripts/check-schema-compatibility.sh [base-branch]
-
-BASE_BRANCH="${1:-master}"
-SCHEMA_DIR="schemas"
-TEMP_DIR=$(mktemp -d)
 
 # Colors for output
 RED='\033[0;31m'
@@ -14,74 +12,138 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-echo "📋 Checking schema compatibility against branch: $BASE_BRANCH"
+# Configuration
+SCHEMA_DIR="crate/sinex-events/src/payloads"
+TEMP_DIR=$(mktemp -d)
+trap "rm -rf $TEMP_DIR" EXIT
 
-# Check if json-schema-diff is installed
-if ! command -v json-schema-diff &> /dev/null; then
-    echo -e "${YELLOW}⚠️  json-schema-diff not found. Installing...${NC}"
-    npm install -g json-schema-diff
-fi
+echo "🔍 Checking schema compatibility..."
+
+# Function to extract version from a payload file
+extract_version() {
+    local file=$1
+    grep -E "VERSION.*=.*\"[0-9]+\.[0-9]+\.[0-9]+\"" "$file" | sed -E 's/.*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/' || echo "1.0.0"
+}
+
+# Function to check if version is newer
+is_version_newer() {
+    local new=$1
+    local old=$2
+    
+    IFS='.' read -r new_major new_minor new_patch <<< "$new"
+    IFS='.' read -r old_major old_minor old_patch <<< "$old"
+    
+    if [ "$new_major" -gt "$old_major" ]; then
+        return 0
+    elif [ "$new_major" -eq "$old_major" ] && [ "$new_minor" -gt "$old_minor" ]; then
+        return 0
+    elif [ "$new_major" -eq "$old_major" ] && [ "$new_minor" -eq "$old_minor" ] && [ "$new_patch" -gt "$old_patch" ]; then
+        return 0
+    fi
+    return 1
+}
 
 # Check if we're in a git repository
 if ! git rev-parse --git-dir > /dev/null 2>&1; then
-    echo -e "${RED}❌ Not in a git repository${NC}"
+    echo -e "${RED}Error: Not in a git repository${NC}"
     exit 1
 fi
 
-# Fetch the base branch
-git fetch origin "$BASE_BRANCH" 2>/dev/null || true
+# Get the base branch (usually main or master)
+BASE_BRANCH=${CI_BASE_BRANCH:-$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@' || echo "master")}
 
-# Track if any breaking changes are found
-BREAKING_CHANGES=0
-COMPATIBLE_CHANGES=0
+# Get list of changed payload files
+CHANGED_FILES=$(git diff --name-only "$BASE_BRANCH"...HEAD | grep -E "^$SCHEMA_DIR/.*\.rs$" || true)
 
-# Get list of all current schema files
-find "$SCHEMA_DIR" -name "*.json" -type f | sort | while read -r current_schema; do
-    relative_path="${current_schema#$SCHEMA_DIR/}"
+if [ -z "$CHANGED_FILES" ]; then
+    echo -e "${GREEN}✅ No schema changes detected${NC}"
+    exit 0
+fi
+
+echo "Found schema changes in:"
+echo "$CHANGED_FILES"
+echo
+
+# Check each changed file
+ERRORS=0
+WARNINGS=0
+
+for file in $CHANGED_FILES; do
+    if [ ! -f "$file" ]; then
+        echo -e "${YELLOW}⚠️  File deleted: $file${NC}"
+        WARNINGS=$((WARNINGS + 1))
+        continue
+    fi
     
-    # Check if this schema exists in the base branch
-    if git show "origin/$BASE_BRANCH:$current_schema" > "$TEMP_DIR/base.json" 2>/dev/null; then
-        echo -n "Checking $relative_path... "
-        
-        # Run json-schema-diff and capture the output
-        if json-schema-diff "$TEMP_DIR/base.json" "$current_schema" > "$TEMP_DIR/diff.txt" 2>&1; then
-            echo -e "${GREEN}✓ Compatible${NC}"
-            ((COMPATIBLE_CHANGES++)) || true
+    # Get the old version from base branch
+    git show "$BASE_BRANCH:$file" > "$TEMP_DIR/old_file.rs" 2>/dev/null || {
+        echo -e "${GREEN}✅ New schema file: $file${NC}"
+        continue
+    }
+    
+    # Extract versions
+    OLD_VERSION=$(extract_version "$TEMP_DIR/old_file.rs")
+    NEW_VERSION=$(extract_version "$file")
+    
+    echo "Checking $file: $OLD_VERSION -> $NEW_VERSION"
+    
+    # Check version progression
+    if [ "$OLD_VERSION" == "$NEW_VERSION" ]; then
+        # Check if there are structural changes
+        if ! diff -q <(grep -E "pub struct|pub enum" "$TEMP_DIR/old_file.rs" | sort) <(grep -E "pub struct|pub enum" "$file" | sort) > /dev/null; then
+            echo -e "${RED}❌ Structural changes without version bump in $file${NC}"
+            ERRORS=$((ERRORS + 1))
+        fi
+    elif is_version_newer "$NEW_VERSION" "$OLD_VERSION"; then
+        # Check if evolves_from is specified for version changes
+        if grep -q "evolves_from" "$file"; then
+            echo -e "${GREEN}✅ Version migration specified${NC}"
         else
-            echo -e "${RED}✗ Breaking change detected${NC}"
-            echo -e "${YELLOW}Details:${NC}"
-            cat "$TEMP_DIR/diff.txt" | sed 's/^/  /'
-            echo
-            ((BREAKING_CHANGES++)) || true
+            # Check if it's a major version change
+            IFS='.' read -r new_major _ _ <<< "$NEW_VERSION"
+            IFS='.' read -r old_major _ _ <<< "$OLD_VERSION"
+            
+            if [ "$new_major" -gt "$old_major" ]; then
+                echo -e "${YELLOW}⚠️  Major version change without evolves_from attribute${NC}"
+                WARNINGS=$((WARNINGS + 1))
+            fi
         fi
     else
-        echo -e "${GREEN}+ New schema: $relative_path${NC}"
+        echo -e "${RED}❌ Version downgrade detected in $file${NC}"
+        ERRORS=$((ERRORS + 1))
+    fi
+    
+    # Check for breaking_change documentation
+    if grep -q "breaking_change" "$file"; then
+        echo -e "${GREEN}✅ Breaking changes documented${NC}"
     fi
 done
 
-# Check for removed schemas
-git ls-tree -r "origin/$BASE_BRANCH" --name-only | grep "^$SCHEMA_DIR/.*\.json$" | while read -r base_schema; do
-    if [ ! -f "$base_schema" ]; then
-        echo -e "${RED}- Removed schema: ${base_schema#$SCHEMA_DIR/}${NC}"
-        echo -e "${YELLOW}  ⚠️  Removing schemas is a breaking change!${NC}"
-        ((BREAKING_CHANGES++)) || true
-    fi
-done
-
-# Clean up
-rm -rf "$TEMP_DIR"
-
+# Run Rust schema validation tests
 echo
-echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-if [ "$BREAKING_CHANGES" -gt 0 ]; then
-    echo -e "${RED}❌ Found $BREAKING_CHANGES breaking changes${NC}"
-    echo
-    echo "Options:"
-    echo "1. If these changes are intentional, increment the schema version"
-    echo "2. Modify your changes to maintain backward compatibility"
-    echo "3. Document the migration path for schema consumers"
+echo "🧪 Running schema validation tests..."
+
+# Enter nix shell and run tests
+nix develop --command bash -c "
+    cd crate/sinex-events && \
+    cargo test schema_registry -- --nocapture || exit 1
+" || {
+    echo -e "${RED}❌ Schema validation tests failed${NC}"
+    ERRORS=$((ERRORS + 1))
+}
+
+# Summary
+echo
+echo "======================================"
+echo "Schema Compatibility Check Summary"
+echo "======================================"
+echo -e "Errors:   ${RED}$ERRORS${NC}"
+echo -e "Warnings: ${YELLOW}$WARNINGS${NC}"
+
+if [ $ERRORS -gt 0 ]; then
+    echo -e "${RED}❌ Schema compatibility check failed${NC}"
     exit 1
 else
-    echo -e "${GREEN}✅ All schema changes are backward compatible${NC}"
+    echo -e "${GREEN}✅ Schema compatibility check passed${NC}"
     exit 0
 fi

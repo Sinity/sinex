@@ -44,7 +44,7 @@
 //
 // All tests use the unified `#[sinex_test]` infrastructure providing:
 // - **Automatic Database Setup**: Shared pool with transaction isolation
-// - **Standard Error Handling**: `anyhow::Result<()>`
+// - **Standard Error Handling**: `color_eyre::eyre::Result<()>`
 // - **Timing Utilities**: Deterministic waits instead of arbitrary sleeps
 // - **Test Context**: `TestContext` parameter for consistent resource access
 // - **Cleanup**: Automatic transaction rollback for perfect test isolation
@@ -55,7 +55,7 @@
 // use sinex_test_utils::prelude::*;
 //
 // #[sinex_test]
-// async fn my_test(ctx: TestContext) -> anyhow::Result<()> {
+// async fn my_test(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //     let pool = ctx.pool().clone();
 //     // Test implementation
 //     Ok(())

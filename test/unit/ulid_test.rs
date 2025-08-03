@@ -347,7 +347,7 @@ mod performance {
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_property_relationships(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_property_relationships(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Generate a batch of ULIDs with known timestamps
     let base_time = Utc::now();
     let ulids: Vec<_> = (0..100)
@@ -383,7 +383,7 @@ async fn test_ulid_property_relationships(_ctx: TestContext) -> anyhow::Result<(
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_implementation_consistency(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_implementation_consistency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use std::collections::HashMap;
 
     // Test that our ULID implementation matches expected behavior

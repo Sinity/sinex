@@ -15,7 +15,7 @@ use std::sync::atomic::{AtomicU32, AtomicBool, Ordering};
 use tokio::time::{timeout, Duration};
 
 #[sinex_test]
-async fn test_satellite_coordination_initialization() -> anyhow::Result<()> {
+async fn test_satellite_coordination_initialization() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -36,7 +36,7 @@ async fn test_satellite_coordination_initialization() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_single_instance_becomes_leader() -> anyhow::Result<()> {
+async fn test_single_instance_becomes_leader() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -76,7 +76,7 @@ async fn test_single_instance_becomes_leader() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_multi_instance_leadership_election() -> anyhow::Result<()> {
+async fn test_multi_instance_leadership_election() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -162,7 +162,7 @@ async fn test_multi_instance_leadership_election() -> anyhow::Result<()> {
 }
 
 #[sinex_test] 
-async fn test_version_based_handoff() -> anyhow::Result<()> {
+async fn test_version_based_handoff() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -228,7 +228,7 @@ async fn test_version_based_handoff() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_leader_failure_detection() -> anyhow::Result<()> {
+async fn test_leader_failure_detection() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -294,7 +294,7 @@ async fn test_leader_failure_detection() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_with_preflight_checks() -> anyhow::Result<()> {
+async fn test_coordination_with_preflight_checks() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -327,7 +327,7 @@ async fn test_coordination_with_preflight_checks() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_graceful_shutdown() -> anyhow::Result<()> {
+async fn test_coordination_graceful_shutdown() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -368,7 +368,7 @@ async fn test_coordination_graceful_shutdown() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_database_state_tracking() -> anyhow::Result<()> {
+async fn test_coordination_database_state_tracking() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -397,7 +397,7 @@ async fn test_coordination_database_state_tracking() -> anyhow::Result<()> {
 }
 
 mod test_common {
-    use sinex_core_types::Result as anyhow::Result<()>;
+    use sinex_core_types::Result as color_eyre::eyre::Result<()>;
     use sinex_db::DbPool;
     
     pub struct TestContext {
@@ -405,7 +405,7 @@ mod test_common {
     }
     
     impl TestContext {
-        pub async fn new() -> anyhow::Result<Self> {
+        pub async fn new() -> color_eyre::eyre::Result<Self> {
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
@@ -421,7 +421,7 @@ mod test_common {
 }
 
 use test_sinex_test_utils::TestContext;
-type anyhow::Result<T> = sinex_core_types::Result<T>;
+type color_eyre::eyre::Result<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation
 macro_rules! sinex_test {

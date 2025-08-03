@@ -66,9 +66,9 @@
       # Migration settings
       migration = {
         enable = true;
-        package = pkgs.sqlx-cli;
-        directory = "../migrations";
-        timeout = 300;           # Missing from original example
+        # package defaults to cfg.package which includes migration binary
+        # binary = "sinex-db-migration"; # defaults to this
+        timeout = 300;
       };
     };
 

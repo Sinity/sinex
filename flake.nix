@@ -85,9 +85,8 @@
                 EOF
               '';
               postInstall = ''
-                # Include migrations in the package
-                mkdir -p $out/share/sinex
-                cp -r migrations $out/share/sinex/
+                # Migration binary is now built separately as sinex-db-migration
+                # No need to include SQL files anymore
               '';
             };
           # Package the Python CLI tool
@@ -178,6 +177,9 @@
             sinexPreflight = buildRustPackage "sinex-preflight";
             sinexCli = sinex-cli;
 
+            # Database migration tool
+            sinexDbMigration = buildRustPackage "sinex-db-migration";
+
             # Default package is now the ingestion daemon
             default = buildRustPackage "sinex-ingestd";
             inherit pg_jsonschema;
@@ -195,6 +197,7 @@
               just
               sqlx-cli
               mold # Fast linker for compilation speed
+              cargo-modules # Module structure visualization
 
               # Python and testing
               python3
@@ -202,6 +205,19 @@
               python3Packages.psycopg2
               python3Packages.rich
               python3Packages.pyyaml
+              
+              # Token counting for LLM context
+              (pkgs.python3Packages.buildPythonPackage rec {
+                pname = "ttok";
+                version = "0.3";
+                src = pkgs.python3Packages.fetchPypi {
+                  inherit pname version;
+                  sha256 = "sha256-BHSgCldHYNsiTSSur6UOG56t9qV056bBMkZYvZuCSbg=";
+                };
+                propagatedBuildInputs = with pkgs.python3Packages; [
+                  tiktoken
+                ];
+              })
 
               # Process management and monitoring
               mprocs
@@ -236,15 +252,15 @@
                   createdb -h /run/postgresql "$DATABASE_NAME" 2>/dev/null || DB_STATUS="🟡"
                 fi
                 
-                # Run migrations silently
-                if [ -d "migrations" ] && [ "$DB_STATUS" = "🟢" ]; then
-                  if sqlx migrate run --source migrations >/dev/null 2>&1; then
-                    MIGRATION_COUNT=$(sqlx migrate info --source migrations 2>/dev/null | grep -c "applied" || echo "0")
-                    MIGRATION_INFO="$MIGRATION_COUNT migrations"
+                # Run migrations using sea-orm system
+                if [ "$DB_STATUS" = "🟢" ] && command -v cargo >/dev/null 2>&1; then
+                  if cd crate/sinex-db/migration && cargo run -- status >/dev/null 2>&1; then
+                    MIGRATION_INFO="migrations ready"
                   else
                     DB_STATUS="🟡"
                     MIGRATION_INFO="run 'just migrate'"
                   fi
+                  cd - >/dev/null
                 fi
               else
                 DB_STATUS="🔴"
@@ -256,7 +272,7 @@
               echo -e "\033[1;36m   🚀 SINEX Development Environment\033[0m"
               echo -e "\033[1;36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
               echo
-              
+
               # Database status
               if [ "$DB_STATUS" = "🟢" ]; then
                 echo -e "Database:    \033[32m✓\033[0m $DATABASE_NAME"
@@ -265,11 +281,11 @@
               else
                 echo -e "Database:    \033[31m✗\033[0m $MIGRATION_INFO"
               fi
-              
+
               # Build system status
               echo -e "Build:       \033[32m✓\033[0m Incremental compilation enabled"
               echo -e "Cores:       \033[32m✓\033[0m 24 parallel jobs"
-              
+
               echo -e "\033[90m────────────────────────────────────────\033[0m"
               echo -e "\033[90mQuick commands:\033[0m"
               echo -e "  \033[1mjust\033[0m         → Show all commands"

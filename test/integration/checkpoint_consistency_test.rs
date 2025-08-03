@@ -9,12 +9,12 @@
 
 use sinex_db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
 use sinex_db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 
 #[sinex_test]
-async fn test_checkpoint_consistency_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_consistency_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -98,7 +98,7 @@ async fn test_checkpoint_consistency_validation(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_checkpoint_gap_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -247,7 +247,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_stale_checkpoint_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton
@@ -340,7 +340,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> anyhow::Result<()>
 }
 
 #[sinex_test]
-async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create multiple test automatons
@@ -503,7 +503,7 @@ async fn test_cross_automaton_checkpoint_validation(ctx: TestContext) -> anyhow:
 }
 
 #[sinex_test]
-async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton for recovery scenarios
@@ -691,7 +691,7 @@ async fn test_checkpoint_recovery_scenarios(ctx: TestContext) -> anyhow::Result<
 }
 
 #[sinex_test]
-async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton

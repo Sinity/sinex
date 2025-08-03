@@ -6,7 +6,7 @@
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]
-async fn demo_streamlined_event_creation(ctx: TestContext) -> anyhow::Result<()> {
+async fn demo_streamlined_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // FLUENT API - Most tests use this discoverable, type-safe approach
     let event = ctx.event()
         .filesystem()
@@ -40,7 +40,7 @@ async fn demo_streamlined_event_creation(ctx: TestContext) -> anyhow::Result<()>
 }
 
 #[sinex_test] 
-async fn demo_streamlined_querying(ctx: TestContext) -> anyhow::Result<()> {
+async fn demo_streamlined_querying(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create some test data
     ctx.event().filesystem().path("/demo1.txt").created().insert().await?;
     ctx.event().filesystem().path("/demo2.txt").created().insert().await?;
@@ -63,7 +63,7 @@ async fn demo_streamlined_querying(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn demo_streamlined_fixtures(ctx: TestContext) -> anyhow::Result<()> {
+async fn demo_streamlined_fixtures(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // SCENARIO FIXTURES - Organized by purpose
     let session = ctx.scenarios()
         .user_session()
@@ -95,7 +95,7 @@ async fn demo_streamlined_fixtures(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn demo_assertions_and_timing(ctx: TestContext) -> anyhow::Result<()> {
+async fn demo_assertions_and_timing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create events
     ctx.event().filesystem().path("/test1.txt").created().insert().await?;
     ctx.event().filesystem().path("/test2.txt").created().insert().await?;

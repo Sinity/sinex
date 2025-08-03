@@ -27,7 +27,7 @@
 
 use futures::future::join_all;
 use sinex_test_utils::prelude::*;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -191,7 +191,7 @@ impl StressTestUtils {
         pool: &DbPool,
         agent_name: &str,
         source_prefix: &str,
-    ) -> AnyhowResult<(), anyhow::Error> {
+    ) -> AnyhowResult<(), color_eyre::eyre::Error> {
         // Clean up in reverse dependency order for satellite architecture
         sqlx::query!(
             "DELETE FROM core.events WHERE source LIKE $1",
@@ -458,7 +458,7 @@ impl DeadlockStressWorker {
 
 /// Test coordinated checkpoint scenario detection and recovery in satellite architecture
 #[sinex_test(timeout = 300)]
-async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_coordinated_checkpoint_scenario(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing coordinated deadlock scenario...");
     let pool = ctx.pool().clone();
 
@@ -881,7 +881,7 @@ impl RaceConditionWorker {
             Ok(Some(checkpoint)) => Ok(Some(WorkItem {
                 queue_id: checkpoint
                     .id
-                    .ok_or_else(|| anyhow::anyhow!("Missing checkpoint id"))?,
+                    .ok_or_else(|| eyre!("Missing checkpoint id"))?,
                 event_id: checkpoint
                     .last_processed_id()
                     .unwrap_or_else(|| "synthetic_event".to_string()),
@@ -936,7 +936,7 @@ impl RaceConditionWorker {
 
 /// Test race condition detection in competitive scenarios
 #[sinex_test(timeout = 300)]
-async fn test_race_condition_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_race_condition_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing race condition detection...");
     let pool = ctx.pool().clone();
 
@@ -1409,7 +1409,7 @@ impl StressTestWorker {
                 Ok(Some(WorkItem {
                     queue_id: checkpoint
                         .id
-                        .ok_or_else(|| anyhow::anyhow!("Missing checkpoint id"))?,
+                        .ok_or_else(|| eyre!("Missing checkpoint id"))?,
                     event_id: checkpoint
                         .last_processed_id()
                         .unwrap_or_else(|| "synthetic_event".to_string()),
@@ -1470,7 +1470,7 @@ impl StressTestWorker {
 
 /// Test extreme concurrency stress with many workers
 #[sinex_test(timeout = 600)]
-async fn test_extreme_concurrency_stress(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_extreme_concurrency_stress(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing extreme concurrency stress...");
     let pool = ctx.pool().clone();
     run_migrations(pool).await?;

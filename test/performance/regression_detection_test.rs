@@ -8,7 +8,7 @@ use crate::performance::baseline_performance_test::{
     BaselineTracker, EnvironmentInfo, PerformanceBaseline,
 };
 use serde_json::json;
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -386,7 +386,7 @@ impl RegressionDetector {
 
 /// Test regression detection for database operations
 #[sinex_test]
-async fn test_database_operation_regression_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_operation_regression_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut detector = RegressionDetector::new();
 
@@ -562,7 +562,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> anyho
 
 /// Test regression detection with multiple operations
 #[sinex_test]
-async fn test_multi_operation_regression_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut detector = RegressionDetector::new();
 
@@ -705,7 +705,7 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> anyhow::
 
 /// Test regression detection with custom thresholds
 #[sinex_test]
-async fn test_custom_threshold_regression_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_custom_threshold_regression_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("🔍 Testing custom threshold regression detection");
