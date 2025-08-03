@@ -5,7 +5,7 @@
 // Provides automated bottleneck detection and performance optimization guidance.
 
 use serde_json::json;
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_types::events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -536,7 +536,7 @@ impl BottleneckDetector {
 
 /// Test database connection bottleneck identification
 #[sinex_test]
-async fn test_database_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_bottleneck_identification(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
 
@@ -670,7 +670,7 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> anyhow::Re
 
 /// Test memory bottleneck identification
 #[sinex_test]
-async fn test_memory_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_memory_bottleneck_identification(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut detector = BottleneckDetector::new();
 
@@ -757,7 +757,7 @@ async fn test_memory_bottleneck_identification(ctx: TestContext) -> anyhow::Resu
 
 /// Test Redis bottleneck identification
 #[sinex_test]
-async fn test_redis_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_redis_bottleneck_identification(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut detector = BottleneckDetector::new();
 
     println!("🔍 Testing Redis bottleneck identification");
@@ -855,7 +855,7 @@ async fn test_redis_bottleneck_identification(ctx: TestContext) -> anyhow::Resul
 
 /// Test concurrent bottleneck identification
 #[sinex_test]
-async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let shared_detector = Arc::new(Mutex::new(BottleneckDetector::new()));
 

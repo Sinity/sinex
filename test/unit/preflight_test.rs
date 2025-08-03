@@ -12,7 +12,7 @@ use tokio::time::timeout;
 
 /// Test basic VerificationStatus functionality
 #[sinex_test]
-async fn test_verification_status_basic(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_verification_status_basic(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test that VerificationStatus enum works correctly
     assert_eq!(VerificationStatus::Pass, VerificationStatus::Pass);
     assert_ne!(VerificationStatus::Pass, VerificationStatus::Fail);
@@ -27,7 +27,7 @@ async fn test_verification_status_basic(_ctx: TestContext) -> anyhow::Result<()>
 
 /// Test verification status comparisons
 #[sinex_test]
-async fn test_verification_status_comparisons(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_verification_status_comparisons(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test basic equality
     assert_eq!(VerificationStatus::Pass, VerificationStatus::Pass);
     assert_eq!(VerificationStatus::Warning, VerificationStatus::Warning);
@@ -45,7 +45,7 @@ async fn test_verification_status_comparisons(_ctx: TestContext) -> anyhow::Resu
 
 /// Test Phase 1: Database connectivity verification with valid connection
 #[sinex_test]
-async fn test_phase1_database_connectivity_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase1_database_connectivity_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Set valid database URL
     env::set_var("DATABASE_URL", ctx.database_url());
 
@@ -69,7 +69,7 @@ async fn test_phase1_database_connectivity_success(ctx: TestContext) -> anyhow::
 
 /// Test Phase 1: Database connectivity with invalid URL
 #[sinex_test]
-async fn test_phase1_database_connectivity_failure(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase1_database_connectivity_failure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Set invalid database URL
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -93,7 +93,7 @@ async fn test_phase1_database_connectivity_failure(_ctx: TestContext) -> anyhow:
 
 /// Test Phase 1: Database connectivity timeout handling
 #[sinex_test]
-async fn test_phase1_database_connectivity_timeout(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase1_database_connectivity_timeout(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Use a non-responsive IP to trigger timeout
     env::set_var("DATABASE_URL", "postgresql://192.0.2.1:5432/test"); // RFC 5737 test IP
 
@@ -126,7 +126,7 @@ async fn test_phase1_database_connectivity_timeout(_ctx: TestContext) -> anyhow:
 
 /// Test Phase 2: PostgreSQL extensions verification
 #[sinex_test]
-async fn test_phase2_postgresql_extensions(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase2_postgresql_extensions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     let (status, details, messages) = database::verify_postgresql_extensions()
@@ -157,7 +157,7 @@ async fn test_phase2_postgresql_extensions(ctx: TestContext) -> anyhow::Result<(
 
 /// Test Phase 2: Extensions verification with database connection failure
 #[sinex_test]
-async fn test_phase2_extensions_db_failure(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase2_extensions_db_failure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
     let result = database::verify_postgresql_extensions().await;
@@ -172,7 +172,7 @@ async fn test_phase2_extensions_db_failure(_ctx: TestContext) -> anyhow::Result<
 
 /// Test Phase 3: Migration readiness verification
 #[sinex_test]
-async fn test_phase3_migration_readiness(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase3_migration_readiness(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     let (status, details, messages) = database::verify_migration_readiness()
@@ -195,7 +195,7 @@ async fn test_phase3_migration_readiness(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test Phase 3: Migration readiness with invalid database
 #[sinex_test]
-async fn test_phase3_migration_readiness_db_failure(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase3_migration_readiness_db_failure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
     let result = database::verify_migration_readiness().await;
@@ -210,7 +210,7 @@ async fn test_phase3_migration_readiness_db_failure(_ctx: TestContext) -> anyhow
 
 /// Test Phase 4: System resources verification success
 #[sinex_test]
-async fn test_phase4_system_resources_success(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase4_system_resources_success(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let (status, details, messages) = resources::verify_system_resources()
         .await
         .map_err(|e| format!("System resources test failed: {}", e))?;
@@ -239,7 +239,7 @@ async fn test_phase4_system_resources_success(_ctx: TestContext) -> anyhow::Resu
 
 /// Test Phase 4: Filesystem permissions verification with temp directory
 #[sinex_test]
-async fn test_phase4_filesystem_permissions(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase4_filesystem_permissions(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create a temporary directory for testing
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     let temp_path = temp_dir.path().to_string_lossy();
@@ -267,7 +267,7 @@ async fn test_phase4_filesystem_permissions(_ctx: TestContext) -> anyhow::Result
 
 /// Test Phase 5: Configuration verification success
 #[sinex_test]
-async fn test_phase5_configuration_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase5_configuration_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     let (status, details, messages) = configuration::verify_configuration_generation()
@@ -291,7 +291,7 @@ async fn test_phase5_configuration_success(ctx: TestContext) -> anyhow::Result<(
 
 /// Test Phase 5: Configuration with missing environment variables
 #[sinex_test]
-async fn test_phase5_configuration_missing_env(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase5_configuration_missing_env(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Remove required environment variable
     env::remove_var("DATABASE_URL");
 
@@ -309,7 +309,7 @@ async fn test_phase5_configuration_missing_env(_ctx: TestContext) -> anyhow::Res
 
 /// Test Phase 5: TOML configuration generation
 #[sinex_test]
-async fn test_phase5_toml_generation(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase5_toml_generation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test TOML generation independently
     let test_config = r#"
 [database]
@@ -335,7 +335,7 @@ level = "info"
 
 /// Test Phase 6: Service dependencies verification
 #[sinex_test]
-async fn test_phase6_service_dependencies(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase6_service_dependencies(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let (status, details, messages) = services::verify_service_dependencies()
         .await
         .map_err(|e| format!("Service dependencies test failed: {}", e))?;
@@ -357,7 +357,7 @@ async fn test_phase6_service_dependencies(_ctx: TestContext) -> anyhow::Result<(
 
 /// Test Phase 6: Binary availability verification
 #[sinex_test]
-async fn test_phase6_binary_availability(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase6_binary_availability(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test with a binary that should exist (ls)
     let output = std::process::Command::new("which")
         .arg("ls")
@@ -384,7 +384,7 @@ async fn test_phase6_binary_availability(_ctx: TestContext) -> anyhow::Result<()
 
 /// Test Phase 7: End-to-end integration verification
 #[sinex_test]
-async fn test_phase7_integration_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     let (status, details, messages) = verification::verify_end_to_end_integration()
@@ -406,7 +406,7 @@ async fn test_phase7_integration_success(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test Phase 7: Integration with database connection failure
 #[sinex_test]
-async fn test_phase7_integration_db_failure(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_phase7_integration_db_failure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
     let (status, _details, messages) = verification::verify_end_to_end_integration()
@@ -425,7 +425,7 @@ async fn test_phase7_integration_db_failure(_ctx: TestContext) -> anyhow::Result
 
 /// Test verification status serialization
 #[sinex_test]
-async fn test_verification_status_serialization(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_verification_status_serialization(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test that VerificationStatus can be serialized/deserialized properly
     let statuses = vec![
         VerificationStatus::Pass,
@@ -448,7 +448,7 @@ async fn test_verification_status_serialization(_ctx: TestContext) -> anyhow::Re
 
 /// Test error message formatting and context
 #[sinex_test]
-async fn test_error_message_formatting(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_error_message_formatting(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test various error scenarios and verify message formatting
     let test_cases = vec![
         ("✓ Success message format", true),

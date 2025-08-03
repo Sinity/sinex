@@ -12,7 +12,7 @@ use sinex_core_runtime::{MetricsProvider, ProcessHeartbeatEmitter};
 use sinex_core_types::event_constants::{sources, types};
 use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{
+use sinex_types::events::{
     EventFactory, ProcessHeartbeatPayload, ProcessShutdownPayload, ProcessStartedPayload,
 };
 use sinex_test_utils::prelude::*;
@@ -82,7 +82,7 @@ impl MetricsProvider for MockMetricsProvider {
 #[sinex_test]
 async fn test_process_heartbeat_emitter_basic_functionality(
     ctx: TestContext,
-) -> anyhow::Result<()> {
+) -> color_eyre::eyre::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     metrics_provider.set_uptime(3600); // 1 hour
     metrics_provider.set_memory(256); // 256 MB
@@ -136,7 +136,7 @@ async fn test_process_heartbeat_emitter_basic_functionality(
 }
 
 #[sinex_test]
-async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_process_lifecycle_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "lifecycle_test";
     let version = "2.0.0";
@@ -251,7 +251,7 @@ async fn test_process_lifecycle_events(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "custom_metrics_test";
     let version = "1.5.0";
@@ -310,7 +310,7 @@ async fn test_process_heartbeat_with_custom_metrics(ctx: TestContext) -> anyhow:
 }
 
 #[sinex_test]
-async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "continuous_test";
     let version = "1.0.0";
@@ -387,7 +387,7 @@ async fn test_process_heartbeat_continuous_emission(ctx: TestContext) -> anyhow:
 // =============================================================================
 
 #[sinex_test]
-async fn test_health_aggregator_process_discovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_health_aggregator_process_discovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create multiple processes with different states
     let processes = vec![
         ("web_server", "healthy", 3600, 512, 1000),
@@ -485,7 +485,7 @@ async fn test_health_aggregator_process_discovery(ctx: TestContext) -> anyhow::R
 }
 
 #[sinex_test]
-async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_process_failure_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "failing_process";
     let version = "1.0.0";
@@ -632,7 +632,7 @@ async fn test_process_failure_detection(ctx: TestContext) -> anyhow::Result<()> 
 }
 
 #[sinex_test]
-async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_process_restart_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let process_name = "restartable_process";
     let event_factory = EventFactory::new("sinex.process");
 
@@ -761,7 +761,7 @@ async fn test_process_restart_detection(ctx: TestContext) -> anyhow::Result<()> 
 // =============================================================================
 
 #[sinex_test]
-async fn test_high_frequency_heartbeats(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_high_frequency_heartbeats(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let metrics_provider = MockMetricsProvider::new();
     let process_name = "high_freq_test";
     let version = "1.0.0";

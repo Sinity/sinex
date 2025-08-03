@@ -18,7 +18,7 @@ use tokio::task::JoinSet;
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing ULID maximum timestamp representation...");
 
     // ULID uses 48 bits for timestamp (milliseconds since Unix epoch)
@@ -88,7 +88,7 @@ async fn test_ulid_max_timestamp_representation(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_ulid_timestamp_wraparound_behavior(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_timestamp_wraparound_behavior(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing ULID timestamp wraparound behavior...");
 
     // Test what happens when we try to create ULIDs beyond max timestamp
@@ -132,7 +132,7 @@ async fn test_ulid_timestamp_wraparound_behavior(ctx: TestContext) -> anyhow::Re
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing ULID monotonic generation at extreme rates...");
 
     let generated_ulids = Arc::new(Mutex::new(Vec::new()));
@@ -204,7 +204,7 @@ async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> anyhow
 }
 
 #[sinex_test]
-async fn test_ulid_generation_same_millisecond_ordering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_generation_same_millisecond_ordering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing ULID generation within same millisecond...");
 
     // Force generation within same millisecond by generating in tight loop
@@ -269,7 +269,7 @@ async fn test_ulid_generation_same_millisecond_ordering(ctx: TestContext) -> any
 // =============================================================================
 
 #[sinex_test]
-async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing ULID concurrent generation safety...");
 
     let pool = ctx.pool();
@@ -371,7 +371,7 @@ async fn test_ulid_concurrent_generation_safety(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_ulid_random_component_distribution(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_random_component_distribution(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing ULID random component distribution...");
 
     // Generate many ULIDs and analyze random component distribution

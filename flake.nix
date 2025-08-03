@@ -197,6 +197,7 @@
               just
               sqlx-cli
               mold # Fast linker for compilation speed
+              cargo-modules # Module structure visualization
 
               # Python and testing
               python3
@@ -204,6 +205,19 @@
               python3Packages.psycopg2
               python3Packages.rich
               python3Packages.pyyaml
+              
+              # Token counting for LLM context
+              (pkgs.python3Packages.buildPythonPackage rec {
+                pname = "ttok";
+                version = "0.3";
+                src = pkgs.python3Packages.fetchPypi {
+                  inherit pname version;
+                  sha256 = "sha256-BHSgCldHYNsiTSSur6UOG56t9qV056bBMkZYvZuCSbg=";
+                };
+                propagatedBuildInputs = with pkgs.python3Packages; [
+                  tiktoken
+                ];
+              })
 
               # Process management and monitoring
               mprocs

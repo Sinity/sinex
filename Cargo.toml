@@ -1,38 +1,40 @@
 [workspace]
 members = [
-  "crate/sinex",
-  "crate/sinex-db",
-  "crate/sinex-db/migration",
-  "crate/sinex-events",
-  "crate/sinex-annex",
-  "crate/sinex-health-aggregator",
-  "crate/sinex-preflight",
-  "crate/sinex-services",
-  "crate/sinex-macros",
-  "crate/sinex-gateway",
-  "crate/sinex-satellite-sdk",
-  "crate/sinex-ingestd",
-  "crate/sinex-fs-watcher",
-  "crate/sinex-terminal-command-canonicalizer",
-  "crate/sinex-terminal-satellite",
-  "crate/sinex-desktop-satellite",
-  "crate/sinex-system-satellite",
-  "crate/sinex-document-ingestor",
-  # Phase 3: NATS JetStream integration
-  "crate/sinex-nats",
-  # Service automata (Phase 4: Gateway dissolution)
-  "crate/sinex-analytics-automaton",
-  "crate/sinex-pkm-automaton",
-  "crate/sinex-search-automaton",
-  "crate/sinex-content-automaton",
-  "crate/sinex-rpc-dispatcher",
-  # New consolidated crates (replacing sinex-core split)
-  "crate/sinex-types",
-  "crate/sinex-telemetry",
-  # Test infrastructure
-  "crate/sinex-test-utils",
-  # Schema management - temporarily disabled due to compilation issues
-  # "crate/sinex-schema-manager",
+  # Library crates
+  "crate/lib/sinex-db",
+  "crate/lib/sinex-db/migration",
+  "crate/lib/sinex-types",
+  "crate/lib/sinex-macros",
+  "crate/lib/sinex-satellite-sdk",
+  "crate/lib/sinex-services",
+  "crate/lib/sinex-test-utils",
+  
+  # Core runtime crates
+  "crate/core/sinex-ingestd",
+  "crate/core/sinex-gateway",
+  "crate/core/sinex-rpc-dispatcher",
+  
+  # Satellite crates
+  "crate/satellites/sinex-fs-watcher",
+  "crate/satellites/sinex-terminal-satellite",
+  "crate/satellites/sinex-desktop-satellite",
+  "crate/satellites/sinex-system-satellite",
+  "crate/satellites/sinex-terminal-command-canonicalizer",
+  "crate/satellites/sinex-health-aggregator",
+  "crate/satellites/sinex-document-ingestor",
+  
+  # Automaton crates
+  "crate/satellites/sinex-analytics-automaton",
+  "crate/satellites/sinex-pkm-automaton",
+  "crate/satellites/sinex-search-automaton",
+  "crate/satellites/sinex-content-automaton",
+  
+  # Disabled/folded crates
+  # "crate/sinex-annex", # Folded into sinex-satellite-sdk
+  # "crate/sinex-preflight", # Folded into sinex-satellite-sdk
+  # "crate/sinex-nats", # Folded into sinex-satellite-sdk
+  # "crate/sinex-telemetry", # Folded into sinex-db
+  # "crate/sinex-schema-manager", # Folded into sinex-types
 ]
 resolver = "2"
 
@@ -86,6 +88,9 @@ thiserror = "2.0.12"
 color-eyre = "0.6.5"
 serde_path_to_error = "0.1.17"
 
+# Path handling
+camino = { version = "1.1", features = ["serde1"] }
+
 # Logging
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.19", features = ["env-filter", "json"] }
@@ -105,6 +110,8 @@ blake3 = "1.8.2"
 glob = "0.3"
 toml = "0.8"
 fastrand = "2.0"
+ahash = "0.8"
+mimalloc = { version = "0.1", default-features = false }
 
 # Builder pattern
 bon = "2.3"
@@ -117,8 +124,9 @@ tonic = "0.11"
 prost = "0.12"
 tonic-build = "0.11"
 
-# Redis for message bus
+# Message bus
 redis = { version = "0.24", features = ["tokio-comp", "streams"] }
+async-nats = "0.33"
 
 # System integration
 sd-notify = "0.4"
@@ -133,6 +141,10 @@ notify = "6.1"
 
 # Testing
 proptest = "1"
+rstest = "0.18"
+insta = { version = "1.34", features = ["json", "yaml", "redactions"] }
+tracing-test = "0.2"
+similar-asserts = "1.5"
 
 # System
 gethostname = "0.4"
@@ -143,7 +155,7 @@ which = "5.0"
 regex = "1.11.1"
 url = "2"
 unicode-normalization = "0.1"
-schemars = "0.8"
+schemars = { version = "0.8", features = ["chrono", "uuid1"] }
 tempfile = "3.0"
 jsonschema = "0.17"
 validator = { version = "0.18", features = ["derive"] }

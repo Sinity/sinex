@@ -9,7 +9,7 @@ use tokio::time::{Duration, timeout};
 
 /// Test system behavior with maximum payload sizes
 #[sinex_test]
-async fn test_maximum_payload_sizes(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_maximum_payload_sizes(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let payload_sizes = vec![
         1024,           // 1KB
         64 * 1024,      // 64KB
@@ -48,7 +48,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test system behavior with zero and minimal values
 #[sinex_test]
-async fn test_minimal_boundary_values(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test empty payload
     let empty_event = ctx.create_test_event(
         "boundary_test",
@@ -92,7 +92,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test system behavior with Unicode and special characters
 #[sinex_test]
-async fn test_unicode_boundary_cases(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_unicode_boundary_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let unicode_cases = vec![
         // Basic multilingual plane
         ("emoji", "🎉🎊🎈🎁🎀"),
@@ -130,7 +130,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test timestamp boundaries
 #[sinex_test]
-async fn test_timestamp_boundaries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use chrono::{DateTime, Utc, TimeZone};
 
     let timestamp_cases = vec![
@@ -166,7 +166,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test array and collection boundaries
 #[sinex_test]
-async fn test_collection_boundaries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_collection_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Empty arrays
     let empty_array = ctx.create_test_event(
         "collection_test",
@@ -219,7 +219,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test numeric boundaries
 #[sinex_test]
-async fn test_numeric_boundaries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_numeric_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let numeric_cases = vec![
         ("i64_max", serde_json::json!(i64::MAX)),
         ("i64_min", serde_json::json!(i64::MIN)),
@@ -254,7 +254,7 @@ async fn test_numeric_boundaries(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test concurrent access boundaries
 #[sinex_test]
-async fn test_concurrent_access_boundaries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_access_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let event_count = 1000;
     let concurrent_tasks = 100;
     let events_per_task = event_count / concurrent_tasks;
@@ -307,7 +307,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> anyhow::Result<(
 
 /// Test string length boundaries
 #[sinex_test]
-async fn test_string_length_boundaries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_string_length_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let string_lengths = vec![
         0,      // Empty string
         1,      // Single character
@@ -338,7 +338,7 @@ async fn test_string_length_boundaries(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Property-based testing for boundary conditions
 #[sinex_test]
-async fn test_property_based_boundaries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_property_based_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     proptest!(|(
         array_size in 0..1000usize,
         string_len in 0..10000usize,

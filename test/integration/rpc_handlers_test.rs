@@ -65,7 +65,7 @@ impl JsonRpcRequest {
 }
 
 /// Create test events for analytics testing
-async fn create_test_events_for_analytics(pool: &DbPool) -> anyhow::Result<()> {
+async fn create_test_events_for_analytics(pool: &DbPool) -> color_eyre::eyre::Result<()> {
     let test_events = vec![
         ("fs", "file.created", json!({"path": "/test1.txt"})),
         ("fs", "file.modified", json!({"path": "/test2.txt"})),
@@ -97,7 +97,7 @@ async fn create_test_events_for_analytics(pool: &DbPool) -> anyhow::Result<()> {
 }
 
 /// Create test events for search testing
-async fn create_test_events_for_search(pool: &DbPool) -> anyhow::Result<()> {
+async fn create_test_events_for_search(pool: &DbPool) -> color_eyre::eyre::Result<()> {
     let test_events = vec![
         (
             "fs",
@@ -245,7 +245,7 @@ async fn simulate_rpc_request(
 // ===============================
 
 #[sinex_test]
-async fn test_analytics_event_count_by_source_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_analytics_event_count_by_source_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
@@ -277,7 +277,7 @@ async fn test_analytics_event_count_by_source_success(ctx: TestContext) -> anyho
 }
 
 #[sinex_test]
-async fn test_analytics_event_count_by_source_defaults(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_analytics_event_count_by_source_defaults(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
@@ -296,7 +296,7 @@ async fn test_analytics_event_count_by_source_defaults(ctx: TestContext) -> anyh
 }
 
 #[sinex_test]
-async fn test_analytics_activity_heatmap_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_analytics_activity_heatmap_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
@@ -327,7 +327,7 @@ async fn test_analytics_activity_heatmap_success(ctx: TestContext) -> anyhow::Re
 // ===============================
 
 #[sinex_test]
-async fn test_search_events_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_events_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_search(ctx.pool()).await?;
 
@@ -372,7 +372,7 @@ async fn test_search_events_success(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_events_with_filters(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_events_with_filters(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_search(ctx.pool()).await?;
 
@@ -407,7 +407,7 @@ async fn test_search_events_with_filters(ctx: TestContext) -> anyhow::Result<()>
 }
 
 #[sinex_test]
-async fn test_search_events_invalid_params(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_events_invalid_params(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     // Test with invalid parameter structure
@@ -438,7 +438,7 @@ async fn test_search_events_invalid_params(ctx: TestContext) -> anyhow::Result<(
 // ===============================
 
 #[sinex_test]
-async fn test_pkm_create_note_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_pkm_create_note_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     // Create a test event to annotate
@@ -475,7 +475,7 @@ async fn test_pkm_create_note_success(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     let request = JsonRpcRequest::new(
@@ -498,7 +498,7 @@ async fn test_pkm_create_note_missing_event_id(ctx: TestContext) -> anyhow::Resu
 }
 
 #[sinex_test]
-async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     let event = EventFactory::new("test")
@@ -544,7 +544,7 @@ async fn test_pkm_create_entities_from_list_success(ctx: TestContext) -> anyhow:
 // ===============================
 
 #[sinex_test]
-async fn test_content_store_blob_success(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_content_store_blob_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     let request = JsonRpcRequest::new(
@@ -573,7 +573,7 @@ async fn test_content_store_blob_success(ctx: TestContext) -> anyhow::Result<()>
 }
 
 #[sinex_test]
-async fn test_content_store_blob_missing_content(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_content_store_blob_missing_content(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     let request = JsonRpcRequest::new(
@@ -598,7 +598,7 @@ async fn test_content_store_blob_missing_content(ctx: TestContext) -> anyhow::Re
 // ===============================
 
 #[sinex_test]
-async fn test_rpc_method_not_found(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_rpc_method_not_found(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     let request = JsonRpcRequest::new("non.existent.method", json!({}));
@@ -618,7 +618,7 @@ async fn test_rpc_method_not_found(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_rpc_request_without_id(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_rpc_request_without_id(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
@@ -634,7 +634,7 @@ async fn test_rpc_request_without_id(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_rpc_request_with_string_id(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_rpc_request_with_string_id(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
     create_test_events_for_analytics(ctx.pool()).await?;
 
@@ -654,7 +654,7 @@ async fn test_rpc_request_with_string_id(ctx: TestContext) -> anyhow::Result<()>
 // ===============================
 
 #[sinex_test]
-async fn test_parameter_serialization_all_types(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_parameter_serialization_all_types(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     let event = EventFactory::new("test")
@@ -682,7 +682,7 @@ async fn test_parameter_serialization_all_types(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_parameter_validation_ulid_parsing(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_parameter_validation_ulid_parsing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     // Test with invalid ULID format
@@ -709,7 +709,7 @@ async fn test_parameter_validation_ulid_parsing(ctx: TestContext) -> anyhow::Res
 // ===============================
 
 #[sinex_test]
-async fn test_full_workflow_integration(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_full_workflow_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let services = create_test_services().await?;
 
     // 1. Create test data

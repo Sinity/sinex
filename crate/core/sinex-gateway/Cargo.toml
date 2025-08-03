@@ -1,0 +1,56 @@
+[package]
+name = "sinex-gateway"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+repository.workspace = true
+license.workspace = true
+
+[dependencies]
+# Performance
+mimalloc = { workspace = true }
+
+sinex-types = { path = "../../lib/sinex-types" }
+sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }
+sinex-services = { path = "../../lib/sinex-services" }
+# sinex-annex folded into sinex-satellite-sdk
+# sinex-telemetry folded into sinex-db
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+
+# Async runtime
+tokio = { workspace = true, features = ["full"] }
+
+# Web framework for RPC server
+axum = { workspace = true }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
+hyper = "1.0"
+hyper-util = { version = "0.1", features = ["server", "server-auto"] }
+
+# JSON-RPC
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Path handling
+camino = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# CLI
+clap = { workspace = true, features = ["derive"] }
+
+# Native messaging
+byteorder = "1.5"
+
+# Time handling
+chrono = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.10"
+futures = "0.3"

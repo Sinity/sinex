@@ -16,11 +16,11 @@ use sinex_core_types::{CoreError, EventSender};
 use sinex_core_types::event_constants::{sources, types};
 use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, EventFactory};
+use sinex_types::events::{event_types, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{assertions, events};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use camino::Utf8PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -47,7 +47,7 @@ fn create_comprehensive_config() -> serde_json::Value {
 }
 
 #[sinex_test]
-async fn test_system_startup_with_all_configurations(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_system_startup_with_all_configurations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = create_comprehensive_config();
 
     // Validate configuration structure
@@ -151,7 +151,7 @@ async fn test_database_startup_health(pool: &DbPool) -> AnyhowResult<bool> {
     Ok(true)
 }
 
-async fn test_git_annex_startup(annex_path: &std::path::Path) -> AnyhowResult<bool> {
+async fn test_git_annex_startup(annex_path: &camino::Utf8Path) -> AnyhowResult<bool> {
     let git_init = Command::new("git")
         .args(["init"])
         .current_dir(annex_path)
@@ -340,7 +340,7 @@ async fn test_monitoring_system_startup(_config: &serde_json::Value) -> AnyhowRe
 }
 
 #[sinex_test]
-async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_graceful_degradation_on_component_failure(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut config = create_comprehensive_config();
 
     config.enabled_events = vec![
@@ -432,7 +432,7 @@ async fn test_annex_fallback_scenario() -> AnyhowResult<bool> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_systemd_notify_protocol(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_systemd_notify_protocol(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use mock_types::{SystemdEvent, SystemdNotifier};
 
     let notifier = SystemdNotifier::new();
@@ -455,7 +455,7 @@ async fn test_systemd_notify_protocol(ctx: TestContext) -> anyhow::Result<()> {
 
     notifier
         .verify_sequence(&expected_sequence)
-        .map_err(|e| anyhow::anyhow!("SystemD notification sequence validation failed: {}", e))?;
+        .map_err(|e| eyre!("SystemD notification sequence validation failed: {}", e))?;
 
     let events = notifier.get_events();
     pretty_assertions::assert_eq!(events.len(), 6, "Should have recorded all 6 systemd events");
@@ -473,7 +473,7 @@ async fn test_systemd_notify_protocol(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_resource_limits_configuration(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_resource_limits_configuration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let presets = vec![
         ("lite", ResourcePreset::lite()),
         ("normal", ResourcePreset::normal()),
@@ -525,7 +525,7 @@ async fn test_resource_limits_configuration(ctx: TestContext) -> anyhow::Result<
 }
 
 #[sinex_test]
-async fn test_deployment_checklist_automation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_deployment_checklist_automation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut checklist = DeploymentChecklist::new();
 
     checklist.add_check("Database connectivity", || async { Ok(true) });
@@ -562,7 +562,7 @@ async fn test_deployment_checklist_automation(ctx: TestContext) -> anyhow::Resul
 // =============================================================================
 
 #[sinex_test]
-async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("🚀 Starting comprehensive abstraction integration test");
 
     // Create a simple test configuration
@@ -649,7 +649,7 @@ async fn test_comprehensive_abstraction_integration(ctx: TestContext) -> anyhow:
 // =============================================================================
 
 #[sinex_test]
-async fn test_database_disconnection_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_disconnection_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let recovery_test = test_database_connection_recovery(ctx.pool()).await?;
     assert!(
         recovery_test,
@@ -903,7 +903,7 @@ impl Clone for SystemHealthMonitor {
 }
 
 #[sinex_test]
-async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     let monitor = SystemHealthMonitor::new(Duration::from_millis(100), 3);
@@ -953,7 +953,7 @@ async fn test_comprehensive_health_monitoring_system(ctx: TestContext) -> anyhow
 async fn test_component_health_checks(
     monitor: &SystemHealthMonitor,
     pool: &DbPool,
-) -> AnyhowResult<(), anyhow::Error> {
+) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let db_health = check_database_health(pool).await?;
     monitor
         .update_component_health("database", db_health, None)
@@ -1006,7 +1006,7 @@ async fn check_filesystem_source_health() -> AnyhowResult<HealthStatus> {
 
 async fn test_failure_detection_and_recovery(
     monitor: &SystemHealthMonitor,
-) -> AnyhowResult<(), anyhow::Error> {
+) -> AnyhowResult<(), color_eyre::eyre::Error> {
     monitor
         .update_component_health(
             "filesystem_source",
@@ -1042,7 +1042,7 @@ async fn test_failure_detection_and_recovery(
 
 async fn test_system_health_aggregation(
     monitor: &SystemHealthMonitor,
-) -> AnyhowResult<(), anyhow::Error> {
+) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let components = [
         "database",
         "filesystem_source",
@@ -1088,7 +1088,7 @@ const LARGE_PAYLOAD_SIZE: usize = 10 * 1024 * 1024;
 const EXTREME_PAYLOAD_SIZE: usize = 100 * 1024 * 1024;
 
 #[sinex_test]
-async fn test_small_payload_handling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_small_payload_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let small_content = "x".repeat(SMALL_PAYLOAD_SIZE / 2);
     let payload = json!({
         "content": small_content,
@@ -1115,7 +1115,7 @@ async fn test_small_payload_handling(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_large_payload_handling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_large_payload_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let large_content = "b".repeat(LARGE_PAYLOAD_SIZE);
     let payload = json!({
         "very_large_text": large_content,
@@ -1158,7 +1158,7 @@ async fn test_large_payload_handling(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_extreme_payload_rejection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_extreme_payload_rejection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let extreme_content = "c".repeat(EXTREME_PAYLOAD_SIZE);
     let payload = json!({
         "extreme_text": extreme_content,
@@ -1244,7 +1244,7 @@ async fn test_exo_cli_basic_queries(ctx: TestContext) -> sqlx::Result<()> {
 }
 
 #[sinex_test]
-async fn test_exo_cli_error_handling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_exo_cli_error_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let cli_path = std::env::current_dir().unwrap().join("cli/exo.py");
 
     let output = Command::new("python3")
@@ -1278,7 +1278,7 @@ async fn test_exo_cli_error_handling(ctx: TestContext) -> anyhow::Result<()> {
 // =============================================================================
 
 mod mock_types {
-    use anyhow::Result as AnyhowResult;
+    use color_eyre::eyre::Result as AnyhowResult;
     use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
@@ -1351,7 +1351,7 @@ mod mock_types {
 
         pub fn notify_watchdog(&self) -> AnyhowResult<()> {
             if *self.fail_watchdog.lock().unwrap() {
-                return Err(anyhow::anyhow!("Simulated watchdog failure"));
+                return Err(eyre!("Simulated watchdog failure"));
             }
             self.events
                 .lock()
@@ -1360,7 +1360,7 @@ mod mock_types {
             Ok(())
         }
 
-        pub fn notify_status(&self, status: &str) -> AnyhowResult<(), anyhow::Error> {
+        pub fn notify_status(&self, status: &str) -> AnyhowResult<(), color_eyre::eyre::Error> {
             self.events
                 .lock()
                 .unwrap()
@@ -1368,7 +1368,7 @@ mod mock_types {
             Ok(())
         }
 
-        pub fn notify_stopping(&self) -> AnyhowResult<(), anyhow::Error> {
+        pub fn notify_stopping(&self) -> AnyhowResult<(), color_eyre::eyre::Error> {
             self.events
                 .lock()
                 .unwrap()
@@ -1419,7 +1419,7 @@ mod mock_types {
             &'static str,
             Box<
                 dyn Fn() -> std::pin::Pin<
-                    Box<dyn std::future::Future<Output = Result<bool, anyhow::Error>>>,
+                    Box<dyn std::future::Future<Output = Result<bool, color_eyre::eyre::Error>>>,
                 >,
             >,
         )>,
@@ -1433,13 +1433,13 @@ mod mock_types {
         pub fn add_check<F, Fut>(&mut self, name: &'static str, check: F)
         where
             F: Fn() -> Fut + 'static,
-            Fut: std::future::Future<Output = Result<bool, anyhow::Error>> + 'static,
+            Fut: std::future::Future<Output = Result<bool, color_eyre::eyre::Error>> + 'static,
         {
             self.checks
                 .push((name, Box::new(move || Box::pin(check()))));
         }
 
-        pub async fn run_all(&self) -> AnyhowResult<Vec<(&str, bool)>, anyhow::Error> {
+        pub async fn run_all(&self) -> AnyhowResult<Vec<(&str, bool)>, color_eyre::eyre::Error> {
             let mut results = vec![];
             for (name, check) in &self.checks {
                 let passed = check().await?;
@@ -1456,7 +1456,7 @@ mod mock_types {
 
 /// Git-annex integration test helper
 struct GitAnnexTestRepo {
-    pub path: PathBuf,
+    pub path: Utf8PathBuf,
     pub _temp_dir: TempDir,
     pub available: bool,
 }
@@ -1516,7 +1516,7 @@ impl GitAnnexTestRepo {
 
     pub async fn add_file(&self, relative_path: &str, content: &[u8]) -> AnyhowResult<String> {
         if !self.available {
-            return Err(anyhow::anyhow!("Git-annex not available"));
+            return Err(eyre!("Git-annex not available"));
         }
 
         let file_path = self.path.join(relative_path);
@@ -1533,7 +1533,7 @@ impl GitAnnexTestRepo {
             .output()?;
 
         if !add_output.status.success() {
-            return Err(anyhow::anyhow!(
+            return Err(eyre!(
                 "Git-annex add failed: {}",
                 String::from_utf8_lossy(&add_output.stderr)
             ));
@@ -1545,7 +1545,7 @@ impl GitAnnexTestRepo {
             .output()?;
 
         if !commit_output.status.success() {
-            return Err(anyhow::anyhow!(
+            return Err(eyre!(
                 "Git commit failed: {}",
                 String::from_utf8_lossy(&commit_output.stderr)
             ));
@@ -1561,13 +1561,13 @@ impl GitAnnexTestRepo {
                 .trim()
                 .to_string())
         } else {
-            Err(anyhow::anyhow!("Failed to get annex key"))
+            Err(eyre!("Failed to get annex key"))
         }
     }
 
     pub async fn get_file_content(&self, relative_path: &str) -> AnyhowResult<Vec<u8>> {
         if !self.available {
-            return Err(anyhow::anyhow!("Git-annex not available"));
+            return Err(eyre!("Git-annex not available"));
         }
 
         let file_path = self.path.join(relative_path);
@@ -1578,7 +1578,7 @@ impl GitAnnexTestRepo {
             .output()?;
 
         if !get_output.status.success() {
-            return Err(anyhow::anyhow!(
+            return Err(eyre!(
                 "Git-annex get failed: {}",
                 String::from_utf8_lossy(&get_output.stderr)
             ));
@@ -1590,7 +1590,7 @@ impl GitAnnexTestRepo {
 }
 
 #[sinex_test]
-async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     let annex_repo = GitAnnexTestRepo::new().await?;
@@ -1609,7 +1609,7 @@ async fn test_git_annex_integration_with_event_pipeline(ctx: TestContext) -> any
 async fn test_large_file_event_capture(
     pool: &DbPool,
     annex_repo: &GitAnnexTestRepo,
-) -> AnyhowResult<(), anyhow::Error> {
+) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let large_content = "x".repeat(2048);
     let medium_content = "y".repeat(512);
 
@@ -1675,7 +1675,7 @@ async fn test_large_file_event_capture(
 async fn test_event_processing_with_annex_blobs(
     pool: &DbPool,
     annex_repo: &GitAnnexTestRepo,
-) -> AnyhowResult<(), anyhow::Error> {
+) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let text_content = "This is a test document with important content for processing.";
     let binary_content = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10];
     let json_content = r#"{"type": "document", "content": "structured data", "version": 1}"#;
@@ -1796,7 +1796,7 @@ async fn test_event_processing_with_annex_blobs(
 }
 
 #[sinex_test]
-async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     test_annex_unavailable_fallback(pool).await?;
@@ -1805,7 +1805,7 @@ async fn test_git_annex_fallback_scenarios(ctx: TestContext) -> anyhow::Result<(
     Ok(())
 }
 
-async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
+async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let large_file_content = "x".repeat(2048);
 
     let factory = EventFactory::new(sources::FS);
@@ -1846,7 +1846,7 @@ async fn test_annex_unavailable_fallback(pool: &DbPool) -> AnyhowResult<(), anyh
     Ok(())
 }
 
-async fn test_annex_operation_failure_handling(pool: &DbPool) -> AnyhowResult<(), anyhow::Error> {
+async fn test_annex_operation_failure_handling(pool: &DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let failure_scenarios = vec![
         ("corrupted_repo", "Repository corruption detected"),
         ("disk_full", "No space left on device"),
@@ -1897,7 +1897,7 @@ use mock_types::*;
 // =============================================================================
 
 #[sinex_test]
-async fn test_agent_manifest_create(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_manifest_create(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create a complete agent manifest
     let result = sqlx::query(
         "INSERT INTO core.processor_manifests
@@ -1986,7 +1986,7 @@ async fn test_agent_manifest_create(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_agent_manifest_update(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_manifest_update(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create agent
     sqlx::query("INSERT INTO core.processor_manifests (processor_name, processor_type, version) VALUES ($1, 'automaton', $2)")
         .bind("update_test_agent")
@@ -2049,7 +2049,7 @@ async fn test_agent_manifest_update(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_agent_manifest_delete(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_manifest_delete(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create agent
     sqlx::query("INSERT INTO core.processor_manifests (processor_name, processor_type, version) VALUES ($1, 'automaton', $2)")
         .bind("delete_test_agent")
@@ -2117,7 +2117,7 @@ async fn test_agent_manifest_delete(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_agent_status_transitions(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_status_transitions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create agent in pending state
     sqlx::query(
         "INSERT INTO core.processor_manifests (processor_name, processor_type, version, status)
@@ -2192,7 +2192,7 @@ async fn test_agent_status_transitions(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create agent with complex capabilities
     let capabilities = json!({
         "filesystem_read": ["/home/user/documents", "/var/log/app"],
@@ -2257,7 +2257,7 @@ async fn test_agent_capabilities_and_dependencies(ctx: TestContext) -> anyhow::R
 }
 
 #[sinex_test]
-async fn test_agent_event_subscription_queries(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_event_subscription_queries(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create multiple agents with different subscriptions
     let agents = vec![
         (

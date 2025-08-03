@@ -13,7 +13,7 @@ use sinex_db::integrity::{malformed_detection, IntegrityTestConfig, IntegrityTes
 use sinex_db::validation::{EventValidator, SchemaViolationType, ValidationError};
 
 #[sinex_test]
-async fn test_malformed_event_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_malformed_event_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -64,7 +64,7 @@ async fn test_malformed_event_detection(ctx: TestContext) -> anyhow::Result<()> 
 }
 
 #[sinex_test]
-async fn test_schema_constraint_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_schema_constraint_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -109,7 +109,7 @@ async fn test_schema_constraint_validation(ctx: TestContext) -> anyhow::Result<(
 }
 
 #[sinex_test]
-async fn test_json_payload_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_json_payload_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -151,7 +151,7 @@ async fn test_json_payload_validation(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_security_validation_injection_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_security_validation_injection_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -221,7 +221,7 @@ async fn test_security_validation_injection_attacks(ctx: TestContext) -> anyhow:
 }
 
 #[sinex_test]
-async fn test_schema_validation_performance_under_load(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_schema_validation_performance_under_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 
@@ -274,7 +274,7 @@ async fn test_schema_validation_performance_under_load(ctx: TestContext) -> anyh
 }
 
 #[sinex_test]
-async fn test_comprehensive_integrity_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_comprehensive_integrity_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Insert some test events with known issues
@@ -340,7 +340,7 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> anyhow::Re
 }
 
 #[sinex_test]
-async fn test_malformed_event_anomaly_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_malformed_event_anomaly_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test the anomaly detection utilities
@@ -404,7 +404,7 @@ fn create_deeply_nested_json(depth: usize) -> Value {
 
 // Test schema validation with various event types
 #[sinex_test]
-async fn test_event_type_specific_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_type_specific_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let validator = EventValidator::load_from_db(&pool).await?;
 

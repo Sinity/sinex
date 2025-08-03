@@ -164,7 +164,7 @@ impl CheckpointMetrics {
 
 /// Test basic checkpoint save and load performance
 #[sinex_test]
-async fn test_checkpoint_save_load_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_save_load_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = CheckpointMetrics::new();
 
@@ -351,7 +351,7 @@ async fn test_checkpoint_save_load_performance(ctx: TestContext) -> anyhow::Resu
 
 /// Test checkpoint recovery performance
 #[sinex_test]
-async fn test_checkpoint_recovery_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_recovery_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = CheckpointMetrics::new();
 
@@ -610,7 +610,7 @@ async fn test_checkpoint_recovery_performance(ctx: TestContext) -> anyhow::Resul
 
 /// Test checkpoint performance under high frequency updates
 #[sinex_test]
-async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_high_frequency_checkpoint_updates(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(CheckpointMetrics::new()));
 

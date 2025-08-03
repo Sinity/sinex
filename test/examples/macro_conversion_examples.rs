@@ -12,7 +12,7 @@ use sinex_test_utils::test_macros::*;
 
 // BEFORE: Verbose manual implementation (15 lines)
 #[sinex_test]
-async fn test_file_created_event_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_file_created_event_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let event = EventFactory::new("fs")
         .create_event("file.created", json!({"path": "/test/file.txt", "size": 1024}));
     
@@ -45,7 +45,7 @@ test_event_insertion!(
 
 // BEFORE: Complex concurrent insertion (30+ lines)
 #[sinex_test]
-async fn test_bulk_import_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_bulk_import_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let event_count = 100;
     let mut handles = vec![];
     
@@ -97,7 +97,7 @@ test_batch_events!(
 
 // BEFORE: Repetitive checkpoint management (25+ lines)
 #[sinex_test]
-async fn test_automaton_progress_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_automaton_progress_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use sinex_satellite_sdk::checkpoint::CheckpointManager;
     
     let checkpoint_manager = CheckpointManager::new(
@@ -139,7 +139,7 @@ test_checkpoint_flow!(
 
 // BEFORE: Manual concurrency management (35+ lines)
 #[sinex_test]
-async fn test_concurrent_queries_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_queries_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let worker_count = 50;
     let queries_per_worker = 10;
     let pool = Arc::new(ctx.pool().clone());
@@ -210,7 +210,7 @@ test_concurrent_operations!(
 
 // BEFORE: Manual time range setup (20+ lines)
 #[sinex_test]
-async fn test_event_time_filtering_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_time_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use chrono::{Duration, Utc};
     
     let now = Utc::now();
@@ -253,7 +253,7 @@ test_time_range_query!(
 
 // BEFORE: Complex Redis stream setup (40+ lines)
 #[sinex_test]
-async fn test_redis_event_streaming_old(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_redis_event_streaming_old(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use redis::{cmd, AsyncCommands};
     
     let redis_client = redis::Client::open("redis://localhost:6379")?;
@@ -318,7 +318,7 @@ test_redis_stream_operations!(
 
 // BEFORE: Verbose schema validation (30+ lines)
 #[sinex_test]
-async fn test_event_schema_enforcement_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_schema_enforcement_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let schema = json!({
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -388,7 +388,7 @@ test_schema_validation!(
 
 // BEFORE: Manual filtering implementation (25 lines)
 #[sinex_test]
-async fn test_source_filtering_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_source_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let sources = ["fs", "terminal", "desktop"];
     let events_per_source = 5;
     
@@ -429,7 +429,7 @@ test_event_filter!(
 
 // BEFORE: Repetitive test cases (40+ lines)
 #[sinex_test]
-async fn test_event_type_validation_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_type_validation_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test case 1: Valid event type
     let event1 = EventFactory::new("test").create_event("valid.event.type", json!({}));
     let result1 = sinex_db::insert_event_with_validator(ctx.pool(), &event1, None).await;
@@ -477,7 +477,7 @@ parameterized_test!(
 
 // BEFORE: Manual flow orchestration (20+ lines)
 #[sinex_test]
-async fn test_event_processing_flow_old(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_processing_flow_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Insert event
     let event = EventFactory::new("workflow")
         .create_event("task.created", json!({"task_id": "123", "priority": "high"}));

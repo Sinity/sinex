@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 use tokio::time::sleep;
 
 #[sinex_test]
-async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Generate a sequence of events with known ordering
@@ -74,7 +74,7 @@ async fn test_ulid_sequence_ordering_validation(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_timestamp_progression_verification(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_timestamp_progression_verification(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create events with specific timestamp patterns
@@ -120,7 +120,7 @@ async fn test_timestamp_progression_verification(ctx: TestContext) -> anyhow::Re
 }
 
 #[sinex_test]
-async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test concurrent event insertion
@@ -214,7 +214,7 @@ async fn test_concurrent_ulid_generation_ordering(ctx: TestContext) -> anyhow::R
 }
 
 #[sinex_test]
-async fn test_database_ordering_consistency(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_ordering_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Insert events in batches with different timing patterns
@@ -328,7 +328,7 @@ async fn test_database_ordering_consistency(ctx: TestContext) -> anyhow::Result<
 }
 
 #[sinex_test]
-async fn test_clock_skew_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_clock_skew_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Generate test ULIDs with known ordering violations
@@ -402,7 +402,7 @@ async fn test_clock_skew_detection(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_ulid_ordering_performance_analysis(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Generate a large number of events to test ordering performance

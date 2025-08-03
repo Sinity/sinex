@@ -346,7 +346,7 @@ impl PerformanceTestRunner {
 
 /// Run complete performance test suite
 #[sinex_test]
-async fn test_comprehensive_performance_suite(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_comprehensive_performance_suite(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("🚀 Running comprehensive performance test suite");
@@ -568,7 +568,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> anyhow::Resul
 
 /// Run focused performance regression test
 #[sinex_test]
-async fn test_focused_performance_regression_suite(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_focused_performance_regression_suite(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("🎯 Running focused performance regression test suite");

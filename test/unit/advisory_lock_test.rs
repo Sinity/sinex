@@ -11,7 +11,7 @@ use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
 use test_sinex_test_utils::TestContext;
 
 #[sinex_test]
-async fn test_advisory_lock_basic_acquisition() -> anyhow::Result<()> {
+async fn test_advisory_lock_basic_acquisition() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -36,7 +36,7 @@ async fn test_advisory_lock_basic_acquisition() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_raii_cleanup() -> anyhow::Result<()> {
+async fn test_advisory_lock_raii_cleanup() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -58,7 +58,7 @@ async fn test_advisory_lock_raii_cleanup() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_different_names() -> anyhow::Result<()> {
+async fn test_advisory_lock_different_names() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -79,7 +79,7 @@ async fn test_advisory_lock_different_names() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_leadership_guard_basic() -> anyhow::Result<()> {
+async fn test_leadership_guard_basic() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -107,7 +107,7 @@ async fn test_leadership_guard_basic() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_leadership_guard_heartbeat() -> anyhow::Result<()> {
+async fn test_leadership_guard_heartbeat() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -143,7 +143,7 @@ async fn test_leadership_guard_heartbeat() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_instance_registration() -> anyhow::Result<()> {
+async fn test_distributed_coordination_instance_registration() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -166,7 +166,7 @@ async fn test_distributed_coordination_instance_registration() -> anyhow::Result
     .await?;
     
     assert!(registered.is_some());
-    let reg = registered.ok_or_else(|| anyhow::anyhow!("Expected instance to be registered"))?;
+    let reg = registered.ok_or_else(|| eyre!("Expected instance to be registered"))?;
     assert_eq!(reg.service_name, "test_coordination");
     assert_eq!(reg.version, "1.0.100+abc123");
     
@@ -174,7 +174,7 @@ async fn test_distributed_coordination_instance_registration() -> anyhow::Result
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_leadership_election() -> anyhow::Result<()> {
+async fn test_distributed_coordination_leadership_election() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -208,7 +208,7 @@ async fn test_distributed_coordination_leadership_election() -> anyhow::Result<(
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_version_priority() -> anyhow::Result<()> {
+async fn test_distributed_coordination_version_priority() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -254,7 +254,7 @@ async fn test_distributed_coordination_version_priority() -> anyhow::Result<()> 
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_start_time_tiebreaker() -> anyhow::Result<()> {
+async fn test_distributed_coordination_start_time_tiebreaker() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -289,7 +289,7 @@ async fn test_distributed_coordination_start_time_tiebreaker() -> anyhow::Result
 }
 
 #[sinex_test]
-async fn test_advisory_lock_concurrent_acquisition() -> anyhow::Result<()> {
+async fn test_advisory_lock_concurrent_acquisition() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -323,7 +323,7 @@ async fn test_advisory_lock_concurrent_acquisition() -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_with_database_failure_simulation() -> anyhow::Result<()> {
+async fn test_coordination_with_database_failure_simulation() -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
     let pool = ctx.db_pool();
     
@@ -346,7 +346,7 @@ async fn test_coordination_with_database_failure_simulation() -> anyhow::Result<
 }
 
 mod test_common {
-    use sinex_core_types::Result as anyhow::Result<()>;
+    use sinex_core_types::Result as color_eyre::eyre::Result<()>;
     use sinex_db::DbPool;
     
     pub struct TestContext {
@@ -354,7 +354,7 @@ mod test_common {
     }
     
     impl TestContext {
-        pub async fn new() -> anyhow::Result<Self> {
+        pub async fn new() -> color_eyre::eyre::Result<Self> {
             let database_url = std::env::var("DATABASE_URL")
                 .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
             
@@ -370,7 +370,7 @@ mod test_common {
 }
 
 use test_sinex_test_utils::TestContext;
-type anyhow::Result<T> = sinex_core_types::Result<T>;
+type color_eyre::eyre::Result<T> = sinex_core_types::Result<T>;
 
 // Mock sinex_test macro for compilation
 macro_rules! sinex_test {

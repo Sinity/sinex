@@ -24,7 +24,7 @@ use sinex_test_utils::prelude::*;
 use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use sinex_events::RawEvent;
+use sinex_types::events::RawEvent;
 use sinex_types::ulid::Ulid;
 
 // ============================================================================

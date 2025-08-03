@@ -14,7 +14,7 @@
 // - Concurrent testing patterns
 
 use proptest::prelude::*;
-use sinex_events::{event_types, sources};
+use sinex_types::events::{event_types, sources};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::property_helpers::*;
 use sinex_test_utils::test_macros::*;

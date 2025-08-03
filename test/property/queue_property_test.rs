@@ -85,7 +85,7 @@ async fn automaton_consumer_with_crashes(
     crash_probability: f64,
     runtime_seconds: u64,
     seed: u64,
-) -> AnyhowResult<(), anyhow::Error> {
+) -> AnyhowResult<(), color_eyre::eyre::Error> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
@@ -185,7 +185,7 @@ async fn automaton_consumer_with_crashes(
 
 /// Test that Redis Streams with consumer groups prevent duplicate processing even with crashes
 #[sinex_test]
-async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     
     // Setup Redis connection
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
@@ -334,7 +334,7 @@ async fn test_no_duplicate_processing_with_crashes(ctx: TestContext) -> anyhow::
 
 /// Test consumer group scaling and high contention scenarios
 #[sinex_test]
-async fn test_consumer_group_contention_properties(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_group_contention_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -452,7 +452,7 @@ async fn test_consumer_group_contention_properties(ctx: TestContext) -> anyhow::
 
 /// Test scaling properties with many events and consumers
 #[sinex_test]
-async fn test_redis_streams_scalability_properties(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_redis_streams_scalability_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -618,7 +618,7 @@ async fn test_redis_streams_scalability_properties(ctx: TestContext) -> anyhow::
 
 /// Test that Redis Stream IDs maintain ordering guarantees
 #[sinex_test]
-async fn test_redis_stream_ordering_properties() -> AnyhowResult<(), anyhow::Error> {
+async fn test_redis_stream_ordering_properties() -> AnyhowResult<(), color_eyre::eyre::Error> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let mut redis = ConnectionManager::new(redis_client).await?;
 
@@ -743,7 +743,7 @@ async fn test_redis_stream_ordering_properties() -> AnyhowResult<(), anyhow::Err
 
 /// Test checkpoint-based recovery after consumer crashes
 #[sinex_test]
-async fn test_checkpoint_recovery_properties(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_recovery_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -903,7 +903,7 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> anyhow::Result
 
 /// Test that consumer group state remains consistent under various failure scenarios
 #[sinex_test]
-async fn test_consumer_group_state_consistency(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_consumer_group_state_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = redis::Client::open("redis://127.0.0.1/")?;
     let redis_conn = ConnectionManager::new(redis_client).await?;
 
@@ -1077,7 +1077,7 @@ mod unit_tests {
     }
 
     #[sinex_test(timeout = 40)]
-    async fn test_automaton_crash_simulation(ctx: TestContext) -> anyhow::Result<()> {
+    async fn test_automaton_crash_simulation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that the crash simulation compiles and runs
         let redis_client = redis::Client::open("redis://127.0.0.1/")?;
         let redis_conn = ConnectionManager::new(redis_client).await?;

@@ -12,7 +12,7 @@
 
 use proptest::prelude::*;
 use sinex_types::error::{CoreError, Result as CoreResult, ResultExt};
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::property_helpers::*;
 use sinex_test_utils::test_macros::*;
@@ -218,7 +218,7 @@ sinex_proptest_sync! {
         let mut error = CoreError::validation(&base_msg);
 
         for (key, value) in &contexts {
-            error = error.with_context(key, value);
+            error = error.wrap_err_with(key, value);
         }
 
         let built = error.build();
@@ -362,7 +362,7 @@ stateful_proptest! {
 // =============================================================================
 
 #[sinex_test]
-async fn test_realistic_user_activity_scenario(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_realistic_user_activity_scenario(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Use property-generated realistic activity
     let mut runner = proptest::test_runner::TestRunner::default();
     let activity = user_activity_batch()
@@ -413,7 +413,7 @@ configured_proptest! {
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Both methods should produce equivalent events
     let factory_event = EventFactory::new(sources::FS).create_event(
         event_types::filesystem::FILE_CREATED,
@@ -439,7 +439,7 @@ async fn test_event_factory_vs_builder_consistency(_ctx: TestContext) -> anyhow:
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_invariants_across_sources(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_invariants_across_sources(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Generate events from all sources
     let sources = vec![
         sources::FS,

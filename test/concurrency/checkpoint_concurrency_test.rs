@@ -18,7 +18,7 @@ use tokio::task::JoinSet;
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
     let processor_name = "concurrent_test_processor";
     let consumer_group = "test_group";
@@ -129,7 +129,7 @@ async fn test_concurrent_checkpoint_updates_basic(ctx: TestContext) -> anyhow::R
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
     let processor_name = "lost_update_test";
     let consumer_group = "test_group";
@@ -263,7 +263,7 @@ async fn test_checkpoint_lost_update_prevention(ctx: TestContext) -> anyhow::Res
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
     let processor_name = "optimistic_lock_test";
     let consumer_group = "test_group";
@@ -376,7 +376,7 @@ async fn test_checkpoint_optimistic_locking(ctx: TestContext) -> anyhow::Result<
 // =============================================================================
 
 #[sinex_test(timeout = 60)]
-async fn test_checkpoint_high_contention_stress(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_high_contention_stress(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
     let processor_name = "high_contention_test";
     let consumer_group = "stress_group";
@@ -507,7 +507,7 @@ async fn test_checkpoint_high_contention_stress(ctx: TestContext) -> anyhow::Res
 // =============================================================================
 
 #[sinex_test]
-async fn test_checkpoint_history_consistency(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_history_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool();
     let processor_name = "history_test";
     let consumer_group = "test_group";
@@ -652,7 +652,7 @@ async fn insert_checkpoint(pool: &PgPool, checkpoint: &TestCheckpoint) -> Result
     )
     .execute(pool)
     .await
-    .context("Failed to insert checkpoint")?;
+    .wrap_err("Failed to insert checkpoint")?;
     Ok(())
 }
 
@@ -683,7 +683,7 @@ async fn get_checkpoint(
     )
     .fetch_one(pool)
     .await
-    .context("Failed to get checkpoint")?;
+    .wrap_err("Failed to get checkpoint")?;
 
     Ok(TestCheckpoint {
         id: Ulid::from_string(&row.id)?,
@@ -725,7 +725,7 @@ async fn update_checkpoint_atomic(
     )
     .execute(pool)
     .await
-    .context("Failed to update checkpoint")?;
+    .wrap_err("Failed to update checkpoint")?;
 
     Ok(result.rows_affected() > 0)
 }

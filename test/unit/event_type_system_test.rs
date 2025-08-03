@@ -5,11 +5,13 @@
 // functionality tests for the new architecture.
 
 use sinex_test_utils::prelude::*;
+use rstest::*;
+use insta::assert_json_snapshot;
+use tracing_test::traced_test;
 
-use sinex_events::{
+use sinex_types::events::{
     event_types, sources, strongly_typed_events::*, EventEnvelope, EventFactory, RawEvent,
 };
-use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
 // =============================================================================
@@ -17,33 +19,48 @@ use std::collections::HashSet;
 // =============================================================================
 
 /// Test that event type constants are properly defined and consistent
+#[rstest]
+#[case(sources::FS, "fs")]
+#[case(sources::SHELL_KITTY, "shell.kitty")]
+#[case(sources::SHELL_ATUIN, "shell.atuin")]
+#[case(sources::SHELL_HISTORY, "shell.history")]
+#[case(sources::SHELL_RECORDING, "shell.recording")]
+#[case(sources::SHELL_SCROLLBACK, "shell.scrollback")]
+#[case(sources::WM_HYPRLAND, "wm.hyprland")]
+#[case(sources::CLIPBOARD, "clipboard")]
+#[case(sources::DBUS, "dbus")]
+#[case(sources::JOURNALD, "journald")]
+#[case(sources::SINEX, "sinex")]
 #[sinex_test]
-async fn test_event_type_constants(_ctx: TestContext) -> anyhow::Result<()> {
-    // Test that source constants exist and are consistent
-    assert_eq!(sources::FS, "fs");
-    assert_eq!(sources::SHELL_KITTY, "shell.kitty");
-    assert_eq!(sources::SHELL_ATUIN, "shell.atuin");
-    assert_eq!(sources::SHELL_HISTORY, "shell.history");
-    assert_eq!(sources::SHELL_RECORDING, "shell.recording");
-    assert_eq!(sources::SHELL_SCROLLBACK, "shell.scrollback");
-    assert_eq!(sources::WM_HYPRLAND, "wm.hyprland");
-    assert_eq!(sources::CLIPBOARD, "clipboard");
-    assert_eq!(sources::DBUS, "dbus");
-    assert_eq!(sources::JOURNALD, "journald");
-    assert_eq!(sources::SINEX, "sinex");
+async fn test_event_type_constants(
+    _ctx: TestContext,
+    #[case] source_const: &'static str,
+    #[case] expected_value: &'static str,
+) -> color_eyre::eyre::Result<()> {
+    assert_eq!(source_const, expected_value);
+    Ok(())
+}
 
-    // Test that sources follow consistent naming patterns
-    assert!(sources::SHELL_KITTY.starts_with("shell."));
-    assert!(sources::SHELL_ATUIN.starts_with("shell."));
-    assert!(sources::SHELL_HISTORY.starts_with("shell."));
-    assert!(sources::WM_HYPRLAND.starts_with("wm."));
-
+/// Test that sources follow consistent naming patterns
+#[rstest]
+#[case(sources::SHELL_KITTY, "shell.")]
+#[case(sources::SHELL_ATUIN, "shell.")]
+#[case(sources::SHELL_HISTORY, "shell.")]
+#[case(sources::WM_HYPRLAND, "wm.")]
+#[sinex_test]
+async fn test_source_naming_patterns(
+    _ctx: TestContext,
+    #[case] source: &'static str,
+    #[case] expected_prefix: &'static str,
+) -> color_eyre::eyre::Result<()> {
+    assert!(source.starts_with(expected_prefix), 
+        "Source '{}' should start with '{}'", source, expected_prefix);
     Ok(())
 }
 
 /// Test event type validation through EventEnvelope variants
 #[sinex_test]
-async fn test_event_envelope_coverage(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_envelope_coverage(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test that EventEnvelope covers all major event categories
     let event_factory = EventFactory::new("test");
 
@@ -89,7 +106,7 @@ async fn test_event_envelope_coverage(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test event type naming consistency and patterns
 #[sinex_test]
-async fn test_event_type_naming_patterns(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_type_naming_patterns(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let event_factory = EventFactory::new("test");
 
     // Test filesystem event naming follows pattern: object.action
@@ -188,109 +205,132 @@ async fn test_event_type_naming_patterns(_ctx: TestContext) -> anyhow::Result<()
 // =============================================================================
 
 /// Test source to event type mapping consistency
+#[rstest]
+#[case::filesystem(
+    "filesystem",
+    sources::FS,
+    vec![
+        ("created", "/test/file1.txt"),
+        ("modified", "/test/file2.txt"),
+        ("deleted", "/test/file3.txt"),
+        ("created", "/test/dir1"),
+        ("deleted", "/test/dir2")
+    ]
+)]
+#[case::terminal(
+    "terminal",
+    sources::SHELL_KITTY,
+    vec![
+        ("executed", "test-cmd"),
+        ("completed", "test-cmd"),
+        ("executed", "bash"),
+        ("completed", "bash")
+    ]
+)]
+#[case::clipboard(
+    "clipboard",
+    sources::CLIPBOARD,
+    vec![
+        ("text", "content1"),
+        ("text", "content2")
+    ]
+)]
+#[case::window_manager(
+    "window_manager",
+    sources::WM_HYPRLAND,
+    vec![
+        ("window", "TestWindow"),
+        ("window", "AnotherWindow"),
+        ("focused", "FocusedWindow"),
+        ("workspace", "workspace1")
+    ]
+)]
 #[sinex_test]
-async fn test_source_event_type_mapping(_ctx: TestContext) -> anyhow::Result<()> {
+#[traced_test]
+async fn test_source_event_type_mapping(
+    ctx: TestContext,
+    #[case] source_type: &str,
+    #[case] expected_source: &'static str,
+    #[case] test_cases: Vec<(&str, &str)>,
+) -> color_eyre::eyre::Result<()> {
     let event_factory = EventFactory::new("test");
+    let mut created_events = Vec::new();
 
-    // Test that all filesystem events map to 'fs' source
-    let fs_events = vec![
-        event_factory.filesystem().path("/test").created().build(),
-        event_factory.filesystem().path("/test").modified().build(),
-        event_factory.filesystem().path("/test").deleted().build(),
-        event_factory.filesystem().path("/test").created().build(),
-        event_factory.filesystem().path("/test").deleted().build(),
-    ];
+    // Create events based on source type
+    for (action, param) in test_cases {
+        let event = match source_type {
+            "filesystem" => match action {
+                "created" => event_factory.filesystem().path(param).created().build(),
+                "modified" => event_factory.filesystem().path(param).modified().build(),
+                "deleted" => event_factory.filesystem().path(param).deleted().build(),
+                _ => panic!("Unknown filesystem action: {}", action),
+            },
+            "terminal" => match action {
+                "executed" => event_factory.terminal().command(param).working_dir("/").build_executed(),
+                "completed" => event_factory.terminal().command(param).working_dir("/").exit_code(0).build_completed(),
+                _ => panic!("Unknown terminal action: {}", action),
+            },
+            "clipboard" => event_factory.clipboard().text(param).build(),
+            "window_manager" => match action {
+                "window" => event_factory.window_manager().window_title(param).window_class("app").build(),
+                "focused" => event_factory.window_manager().window_title(param).window_class("app").window_focused().build(),
+                "workspace" => event_factory.window_manager().workspace_id(param).build(),
+                _ => panic!("Unknown window manager action: {}", action),
+            },
+            _ => panic!("Unknown source type: {}", source_type),
+        };
+        
+        created_events.push(event);
+    }
 
-    for event in fs_events {
+    // Verify all events map to expected source
+    for event in &created_events {
         assert_eq!(
             event.source,
-            sources::FS,
-            "Filesystem events should map to 'fs' source"
+            expected_source,
+            "Event from {} should map to '{}' source",
+            source_type,
+            expected_source
         );
     }
 
-    // Test that all terminal events map to 'shell.kitty' source
-    let terminal_events = vec![
-        event_factory
-            .terminal()
-            .command("test")
-            .working_dir("/")
-            .build_executed(),
-        event_factory
-            .terminal()
-            .command("test")
-            .working_dir("/")
-            .exit_code(0)
-            .build_completed(),
-        event_factory.terminal().command("bash").build_executed(),
-        event_factory
-            .terminal()
-            .command("bash")
-            .exit_code(0)
-            .build_completed(),
-    ];
-
-    for event in terminal_events {
-        assert_eq!(
-            event.source,
-            sources::SHELL_KITTY,
-            "Terminal events should map to 'shell.kitty' source"
-        );
-    }
-
-    // Test that all clipboard events map to 'clipboard' source
-    let clipboard_events = vec![
-        event_factory.clipboard().text("test").build(),
-        event_factory.clipboard().text("test").build(),
-    ];
-
-    for event in clipboard_events {
-        assert_eq!(
-            event.source,
-            sources::CLIPBOARD,
-            "Clipboard events should map to 'clipboard' source"
-        );
-    }
-
-    // Test that all window manager events map to 'wm.hyprland' source
-    let wm_events = vec![
-        event_factory
-            .window_manager()
-            .window_title("Test")
-            .window_class("app")
-            .build(),
-        event_factory
-            .window_manager()
-            .window_title("Test")
-            .window_class("app")
-            .build(),
-        event_factory
-            .window_manager()
-            .window_title("Test")
-            .window_class("app")
-            .window_focused()
-            .build(),
-        event_factory
-            .window_manager()
-            .workspace_id("workspace1")
-            .build(),
-    ];
-
-    for event in wm_events {
-        assert_eq!(
-            event.source,
-            sources::WM_HYPRLAND,
-            "Window manager events should map to 'wm.hyprland' source"
-        );
-    }
+    // Create snapshot of the source mapping results
+    ctx.snapshot_json(&format!("source_mapping_{}", source_type), &serde_json::json!({
+        "source_type": source_type,
+        "expected_source": expected_source,
+        "events": created_events.iter().map(|e| {
+            serde_json::json!({
+                "source": e.source,
+                "event_type": e.event_type,
+                "payload_keys": e.payload.as_object().map(|obj| obj.keys().collect::<Vec<_>>()).unwrap_or_default()
+            })
+        }).collect::<Vec<_>>()
+    }));
 
     Ok(())
 }
 
 /// Test that source names are unique and don't conflict
+#[rstest]
+#[case(sources::FS)]
+#[case(sources::SHELL_KITTY)]
+#[case(sources::SHELL_ATUIN)]
+#[case(sources::SHELL_HISTORY)]
+#[case(sources::SHELL_RECORDING)]
+#[case(sources::SHELL_SCROLLBACK)]
+#[case(sources::WM_HYPRLAND)]
+#[case(sources::CLIPBOARD)]
+#[case(sources::DBUS)]
+#[case(sources::JOURNALD)]
+#[case(sources::SINEX)]
 #[sinex_test]
-async fn test_source_name_uniqueness(_ctx: TestContext) -> anyhow::Result<()> {
-    let sources = vec![
+#[traced_test]
+async fn test_source_name_uniqueness(
+    ctx: TestContext,
+    #[case] source: &'static str,
+) -> color_eyre::eyre::Result<()> {
+    // Collect all sources for uniqueness verification
+    let all_sources = vec![
         sources::FS,
         sources::SHELL_KITTY,
         sources::SHELL_ATUIN,
@@ -303,15 +343,24 @@ async fn test_source_name_uniqueness(_ctx: TestContext) -> anyhow::Result<()> {
         sources::JOURNALD,
         sources::SINEX,
     ];
-
-    let mut seen_sources = HashSet::new();
-    for source in sources {
-        assert!(
-            seen_sources.insert(source),
-            "Source name '{}' is not unique",
-            source
-        );
-    }
+    
+    // Count occurrences of this source
+    let count = all_sources.iter().filter(|&&s| s == source).count();
+    assert_eq!(count, 1, "Source name '{}' should appear exactly once", source);
+    
+    // Validate source format
+    assert!(!source.is_empty(), "Source name cannot be empty");
+    assert!(!source.starts_with('.'), "Source name cannot start with dot");
+    assert!(!source.ends_with('.'), "Source name cannot end with dot");
+    
+    // Create snapshot for this source validation
+    ctx.snapshot_json(&format!("source_validation_{}", source.replace('.', "_")), &serde_json::json!({
+        "source": source,
+        "length": source.len(),
+        "contains_dot": source.contains('.'),
+        "dot_count": source.matches('.').count(),
+        "is_unique": count == 1
+    }));
 
     Ok(())
 }
@@ -321,97 +370,128 @@ async fn test_source_name_uniqueness(_ctx: TestContext) -> anyhow::Result<()> {
 // =============================================================================
 
 /// Test event type enumeration through EventEnvelope variants
+#[rstest]
+#[case::filesystem(
+    "filesystem",
+    sources::FS,
+    vec![
+        ("file", "created", "/test/file1.txt"),
+        ("file", "modified", "/test/file2.txt"),
+        ("file", "deleted", "/test/file3.txt"),
+        ("dir", "created", "/test/dir1"),
+        ("dir", "deleted", "/test/dir2")
+    ],
+    vec!["file.created", "file.modified", "file.deleted", "dir.created", "dir.deleted"]
+)]
+#[case::terminal(
+    "terminal",
+    sources::SHELL_KITTY,
+    vec![
+        ("command", "executed", "test-cmd"),
+        ("command", "completed", "test-cmd"),
+        ("command", "executed", "bash"),
+        ("command", "completed", "bash")
+    ],
+    vec!["command.executed", "command.completed"]
+)]
+#[case::clipboard(
+    "clipboard",
+    sources::CLIPBOARD,
+    vec![
+        ("content", "copied", "content1"),
+        ("content", "copied", "content2")
+    ],
+    vec!["content.copied"]
+)]
+#[case::window_manager(
+    "window_manager",
+    sources::WM_HYPRLAND,
+    vec![
+        ("window", "created", "TestWindow"),
+        ("window", "created", "AnotherWindow"),
+        ("window", "focused", "FocusedWindow"),
+        ("workspace", "switched", "workspace1")
+    ],
+    vec!["window.created", "window.focused", "workspace.switched"]
+)]
 #[sinex_test]
-async fn test_event_type_enumeration(_ctx: TestContext) -> anyhow::Result<()> {
-    // Create events of different types and verify they can be enumerated
+#[traced_test]
+async fn test_event_type_enumeration(
+    ctx: TestContext,
+    #[case] source_category: &str,
+    #[case] expected_source: &'static str,
+    #[case] event_specs: Vec<(&str, &str, &str)>,
+    #[case] expected_event_types: Vec<&str>,
+) -> color_eyre::eyre::Result<()> {
     let event_factory = EventFactory::new("test");
+    let mut created_events = Vec::new();
 
-    let events = vec![
-        event_factory.filesystem().path("/test").created().build(),
-        event_factory.filesystem().path("/test").modified().build(),
-        event_factory.filesystem().path("/test").deleted().build(),
-        event_factory.filesystem().path("/test").created().build(),
-        event_factory.filesystem().path("/test").deleted().build(),
-        event_factory
-            .terminal()
-            .command("test")
-            .working_dir("/")
-            .build_executed(),
-        event_factory
-            .terminal()
-            .command("test")
-            .working_dir("/")
-            .exit_code(0)
-            .build_completed(),
-        event_factory.terminal().command("bash").build_executed(),
-        event_factory
-            .terminal()
-            .command("bash")
-            .exit_code(0)
-            .build_completed(),
-        event_factory.clipboard().text("test").build(),
-        event_factory.clipboard().text("test").build(),
-        event_factory
-            .window_manager()
-            .window_title("Test")
-            .window_class("app")
-            .build(),
-        event_factory
-            .window_manager()
-            .window_title("Test")
-            .window_class("app")
-            .build(),
-        event_factory
-            .window_manager()
-            .window_title("Test")
-            .window_class("app")
-            .window_focused()
-            .build(),
-        event_factory
-            .window_manager()
-            .workspace_id("workspace1")
-            .build(),
-    ];
-
-    // Group events by category
-    let mut fs_events = Vec::new();
-    let mut terminal_events = Vec::new();
-    let mut clipboard_events = Vec::new();
-    let mut wm_events = Vec::new();
-
-    for event in events {
-        match event.source.as_str() {
-            sources::FS => fs_events.push(event),
-            sources::SHELL_KITTY => terminal_events.push(event),
-            sources::CLIPBOARD => clipboard_events.push(event),
-            sources::WM_HYPRLAND => wm_events.push(event),
-            _ => panic!("Unexpected source: {}", event.source),
-        }
+    // Create events based on specifications
+    for (object, action, param) in event_specs {
+        let event = match source_category {
+            "filesystem" => match (object, action) {
+                ("file", "created") => event_factory.filesystem().path(param).created().build(),
+                ("file", "modified") => event_factory.filesystem().path(param).modified().build(),
+                ("file", "deleted") => event_factory.filesystem().path(param).deleted().build(),
+                ("dir", "created") => event_factory.filesystem().path(param).created().build(),
+                ("dir", "deleted") => event_factory.filesystem().path(param).deleted().build(),
+                _ => panic!("Unknown filesystem event: {}.{}", object, action),
+            },
+            "terminal" => match (object, action) {
+                ("command", "executed") => event_factory.terminal().command(param).working_dir("/").build_executed(),
+                ("command", "completed") => event_factory.terminal().command(param).working_dir("/").exit_code(0).build_completed(),
+                _ => panic!("Unknown terminal event: {}.{}", object, action),
+            },
+            "clipboard" => event_factory.clipboard().text(param).build(),
+            "window_manager" => match (object, action) {
+                ("window", "created") => event_factory.window_manager().window_title(param).window_class("app").build(),
+                ("window", "focused") => event_factory.window_manager().window_title(param).window_class("app").window_focused().build(),
+                ("workspace", "switched") => event_factory.window_manager().workspace_id(param).build(),
+                _ => panic!("Unknown window manager event: {}.{}", object, action),
+            },
+            _ => panic!("Unknown source category: {}", source_category),
+        };
+        
+        created_events.push(event);
     }
 
-    // Verify we have events in each category
-    assert!(!fs_events.is_empty(), "Should have filesystem events");
-    assert!(!terminal_events.is_empty(), "Should have terminal events");
-    assert!(!clipboard_events.is_empty(), "Should have clipboard events");
-    assert!(!wm_events.is_empty(), "Should have window manager events");
+    // Verify all events map to expected source
+    for event in &created_events {
+        assert_eq!(
+            event.source,
+            expected_source,
+            "Events from {} should map to '{}' source",
+            source_category,
+            expected_source
+        );
+    }
 
-    // Verify filesystem events have expected types
-    let fs_types: HashSet<String> = fs_events.iter().map(|e| e.event_type.clone()).collect();
-    assert!(fs_types.contains("file.created"));
-    assert!(fs_types.contains("file.modified"));
-    assert!(fs_types.contains("file.deleted"));
-    assert!(fs_types.contains("dir.created"));
-    assert!(fs_types.contains("dir.deleted"));
+    // Verify events have expected types
+    let actual_types: HashSet<String> = created_events.iter().map(|e| e.event_type.clone()).collect();
+    for expected_type in &expected_event_types {
+        assert!(
+            actual_types.contains(*expected_type),
+            "Should contain event type '{}' for {} category",
+            expected_type,
+            source_category
+        );
+    }
 
-    // Verify terminal events have expected types
-    let terminal_types: HashSet<String> = terminal_events
-        .iter()
-        .map(|e| e.event_type.clone())
-        .collect();
-    assert!(terminal_types.contains("command.executed"));
-    assert!(terminal_types.contains("command.completed"));
-    assert!(terminal_types.contains("session.started"));
-    assert!(terminal_types.contains("session.ended"));
+    // Create snapshot of enumeration results
+    ctx.snapshot_json(&format!("event_enumeration_{}", source_category), &serde_json::json!({
+        "source_category": source_category,
+        "expected_source": expected_source,
+        "expected_event_types": expected_event_types,
+        "created_events": created_events.iter().map(|e| {
+            serde_json::json!({
+                "source": e.source,
+                "event_type": e.event_type,
+                "payload_structure": e.payload.as_object().map(|obj| {
+                    obj.keys().collect::<Vec<_>>()
+                }).unwrap_or_default()
+            })
+        }).collect::<Vec<_>>()
+    }));
 
     Ok(())
 }
@@ -422,9 +502,9 @@ async fn test_event_type_enumeration(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test TypedRawEvent to RawEvent conversion
 #[sinex_test]
-async fn test_typed_raw_event_conversion(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_typed_raw_event_conversion(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use chrono::Utc;
-    use sinex_events::strongly_typed_events::*;
+    use sinex_types::events::strongly_typed_events::*;
     use sinex_types::ulid::Ulid;
 
     // Create a typed event
@@ -472,9 +552,9 @@ async fn test_typed_raw_event_conversion(_ctx: TestContext) -> anyhow::Result<()
 
 /// Test EventEnvelope type safety
 #[sinex_test]
-async fn test_event_envelope_type_safety(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_envelope_type_safety(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use chrono::Utc;
-    use sinex_events::strongly_typed_events::*;
+    use sinex_types::events::strongly_typed_events::*;
     use sinex_types::ulid::Ulid;
 
     // Create typed events and envelopes
@@ -547,7 +627,7 @@ async fn test_event_envelope_type_safety(_ctx: TestContext) -> anyhow::Result<()
 
 /// Test concurrent event creation and processing
 #[sinex_test]
-async fn test_concurrent_event_creation(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_event_creation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use std::sync::Arc;
     use tokio::task;
 
@@ -586,7 +666,7 @@ async fn test_concurrent_event_creation(_ctx: TestContext) -> anyhow::Result<()>
             );
 
             // Return events and task number
-            Ok::<(Vec<RawEvent>, usize), anyhow::Error>((events, i))
+            Ok::<(Vec<RawEvent>, usize), color_eyre::eyre::Error>((events, i))
         });
         handles.push(handle);
     }
@@ -636,7 +716,7 @@ async fn test_concurrent_event_creation(_ctx: TestContext) -> anyhow::Result<()>
 
 /// Test that event IDs are unique even under concurrent creation
 #[sinex_test]
-async fn test_event_id_uniqueness_concurrent(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_id_uniqueness_concurrent(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use std::collections::HashSet;
     use std::sync::Arc;
     use tokio::task;
@@ -660,7 +740,7 @@ async fn test_event_id_uniqueness_concurrent(_ctx: TestContext) -> anyhow::Resul
                 event_ids.push(event.id);
             }
 
-            Ok::<Vec<sinex_ulid::Ulid>, anyhow::Error>(event_ids)
+            Ok::<Vec<sinex_ulid::Ulid>, color_eyre::eyre::Error>(event_ids)
         });
         handles.push(handle);
     }

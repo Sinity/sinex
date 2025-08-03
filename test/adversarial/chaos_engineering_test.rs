@@ -92,7 +92,7 @@ impl ChaosRedisProxy {
 
 /// Test multiple agent instances registering simultaneously
 #[sinex_test]
-async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     let processor_name = "chaos-agent";
@@ -213,7 +213,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> any
 
 /// Test agent heartbeat chaos with network failures
 #[sinex_test]
-async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let processor_name = "heartbeat-chaos-agent";
 
@@ -316,7 +316,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> a
 
 /// Test agent lifecycle during concurrent operations
 #[sinex_test]
-async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let base_processor_name = "lifecycle-chaos";
 
@@ -439,7 +439,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
 /// Test file permission revoked while watching
 #[sinex_test]
-async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = resources::temp_dir()?;
     let watch_dir = temp_dir.path().join("watch_me");
 
@@ -510,7 +510,7 @@ async fn test_file_permission_revoked_while_watching(ctx: TestContext) -> anyhow
 
 /// Test directory unmounted while watching
 #[sinex_test]
-async fn test_directory_unmounted_while_watching(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_directory_unmounted_while_watching(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // This test simulates what happens when a watched directory becomes unavailable
     let temp_dir = resources::temp_dir()?;
     let mount_point = temp_dir.path().join("mount_point");
@@ -597,7 +597,7 @@ async fn test_directory_unmounted_while_watching(ctx: TestContext) -> anyhow::Re
 
 /// Test filesystem chaos with concurrent operations
 #[sinex_test]
-async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = resources::temp_dir()?;
     let chaos_dir = temp_dir.path().join("chaos_testing");
     fs::create_dir(&chaos_dir).unwrap();
@@ -719,7 +719,7 @@ async fn test_filesystem_chaos_concurrent_operations(ctx: TestContext) -> anyhow
 
 /// Test shutdown signal during initialization
 #[sinex_test]
-async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let pool_clone = ctx.pool();
     let shutdown_triggered = Arc::new(AtomicU64::new(0));
@@ -812,7 +812,7 @@ async fn test_shutdown_signal_during_initialization(ctx: TestContext) -> anyhow:
 
 /// Test multiple concurrent shutdown signals
 #[sinex_test]
-async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let shutdown_count = Arc::new(AtomicU64::new(0));
     let shutdown_handler_count = Arc::new(AtomicU64::new(0));
     let mut handles = vec![];
@@ -865,7 +865,7 @@ async fn test_multiple_concurrent_shutdown_signals(ctx: TestContext) -> anyhow::
 
 /// Test state machine corruption under load
 #[sinex_test]
-async fn test_state_machine_corruption_under_load(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_state_machine_corruption_under_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let state_transitions = Arc::new(AtomicU64::new(0));
     let invalid_transitions = Arc::new(AtomicU64::new(0));
@@ -959,7 +959,7 @@ async fn test_state_machine_corruption_under_load(ctx: TestContext) -> anyhow::R
 
 /// Test system resilience under database connection failures
 #[sinex_test]
-async fn test_database_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let failure_count = Arc::new(AtomicU64::new(0));
     let recovery_count = Arc::new(AtomicU64::new(0));
@@ -1082,7 +1082,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> anyhow::Result<()
 
 /// Test Redis failure resilience with stream operations
 #[sinex_test]
-async fn test_redis_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use sinex_test_utils::mocks::{MockRedis, MockRedisConfig, FailureInjector, FailurePattern};
 
     let mut mock_redis = MockRedis::new(MockRedisConfig {
@@ -1213,7 +1213,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
 // TODO: Rewrite this test to use real network tools or testcontainers
 // /// Test network partition resilience
 // // #[sinex_test]
-// // async fn test_network_partition_resilience(ctx: TestContext) -> anyhow::Result<()> {
+// // async fn test_network_partition_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //     use sinex_test_utils::mocks::{MockNetwork, MockNetworkConfig, FailurePattern};
 //
 //     let mut mock_network = MockNetwork::new(MockNetworkConfig {
@@ -1322,7 +1322,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
 // // TODO: Rewrite this test to use real services or chaos proxies
 // // /// Test cascading failure resilience
 // // #[sinex_test]
-// // async fn test_cascading_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
+// // async fn test_cascading_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //     use sinex_test_utils::mocks::{FailureInjector, FailurePattern};
 //
 //     let mut failure_injector = FailureInjector::new();
@@ -1479,7 +1479,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> anyhow::Result<()> {
 // // TODO: Rewrite this test to use real services
 // // /// Test post-chaos recovery and system state consistency
 // // #[sinex_test]
-// // async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> anyhow::Result<()> {
+// // async fn test_post_chaos_recovery_consistency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //     use sinex_test_utils::mocks::{MockRedis, MockDatabase, MockFilesystem, MockRedisConfig, MockDatabaseConfig, MockFilesystemConfig};
 //
 //     let pool = ctx.pool().clone();

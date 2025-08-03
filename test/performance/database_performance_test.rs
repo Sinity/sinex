@@ -8,7 +8,7 @@ use sinex_test_utils::prelude::*;
 
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{events, generators};
 use sinex_types::ulid::Ulid;
@@ -160,7 +160,7 @@ impl DatabaseMetrics {
 
 /// Test performance of different query patterns
 #[sinex_test]
-async fn test_query_performance_patterns(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_query_performance_patterns(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
 
@@ -313,7 +313,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test database performance under concurrent load
 #[sinex_test]
-async fn test_concurrent_database_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_database_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     let concurrent_workers = 15;
@@ -426,7 +426,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> anyhow::Resul
 
 /// Test database connection pool performance
 #[sinex_test]
-async fn test_connection_pool_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_connection_pool_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
 
@@ -576,7 +576,7 @@ async fn test_connection_pool_performance(ctx: TestContext) -> anyhow::Result<()
 
 /// Test transaction performance and isolation
 #[sinex_test]
-async fn test_transaction_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_transaction_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
 

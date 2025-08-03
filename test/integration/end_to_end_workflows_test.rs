@@ -20,7 +20,7 @@ use redis::{cmd, AsyncCommands};
 use sinex_core_types::CoreError;
 use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_satellite_sdk::{
     checkpoint::{CheckpointManager, CheckpointState},
     config::EventSourceConfig,
@@ -42,7 +42,7 @@ use tokio::sync::{Mutex, RwLock};
 
 /// Test complete event ingestion workflow from satellite to database
 #[sinex_test]
-async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Simulate satellite event generation
@@ -113,7 +113,7 @@ async fn test_complete_event_ingestion_workflow(ctx: TestContext) -> anyhow::Res
 
 /// Test event ingestion with concurrent satellites
 #[sinex_test]
-async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Simulate multiple satellites ingesting events concurrently
@@ -232,7 +232,7 @@ async fn test_concurrent_satellite_ingestion_workflow(ctx: TestContext) -> anyho
 
 /// Test complete stream processing workflow from Redis to automaton
 #[sinex_test]
-async fn test_stream_processing_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_stream_processing_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test automaton for stream processing
@@ -417,7 +417,7 @@ async fn test_stream_processing_workflow(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test checkpoint persistence and recovery workflow
 #[sinex_test]
-async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let processor_name = "checkpoint-test-automaton";
 
@@ -554,7 +554,7 @@ async fn test_checkpoint_persistence_recovery_workflow(ctx: TestContext) -> anyh
 
 /// Test coordination between multiple system components
 #[sinex_test]
-async fn test_multi_component_coordination_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_multi_component_coordination_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Set up multiple components
@@ -674,7 +674,7 @@ async fn test_multi_component_coordination_workflow(ctx: TestContext) -> anyhow:
 
 /// Test error detection and recovery workflow
 #[sinex_test]
-async fn test_error_recovery_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_error_recovery_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Simulate system with intermittent errors
@@ -834,7 +834,7 @@ async fn test_error_recovery_workflow(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test system performance under concurrent load
 #[sinex_test]
-async fn test_performance_under_load_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_performance_under_load_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Configure load test parameters
@@ -962,7 +962,7 @@ async fn test_performance_under_load_workflow(ctx: TestContext) -> anyhow::Resul
 
 /// Test data consistency across component boundaries
 #[sinex_test]
-async fn test_data_consistency_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_data_consistency_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Phase 1: Set up consistency test scenario
