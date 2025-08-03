@@ -1,10 +1,10 @@
 use sinex_test_utils::prelude::*;
 use chrono::Utc;
 /// Integration tests for typed clipboard event conversion  
-use sinex_events::{
+use sinex_types::events::{
     ClipboardCopiedPayload, EventEnvelope, TypedClipboardEventBuilder, TypedRawEvent,
 };
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 
 #[test]
 fn test_typed_clipboard_event_builder() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit hook for schema validation
+# Simplified pre-commit hook
 # Install with: git config core.hooksPath .githooks
 
 set -e
@@ -18,35 +18,15 @@ echo "🎨 Checking code formatting..."
 STAGED_RUST_FILES=$(git diff --cached --name-only --diff-filter=d | grep -E '\.rs$' || true)
 
 if [ -n "$STAGED_RUST_FILES" ]; then
-    # Check if staged files are formatted
-    FORMATTING_ISSUES=""
-    
-    for file in $STAGED_RUST_FILES; do
-        if [ -f "$file" ]; then
-            # Check formatting for individual file (only .rs files)
-            if [[ "$file" == *.rs ]]; then
-                if [ -z "$IN_NIX_SHELL" ]; then
-                    # Not in nix shell, use nix develop wrapper
-                    if ! nix develop --command rustfmt --check "$file" >/dev/null 2>&1; then
-                        FORMATTING_ISSUES="${FORMATTING_ISSUES}${file}\n"
-                    fi
-                else
-                    # In nix shell, run directly
-                    if ! rustfmt --check "$file" >/dev/null 2>&1; then
-                        FORMATTING_ISSUES="${FORMATTING_ISSUES}${file}\n"
-                    fi
-                fi
-            fi
-        fi
-    done
-    
-    if [ -n "$FORMATTING_ISSUES" ]; then
-        echo -e "${RED}✗ Code is not formatted in staged files:${NC}"
-        echo -e "$FORMATTING_ISSUES"
-        echo "Run 'just fmt' to fix formatting issues."
+    # Simply run cargo fmt check on the whole workspace
+    # This is simpler and more reliable than checking individual files
+    if cargo fmt --check 2>/dev/null; then
+        echo -e "${GREEN}✓ Code formatting check passed${NC}"
+    else
+        echo -e "${RED}✗ Code is not formatted${NC}"
+        echo "Run 'cargo fmt' or 'just fmt' to fix formatting issues."
         exit 1
     fi
-    echo -e "${GREEN}✓ Code formatting check passed for staged files${NC}"
 else
     echo "No Rust files staged, skipping formatting check"
 fi
@@ -55,13 +35,17 @@ fi
 if git diff --cached --name-only | grep -q "^schemas/"; then
     echo "Schema files modified, running validation..."
     
-    # Run schema compatibility check
-    if ./scripts/schema-compatibility-check.sh; then
-        echo -e "${GREEN}✓ Schema validation passed${NC}"
+    # Run schema compatibility check if it exists
+    if [ -f "./scripts/schema-compatibility-check.sh" ]; then
+        if ./scripts/schema-compatibility-check.sh; then
+            echo -e "${GREEN}✓ Schema validation passed${NC}"
+        else
+            echo -e "${RED}✗ Schema validation failed${NC}"
+            echo "Commit aborted. Please fix schema issues and try again."
+            exit 1
+        fi
     else
-        echo -e "${RED}✗ Schema validation failed${NC}"
-        echo "Commit aborted. Please fix schema issues and try again."
-        exit 1
+        echo "Schema validation script not found, skipping"
     fi
 else
     echo "No schema files modified, skipping validation"

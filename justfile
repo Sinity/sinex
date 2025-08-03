@@ -1,474 +1,197 @@
-# Show available commands with descriptions
+# Essential aliases
+alias m := migrate
+alias q := query
+
+# Show available commands
 default:
-    @echo -e "\033[1m⚡ Sinex Quick Reference\033[0m"
-    @echo ""
-    @echo -e "\033[90mEssential Commands:\033[0m"
-    @echo -e "  \033[1mdev\033[0m         Format → Check → Test (~1min)"
-    @echo -e "  \033[1mqc\033[0m          Compilation status (instant)"
-    @echo -e "  \033[1merrors\033[0m      Show errors/warnings"
-    @echo -e "  \033[1mtest-fast\033[0m   Unit tests only (~30s)"
-    @echo ""
+    @echo -e "\033[1m⚡ Sinex Commands\033[0m\n"
+    @echo -e "\033[90mDevelopment:\033[0m"
+    @echo -e "  \033[1mcheck\033[0m        Fast compilation check"
+    @echo -e "  \033[1mtest\033[0m         Run unit + property tests"
+    @echo -e "  \033[1mtest-all\033[0m     Run complete test suite"
+    @echo -e "  \033[1mpre-commit\033[0m   Format + lint + check + test\n"
+    @echo -e "\033[90mDatabase:\033[0m"
+    @echo -e "  \033[1mmigrate\033[0m      Apply migrations (alias: m)"
+    @echo -e "  \033[1mpsql\033[0m         Connect to database"
+    @echo -e "  \033[1msqlx-prepare\033[0m Update SQLX cache (commit .sqlx/!)\n"
     @echo -e "\033[90mServices:\033[0m"
-    @echo -e "  \033[1mingestd\033[0m     Central coordinator (gRPC)"
-    @echo -e "  \033[1mmonitor\033[0m     Dev dashboard (mprocs UI)"
-    @echo -e "  \033[1mquery\033[0m       Query recent events"
-    @echo ""
-    @echo -e "\033[90mEvent Satellites:\033[0m"
-    @echo -e "  \033[1mfs-watcher\033[0m  File system changes"
-    @echo -e "  \033[1mterminal\033[0m    Terminal commands"
-    @echo -e "  \033[1mdesktop\033[0m     Clipboard/window events"
-    @echo -e "  \033[1msystem\033[0m      D-Bus/systemd events"
-    @echo ""
-    @echo -e "\033[90mRun\033[0m \033[1mjust --list\033[0m \033[90mfor all $(( $(just --list 2>/dev/null | wc -l) - 1 )) commands\033[0m"
-
-# === Testing ===
-
-# 🧪 Run complete test suite (unit → integration → system → stress → property → adversarial → VM)
-test-all:
-    @echo "🧪 Running complete Sinex test suite..."
-    @echo "This includes: unit → integration → system → stress → property → adversarial → VM"
-    @echo "Expected duration: 10-15 minutes"
-    @echo ""
-    just test-unit
-    just test-integration  
-    just test-system
-    just test-property
-    just test-performance
-    just test-adversarial
-    just test-vm
-
-# 📦 Unit tests - Fast isolated component tests (~5s)
-test-unit *ARGS:
-    @echo "📦 Running unit tests (fast, isolated components)..."
-    cargo nextest run -E "test(unit::)" -- {{ARGS}}
-
-
-# 🔗 Integration tests - Component interaction tests (~30s)
-test-integration *ARGS:
-    @echo "🔗 Running integration tests (component interactions)..."
-    cargo nextest run -E "test(integration::)" -- {{ARGS}}
-
-# 🌐 System tests - Full pipeline E2E tests (~2min)
-test-system *ARGS:
-    @echo "🌐 Running system tests (full pipeline E2E)..."
-    cargo nextest run -E "test(system::)" -- {{ARGS}}
-
-
-# 🎲 Property-based tests - Randomized edge case testing (~1min)
-test-property *ARGS:
-    @echo "🎲 Running property-based tests (randomized edge cases)..."
-    cargo nextest run -E "test(property::)" -- {{ARGS}}
-
-# 🚀 Performance tests - Load and performance testing (~2min)
-test-performance *ARGS:
-    @echo "🚀 Running performance tests..."
-    cargo nextest run -E "test(performance::) or test(stress_test)" -- {{ARGS}}
-
-# ⚔️  Adversarial tests - Security and chaos testing (~3min)
-test-adversarial *ARGS:
-    @echo "⚔️ Running adversarial tests (security and chaos scenarios)..."
-    cargo nextest run -E "test(adversarial::)" -- {{ARGS}}
-
-# ⚡ Fast tests only - Unit + property tests for quick feedback (~30s)
-test-fast *ARGS:
-    @echo "⚡ Running fast tests only (unit + property)..."
-    @./scripts/test-analytics.sh -E "test(unit::) or test(property::)" -- {{ARGS}}
-
-
-
-# 🎯 Run specific test file or pattern
-test FILE="" *ARGS:
-    @echo "🎯 Running tests: {{FILE}} {{ARGS}}"
-    @if [ -n "{{FILE}}" ]; then \
-        cargo nextest run -E "test({{FILE}})" -- {{ARGS}}; \
-    else \
-        cargo nextest run -- {{ARGS}}; \
-    fi
-
-
-
-
-
-
-
-
-# 👀 Watch and run specific command
-watch CMD="check":
-    @echo "👀 Watching and running: {{CMD}}"
-    cargo watch -x "{{CMD}}"
-
-
-
-
-
-
-
-
-# 🛡️ Run tests with limited parallelism (for flaky tests)
-test-reliable *ARGS:
-    @echo "🛡️ Running tests with limited parallelism..."
-    cargo nextest run -j 2 -- {{ARGS}}
-
-# === VM Tests ===
-
-# 🖥️  VM smoke tests - Basic VM functionality (~5min)
-test-vm:
-    @echo "🖥️ Running VM smoke tests (basic functionality)..."
-    ./test/nixos-vm/run-vm-tests.sh -c smoke
-
-# 🖥️  All VM tests - Complete VM test suite (~15min)
-test-vm-all:
-    @echo "🖥️ Running complete VM test suite..."
-    ./test/nixos-vm/run-vm-tests.sh -c all
-
-# 🐛 Debug specific VM test
-test-vm-debug TEST="basic-flow":
-    @echo "🐛 Debugging VM test: {{TEST}}"
-    ./test/nixos-vm/run-vm-tests.sh -d {{TEST}}
-
-# === Database ===
-
-# 📊 Apply database migrations
-migrate:
-    @echo "📊 Running database migrations..."
-    sqlx migrate run
-
-# 📝 Create new database migration
-migrate-create NAME:
-    @echo "📝 Creating migration: {{NAME}}"
-    sqlx migrate add {{NAME}}
-
-# 🔌 Connect to development database
-psql *ARGS:
-    @echo "🔌 Connecting to database..."
-    psql "${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" {{ARGS}}
-
-# 💾 Update SQLX offline cache (required for Nix builds)
-sqlx-prepare:
-    @echo "💾 Updating SQLX offline cache..."
-    sqlx migrate run
-    cargo sqlx prepare --workspace -- --all-targets --all-features
-    @echo "✅ SQLX cache updated"
-    @echo "⚠️  IMPORTANT: Commit .sqlx/ directory for Nix builds!"
-
-# ✅ Verify SQLX cache is up to date
-sqlx-check:
-    @echo "✅ Checking SQLX cache consistency..."
-    cargo sqlx prepare --workspace --check -- --all-targets --all-features
-
-# 🔄 Reset test database (for integration tests)
-db-reset:
-    @echo "🔄 Resetting test database..."
-    dropdb --if-exists --force sinex_dev
-    createdb sinex_dev
-    DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" sqlx migrate run
-
-# 🧪 Setup test database (create if not exists)
-db-setup:
-    @echo "🧪 Setting up test database..."
-    createdb sinex_dev 2>/dev/null || true
-    DATABASE_URL="postgresql:///sinex_dev?host=/run/postgresql" sqlx migrate run
-
-# 🧹 Clean test database
-db-clean:
-    @echo "🧹 Cleaning test database..."
-    dropdb --if-exists --force sinex_dev
-
-# === Schema Management ===
-
-# 🔨 Generate JSON schemas from Rust structs
-schema-generate:
-    @echo "🔨 Generating JSON schemas from Rust code..."
-    cargo run --package sinex-events --bin generate-schemas
-    @echo "✅ Schemas generated. Run 'just schema-diff' to see changes"
-
-# 🔍 Validate all JSON schemas
-schema-validate:
-    @echo "🔍 Validating JSON schemas..."
-    ./scripts/schema-dev.sh validate
-
-# 🚀 Deploy schemas to local database
-schema-deploy:
-    @echo "🚀 Deploying schemas to database..."
-    ./scripts/deploy-schemas.sh
-
-# 🔄 Check backward compatibility against master
-schema-check BRANCH="master":
-    @echo "🔄 Checking schema compatibility against {{BRANCH}}..."
-    ./scripts/check-schema-compatibility.sh {{BRANCH}}
-
-# 📊 Show uncommitted schema changes
-schema-diff:
-    @echo "📊 Schema changes:"
-    ./scripts/schema-dev.sh diff
-
-
-
-# === Running Services ===
-
-# 🖥️  Run sinex-gateway RPC server for CLI/browser integration
-host *ARGS:
-    @echo "🖥️ Starting sinex-gateway RPC server..."
-    cargo run --bin sinex-gateway rpc-server {{ARGS}}
-
-
-# 📥 Run sinex-ingestd gRPC server (satellite coordinator)
-ingestd *ARGS:
-    @echo "📥 Starting sinex-ingestd gRPC server..."
-    cargo run --bin sinex-ingestd {{ARGS}}
-
-# 🗂️  Run filesystem watcher satellite
-fs-watcher *ARGS:
-    @echo "🗂️ Starting filesystem watcher satellite..."
-    cargo run --bin sinex-fs-watcher {{ARGS}}
-
-# 🖥️  Run desktop events satellite
-desktop *ARGS:
-    @echo "🖥️ Starting desktop events satellite..."
-    cargo run --bin sinex-desktop-satellite {{ARGS}}
-
-# 💻 Run terminal events satellite
-terminal *ARGS:
-    @echo "💻 Starting terminal events satellite..."
-    cargo run --bin sinex-terminal-satellite {{ARGS}}
-
-# ⚙️  Run system events satellite  
-system *ARGS:
-    @echo "⚙️ Starting system events satellite..."
-    cargo run --bin sinex-system-satellite {{ARGS}}
-
-# 🔧 Run terminal command canonicalizer
-canonicalizer *ARGS:
-    @echo "🔧 Starting terminal command canonicalizer..."
-    cargo run --bin sinex-terminal-command-canonicalizer {{ARGS}}
-
-# 📊 Run health aggregator
-health *ARGS:
-    @echo "📊 Starting health aggregator..."
-    cargo run --bin sinex-health-aggregator {{ARGS}}
-
-# ✅ Run preflight verification
-preflight *ARGS:
-    @echo "✅ Running preflight verification..."
-    cargo run --bin sinex-preflight {{ARGS}}
-
-# 🔍 Query recent events from database
-query LIMIT="10" *ARGS:
-    @echo "🔍 Querying {{LIMIT}} recent events..."
-    python3 ./cli/exo.py query --limit {{LIMIT}} {{ARGS}}
-
-# === Building ===
-
-
-
-
-# 🔨 Build debug binaries
-build:
-    @echo "🔨 Building debug binaries..."
-    cargo build --workspace --all-features 2>&1 | tee build.log
-    @echo "✅ Output saved to build.log"
-
-# 🚀 Build optimized release binaries
-release:
-    @echo "🚀 Building release binaries (optimized)..."
-    cargo build --release --workspace --all-features 2>&1 | tee build-release.log
-    @echo "✅ Output saved to build-release.log"
-
-
-# 📊 Show recent compilation errors
-errors:
-    @cargo check --workspace --all-targets 2>&1 | grep -E "^error\[E[0-9]+\]:|^error:" -A 3 | head -20 || echo "✅ No errors"
-
-# 🔍 Show compilation warnings
-warnings:
-    @cargo check --workspace --all-targets 2>&1 | grep "^warning:" -A 2 | head -20 || echo "✅ No warnings"
-
-
-
-# 🎨 Format all code with rustfmt
+    @echo -e "  \033[1mingestd\033[0m      Start central coordinator"
+    @echo -e "  \033[1mgateway\033[0m      Start API gateway"
+    @echo -e "  \033[1mquery\033[0m        Query events (alias: q)"
+    @echo -e "  \033[1mmonitor\033[0m      Dev dashboard (all services)\n"
+    @echo -e "\033[90mSatellites:\033[0m"
+    @echo -e "  \033[1mfs-watcher\033[0m   File system events"
+    @echo -e "  \033[1mterminal\033[0m     Terminal events"
+    @echo -e "  \033[1mdesktop\033[0m      Desktop events"
+    @echo -e "  \033[1msystem\033[0m       System events\n"
+    @just --list --unsorted
+
+# === Development ===
+
+# Format code
 fmt:
     cargo fmt --all
 
-# 📋 Lint code with clippy (enforce warnings as errors)
+# Lint with clippy
 lint:
-    @echo "📋 Linting with clippy..."
-    cargo clippy --workspace --all-features -- -D warnings
+    cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-# === Coverage ===
+# Fast compilation check
+check:
+    cargo check --workspace --all-features
 
+# Build all binaries
+build:
+    cargo build --workspace
 
-# 📊 Generate HTML coverage report with browser view
-coverage-html:
-    @echo "📊 Generating HTML coverage report..."
-    cargo llvm-cov --workspace --all-features --html
-    @echo "📊 Coverage report: target/llvm-cov/html/index.html"
+# Pre-commit: format + lint + check + test
+pre-commit: fmt lint check test
 
+# === Testing ===
 
+# Run fast tests (unit + property)
+test:
+    cargo test --workspace --lib
+    cargo test --workspace --test property_tests
 
+# Run all tests
+test-all:
+    just db-setup
+    cargo test --workspace
 
+# Run integration tests
+test-integration:
+    just db-setup
+    cargo test --workspace --test '*integration*'
 
+# Run VM tests
+test-vm:
+    ./test/nixos-vm/run-vm-tests.sh -c smoke
+
+# === Database ===
+
+# Apply migrations
+migrate:
+    cd crate/lib/sinex-db/migration && DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" cargo run -- up
+
+# Create new migration
+migrate-create NAME:
+    cd crate/lib/sinex-db/migration && cargo run -- migrate generate {{NAME}}
+
+# Check migration status
+migrate-status:
+    cd crate/lib/sinex-db/migration && DATABASE_URL="${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" cargo run -- status
+
+# Reset database
+db-reset:
+    dropdb --if-exists --force sinex_dev
+    createdb sinex_dev
+    just migrate
+
+# Setup test database
+db-setup:
+    createdb sinex_dev 2>/dev/null || true
+    just migrate
+
+# Connect to database
+psql *ARGS:
+    psql "${DATABASE_URL:-postgresql:///sinex_dev?host=/run/postgresql}" {{ARGS}}
+
+# Update SQLX offline cache (for Nix builds)
+sqlx-prepare:
+    just migrate
+    cargo sqlx prepare --workspace -- --all-targets
+    @echo "✅ SQLX cache updated - remember to commit .sqlx/"
+
+# Check SQLX cache
+sqlx-check:
+    cargo sqlx prepare --workspace --check -- --all-targets
+
+# === Services ===
+
+# Start ingestd
+ingestd:
+    cargo run --bin sinex-ingestd
+
+# Start gateway
+gateway:
+    cargo run --bin sinex-gateway
+
+# Query events
+query LIMIT='10':
+    ./cli/exo.py query --limit {{LIMIT}}
+
+# Development monitor (all services)
+monitor:
+    mprocs -c config/mprocs-dev.yaml
+
+# === Satellites ===
+
+# File system watcher
+fs-watcher:
+    cargo run --bin sinex-fs-watcher
+
+# Terminal satellite
+terminal:
+    cargo run --bin sinex-terminal-satellite
+
+# Desktop satellite
+desktop:
+    cargo run --bin sinex-desktop-satellite
+
+# System satellite
+system:
+    cargo run --bin sinex-system-satellite
+
+# Canonicalizer
+canonicalizer:
+    cargo run --bin sinex-terminal-command-canonicalizer
+
+# Health aggregator
+health:
+    cargo run --bin sinex-health-aggregator
+
+# === Quick Checks ===
+
+# Show compilation errors
+errors:
+    cargo check --workspace --all-features 2>&1 | grep -E "^error" || echo "No errors found"
+
+# Show compilation warnings
+warnings:
+    cargo check --workspace --all-features 2>&1 | grep -E "^warning" || echo "No warnings found"
 
 # === Utilities ===
 
-# 🔗 Install git hooks
-install-hooks:
-    @echo "🔗 Installing git hooks..."
-    @git config core.hooksPath .githooks
-    @chmod +x .githooks/pre-commit
-    @echo "✅ Git hooks installed! Pre-commit will check formatting."
-
-# 📊 Monitor development dashboard (attach to sinex-devtools)
-monitor:
-    @echo "📊 Attaching to development dashboard..."
-    @echo "Press 'q' to detach, Ctrl+q to quit mprocs"
-    @tmux attach-session -t sinex-mprocs || echo "⚠️  No session found. Is sinex-devtools running?"
-
-
-# 🧹 Clean all build artifacts, caches, and logs
-clean:
-    @echo "🧹 Cleaning build artifacts and logs..."
-    cargo clean
-    rm -rf .claude-outputs/*.log
-    rm -f compilation*.log build*.log fix.log check-file.log
-    rm -rf target/nextest/
-    rm -rf target/llvm-cov/
-    @echo "✅ Cleaned build artifacts and logs"
-
-# 📚 Generate and open documentation
-docs:
-    @echo "📚 Building documentation..."
-    cargo doc --workspace --all-features --no-deps
-    @echo "📚 Opening documentation in browser..."
-    @open target/doc/sinex/index.html || xdg-open target/doc/sinex/index.html || echo "📚 Documentation at: target/doc/sinex/index.html"
-
-
-
-
-
-# === Common Workflows ===
-
-
-# ⚡ Quick development cycle - Format, check, and run fast tests
-dev: fmt qc test-fast
-
-# 🚀 Pre-commit validation - Essential checks before committing
-pre-commit: fmt lint qc test-fast
-
-# 🔄 CI-style validation - All tests except VM (for automation)
-ci: fmt lint test-unit test-integration test-system test-property test-performance test-adversarial
-
-# 🚀 PR validation - Run same checks as CI would
-pr-check:
-    @echo "🚀 Running PR validation checks..."
-    @echo "This runs the same checks that CI will run on your PR"
-    just fmt
-    just lint
-    just qc
-    just test-unit
-    just test-integration
-    @echo "✅ PR validation passed! Safe to push."
-
-
-# 🧹 Clean test artifacts and reset environment
-test-clean:
-    @echo "🧹 Cleaning test artifacts..."
-    rm -rf target/nextest/
-    rm -rf target/llvm-cov/
-    just db-clean
-
-# 📊 Show test results summary (if exists)
-test-results:
-    @echo "📊 Test results summary:"
-    @if [ -f target/nextest/default/junit.xml ]; then echo "📄 JUnit results: target/nextest/default/junit.xml"; else echo "⚠️  No JUnit results found"; fi
-    @if [ -d target/llvm-cov/html ]; then echo "📊 Coverage report: target/llvm-cov/html/index.html"; else echo "⚠️  No coverage report found"; fi
-
-
-# 🔄 Quick development test cycle (under 2 minutes)
-test-dev: 
-    @echo "🔄 Quick development test cycle..."
-    just db-setup
-    just test-fast
-
-# === Development Helpers ===
-
-# 🏃 Quick compilation check
-qc:
-    @cargo check --workspace --all-targets
-
-# 🎯 Quick check specific crate (much faster for single-crate work)
-qcc CRATE:
-    @cargo check -p {{CRATE}}
-
-# 🧠 Smart check - only checks crates with changes
-qcs:
-    @./scripts/smart-check.sh
-
-# 🥓 Run bacon for continuous checking
-bacon:
+# Watch for changes
+watch:
     bacon
 
+# Build documentation
+docs:
+    cargo doc --workspace --no-deps --open
 
-# 🤖 Get compilation status as JSON (for AI agents)
-status-json:
-    @cargo check --workspace --all-targets --message-format json 2>&1 | jq -s '{status: "completed", errors: [.[] | select(.reason == "compiler-message" and .message.level == "error")], warnings: [.[] | select(.reason == "compiler-message" and .message.level == "warning")]}'
+# Clean build artifacts
+clean:
+    cargo clean
 
-# 🤖 Get errors and warnings as JSON (for AI agents)
-errors-json:
-    @cargo check --workspace --all-targets --message-format json 2>&1 | \
-        jq -s '{errors: [.[] | select(.reason == "compiler-message" and .message.level == "error") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}], warnings: [.[] | select(.reason == "compiler-message" and .message.level == "warning") | {file: .message.spans[0].file_name, line: .message.spans[0].line_start, message: .message.message}]}'
+# Code statistics
+stats:
+    tokei
 
-# 🔍 Check and show errors immediately
-ce: qc errors
+# Generate coverage report
+coverage:
+    cargo tarpaulin --workspace --out Html --output-dir target/coverage
+    @echo "Coverage report: target/coverage/index.html"
 
+# Update dependencies
+update:
+    cargo update
 
+# Security audit
+audit:
+    cargo audit
 
-
-
-
-
-# 📦 Test specific package with nextest
-test-pkg PKG *ARGS:
-    @echo "📦 Testing package: {{PKG}}"
-    cargo nextest run -p {{PKG}} {{ARGS}}
-
-# 🔍 Find TODOs and FIXMEs in the code
-todos:
-    @echo "🔍 Finding TODOs and FIXMEs..."
-    rg -n "TODO|FIXME|HACK|XXX" --type rust | head -20
-
-# 📊 Show crate dependencies
-deps PKG="":
-    @echo "📊 Dependencies{{PKG}}:"
-    @if [ -z "{{PKG}}" ]; then \
-        cargo tree --workspace; \
-    else \
-        cargo tree -p {{PKG}}; \
-    fi
-
-# 🔍 Search for a pattern in Rust files
-search PATTERN:
-    @echo "🔍 Searching for: {{PATTERN}}"
-    rg "{{PATTERN}}" --type rust
-
-# 📋 List all test functions
-list-tests:
-    @echo "📋 Listing all test functions..."
-    rg "^\s*(#\[test\]|#\[sinex_test\])" --type rust -A 1 | grep -E "^.*\.rs-\s*(async )?fn" | sed 's/.*fn //' | sed 's/(.*//' | sort | uniq
-
-
-
-
-
-
-# === Aliases ===
-alias t := test
-alias b := build
-alias tf := test-fast
-alias tu := test-unit
-alias ti := test-integration
-alias tp := test-pkg
-alias e := errors
-alias w := warnings
-
-
-
+# Check unused dependencies
+unused:
+    cargo machete

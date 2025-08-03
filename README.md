@@ -293,7 +293,7 @@ sinex/
 │   ├── sinex-desktop-satellite/  # Desktop event satellite
 │   ├── sinex-system-satellite/   # System event satellite
 │   └── sinex-terminal-command-canonicalizer/  # Automaton example
-├── migrations/                   # SQL schema migrations
+├── crate/sinex-db/migration/     # Database migrations using sea-orm-migration
 ├── nixos/                        # NixOS module and deployment
 ├── test/                         # Comprehensive test suites
 ├── cli/                          # Python query interface (exo.py)

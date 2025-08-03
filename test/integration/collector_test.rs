@@ -5,7 +5,7 @@ These tests are preserved for reference but are commented out as they no longer 
 with the current codebase.
 
 use sinex_test_utils::prelude::*;
-use sinex_events::{EventFactory, services, event_types};
+use sinex_db::models::{EventFactory, services, event_types};
 use sinex_test_utils::timing_optimization::wait_helpers::wait_for_condition_or_timeout;
 use sinex_collector::{CollectorConfig, OutputConfig, UnifiedCollector};
 use sinex_core_types::{EventSource, EventSourceContext};
@@ -25,7 +25,7 @@ use tokio::sync::{mpsc, Barrier, Mutex};
 
 /// Test that collector can be created with valid configuration
 #[sinex_test]
-async fn test_collector_creation(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_collector_creation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = CollectorConfig {
         enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
@@ -46,7 +46,7 @@ async fn test_collector_creation(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test output configuration options
 #[sinex_test]
-async fn test_output_config_database(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_output_config_database(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = CollectorConfig {
         enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
@@ -67,7 +67,7 @@ async fn test_output_config_database(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test collector configuration loading
 #[sinex_test]
-async fn test_collector_config_loading(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_collector_config_loading(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let result = CollectorConfig::load();
 
     match result {
@@ -112,7 +112,7 @@ async fn test_collector_config_loading(_ctx: TestContext) -> anyhow::Result<()> 
 
 /// Test event filtering based on enabled events
 #[sinex_test]
-async fn test_event_filtering(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_filtering(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let mut config = CollectorConfig {
         enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
@@ -136,7 +136,7 @@ async fn test_event_filtering(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test collector with file output
 #[sinex_test]
-async fn test_collector_file_output(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_collector_file_output(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = CollectorConfig {
         enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
@@ -159,7 +159,7 @@ async fn test_collector_file_output(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test collector with validator
 #[sinex_test]
-async fn test_collector_with_validator(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_collector_with_validator(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = CollectorConfig {
         enabled_events: vec!["fs".to_string()],
         event: HashMap::new(),
@@ -312,7 +312,7 @@ impl SlowEventProcessor {
 #[sinex_test]
 async fn test_channel_backpressure_with_fast_producer_slow_consumer(
     _ctx: TestContext,
-) -> anyhow::Result<()> {
+) -> color_eyre::eyre::Result<()> {
     let (tx, rx) = mpsc::channel::<RawEvent>(10_000);
 
     let fast_producer = HighFrequencyEventSource::new(5000).with_max_events(15_000);
@@ -385,7 +385,7 @@ async fn test_channel_backpressure_with_fast_producer_slow_consumer(
 }
 
 #[sinex_test]
-async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_channel_saturation_prevents_event_loss(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(100);
 
     let producer = HighFrequencyEventSource::new(10_000).with_max_events(150);
@@ -488,7 +488,7 @@ impl EventSource for ConfigurableEventSource {
 }
 
 #[sinex_test]
-async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_config_hot_reload_without_data_loss(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config_file = NamedTempFile::new()?;
     let mut event_config = HashMap::new();
     event_config.insert(
@@ -632,7 +632,7 @@ impl EventSource for TestCoordinatedSource {
 }
 
 #[sinex_test]
-async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
 
     let mut handles = Vec::new();
@@ -687,7 +687,7 @@ async fn test_multiple_sources_lifecycle_management(ctx: TestContext) -> anyhow:
 }
 
 #[sinex_test]
-async fn test_source_startup_synchronization(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_source_startup_synchronization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let (tx, mut rx) = mpsc::channel::<RawEvent>(1000);
     let barrier = Arc::new(Barrier::new(3));
 
@@ -752,7 +752,7 @@ async fn test_source_startup_synchronization(ctx: TestContext) -> anyhow::Result
 }
 
 #[sinex_test]
-async fn test_registry_based_source_discovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_registry_based_source_discovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let registry = create_registry();
 
     let all_types = registry.event_types;

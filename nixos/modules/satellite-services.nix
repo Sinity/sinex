@@ -75,9 +75,9 @@ let
         # Ingestion Hub (sinex-ingestd)
         sinex-ingestd = mkSatelliteService "ingestd" {
           description = "Ingestion Hub";
-          after = [ "postgresql.service" "redis.service" ];
-          requires = [ "postgresql.service" "redis.service" ];
-          execStart = "${cfg.package}/bin/sinex-ingestd --socket-path /run/sinex/ingest.sock --redis-url ${cfg.satellite.redis.url} --batch-size ${toString cfg.satellite.ingestd.batchSize} --log-level ${cfg.satellite.logLevel}";
+          after = [ "postgresql.service" "nats.service" ];
+          requires = [ "postgresql.service" "nats.service" ];
+          execStart = "${cfg.package}/bin/sinex-ingestd --socket-path /run/sinex/ingest.sock --nats-url ${cfg.satellite.nats.servers} --batch-size ${toString cfg.satellite.ingestd.batchSize} --log-level ${cfg.satellite.logLevel}";
           environment = [
             "DATABASE_URL=${cfg.satellite.database.url}"
             "RUST_LOG=${cfg.satellite.logLevel}"
@@ -119,13 +119,14 @@ let
               let instanceId = "${name}-${toString instanceNum}"; in
               lib.nameValuePair "sinex-${instanceId}" (mkSatelliteService "sinex-${name}" {
                 description = "${sourceConfig.description} Event Source";
-                after = [ "sinex-ingestd.service" ];
-                requires = [ "sinex-ingestd.service" ];
-                execStart = "${cfg.package}/bin/sinex-${name} --ingest-socket-path /run/sinex/ingest.sock --service-name sinex-${name} --verbose 1 service" + 
+                after = [ "nats.service" ];
+                requires = [ "nats.service" ];
+                execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --verbose 1 service" + 
                   (if sourceConfig.extraArgs != "" then " ${sourceConfig.extraArgs}" else "");
                 environment = [
                   "RUST_LOG=${cfg.satellite.logLevel}"
                   "DATABASE_URL=${cfg.satellite.database.url}"
+                  "SINEX_NATS_SERVERS=${cfg.satellite.nats.servers}"
                 ] ++ sourceConfig.environment;
                 memoryLimit = sourceConfig.memoryLimit;
                 serviceConfigOverrides = sourceConfig.serviceConfigOverrides or {};
@@ -143,12 +144,12 @@ let
         let
           mkAutomaton = name: automatonConfig: mkIf automatonConfig.enable (mkSatelliteService "sinex-${name}" {
             description = "${automatonConfig.description} Automaton";
-            after = [ "postgresql.service" "redis.service" "sinex-ingestd.service" ];
-            requires = [ "postgresql.service" "redis.service" ];
-            execStart = "${cfg.package}/bin/sinex-${name} --database-url ${cfg.satellite.database.url} --redis-url ${cfg.satellite.redis.url} --consumer-group ${automatonConfig.consumerGroup} --batch-size ${toString automatonConfig.batchSize} --checkpoint-interval ${toString automatonConfig.checkpointInterval} --log-level ${cfg.satellite.logLevel} --ingest-socket-path /run/sinex/ingest.sock";
+            after = [ "postgresql.service" "nats.service" ];
+            requires = [ "postgresql.service" "nats.service" ];
+            execStart = "${cfg.package}/bin/sinex-${name} --service-name sinex-${name} --verbose 1 service";
             environment = [
               "DATABASE_URL=${cfg.satellite.database.url}"
-              "SINEX_REDIS_URL=${cfg.satellite.redis.url}"
+              "SINEX_NATS_SERVERS=${cfg.satellite.nats.servers}"
               "RUST_LOG=${cfg.satellite.logLevel}"
             ] ++ automatonConfig.environment;
             memoryLimit = automatonConfig.memoryLimit;
@@ -189,6 +190,14 @@ in {
         type = types.str;
         default = "redis://localhost:6379";
         description = "Redis URL for message bus";
+      };
+    };
+
+    nats = {
+      servers = mkOption {
+        type = types.str;
+        default = "nats://localhost:4222";
+        description = "NATS server URLs (comma-separated)";
       };
     };
 
@@ -612,14 +621,18 @@ in {
       ];
     };
 
-    services.redis.servers."sinex" = {
+    # NATS JetStream service configuration
+    services.nats = {
       enable = true;
-      port = 6379;
-      bind = "127.0.0.1";
+      serverName = "sinex-nats";
+      jetstream = true;
       settings = {
-        # Enable Redis Streams
-        "maxmemory-policy" = "allkeys-lru";
-        "save" = "900 1 300 10 60 10000";
+        server_name = "sinex-nats";
+        jetstream = {
+          store_dir = "/var/lib/nats/jetstream";
+          max_memory_store = "1G";
+          max_file_store = "10G";
+        };
       };
     };
 
@@ -706,8 +719,8 @@ in {
         message = "Database URL must be configured for satellite services";
       }
       {
-        assertion = cfg.satellite.enable -> cfg.satellite.redis.url != "";
-        message = "Redis URL must be configured for satellite services";
+        assertion = cfg.satellite.enable -> cfg.satellite.nats.servers != "";
+        message = "NATS servers must be configured for satellite services";
       }
     ];
   };

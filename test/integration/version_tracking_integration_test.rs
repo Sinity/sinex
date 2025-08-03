@@ -17,7 +17,7 @@ use tempfile::TempDir;
 
 /// Test VersionInfo basic functionality
 #[sinex_test]
-async fn test_version_info_basic_functionality(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_basic_functionality(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let version_info = VersionInfo::current("test-component");
 
     // Test basic properties
@@ -31,7 +31,7 @@ async fn test_version_info_basic_functionality(_ctx: TestContext) -> anyhow::Res
 
 /// Test VersionInfo with different component names
 #[sinex_test]
-async fn test_version_info_component_names(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_component_names(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let test_names = vec![
         "filesystem-scanner",
         "shell-history-importer",
@@ -54,7 +54,7 @@ async fn test_version_info_component_names(_ctx: TestContext) -> anyhow::Result<
 
 /// Test VersionInfo size and performance
 #[sinex_test]
-async fn test_version_info_performance(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_performance(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let start_time = std::time::Instant::now();
 
     // Create many version infos to test performance
@@ -91,7 +91,7 @@ async fn test_version_info_performance(_ctx: TestContext) -> anyhow::Result<()> 
 
 /// Test version info consistency across multiple calls
 #[sinex_test]
-async fn test_version_info_consistency(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_consistency(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create multiple version infos with same component name
     let mut version_infos = Vec::new();
     for _ in 0..10 {
@@ -116,7 +116,7 @@ async fn test_version_info_consistency(_ctx: TestContext) -> anyhow::Result<()> 
 
 /// Test version info uniqueness across different components
 #[sinex_test]
-async fn test_version_info_uniqueness(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_uniqueness(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let component_names = vec!["scanner-a", "scanner-b", "processor-x", "processor-y"];
 
     let mut version_infos = HashMap::new();
@@ -162,7 +162,7 @@ async fn test_version_info_uniqueness(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test version info with very long component names
 #[sinex_test]
-async fn test_version_info_long_component_names(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_long_component_names(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let long_names = vec![
         "a".repeat(100),
         "very-long-component-name-with-many-dashes-and-details".to_string(),
@@ -186,7 +186,7 @@ async fn test_version_info_long_component_names(_ctx: TestContext) -> anyhow::Re
 
 /// Test version info with special characters in component names
 #[sinex_test]
-async fn test_version_info_special_characters(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_special_characters(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let special_names = vec![
         "component-with-unicode-测试",
         "component_with_underscores",
@@ -209,7 +209,7 @@ async fn test_version_info_special_characters(_ctx: TestContext) -> anyhow::Resu
 
 /// Test version info memory usage
 #[sinex_test]
-async fn test_version_info_memory_usage(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_memory_usage(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let start_memory = get_current_memory_usage();
 
     // Create and drop many version infos
@@ -239,7 +239,7 @@ async fn test_version_info_memory_usage(_ctx: TestContext) -> anyhow::Result<()>
 
 /// Test concurrent version info creation
 #[sinex_test]
-async fn test_concurrent_version_info_creation(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_version_info_creation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -287,7 +287,7 @@ async fn test_concurrent_version_info_creation(_ctx: TestContext) -> anyhow::Res
 
 /// Test version info under concurrent stress
 #[sinex_test]
-async fn test_version_info_concurrent_stress(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_concurrent_stress(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
 
@@ -345,7 +345,7 @@ async fn test_version_info_concurrent_stress(_ctx: TestContext) -> anyhow::Resul
 
 /// Test version info with file system operations
 #[sinex_test]
-async fn test_version_info_with_file_operations(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_version_info_with_file_operations(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = TempDir::new()?;
     let temp_path = temp_dir.path();
 

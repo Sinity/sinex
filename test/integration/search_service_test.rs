@@ -5,10 +5,10 @@
 
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_services::{SearchQuery, SearchService};
 use sinex_test_utils::prelude::*;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 
 /// Helper to create test events with specific content
 async fn create_test_event(
@@ -117,7 +117,7 @@ async fn setup_test_data(pool: &DbPool) -> AnyhowResult<Vec<Ulid>> {
 }
 
 #[sinex_test]
-async fn test_search_sql_injection_prevention(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_sql_injection_prevention(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -176,7 +176,7 @@ async fn test_search_sql_injection_prevention(ctx: TestContext) -> anyhow::Resul
 }
 
 #[sinex_test]
-async fn test_search_sql_injection_in_filters(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_sql_injection_in_filters(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -217,7 +217,7 @@ async fn test_search_sql_injection_in_filters(ctx: TestContext) -> anyhow::Resul
 }
 
 #[sinex_test]
-async fn test_search_basic_text_search(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_basic_text_search(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -258,7 +258,7 @@ async fn test_search_basic_text_search(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_source_filtering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_source_filtering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -300,7 +300,7 @@ async fn test_search_source_filtering(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_event_type_filtering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_event_type_filtering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -325,7 +325,7 @@ async fn test_search_event_type_filtering(ctx: TestContext) -> anyhow::Result<()
 }
 
 #[sinex_test]
-async fn test_search_time_range_filtering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_time_range_filtering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -351,7 +351,7 @@ async fn test_search_time_range_filtering(ctx: TestContext) -> anyhow::Result<()
 }
 
 #[sinex_test]
-async fn test_search_pagination(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_pagination(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -396,7 +396,7 @@ async fn test_search_pagination(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_limit_bounds(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_limit_bounds(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -434,7 +434,7 @@ async fn test_search_limit_bounds(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_combined_filters(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_combined_filters(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -458,7 +458,7 @@ async fn test_search_combined_filters(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_ordering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_ordering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -489,7 +489,7 @@ async fn test_search_ordering(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_snippet_extraction(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_snippet_extraction(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -528,7 +528,7 @@ async fn test_search_snippet_extraction(ctx: TestContext) -> anyhow::Result<()> 
 }
 
 #[sinex_test]
-async fn test_search_special_characters_in_text(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_special_characters_in_text(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -589,7 +589,7 @@ async fn test_search_special_characters_in_text(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_search_empty_results(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_empty_results(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -627,7 +627,7 @@ async fn test_search_empty_results(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_search_result_format(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_search_result_format(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 
@@ -672,7 +672,7 @@ async fn test_search_result_format(ctx: TestContext) -> anyhow::Result<()> {
 #[sinex_test]
 async fn test_search_sql_injection_limit_offset_vulnerability(
     ctx: TestContext,
-) -> anyhow::Result<()> {
+) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let service = SearchService::new(pool.clone());
 

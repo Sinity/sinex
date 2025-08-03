@@ -3,19 +3,19 @@
 // These tests verify that the satellite services can communicate
 // properly and that the overall system works as expected.
 
-use anyhow::Result;
+use color_eyre::eyre::Result;
 use sinex_db::queries::{CheckpointQueries, EventQueries, OperationQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient, SatelliteResult};
-use sinex_test_macros::sinex_test;
+use sinex_test_utils::sinex_test;
 use sinex_test_utils::prelude::*;
 use tokio::time::{sleep, Duration};
 use tracing::{info, warn};
 use uuid;
 
 #[sinex_test]
-async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());
@@ -76,7 +76,7 @@ async fn test_satellite_architecture_basic_flow(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_satellite_sdk_components(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_satellite_sdk_components(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     info!("Testing satellite SDK components");
 
     // Test checkpoint manager
@@ -122,7 +122,7 @@ async fn test_satellite_sdk_components(ctx: TestContext) -> anyhow::Result<()> {
 }
 
 #[sinex_test]
-async fn test_satellite_event_flow_simulation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_satellite_event_flow_simulation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     info!("Testing simulated satellite event flow");
 
     // Simulate the flow described in the refactoring plan:
@@ -172,7 +172,7 @@ async fn test_satellite_event_flow_simulation(ctx: TestContext) -> anyhow::Resul
 fn create_test_event_source_config() -> EventSourceConfig {
     use sinex_satellite_sdk::config::SatelliteConfig;
     use std::collections::HashMap;
-    use std::path::PathBuf;
+    use camino::Utf8PathBuf;
 
     let base_config = SatelliteConfig {
         service_name: "test-event-source".to_string(),
@@ -181,7 +181,7 @@ fn create_test_event_source_config() -> EventSourceConfig {
         redis_url: "redis://localhost:6379".to_string(),
         database_url: None,
         database_pool_size: 10,
-        work_dir: PathBuf::from("/tmp/sinex-test"),
+        work_dir: Utf8PathBuf::from("/tmp/sinex-test"),
         dry_run: true,
         replay: None,
     };

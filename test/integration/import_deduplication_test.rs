@@ -13,13 +13,13 @@ use sinex_test_utils::event_sources::EventSource;
 use sinex_test_utils::mocks::EventSourceContext;
 use sinex_test_utils::prelude::*;
 use chrono::{TimeZone, Utc};
-use sinex_annex::{AnnexConfig, BlobManager};
+use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
 use sinex_core_types::CoreError;
-use sinex_events::EventFactory;
+use sinex_db::models::EventFactory;
 use sinex_satellite_sdk::{ScanArgs, ScanReport};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use camino::Utf8PathBuf;
 use tempfile::TempDir;
 use tracing::info;
 
@@ -28,7 +28,7 @@ use tracing::info;
 // =============================================================================
 
 #[sinex_test]
-async fn test_git_annex_hash_deduplication(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_git_annex_hash_deduplication(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let annex_dir = temp_dir.path().join("git-annex");
 
@@ -75,7 +75,7 @@ async fn test_git_annex_hash_deduplication(ctx: TestContext) -> anyhow::Result<(
 }
 
 #[sinex_test]
-async fn test_atuin_import_overlap_detection(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_atuin_import_overlap_detection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let db_path = temp_dir.path().join("test_atuin.db");
 
@@ -173,7 +173,7 @@ async fn test_atuin_import_overlap_detection(ctx: TestContext) -> anyhow::Result
 }
 
 #[sinex_test]
-async fn test_shell_history_time_range_overlap(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_shell_history_time_range_overlap(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".bash_history");
 
@@ -272,7 +272,7 @@ echo "recent command"
 // =============================================================================
 
 #[sinex_test]
-async fn test_overlap_analysis_statistics(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_overlap_analysis_statistics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".zsh_history");
 
@@ -384,7 +384,7 @@ async fn test_overlap_analysis_statistics(ctx: TestContext) -> anyhow::Result<()
 // =============================================================================
 
 #[sinex_test]
-async fn test_cross_scanner_deduplication(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_cross_scanner_deduplication(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
 
     // Create the same command in both Atuin and shell history
@@ -502,7 +502,7 @@ async fn test_cross_scanner_deduplication(ctx: TestContext) -> anyhow::Result<()
 // Helper Functions
 // =============================================================================
 
-fn create_test_atuin_db(path: &PathBuf, entries: Vec<TestAtuinEntry>) -> anyhow::Result<()> {
+fn create_test_atuin_db(path: &Utf8PathBuf, entries: Vec<TestAtuinEntry>) -> color_eyre::eyre::Result<()> {
     use rusqlite::{params, Connection};
 
     let conn = Connection::open(path)?;
@@ -546,7 +546,7 @@ fn create_test_atuin_db(path: &PathBuf, entries: Vec<TestAtuinEntry>) -> anyhow:
     Ok(())
 }
 
-fn add_atuin_entries(path: &PathBuf, entries: Vec<TestAtuinEntry>) -> anyhow::Result<()> {
+fn add_atuin_entries(path: &Utf8PathBuf, entries: Vec<TestAtuinEntry>) -> color_eyre::eyre::Result<()> {
     use rusqlite::{params, Connection};
 
     let conn = Connection::open(path)?;

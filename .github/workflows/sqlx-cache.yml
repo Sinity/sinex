@@ -3,15 +3,13 @@ name: SQLx Query Cache Validation
 on:
   push:
     paths:
-      - 'src/**/*.rs'
-      - 'ingestors/**/*.rs'
-      - 'migrations/**/*.sql'
+      - 'crate/**/*.rs'
+      - 'crate/sinex-db/migration/**'
       - '.sqlx/**'
   pull_request:
     paths:
-      - 'src/**/*.rs'
-      - 'ingestors/**/*.rs'
-      - 'migrations/**/*.sql'
+      - 'crate/**/*.rs'
+      - 'crate/sinex-db/migration/**'
       - '.sqlx/**'
 
 jobs:
@@ -52,8 +50,8 @@ jobs:
           # Install PostgreSQL extensions (simplified for CI)
           sudo apt-get update && sudo apt-get install -y postgresql-contrib
           
-          # Run migrations
-          sqlx migrate run
+          # Run migrations using new sea-orm system
+          cd crate/sinex-db/migration && cargo run -- up
           
       - name: Check query cache is current
         env:

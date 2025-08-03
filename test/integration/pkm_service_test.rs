@@ -23,7 +23,7 @@ use sinex_db::{
 use sinex_services::pkm::PkmService;
 use sinex_test_utils::generators;
 use sinex_test_utils::prelude::*;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::collections::{HashMap, HashSet};
 
 // =============================================================================
@@ -32,7 +32,7 @@ use std::collections::{HashMap, HashSet};
 
 /// Test creating a note annotation on an event
 #[sinex_test(timeout = 30)]
-async fn test_create_note_annotation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_create_note_annotation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create a test event first
@@ -69,7 +69,7 @@ async fn test_create_note_annotation(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test creating multiple notes on the same event
 #[sinex_test(timeout = 30)]
-async fn test_multiple_note_annotations(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_multiple_note_annotations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create a test event
@@ -112,7 +112,7 @@ async fn test_multiple_note_annotations(ctx: TestContext) -> anyhow::Result<()> 
 
 /// Test creating entities from a list
 #[sinex_test(timeout = 30)]
-async fn test_create_entities_from_list(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_create_entities_from_list(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create a test event
@@ -156,7 +156,7 @@ async fn test_create_entities_from_list(ctx: TestContext) -> anyhow::Result<()> 
 
 /// Test entity constraint validation - valid entity types
 #[sinex_test(timeout = 30)]
-async fn test_entity_type_constraints_valid(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_entity_type_constraints_valid(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -191,7 +191,7 @@ async fn test_entity_type_constraints_valid(ctx: TestContext) -> anyhow::Result<
 
 /// Test entity constraint validation - invalid entity types
 #[sinex_test(timeout = 30)]
-async fn test_entity_type_constraints_invalid(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_entity_type_constraints_invalid(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -209,7 +209,7 @@ async fn test_entity_type_constraints_invalid(ctx: TestContext) -> anyhow::Resul
 
 /// Test direct entity creation with full parameters
 #[sinex_test(timeout = 30)]
-async fn test_direct_entity_creation(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_direct_entity_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test direct database entity creation for comprehensive coverage
     let input = CreateEntityInput {
         entity_type: "person".to_string(),
@@ -236,7 +236,7 @@ async fn test_direct_entity_creation(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test entity search functionality
 #[sinex_test(timeout = 30)]
-async fn test_entity_search(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_entity_search(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create test entities
     let entities = vec![
         CreateEntityInput {
@@ -291,7 +291,7 @@ async fn test_entity_search(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test getting entities by type
 #[sinex_test(timeout = 30)]
-async fn test_get_entities_by_type(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_get_entities_by_type(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create entities of different types
     let person_input = CreateEntityInput {
         entity_type: "person".to_string(),
@@ -338,7 +338,7 @@ async fn test_get_entities_by_type(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test creating relationships between entities
 #[sinex_test(timeout = 30)]
-async fn test_link_entities(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_link_entities(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create two test entities
@@ -396,7 +396,7 @@ async fn test_link_entities(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test bidirectional relationship queries
 #[sinex_test(timeout = 30)]
-async fn test_bidirectional_relationships(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_bidirectional_relationships(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create entities
@@ -453,7 +453,7 @@ async fn test_bidirectional_relationships(ctx: TestContext) -> anyhow::Result<()
 
 /// Test relationship with strength and validity period
 #[sinex_test(timeout = 30)]
-async fn test_relationship_with_strength_and_validity(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_relationship_with_strength_and_validity(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create entities
     let entity1 = knowledge_graph::create_entity(
         ctx.pool(),
@@ -514,7 +514,7 @@ async fn test_relationship_with_strength_and_validity(ctx: TestContext) -> anyho
 
 /// Test getting relationship by ID
 #[sinex_test(timeout = 30)]
-async fn test_get_relationship_by_id(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_get_relationship_by_id(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create entities and relationship
@@ -576,7 +576,7 @@ async fn test_get_relationship_by_id(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test creating and retrieving artifacts
 #[sinex_test(timeout = 30)]
-async fn test_create_and_get_artifact(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_create_and_get_artifact(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create test event for artifact linkage
     let event = generators::test_events(1).into_iter().next().unwrap();
     let inserted_event = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
@@ -630,7 +630,7 @@ async fn test_create_and_get_artifact(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test artifact type constraints - valid types
 #[sinex_test(timeout = 30)]
-async fn test_artifact_type_constraints_valid(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_artifact_type_constraints_valid(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test all valid artifact types from the database constraint
     let valid_types = vec![
         "note", "webpage", "email", "file", "document", "code", "media",
@@ -663,7 +663,7 @@ async fn test_artifact_type_constraints_valid(ctx: TestContext) -> anyhow::Resul
 
 /// Test artifact type constraints - invalid types
 #[sinex_test(timeout = 30)]
-async fn test_artifact_type_constraints_invalid(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_artifact_type_constraints_invalid(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let artifact_input = CreateArtifactInput {
         artifact_type: "invalid_type".to_string(),
         title: "Test Invalid".to_string(),
@@ -685,7 +685,7 @@ async fn test_artifact_type_constraints_invalid(ctx: TestContext) -> anyhow::Res
 
 /// Test getting recent artifacts
 #[sinex_test(timeout = 30)]
-async fn test_get_recent_artifacts(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_get_recent_artifacts(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create multiple artifacts
     for i in 0..3 {
         let artifact_input = CreateArtifactInput {
@@ -724,7 +724,7 @@ async fn test_get_recent_artifacts(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test complete PKM workflow: event → annotation → entities → relationships → artifacts
 #[sinex_test(timeout = 60)]
-async fn test_complete_pkm_workflow(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_complete_pkm_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Step 1: Create an event
@@ -849,7 +849,7 @@ async fn test_complete_pkm_workflow(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test transaction rollback on entity creation failure
 #[sinex_test(timeout = 30)]
-async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -880,7 +880,7 @@ async fn test_transaction_rollback_on_entity_failure(ctx: TestContext) -> anyhow
 
 /// Test handling non-existent entity IDs in relationships
 #[sinex_test(timeout = 30)]
-async fn test_relationship_with_nonexistent_entities(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_relationship_with_nonexistent_entities(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     // Create one valid entity
@@ -913,7 +913,7 @@ async fn test_relationship_with_nonexistent_entities(ctx: TestContext) -> anyhow
 
 /// Test duplicate entity names (should be allowed)
 #[sinex_test(timeout = 30)]
-async fn test_duplicate_entity_names_allowed(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_duplicate_entity_names_allowed(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create two entities with the same name but different types
     let person_input = CreateEntityInput {
         entity_type: "person".to_string(),
@@ -952,7 +952,7 @@ async fn test_duplicate_entity_names_allowed(ctx: TestContext) -> anyhow::Result
 
 /// Test empty entity list handling
 #[sinex_test(timeout = 30)]
-async fn test_empty_entity_list(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_empty_entity_list(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();
@@ -969,7 +969,7 @@ async fn test_empty_entity_list(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test annotation with empty content (should be allowed)
 #[sinex_test(timeout = 30)]
-async fn test_annotation_with_empty_content(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_annotation_with_empty_content(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let service = PkmService::new(ctx.pool().clone());
 
     let event = generators::test_events(1).into_iter().next().unwrap();

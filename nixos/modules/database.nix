@@ -140,16 +140,15 @@ in
 
       package = mkOption {
         type = types.package;
-        default = pkgs.sqlx-cli;
-        defaultText = literalExpression "pkgs.sqlx-cli";
-        description = "SQLx CLI package for running migrations";
+        default = cfg.package; # Use the main sinex package which includes migration binary
+        defaultText = literalExpression "cfg.package";
+        description = "Package containing the migration binary (sinex-db-migration)";
       };
 
-      directory = mkOption {
-        type = types.path;
-        default = "${cfg.package}/share/sinex/migrations";
-        defaultText = literalExpression ''"''${cfg.package}/share/sinex/migrations"'';
-        description = "Directory containing migration files";
+      binary = mkOption {
+        type = types.str;
+        default = "sinex-db-migration";
+        description = "Name of the migration binary";
       };
 
       timeout = mkOption {

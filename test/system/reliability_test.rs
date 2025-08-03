@@ -20,18 +20,18 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use sinex_events::EventFactory;
+use sinex_db::models::EventFactory;
 use sinex_test_utils::database_pool::acquire_test_database;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_ulid::Ulid;
+use sinex_types::ulid::Ulid;
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================
 
 /// Test startup sequence robustness and error handling
 #[sinex_test(timeout = 60)]
-async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing startup sequence robustness...");
 
     // Test 1: Database initialization from scratch
@@ -148,7 +148,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()
                 .await
                 .unwrap_or(0);
 
-        Ok::<(i64, i64), anyhow::Error>((checkpoint_count, event_count))
+        Ok::<(i64, i64), color_eyre::eyre::Error>((checkpoint_count, event_count))
     })
     .await;
 
@@ -198,16 +198,17 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()
             .ok(); // Ignore errors if table doesn't exist
 
             // Try to run migrations with corrupted state
-            let migration_result = sqlx::migrate!("./migrations").run(pool).await;
+            // Note: Using sinex_db's migration system now
+            let migration_result = sinex_db::run_migrations(pool).await;
 
             match migration_result {
                 Ok(()) => {
                     println!("    ✓ Migrations recovered from corruption");
-                    Ok::<bool, anyhow::Error>(true)
+                    Ok::<bool, color_eyre::eyre::Error>(true)
                 }
                 Err(e) => {
                     println!("    Migration failed gracefully: {}", e);
-                    Ok::<bool, anyhow::Error>(false)
+                    Ok::<bool, color_eyre::eyre::Error>(false)
                 }
             }
         }
@@ -240,7 +241,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> anyhow::Result<()
 
 /// Test shutdown sequence and graceful termination
 #[sinex_test]
-async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing shutdown sequence and graceful termination...");
@@ -337,7 +338,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow
             .fetch_one(verification_pool)
             .await?;
 
-        Ok::<(i64, i32), anyhow::Error>((committed_events, db_check.unwrap_or(0)))
+        Ok::<(i64, i32), color_eyre::eyre::Error>((committed_events, db_check.unwrap_or(0)))
     })
     .await;
 
@@ -407,7 +408,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow
                 }
             }
 
-            Ok::<(), anyhow::Error>(())
+            Ok::<(), color_eyre::eyre::Error>(())
         });
 
         // Let operation start
@@ -434,7 +435,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow
             .await
             .unwrap_or(0);
 
-            Ok::<(i32, i64), anyhow::Error>((health_check.unwrap_or(0), partial_events))
+            Ok::<(i32, i64), color_eyre::eyre::Error>((health_check.unwrap_or(0), partial_events))
         })
         .await;
 
@@ -461,7 +462,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow
             }
             Err(_) => {
                 println!("    Stability check timed out");
-                Err(anyhow::anyhow!("Stability check timeout"))
+                Err(eyre!("Stability check timeout"))
             }
         }
     })
@@ -492,7 +493,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> anyhow
 
 /// Test configuration validation and hot reload scenarios
 #[sinex_test]
-async fn test_configuration_validation_and_reload(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_configuration_validation_and_reload(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing configuration validation and hot reload scenarios...");
 
     let temp_dir = TempDir::new()?;
@@ -550,7 +551,7 @@ enabled = false
             .and_then(|v| v.as_integer())
             .unwrap_or(0);
 
-        Ok::<(bool, bool, bool, i64, i64), anyhow::Error>((
+        Ok::<(bool, bool, bool, i64, i64), color_eyre::eyre::Error>((
             has_database,
             has_collector,
             has_event_sources,
@@ -671,18 +672,18 @@ channel_buffer_size = 10000
 
                     // Check for semantic errors
                     if max_conn <= 0 {
-                        Err(anyhow::anyhow!("Invalid max_connections"))
+                        Err(eyre!("Invalid max_connections"))
                     } else if buffer_size <= 0 {
-                        Err(anyhow::anyhow!("Invalid buffer_size"))
+                        Err(eyre!("Invalid buffer_size"))
                     } else if max_conn == 1 && buffer_size > 5000 {
-                        Err(anyhow::anyhow!(
+                        Err(eyre!(
                             "Resource conflict: low connections, high buffer"
                         ))
                     } else {
                         Ok(config)
                     }
                 }
-                Err(e) => Err(anyhow::anyhow!("TOML parse error: {}", e)),
+                Err(e) => Err(eyre!("TOML parse error: {}", e)),
             }
         })
         .await;
@@ -748,7 +749,7 @@ channel_buffer_size = 10000
             "New config value should be correct"
         );
 
-        Ok::<(), anyhow::Error>(())
+        Ok::<(), color_eyre::eyre::Error>(())
     })
     .await;
 
@@ -789,7 +790,7 @@ channel_buffer_size = 10000
 
 /// Test data migration safety and version compatibility
 #[sinex_test]
-async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing data migration safety and version compatibility...");
 
     // Create isolated test database for migration testing
@@ -845,7 +846,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
         .await
         .unwrap_or_default();
 
-        Ok::<(Vec<String>, Vec<String>, Vec<String>), anyhow::Error>((schemas, tables, extensions))
+        Ok::<(Vec<String>, Vec<String>, Vec<String>), color_eyre::eyre::Error>((schemas, tables, extensions))
     })
     .await;
 
@@ -904,7 +905,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
             .await?
             .unwrap_or(0);
 
-        Ok::<(i64, i64), anyhow::Error>((table_count, migration_count))
+        Ok::<(i64, i64), color_eyre::eyre::Error>((table_count, migration_count))
     })
     .await;
 
@@ -1027,7 +1028,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
                 Option<serde_json::Value>,
                 Option<serde_json::Value>,
             ),
-            anyhow::Error,
+            color_eyre::eyre::Error,
         >((
             initial_checkpoint_count,
             initial_event_count,
@@ -1156,7 +1157,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test graceful degradation under database connectivity issues
 #[sinex_test]
-async fn test_graceful_degradation_database_failure(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Create test checkpoint for degradation testing
@@ -1206,7 +1207,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> anyhow:
     let pool3 = pool.clone();
 
     // Define async functions for each operation
-    async fn event_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
+    async fn event_test(pool: DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
         let mut event = EventFactory::new("degradation.test")
             .create_event("connection_exhaustion", json!({"test": "degraded_mode"}));
         event.host = "localhost".to_string();
@@ -1216,21 +1217,21 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> anyhow:
         Ok(())
     }
 
-    async fn health_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
+    async fn health_test(pool: DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
         let _health_check = sqlx::query_scalar!("SELECT 1")
             .fetch_one(&pool)
             .await
-            .map_err(anyhow::Error::from)?
+            .map_err(color_eyre::eyre::Error::from)?
             .unwrap_or(0);
         Ok(())
     }
 
-    async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), anyhow::Error> {
+    async fn checkpoint_test(pool: DbPool) -> AnyhowResult<(), color_eyre::eyre::Error> {
         let _checkpoint_check =
             sqlx::query!("SELECT processor_name FROM core.processor_checkpoints LIMIT 1")
                 .fetch_one(&pool)
                 .await
-                .map_err(anyhow::Error::from)?;
+                .map_err(color_eyre::eyre::Error::from)?;
         Ok(())
     }
 
@@ -1350,7 +1351,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> anyhow:
 
 /// Test resource limits and monitoring under load
 #[sinex_test]
-async fn test_resource_limits_monitoring(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource limits and monitoring under load...");
@@ -1608,7 +1609,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test system behavior under resource exhaustion scenarios
 #[sinex_test]
-async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_resource_exhaustion_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     println!("Testing resource exhaustion scenarios...");

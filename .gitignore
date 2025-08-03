@@ -70,3 +70,7 @@ worktree-*
 # Removed daemon scripts - don't restore
 scripts/compile-daemon.sh
 scripts/git-state-tracker.sh
+
+# SQLX offline cache - only allow at workspace root
+**/.sqlx/
+!/.sqlx/

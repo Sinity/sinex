@@ -3,13 +3,13 @@ use serde_json::json;
 use sinex_db::events::{get_event_by_id, insert_event};
 use sinex_db::queries::{EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{RawEvent, EventFactory, sources, event_types};
-use sinex_test_macros::sinex_test;
+use sinex_types::events::{RawEvent, EventFactory, sources, event_types};
+use sinex_test_utils::sinex_test;
 use tracing::info;
 
 /// Integration test for provenance tracking functionality
 #[sinex_test]
-async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::anyhow::Result<()> {
+async fn test_provenance_tracking_end_to_end(ctx: crate::TestContext) -> crate::color_eyre::eyre::Result<()> {
     // NOTE: This test is disabled due to ULID/UUID type issues with sqlx
     // TODO: Fix ULID handling in database queries
     return Ok(());

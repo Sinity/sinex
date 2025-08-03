@@ -11,11 +11,11 @@ use sinex_test_utils::prelude::*;
 use sinex_test_utils::prelude::*;
 use chrono::{TimeZone, Utc};
 use sinex_core_types::CoreError;
-use sinex_events::EventFactory;
+use sinex_db::models::EventFactory;
 use sinex_satellite_sdk::{EventSourceConfig, ScanArgs, ScanReport, StatefulStreamProcessor};
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
+use camino::Utf8PathBuf;
 use tempfile::TempDir;
 
 // =============================================================================
@@ -23,7 +23,7 @@ use tempfile::TempDir;
 // =============================================================================
 
 #[sinex_test]
-async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 
@@ -78,7 +78,7 @@ async fn test_filesystem_scanner_basic_functionality(ctx: TestContext) -> anyhow
 }
 
 #[sinex_test]
-async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 
@@ -137,7 +137,7 @@ async fn test_filesystem_scanner_with_ignore_patterns(ctx: TestContext) -> anyho
 // =============================================================================
 
 #[sinex_test]
-async fn test_shell_history_scanner_bash_format(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_shell_history_scanner_bash_format(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".bash_history");
 
@@ -206,7 +206,7 @@ sudo apt update
 }
 
 #[sinex_test]
-async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".zsh_history");
 
@@ -266,7 +266,7 @@ async fn test_shell_history_scanner_zsh_format(ctx: TestContext) -> anyhow::Resu
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_time_range_filtering(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_scanner_time_range_filtering(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let history_file = temp_dir.path().join(".bash_history");
 
@@ -327,7 +327,7 @@ command_after_range
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_dry_run_mode(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_scanner_dry_run_mode(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 
@@ -375,7 +375,7 @@ async fn test_scanner_dry_run_mode(ctx: TestContext) -> anyhow::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_handles_missing_files(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_scanner_handles_missing_files(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = serde_json::json!({
         "watch_patterns": [],
         "ignore_patterns": [],
@@ -404,7 +404,7 @@ async fn test_scanner_handles_missing_files(ctx: TestContext) -> anyhow::Result<
 }
 
 #[sinex_test]
-async fn test_scanner_handles_empty_paths(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_scanner_handles_empty_paths(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let config = serde_json::json!({
         "watch_patterns": [],
         "ignore_patterns": [],
@@ -439,7 +439,7 @@ async fn test_scanner_handles_empty_paths(ctx: TestContext) -> anyhow::Result<()
 // =============================================================================
 
 #[sinex_test]
-async fn test_scanner_performance_large_directory(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_scanner_performance_large_directory(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let temp_path = temp_dir.path();
 

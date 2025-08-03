@@ -1,5 +1,5 @@
 /// Unit tests for typed clipboard implementation
-use sinex_events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
+use sinex_types::events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_test_utils::prelude::*;
 
 #[test]

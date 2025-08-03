@@ -11,7 +11,7 @@ use tempfile::TempDir;
 
 /// Test database connection recovery after transient failures
 #[sinex_test]
-async fn test_database_connection_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_connection_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Phase 1: Simulate failure condition
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -55,7 +55,7 @@ async fn test_database_connection_recovery(ctx: TestContext) -> anyhow::Result<(
 
 /// Test database extension recovery
 #[sinex_test]
-async fn test_database_extension_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_extension_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Phase 1: Test with invalid database (should fail)
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/test");
 
@@ -89,7 +89,7 @@ async fn test_database_extension_recovery(ctx: TestContext) -> anyhow::Result<()
 
 /// Test migration recovery scenarios
 #[sinex_test]
-async fn test_migration_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_migration_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Phase 1: Test with invalid database (should fail)
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/test");
 
@@ -125,7 +125,7 @@ async fn test_migration_recovery(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test configuration recovery after environment changes
 #[sinex_test]
-async fn test_configuration_recovery(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_configuration_recovery(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Save original environment state
     let original_db_url = env::var("DATABASE_URL").ok();
     let original_rust_log = env::var("RUST_LOG").ok();
@@ -196,7 +196,7 @@ async fn test_configuration_recovery(_ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test TOML configuration file recovery
 #[sinex_test]
-async fn test_toml_config_recovery(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_toml_config_recovery(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
     let config_path = temp_dir.path().join("test_config.toml");
 
@@ -251,7 +251,7 @@ terminal = false
 
 /// Test service dependency recovery
 #[sinex_test]
-async fn test_service_dependency_recovery(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_service_dependency_recovery(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Service verification is resilient by design - it warns rather than fails
     // But we can test the recovery patterns
 
@@ -302,7 +302,7 @@ async fn test_service_dependency_recovery(_ctx: TestContext) -> anyhow::Result<(
 
 /// Test recovery from resource constraint warnings
 #[sinex_test]
-async fn test_resource_constraint_recovery(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_resource_constraint_recovery(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Resources module is designed to be resilient - it warns but doesn't fail
     let (status, details, messages) = sinex_preflight::resources::verify_system_resources()
         .await
@@ -355,7 +355,7 @@ async fn test_resource_constraint_recovery(_ctx: TestContext) -> anyhow::Result<
 
 /// Test filesystem permission recovery
 #[sinex_test]
-async fn test_filesystem_permission_recovery(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_filesystem_permission_recovery(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
 
     // Phase 1: Test with restricted permissions
@@ -428,7 +428,7 @@ async fn test_filesystem_permission_recovery(_ctx: TestContext) -> anyhow::Resul
 
 /// Test end-to-end integration recovery
 #[sinex_test]
-async fn test_integration_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_integration_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Phase 1: Test with invalid database (should fail)
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -488,7 +488,7 @@ async fn test_integration_recovery(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test recovery from partial phase failures
 #[sinex_test]
-async fn test_partial_failure_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_partial_failure_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", ctx.database_url());
 
     // Run multiple phases and test that warnings don't prevent overall success
@@ -581,7 +581,7 @@ async fn test_partial_failure_recovery(ctx: TestContext) -> anyhow::Result<()> {
 
 /// Test rollback simulation after verification failure
 #[sinex_test]
-async fn test_rollback_simulation(_ctx: TestContext) -> anyhow::Result<()> {
+async fn test_rollback_simulation(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Simulate a deployment scenario where verification fails and we need to rollback
 
     // Phase 1: Baseline state (save current environment)
@@ -616,7 +616,7 @@ async fn test_rollback_simulation(_ctx: TestContext) -> anyhow::Result<()> {
         }
     }
 
-    // Phase 4: Simulate rollback (restore baseline state)\n    baseline_state.restore();\n    \n    println!(\"✓ Rolled back to baseline environment state\");\n    \n    // Phase 5: Verify rollback success (should pass/warn now)\n    let rollback_verification = sinex_preflight::configuration::verify_configuration_generation().await;\n    \n    match rollback_verification {\n        Ok((status, _details, _messages)) => {\n            assert!(matches!(status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning),\n                    \"Verification should pass after rollback\");\n            println!(\"✓ Verification passed after rollback\");\n        }\n        Err(e) => {\n            // If it still fails, it might be due to missing DATABASE_URL in baseline\n            // This is acceptable for the rollback test\n            println!(\"ℹ Verification still has issues after rollback (expected if DATABASE_URL was not set initially): {}\", e);\n        }\n    }\n    \n    println!(\"✓ Rollback simulation completed\");\n    \n    Ok(())\n}\n\n// Helper struct for environment state management\nstruct EnvironmentState {\n    database_url: Option<String>,\n    rust_log: Option<String>,\n    sinex_config: Option<String>,\n}\n\nimpl EnvironmentState {\n    fn capture() -> Self {\n        Self {\n            database_url: env::var(\"DATABASE_URL\").ok(),\n            rust_log: env::var(\"RUST_LOG\").ok(),\n            sinex_config: env::var(\"SINEX_CONFIG\").ok(),\n        }\n    }\n    \n    fn restore(&self) {\n        // Restore or remove environment variables\n        match &self.database_url {\n            Some(url) => env::set_var(\"DATABASE_URL\", url),\n            None => env::remove_var(\"DATABASE_URL\"),\n        }\n        \n        match &self.rust_log {\n            Some(log) => env::set_var(\"RUST_LOG\", log),\n            None => env::remove_var(\"RUST_LOG\"),\n        }\n        \n        match &self.sinex_config {\n            Some(config) => env::set_var(\"SINEX_CONFIG\", config),\n            None => env::remove_var(\"SINEX_CONFIG\"),\n        }\n    }\n}\n\n// ====== COMPREHENSIVE RECOVERY TEST ======\n\n/// Test complete system recovery from multiple failure scenarios\n#[sinex_test]\nasync fn test_comprehensive_system_recovery(ctx: TestContext) -> anyhow::Result<()> {\n    let baseline = EnvironmentState::capture();\n    \n    println!(\"✓ Starting comprehensive recovery test\");\n    \n    // Scenario 1: Database failure and recovery\n    env::set_var(\"DATABASE_URL\", \"postgresql://invalid:5432/test\");\n    \n    let db_failure = sinex_preflight::database::verify_database_connectivity().await;\n    assert!(db_failure.is_err() || matches!(db_failure.unwrap().0, sinex_preflight::VerificationStatus::Fail));\n    \n    env::set_var(\"DATABASE_URL\", ctx.database_url());\n    let (db_status, _details, _messages) = sinex_preflight::database::verify_database_connectivity().await\n        .map_err(|e| format!(\"Database recovery failed: {}\", e))?;\n    assert_eq!(db_status, sinex_preflight::VerificationStatus::Pass);\n    \n    println!(\"✓ Database failure/recovery cycle completed\");\n    \n    // Scenario 2: Configuration failure and recovery\n    env::remove_var(\"DATABASE_URL\");\n    \n    let config_failure = sinex_preflight::configuration::verify_configuration_generation().await\n        .map_err(|e| format!(\"Config test should handle missing vars: {}\", e))?;\n    assert_eq!(config_failure.0, sinex_preflight::VerificationStatus::Fail);\n    \n    env::set_var(\"DATABASE_URL\", ctx.database_url());\n    let (config_status, _details, _messages) = sinex_preflight::configuration::verify_configuration_generation().await\n        .map_err(|e| format!(\"Configuration recovery failed: {}\", e))?;\n    assert!(matches!(config_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Configuration failure/recovery cycle completed\");\n    \n    // Scenario 3: Resource constraints (should be resilient)\n    let (resource_status, resource_details, resource_messages) = sinex_preflight::resources::verify_system_resources().await\n        .map_err(|e| format!(\"Resource verification failed: {}\", e))?;\n    \n    assert!(matches!(resource_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Resource resilience verified\");\n    \n    // Scenario 4: Service dependencies (should be resilient)\n    let (service_status, _service_details, _service_messages) = sinex_preflight::services::verify_service_dependencies().await\n        .map_err(|e| format!(\"Service verification failed: {}\", e))?;\n    \n    assert!(matches!(service_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Service dependency resilience verified\");\n    \n    // Scenario 5: Integration recovery\n    env::set_var(\"DATABASE_URL\", \"postgresql://invalid:5432/test\");\n    \n    let integration_failure = sinex_preflight::verification::verify_end_to_end_integration().await\n        .map_err(|e| format!(\"Integration test should handle failure: {}\", e))?;\n    assert_eq!(integration_failure.0, sinex_preflight::VerificationStatus::Fail);\n    \n    env::set_var(\"DATABASE_URL\", ctx.database_url());\n    let (integration_status, _details, _messages) = sinex_preflight::verification::verify_end_to_end_integration().await\n        .map_err(|e| format!(\"Integration recovery failed: {}\", e))?;\n    assert!(matches!(integration_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Integration failure/recovery cycle completed\");\n    \n    // Final: Restore baseline state\n    baseline.restore();\n    \n    println!(\"✓ Comprehensive system recovery test completed successfully\");\n    \n    Ok(())\n}
+    // Phase 4: Simulate rollback (restore baseline state)\n    baseline_state.restore();\n    \n    println!(\"✓ Rolled back to baseline environment state\");\n    \n    // Phase 5: Verify rollback success (should pass/warn now)\n    let rollback_verification = sinex_preflight::configuration::verify_configuration_generation().await;\n    \n    match rollback_verification {\n        Ok((status, _details, _messages)) => {\n            assert!(matches!(status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning),\n                    \"Verification should pass after rollback\");\n            println!(\"✓ Verification passed after rollback\");\n        }\n        Err(e) => {\n            // If it still fails, it might be due to missing DATABASE_URL in baseline\n            // This is acceptable for the rollback test\n            println!(\"ℹ Verification still has issues after rollback (expected if DATABASE_URL was not set initially): {}\", e);\n        }\n    }\n    \n    println!(\"✓ Rollback simulation completed\");\n    \n    Ok(())\n}\n\n// Helper struct for environment state management\nstruct EnvironmentState {\n    database_url: Option<String>,\n    rust_log: Option<String>,\n    sinex_config: Option<String>,\n}\n\nimpl EnvironmentState {\n    fn capture() -> Self {\n        Self {\n            database_url: env::var(\"DATABASE_URL\").ok(),\n            rust_log: env::var(\"RUST_LOG\").ok(),\n            sinex_config: env::var(\"SINEX_CONFIG\").ok(),\n        }\n    }\n    \n    fn restore(&self) {\n        // Restore or remove environment variables\n        match &self.database_url {\n            Some(url) => env::set_var(\"DATABASE_URL\", url),\n            None => env::remove_var(\"DATABASE_URL\"),\n        }\n        \n        match &self.rust_log {\n            Some(log) => env::set_var(\"RUST_LOG\", log),\n            None => env::remove_var(\"RUST_LOG\"),\n        }\n        \n        match &self.sinex_config {\n            Some(config) => env::set_var(\"SINEX_CONFIG\", config),\n            None => env::remove_var(\"SINEX_CONFIG\"),\n        }\n    }\n}\n\n// ====== COMPREHENSIVE RECOVERY TEST ======\n\n/// Test complete system recovery from multiple failure scenarios\n#[sinex_test]\nasync fn test_comprehensive_system_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {\n    let baseline = EnvironmentState::capture();\n    \n    println!(\"✓ Starting comprehensive recovery test\");\n    \n    // Scenario 1: Database failure and recovery\n    env::set_var(\"DATABASE_URL\", \"postgresql://invalid:5432/test\");\n    \n    let db_failure = sinex_preflight::database::verify_database_connectivity().await;\n    assert!(db_failure.is_err() || matches!(db_failure.unwrap().0, sinex_preflight::VerificationStatus::Fail));\n    \n    env::set_var(\"DATABASE_URL\", ctx.database_url());\n    let (db_status, _details, _messages) = sinex_preflight::database::verify_database_connectivity().await\n        .map_err(|e| format!(\"Database recovery failed: {}\", e))?;\n    assert_eq!(db_status, sinex_preflight::VerificationStatus::Pass);\n    \n    println!(\"✓ Database failure/recovery cycle completed\");\n    \n    // Scenario 2: Configuration failure and recovery\n    env::remove_var(\"DATABASE_URL\");\n    \n    let config_failure = sinex_preflight::configuration::verify_configuration_generation().await\n        .map_err(|e| format!(\"Config test should handle missing vars: {}\", e))?;\n    assert_eq!(config_failure.0, sinex_preflight::VerificationStatus::Fail);\n    \n    env::set_var(\"DATABASE_URL\", ctx.database_url());\n    let (config_status, _details, _messages) = sinex_preflight::configuration::verify_configuration_generation().await\n        .map_err(|e| format!(\"Configuration recovery failed: {}\", e))?;\n    assert!(matches!(config_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Configuration failure/recovery cycle completed\");\n    \n    // Scenario 3: Resource constraints (should be resilient)\n    let (resource_status, resource_details, resource_messages) = sinex_preflight::resources::verify_system_resources().await\n        .map_err(|e| format!(\"Resource verification failed: {}\", e))?;\n    \n    assert!(matches!(resource_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Resource resilience verified\");\n    \n    // Scenario 4: Service dependencies (should be resilient)\n    let (service_status, _service_details, _service_messages) = sinex_preflight::services::verify_service_dependencies().await\n        .map_err(|e| format!(\"Service verification failed: {}\", e))?;\n    \n    assert!(matches!(service_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Service dependency resilience verified\");\n    \n    // Scenario 5: Integration recovery\n    env::set_var(\"DATABASE_URL\", \"postgresql://invalid:5432/test\");\n    \n    let integration_failure = sinex_preflight::verification::verify_end_to_end_integration().await\n        .map_err(|e| format!(\"Integration test should handle failure: {}\", e))?;\n    assert_eq!(integration_failure.0, sinex_preflight::VerificationStatus::Fail);\n    \n    env::set_var(\"DATABASE_URL\", ctx.database_url());\n    let (integration_status, _details, _messages) = sinex_preflight::verification::verify_end_to_end_integration().await\n        .map_err(|e| format!(\"Integration recovery failed: {}\", e))?;\n    assert!(matches!(integration_status, sinex_preflight::VerificationStatus::Pass | sinex_preflight::VerificationStatus::Warning));\n    \n    println!(\"✓ Integration failure/recovery cycle completed\");\n    \n    // Final: Restore baseline state\n    baseline.restore();\n    \n    println!(\"✓ Comprehensive system recovery test completed successfully\");\n    \n    Ok(())\n}
     baseline_state.restore();
 
     println!("✓ Rolled back to baseline environment state");
@@ -688,7 +688,7 @@ impl EnvironmentState {
 
 /// Test complete system recovery from multiple failure scenarios
 #[sinex_test]
-async fn test_comprehensive_system_recovery(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_comprehensive_system_recovery(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let baseline = EnvironmentState::capture();
 
     println!("✓ Starting comprehensive recovery test");

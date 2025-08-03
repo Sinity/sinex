@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use redis::AsyncCommands;
 use serde_json::json;
 use sinex_db::SqlxPgPool;
-use sinex_events::RawEvent;
+use sinex_types::events::RawEvent;
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
@@ -13,7 +13,7 @@ use sinex_satellite_sdk::{
     grpc_client::IngestClient,
     redis_client::RedisStreamClient,
 };
-use sinex_test_macros::sinex_test;
+use sinex_test_utils::sinex_test;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -89,7 +89,7 @@ impl HotlogAutomaton for TestCheckpointAutomaton {
 #[sinex_test]
 async fn test_checkpoint_persistence_and_restart_recovery(
     ctx: crate::TestContext,
-) -> crate::anyhow::Result<()> {
+) -> crate::color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut redis_conn = ctx.redis().await?;
     // Start ingestd for this test

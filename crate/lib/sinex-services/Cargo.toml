@@ -1,0 +1,38 @@
+[package]
+name = "sinex-services"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[dependencies]
+# Core dependencies
+sinex-types = { path = "../sinex-types" }
+sinex-db = { path = "../sinex-db" }
+sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
+
+# Async runtime
+tokio.workspace = true
+async-trait.workspace = true
+
+# Error handling
+anyhow.workspace = true
+thiserror.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# Logging
+tracing.workspace = true
+
+# Utilities
+chrono.workspace = true
+uuid.workspace = true
+blake3 = "1.5"
+sha2 = "0.10"
+
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils" }

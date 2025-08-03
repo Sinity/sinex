@@ -8,7 +8,7 @@ use redis::cmd;
 use serde_json::json;
 use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_types::events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -171,7 +171,7 @@ impl BaselineTracker {
 
 /// Establish baseline for basic database operations
 #[sinex_test]
-async fn test_establish_database_operation_baselines(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
 
@@ -362,7 +362,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> anyhow
 
 /// Establish baseline for Redis stream operations
 #[sinex_test]
-async fn test_establish_redis_stream_baselines(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_establish_redis_stream_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut redis_conn = redis_client.get_connection().await?;
     let mut tracker = BaselineTracker::new();
@@ -539,7 +539,7 @@ async fn test_establish_redis_stream_baselines(ctx: TestContext) -> anyhow::Resu
 
 /// Establish baseline for concurrent operations
 #[sinex_test]
-async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
 
@@ -657,7 +657,7 @@ async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> anyh
 
 /// Establish baseline for system recovery operations
 #[sinex_test]
-async fn test_establish_recovery_baselines(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
 

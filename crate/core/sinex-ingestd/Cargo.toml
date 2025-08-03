@@ -1,0 +1,70 @@
+[package]
+name = "sinex-ingestd"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinex-ingestd"
+path = "src/main.rs"
+
+[dependencies]
+# Performance
+mimalloc = { workspace = true }
+ahash = { workspace = true }
+
+# Core dependencies
+anyhow.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["full"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+
+# Database
+sqlx.workspace = true
+
+# NATS for message bus
+async-nats.workspace = true
+
+# gRPC
+tonic.workspace = true
+prost.workspace = true
+
+# Configuration
+clap = { workspace = true, features = ["derive"] }
+toml.workspace = true
+
+# Path handling
+camino = { workspace = true }
+dirs.workspace = true
+figment = { workspace = true }
+
+# Validation
+jsonschema.workspace = true
+validator = { workspace = true }
+
+# Concurrency
+parking_lot = "0.12"
+once_cell = "1.20"
+
+# Networking
+tokio-stream = { workspace = true, features = ["net"] }
+
+# Cryptography
+sha2.workspace = true
+hex.workspace = true
+
+# System
+sd-notify.workspace = true
+
+# Local dependencies
+sinex-types = { path = "../../lib/sinex-types" }
+sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+
+[build-dependencies]
+tonic-build.workspace = true

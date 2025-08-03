@@ -13,7 +13,7 @@
 // - **State Violations**: Invalid state transitions
 
 use serde_json::json;
-use sinex_events::RawEvent;
+use sinex_types::events::RawEvent;
 
 #[allow(dead_code)]
 // Boundary tests for system limits
@@ -30,7 +30,7 @@ pub mod ulid_edge_cases_test;
 /// Common utilities for adversarial testing
 pub mod utils {
     use serde_json::json;
-    use sinex_events::RawEvent;
+    use sinex_types::events::RawEvent;
 
     /// Create malicious payload for testing
     pub fn create_malicious_payload(attack_type: &str) -> serde_json::Value {

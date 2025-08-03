@@ -7,7 +7,7 @@
 use serde_json::json;
 use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_events::{event_types, sources, EventFactory};
+use sinex_types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -157,7 +157,7 @@ impl ConcurrentLoadMetrics {
 
 /// Test concurrent event ingestion with multiple workers
 #[sinex_test]
-async fn test_concurrent_event_ingestion(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_event_ingestion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 
@@ -288,7 +288,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> anyhow::Result<()>
 
 /// Test mixed workload with different operation types
 #[sinex_test]
-async fn test_mixed_concurrent_workload(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_mixed_concurrent_workload(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 
@@ -473,7 +473,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> anyhow::Result<()> 
 
 /// Test system behavior under high concurrency with rate limiting
 #[sinex_test]
-async fn test_rate_limited_concurrent_load(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_rate_limited_concurrent_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 
@@ -580,7 +580,7 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> anyhow::Result<(
 
 /// Test burst load handling
 #[sinex_test]
-async fn test_burst_load_handling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_burst_load_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let metrics = ConcurrentLoadMetrics::new();
 

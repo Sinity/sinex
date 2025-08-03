@@ -1,0 +1,51 @@
+[package]
+name = "sinex-desktop-satellite"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "sinex-desktop-satellite"
+path = "src/main.rs"
+
+[dependencies]
+mimalloc = { workspace = true }
+# Core dependencies
+thiserror.workspace = true
+async-trait.workspace = true
+tokio = { workspace = true, features = ["full"] }
+futures = "0.3"
+tracing.workspace = true
+tracing-subscriber.workspace = true
+camino = { workspace = true }
+clap = { workspace = true }
+
+# Configuration
+serde.workspace = true
+serde_json.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# System integration
+dirs.workspace = true
+
+# Clipboard handling
+copypasta = "0.10"
+
+# Hash computation
+blake3 = "1.5"
+
+# URL parsing for clipboard files
+urlencoding = "2.1"
+
+# Host identification
+gethostname = "0.4"
+
+# Database integration (for blob storage)
+sqlx = { workspace = true }
+
+# Local dependencies
+sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
+sinex-types = { path = "../../lib/sinex-types" }
+sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }

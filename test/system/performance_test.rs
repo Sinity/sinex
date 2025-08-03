@@ -20,7 +20,7 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
 use sqlx::Row;
@@ -29,7 +29,7 @@ use std::time::{Duration, Instant};
 // ==================== DATABASE PERFORMANCE TESTS ====================
 
 #[sinex_test(timeout = 60)]
-async fn test_database_insertion_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_insertion_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test: Basic database insertion performance
     let pool = ctx.pool().clone();
 
@@ -106,7 +106,7 @@ async fn test_database_insertion_performance(ctx: TestContext) -> anyhow::Result
 }
 
 #[sinex_test(timeout = 60)]
-async fn test_concurrent_insertion_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_insertion_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test: Concurrent database insertion
     let pool = ctx.pool().clone();
 
@@ -200,7 +200,7 @@ async fn test_concurrent_insertion_performance(ctx: TestContext) -> anyhow::Resu
 // ==================== PERFORMANCE TESTS FROM MOD.RS ====================
 
 #[sinex_test]
-async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow::Error> {
+async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), color_eyre::eyre::Error> {
     let start = Instant::now();
     let mut handles = vec![];
 
@@ -223,7 +223,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow
                 )
                 .await?;
             }
-            Ok::<_, anyhow::Error>(())
+            Ok::<_, color_eyre::eyre::Error>(())
         });
         handles.push(handle);
     }
@@ -240,7 +240,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow
     let count =
         wait_for_filtered_event_count(ctx.pool(), "source LIKE $1", &["perf_test_%"], 1000, 10)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to verify event count: {}", e))?;
+            .map_err(|e| eyre!("Failed to verify event count: {}", e))?;
 
     pretty_assertions::assert_eq!(count, 1000);
     assert!(
@@ -253,7 +253,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), anyhow
 }
 
 #[sinex_test]
-async fn test_concurrent_processing_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Insert test events
     for i in 0..100 {
         sinex_db::insert_event_with_validator(
@@ -321,7 +321,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> anyhow::Res
                 }
             }
 
-            Ok::<_, anyhow::Error>(processed)
+            Ok::<_, color_eyre::eyre::Error>(processed)
         });
         handles.push(handle);
     }
@@ -349,7 +349,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> anyhow::Res
 }
 
 #[sinex_test]
-async fn test_query_latency(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_query_latency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Insert test data
     for i in 0..1000 {
         sinex_db::insert_event_with_validator(
@@ -394,7 +394,7 @@ async fn test_query_latency(ctx: TestContext) -> anyhow::Result<()> {
 // ==================== MEMORY USAGE TESTS ====================
 
 #[sinex_test]
-async fn test_memory_usage_under_load(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_memory_usage_under_load(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test memory usage during high-volume operations
     let pool = ctx.pool().clone();
     let initial_memory = get_memory_usage();
@@ -475,7 +475,7 @@ fn get_memory_usage() -> usize {
 // ==================== SCALING TESTS ====================
 
 #[sinex_test]
-async fn test_scaling_with_worker_count(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_scaling_with_worker_count(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test how performance scales with worker count
     let pool = ctx.pool().clone();
     let events_per_test = 500;
@@ -553,7 +553,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> anyhow::Result<()> 
                     }
                 }
 
-                Ok::<_, anyhow::Error>(processed)
+                Ok::<_, color_eyre::eyre::Error>(processed)
             });
             handles.push(handle);
         }
@@ -597,7 +597,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> anyhow::Result<()> 
 // ==================== RESOURCE USAGE TESTS ====================
 
 #[sinex_test]
-async fn test_database_connection_pooling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_database_connection_pooling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test database connection pool performance
     let pool = ctx.pool().clone();
     let concurrent_connections = 20;
@@ -627,7 +627,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> anyhow::Result<()
                 query_count += 1;
             }
 
-            Ok::<_, anyhow::Error>(query_count)
+            Ok::<_, color_eyre::eyre::Error>(query_count)
         });
         handles.push(handle);
     }
@@ -657,7 +657,7 @@ async fn test_database_connection_pooling(ctx: TestContext) -> anyhow::Result<()
 }
 
 #[sinex_test]
-async fn test_large_payload_performance(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_large_payload_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test performance with large event payloads
     let pool = ctx.pool().clone();
     let payload_sizes = vec![1024, 10240, 102400]; // 1KB, 10KB, 100KB
@@ -702,7 +702,7 @@ async fn test_large_payload_performance(ctx: TestContext) -> anyhow::Result<()> 
 }
 
 #[sinex_test]
-async fn test_burst_load_handling(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_burst_load_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test how system handles burst loads
     let pool = ctx.pool().clone();
     let burst_size = 1000;

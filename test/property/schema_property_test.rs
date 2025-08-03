@@ -2,7 +2,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::json;
 use sinex_db::validation::{EventValidator, ValidationError};
-use sinex_events::{event_types, services, EventFactory};
+use sinex_types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 
 /// Property tests for schema validation functionality
@@ -149,7 +149,7 @@ fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
 }
 
 #[tokio::test]
-async fn test_event_validator_normal_payloads() -> AnyhowResult<(), anyhow::Error> {
+async fn test_event_validator_normal_payloads() -> AnyhowResult<(), color_eyre::eyre::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_event_payload()
@@ -193,7 +193,7 @@ async fn test_event_validator_normal_payloads() -> AnyhowResult<(), anyhow::Erro
 }
 
 #[tokio::test]
-async fn test_event_validator_security_payloads() -> AnyhowResult<(), anyhow::Error> {
+async fn test_event_validator_security_payloads() -> AnyhowResult<(), color_eyre::eyre::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_problematic_payload()
@@ -217,7 +217,7 @@ async fn test_event_validator_security_payloads() -> AnyhowResult<(), anyhow::Er
 }
 
 #[tokio::test]
-async fn test_raw_event_validation_consistency() -> AnyhowResult<(), anyhow::Error> {
+async fn test_raw_event_validation_consistency() -> AnyhowResult<(), color_eyre::eyre::Error> {
     proptest!(|(
         (source, event_type) in arb_event_source_type(),
         payload in arb_event_payload()
@@ -252,7 +252,7 @@ async fn test_raw_event_validation_consistency() -> AnyhowResult<(), anyhow::Err
 
 /// Test schema evolution and backward compatibility
 #[tokio::test]
-async fn test_schema_evolution_properties() -> AnyhowResult<(), anyhow::Error> {
+async fn test_schema_evolution_properties() -> AnyhowResult<(), color_eyre::eyre::Error> {
     proptest!(|(
         base_payload in arb_event_payload(),
         additional_fields in prop::collection::hash_map(
@@ -433,7 +433,7 @@ fn test_validation_chain_numeric_properties() {
 // =============================================================================
 
 #[sinex_test]
-async fn test_schema_persistence_properties(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_schema_persistence_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     proptest::proptest!(|(
         schema_count in 1..=10usize,
         schema_names in prop::collection::vec("[a-zA-Z][a-zA-Z0-9_]{2,20}", 1..=10),
@@ -525,7 +525,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> anyhow::Result<
 // =============================================================================
 
 #[tokio::test]
-async fn test_event_validator_edge_cases() -> AnyhowResult<(), anyhow::Error> {
+async fn test_event_validator_edge_cases() -> AnyhowResult<(), color_eyre::eyre::Error> {
     let validator = EventValidator::new();
 
     let long_source = "x".repeat(1000);
@@ -575,7 +575,7 @@ async fn test_event_validator_edge_cases() -> AnyhowResult<(), anyhow::Error> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_event_validator_database_integration(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_event_validator_database_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
     // Test loading validator from empty database

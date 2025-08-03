@@ -17,7 +17,7 @@ use unicode_normalization::UnicodeNormalization;
 // =============================================================================
 
 #[sinex_test]
-async fn test_unicode_homograph_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_unicode_homograph_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing unicode homograph attacks...");
 
     // Collection of visually similar characters that could be used in attacks
@@ -107,7 +107,7 @@ async fn test_unicode_homograph_attacks(ctx: TestContext) -> anyhow::Result<()> 
 // =============================================================================
 
 #[sinex_test]
-async fn test_unicode_normalization_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_unicode_normalization_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing unicode normalization attacks...");
 
     // Different unicode normalization forms can represent the same visual string
@@ -200,7 +200,7 @@ async fn test_unicode_normalization_attacks(ctx: TestContext) -> anyhow::Result<
 // =============================================================================
 
 #[sinex_test]
-async fn test_zero_width_character_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_zero_width_character_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing zero-width character attacks...");
 
     let zero_width_tests = vec![
@@ -279,7 +279,7 @@ async fn test_zero_width_character_attacks(ctx: TestContext) -> anyhow::Result<(
 // =============================================================================
 
 #[sinex_test]
-async fn test_direction_override_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_direction_override_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing direction override attacks...");
 
     let direction_tests = vec![
@@ -348,7 +348,7 @@ async fn test_direction_override_attacks(ctx: TestContext) -> anyhow::Result<()>
 // =============================================================================
 
 #[sinex_test]
-async fn test_encoding_based_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_encoding_based_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing encoding-based attacks...");
 
     let encoding_tests = vec![
@@ -404,7 +404,7 @@ async fn test_encoding_based_attacks(ctx: TestContext) -> anyhow::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_combined_unicode_attacks(ctx: TestContext) -> anyhow::Result<()> {
+async fn test_combined_unicode_attacks(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing combined unicode attacks...");
 
     let combined_attacks = vec![
@@ -545,7 +545,7 @@ fn analyze_unicode_attacks(s: &str) -> HashMap<String, bool> {
     vectors
 }
 
-async fn insert_event(pool: &DbPool, event: &RawEvent) -> Result<(), anyhow::Error> {
+async fn insert_event(pool: &DbPool, event: &RawEvent) -> Result<(), color_eyre::eyre::Error> {
     sqlx::query!(
         r#"
         INSERT INTO core.events (event_id, source, event_type, payload, ts_orig, ts_ingest)
@@ -560,6 +560,6 @@ async fn insert_event(pool: &DbPool, event: &RawEvent) -> Result<(), anyhow::Err
     )
     .execute(pool)
     .await
-    .context("Failed to insert event")?;
+    .wrap_err("Failed to insert event")?;
     Ok(())
 }

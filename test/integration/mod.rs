@@ -82,6 +82,9 @@ pub mod end_to_end_workflows_test;
 pub mod satellite_architecture_test;
 pub mod system_integration_test;
 
+// Modern test infrastructure demonstration
+pub mod modern_test_infrastructure_test;
+
 // Failure handling and recovery
 pub mod critical_failure_modes_test;
 pub mod preflight_integration_test;
