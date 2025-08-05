@@ -216,12 +216,10 @@ pub async fn exists(
         .cond_where(Expr::cust(where_clause))
         .to_owned();
 
-    let query = Query::select()
-        .expr(Expr::exists(subquery))
-        .to_owned();
+    let query = Query::select().expr(Expr::exists(subquery)).to_owned();
 
     let (sql, _values) = query.build(PostgresQueryBuilder);
-    
+
     // Since we're using Expr::cust() for where_clause, no additional parameters to bind
     let result: (bool,) = sqlx::query_as(&sql)
         .fetch_one(pool)
@@ -242,12 +240,12 @@ pub async fn count(
         .expr(Func::count(Expr::cust("*")))
         .from(Alias::new(table))
         .to_owned();
-        
+
     if let Some(clause) = where_clause {
         query = query.cond_where(Expr::cust(clause)).to_owned();
     }
     let (sql, _values) = query.build(PostgresQueryBuilder);
-    
+
     // Since we're using Expr::cust() for dynamic parts, no additional parameters to bind
     let result: (i64,) = sqlx::query_as(&sql)
         .fetch_one(pool)
@@ -407,7 +405,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_is_retryable_db_error_function_exists(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_is_retryable_db_error_function_exists(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
         // Test that timeout errors are not retryable
         let timeout_err = SinexError::timeout("test timeout");
         assert!(!is_retryable_db_error(&timeout_err));

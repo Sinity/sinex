@@ -5,9 +5,9 @@
  * This implements the Pre-Flight Verification Model for zero-downtime, safe deployments.
  */
 
-use color_eyre::eyre::{Context, Result};
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
+use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
 use sinex_db::repositories::DbPoolExt;

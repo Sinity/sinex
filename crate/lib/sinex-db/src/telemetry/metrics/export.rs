@@ -1007,7 +1007,9 @@ mod tests {
         }
 
         #[sinex_bench]
-        async fn bench_metric_entry_to_json(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+        async fn bench_metric_entry_to_json(
+            ctx: &mut BenchContext,
+        ) -> color_eyre::eyre::Result<()> {
             let metric = MetricEntry {
                 name: "bench_metric".to_string(),
                 help: "Benchmark metric".to_string(),

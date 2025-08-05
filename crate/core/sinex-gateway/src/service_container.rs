@@ -1,7 +1,7 @@
 //! Service container that holds all service instances
 
-use color_eyre::eyre::{Context, Result};
 use camino::Utf8PathBuf;
+use color_eyre::eyre::{Context, Result};
 use sinex_db::create_pool;
 use sinex_db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_satellite_sdk::annex::BlobManager;

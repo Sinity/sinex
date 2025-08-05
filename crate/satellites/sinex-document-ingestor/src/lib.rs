@@ -6,6 +6,7 @@
 use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
+use camino::Utf8Path;
 use chrono::Utc;
 use serde_json::json;
 use sinex_db::models::Event;
@@ -22,7 +23,6 @@ use sinex_satellite_sdk::{
 };
 use sinex_types::events::DocumentIngestedPayload;
 use std::collections::HashMap;
-use camino::Utf8Path;
 use std::time::Duration;
 use tracing::{info, warn};
 
@@ -177,8 +177,13 @@ impl StatefulStreamProcessor for DocumentProcessor {
                         while let Some(entry) = entries.next_entry().await? {
                             let entry_path = entry.path();
                             if entry_path.is_file() {
-                                let utf8_path = camino::Utf8PathBuf::from_path_buf(entry_path).map_err(|_| SatelliteError::General(eyre!("Path contains invalid UTF-8")))?;
-                        self.process_file(&utf8_path).await?;
+                                let utf8_path = camino::Utf8PathBuf::from_path_buf(entry_path)
+                                    .map_err(|_| {
+                                        SatelliteError::General(eyre!(
+                                            "Path contains invalid UTF-8"
+                                        ))
+                                    })?;
+                                self.process_file(&utf8_path).await?;
                                 events_processed += 1;
                             }
                         }

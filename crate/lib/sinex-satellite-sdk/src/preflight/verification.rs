@@ -8,8 +8,8 @@
  * - Performance baseline verification
  */
 
-use color_eyre::eyre::{bail, Context, Result};
 use chrono::Utc;
+use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
 use sinex_db::models::Event;
 use sinex_db::repositories::DbPoolExt;

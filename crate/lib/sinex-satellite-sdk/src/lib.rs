@@ -137,8 +137,9 @@ pub mod stream_processor;
 pub mod version;
 
 pub use crate::nats_stream_consumer::{
-    BatchProcessingResult as NatsBatchProcessingResult, EventBatchProcessor as NatsEventBatchProcessor,
-    EventFilter as NatsEventFilter, NatsConsumerConfig, NatsStreamConsumer,
+    BatchProcessingResult as NatsBatchProcessingResult,
+    EventBatchProcessor as NatsEventBatchProcessor, EventFilter as NatsEventFilter,
+    NatsConsumerConfig, NatsStreamConsumer,
 };
 pub use crate::redis_stream_consumer::{
     BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,

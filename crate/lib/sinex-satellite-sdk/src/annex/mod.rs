@@ -59,8 +59,8 @@
 //! - In-memory cache for frequently accessed blob metadata
 //! - Filesystem cache for small annexed files
 
-use color_eyre::eyre::{Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn};
@@ -173,7 +173,10 @@ impl GitAnnex {
             cmd.arg(desc);
         }
 
-        let output = cmd.output().await.wrap_err("Failed to run git-annex init")?;
+        let output = cmd
+            .output()
+            .await
+            .wrap_err("Failed to run git-annex init")?;
 
         if !output.status.success() {
             bail!(

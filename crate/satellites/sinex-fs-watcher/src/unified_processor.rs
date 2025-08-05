@@ -580,9 +580,7 @@ impl FilesystemProcessor {
             None,
             notify_tx,
         )
-        .map_err(|e| {
-            SatelliteError::General(eyre!("Failed to create debouncer: {}", e))
-        })?;
+        .map_err(|e| SatelliteError::General(eyre!("Failed to create debouncer: {}", e)))?;
 
         // Set up watch paths
         self.setup_watch_paths(&mut debouncer).await?;
@@ -709,9 +707,8 @@ impl FilesystemProcessor {
             };
 
             // Validate the base path
-            validate_path(&base_path_str).map_err(|e| {
-                SatelliteError::General(eyre!("Invalid watch path: {}", e))
-            })?;
+            validate_path(&base_path_str)
+                .map_err(|e| SatelliteError::General(eyre!("Invalid watch path: {}", e)))?;
 
             let base_path = camino::Utf8Path::new(&base_path_str);
 
@@ -734,11 +731,7 @@ impl FilesystemProcessor {
                     .watcher()
                     .watch(base_path.as_std_path(), notify::RecursiveMode::Recursive)
                     .map_err(|e| {
-                        SatelliteError::General(eyre!(
-                            "Failed to watch path {}: {}",
-                            base_path,
-                            e
-                        ))
+                        SatelliteError::General(eyre!("Failed to watch path {}: {}", base_path, e))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
 
@@ -752,9 +745,7 @@ impl FilesystemProcessor {
         }
 
         if self.watch_roots.is_empty() {
-            return Err(SatelliteError::General(eyre!(
-                "No valid watch roots found"
-            )));
+            return Err(SatelliteError::General(eyre!("No valid watch roots found")));
         }
 
         Ok(())

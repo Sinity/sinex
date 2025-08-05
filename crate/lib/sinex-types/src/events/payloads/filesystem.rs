@@ -78,19 +78,19 @@ impl FileCreatedPayload {
             permissions: Some(0o644),
         }
     }
-    
+
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
         self
     }
-    
+
     /// Builder-style method for permissions  
     pub fn with_permissions(mut self, perms: u32) -> Self {
         self.permissions = Some(perms);
         self
     }
-    
+
     /// Builder-style method for created_at timestamp
     pub fn with_created_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.created_at = timestamp;
@@ -108,19 +108,19 @@ impl FileModifiedPayload {
             modification_type: "content".to_string(),
         }
     }
-    
+
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
         self
     }
-    
+
     /// Builder-style method for modification type
     pub fn with_modification_type(mut self, mod_type: impl Into<String>) -> Self {
         self.modification_type = mod_type.into();
         self
     }
-    
+
     /// Builder-style method for modified_at timestamp
     pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.modified_at = timestamp;
@@ -136,7 +136,7 @@ impl FileDeletedPayload {
             deleted_at: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for deleted_at timestamp
     pub fn with_deleted_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.deleted_at = timestamp;
@@ -153,7 +153,7 @@ impl FileMovedPayload {
             moved_at: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for moved_at timestamp
     pub fn with_moved_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.moved_at = timestamp;
@@ -169,7 +169,7 @@ impl DirCreatedPayload {
             created_at: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for created_at timestamp
     pub fn with_created_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.created_at = timestamp;
@@ -185,7 +185,7 @@ impl DirDeletedPayload {
             deleted_at: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for deleted_at timestamp
     pub fn with_deleted_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.deleted_at = timestamp;
@@ -203,19 +203,19 @@ impl FileDiscoveredPayload {
             permissions: Some(0o644),
         }
     }
-    
+
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
         self
     }
-    
+
     /// Builder-style method for permissions
     pub fn with_permissions(mut self, perms: u32) -> Self {
         self.permissions = Some(perms);
         self
     }
-    
+
     /// Builder-style method for modified_at timestamp
     pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.modified_at = timestamp;
@@ -231,7 +231,7 @@ impl DirDiscoveredPayload {
             modified_at: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for modified_at timestamp
     pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.modified_at = timestamp;

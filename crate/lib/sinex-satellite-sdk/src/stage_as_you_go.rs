@@ -181,11 +181,7 @@ impl StageAsYouGoContext {
             )
             .await
             .map_err(|e| {
-                SatelliteError::General(eyre!(
-                    "Failed to finalize source material {}: {}",
-                    id,
-                    e
-                ))
+                SatelliteError::General(eyre!("Failed to finalize source material {}: {}", id, e))
             })?;
 
         info!(

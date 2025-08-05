@@ -337,9 +337,8 @@ impl RedisStreamConsumer {
             // Parse the event JSON from the "event" field
             if let Some(event_json) = field_map.get("event") {
                 // First validate the JSON structure
-                let validated_json = sinex_types::validate_json(event_json).map_err(|e| {
-                    SatelliteError::General(eyre!("Invalid event JSON: {}", e))
-                })?;
+                let validated_json = sinex_types::validate_json(event_json)
+                    .map_err(|e| SatelliteError::General(eyre!("Invalid event JSON: {}", e)))?;
 
                 // Then deserialize the validated JSON
                 let event: Event = serde_json::from_value(validated_json)
