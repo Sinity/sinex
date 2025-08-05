@@ -125,7 +125,6 @@ prost = "0.12"
 tonic-build = "0.11"
 
 # Message bus
-redis = { version = "0.24", features = ["tokio-comp", "streams"] }
 async-nats = "0.33"
 
 # System integration
