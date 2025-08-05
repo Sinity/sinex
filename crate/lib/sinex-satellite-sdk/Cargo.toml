@@ -9,6 +9,8 @@ camino = { workspace = true }
 # Core dependencies
 anyhow.workspace = true
 thiserror.workspace = true
+color-eyre.workspace = true
+bon.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"

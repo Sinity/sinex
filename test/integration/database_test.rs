@@ -16,6 +16,9 @@
 
 use chrono::{Duration, Utc};
 use futures::future::join_all;
+use rstest::*;
+use insta::assert_json_snapshot;
+use tracing_test::traced_test;
 use sinex_db::queries::{CheckpointQueries, EventQueries};
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::query_builder::{QueryBuilder, QueryParam};
@@ -1282,23 +1285,51 @@ async fn test_connection_pool_statement_cache(ctx: TestContext) -> color_eyre::e
 // OPERATIONS LOG TESTS
 // =============================================================================
 
-/// Test operations_log table basic functionality
+/// Test operations_log table basic functionality with different operation types
+#[rstest]
+#[case::stage_operation(
+    "stage",
+    "test_user",
+    json!({"command": "exo blob stage test.log", "flags": ["--verbose"]}),
+    json!({"events_created": 42, "blobs_processed": 1})
+)]
+#[case::replay_operation(
+    "replay",
+    "replay_user",
+    json!({"command": "exo replay --since 2025-01-01", "target": "historical"}),
+    json!({"events_replayed": 156, "time_range": "2025-01-01 to 2025-01-02"})
+)]
+#[case::archive_operation(
+    "archive",
+    "archive_user",
+    json!({"command": "exo archive --older-than 30d", "retention_policy": "standard"}),
+    json!({"events_archived": 89, "storage_freed_mb": 256})
+)]
 #[sinex_test]
-async fn test_operations_log_basic_functionality(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+#[traced_test]
+async fn test_operations_log_basic_functionality(
+    ctx: TestContext,
+    #[case] operation_type: &str,
+    #[case] user: &str,
+    #[case] parameters: serde_json::Value,
+    #[case] completion_summary: serde_json::Value,
+) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
+
+    tracing::info!("Testing {} operation for user {}", operation_type, user);
 
     // Test start_operation function
     let operation_id_str: String = sqlx::query_scalar!(
         "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
-        "stage",
-        "test_user",
-        json!({"command": "exo blob stage test.log", "flags": ["--verbose"]})
+        operation_type,
+        user,
+        parameters
     )
     .fetch_one(&pool)
     .await?;
 
-    use std::str::FromStr;
     let operation_id = Ulid::from_str(&operation_id_str)?;
+    tracing::debug!("Created operation with ID: {}", operation_id);
 
     // Verify operation was created correctly
     let operation = sqlx::query!(
@@ -1309,21 +1340,18 @@ async fn test_operations_log_basic_functionality(ctx: TestContext) -> color_eyre
     .fetch_one(&pool)
     .await?;
 
-    assert_eq!(operation.operation_type, "stage");
+    assert_eq!(operation.operation_type, operation_type);
     assert_eq!(operation.status, "started");
-    assert_eq!(operation.invoked_by_user.as_deref(), Some("test_user"));
+    assert_eq!(operation.invoked_by_user.as_deref(), Some(user));
 
-    let params = operation.parameters;
-    assert_eq!(
-        params.get("command").unwrap().as_str().unwrap(),
-        "exo blob stage test.log"
-    );
+    // Verify parameters were stored correctly
+    assert_eq!(operation.parameters, parameters);
 
     // Test complete_operation function
     sqlx::query!(
         "SELECT core.complete_operation($1::text::ulid, $2::jsonb)",
         operation_id_str,
-        json!({"events_created": 42, "blobs_processed": 1})
+        completion_summary
     )
     .execute(&pool)
     .await?;
@@ -1342,17 +1370,31 @@ async fn test_operations_log_basic_functionality(ctx: TestContext) -> color_eyre
     assert!(completed_operation.duration_ms.is_some());
     assert!(completed_operation.duration_ms.unwrap() >= 0);
 
-    let summary = completed_operation.summary.unwrap();
-    assert_eq!(summary.get("events_created").unwrap().as_u64().unwrap(), 42);
-    assert_eq!(summary.get("blobs_processed").unwrap().as_u64().unwrap(), 1);
+    // Verify summary was stored correctly
+    let stored_summary = completed_operation.summary.unwrap();
+    assert_eq!(stored_summary, completion_summary);
+
+    // Create snapshot of the complete operation lifecycle
+    ctx.snapshot_json(&format!("operations_log_{}_lifecycle", operation_type), &serde_json::json!({
+        "operation_type": operation_type,
+        "user": user,
+        "operation_id": operation_id_str,
+        "parameters": parameters,
+        "completion_summary": completion_summary,
+        "final_status": completed_operation.status,
+        "duration_ms": completed_operation.duration_ms
+    }));
 
     Ok(())
 }
 
-/// Test operations_log error handling and validation
+/// Test operations_log error handling and validation scenarios  
 #[sinex_test]
-async fn test_operations_log_error_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+#[traced_test]
+async fn test_operations_log_invalid_operation_type(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
+
+    tracing::info!("Testing invalid operation type rejection");
 
     // Test invalid operation type
     let result = sqlx::query_scalar::<_, Ulid>("SELECT core.start_operation($1, $2, $3::jsonb)")
@@ -1363,26 +1405,74 @@ async fn test_operations_log_error_handling(ctx: TestContext) -> color_eyre::eyr
         .await;
 
     assert!(result.is_err(), "Should reject invalid operation type");
+    
+    // Create snapshot of the error handling result
+    ctx.snapshot_json("operations_log_invalid_type_error", &serde_json::json!({
+        "operation_type": "invalid_type",
+        "user": "test_user",
+        "parameters": {},
+        "rejection_confirmed": result.is_err(),
+        "error_message": result.err().map(|e| e.to_string())
+    }));
 
-    // Test fail_operation function
+    Ok(())
+}
+
+/// Test operations_log failure recording with different error scenarios
+#[rstest]
+#[case::blob_not_found(
+    "replay", 
+    json!({"command": "exo replay --ingestor fs-watcher --blob abc123"}),
+    json!({"error": "blob not found", "error_code": "E404"}),
+    "E404"
+)]
+#[case::permission_denied(
+    "stage",
+    json!({"command": "exo blob stage /secure/file.log"}), 
+    json!({"error": "permission denied", "error_code": "E403"}),
+    "E403"
+)]
+#[case::disk_full(
+    "archive",
+    json!({"command": "exo archive --target /storage/backup"}),
+    json!({"error": "disk full", "error_code": "E507", "available_space_mb": 0}),
+    "E507"
+)]
+#[sinex_test]
+#[traced_test]
+async fn test_operations_log_failure_scenarios(
+    ctx: TestContext,
+    #[case] operation_type: &str,
+    #[case] parameters: serde_json::Value,
+    #[case] failure_summary: serde_json::Value, 
+    #[case] expected_error_code: &str,
+) -> color_eyre::eyre::Result<()> {
+    let pool = ctx.pool().clone();
+
+    tracing::info!("Testing {} operation failure scenario", operation_type);
+
+    // Start the operation
     let operation_id_str: String = sqlx::query_scalar!(
         "SELECT core.start_operation($1, $2, $3::jsonb)::text as \"operation_id!\"",
-        "replay",
+        operation_type,
         "test_user",
-        json!({"command": "exo replay --ingestor fs-watcher --blob abc123"})
+        parameters
     )
     .fetch_one(&pool)
     .await?;
 
+    tracing::debug!("Started operation {} with ID: {}", operation_type, operation_id_str);
+
+    // Fail the operation
     sqlx::query!(
         "SELECT core.fail_operation($1::text::ulid, $2::jsonb)",
         operation_id_str,
-        json!({"error": "blob not found", "error_code": "E404"})
+        failure_summary
     )
     .execute(&pool)
     .await?;
 
-    // Verify failure was recorded
+    // Verify failure was recorded correctly
     let failed_operation = sqlx::query!(
         "SELECT status, completed_at, duration_ms, summary
          FROM core.operations_log WHERE operation_id = $1::text::ulid",
@@ -1395,12 +1485,25 @@ async fn test_operations_log_error_handling(ctx: TestContext) -> color_eyre::eyr
     assert!(failed_operation.completed_at.is_some());
     assert!(failed_operation.duration_ms.is_some());
 
-    let summary = failed_operation.summary.unwrap();
+    let stored_summary = failed_operation.summary.unwrap();
+    assert_eq!(stored_summary, failure_summary);
+    
+    // Verify specific error code
     assert_eq!(
-        summary.get("error").unwrap().as_str().unwrap(),
-        "blob not found"
+        stored_summary.get("error_code").unwrap().as_str().unwrap(),
+        expected_error_code
     );
-    assert_eq!(summary.get("error_code").unwrap().as_str().unwrap(), "E404");
+
+    // Create snapshot of the failure scenario
+    ctx.snapshot_json(&format!("operations_log_failure_{}", operation_type), &serde_json::json!({
+        "operation_type": operation_type,
+        "operation_id": operation_id_str,
+        "parameters": parameters,
+        "failure_summary": failure_summary,
+        "expected_error_code": expected_error_code,
+        "final_status": failed_operation.status,
+        "duration_ms": failed_operation.duration_ms
+    }));
 
     Ok(())
 }
