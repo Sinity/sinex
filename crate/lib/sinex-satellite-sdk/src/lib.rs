@@ -129,20 +129,15 @@ pub mod nats_client;
 pub mod nats_stream_consumer;
 pub mod preflight;
 pub mod processor_runner;
-pub mod redis_client;
-pub mod redis_stream_consumer;
 pub mod replay;
 pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
 pub use crate::nats_stream_consumer::{
-    BatchProcessingResult as NatsBatchProcessingResult, EventBatchProcessor as NatsEventBatchProcessor,
-    EventFilter as NatsEventFilter, NatsConsumerConfig, NatsStreamConsumer,
-};
-pub use crate::redis_stream_consumer::{
-    BatchProcessingResult, EventBatchProcessor, EventFilter as StreamEventFilter,
-    RedisConsumerConfig, RedisStreamConsumer,
+    BatchProcessingResult as NatsBatchProcessingResult,
+    EventBatchProcessor as NatsEventBatchProcessor, EventFilter as NatsEventFilter,
+    NatsConsumerConfig, NatsStreamConsumer,
 };
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
@@ -155,7 +150,6 @@ pub use grpc_client::IngestClient;
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
-pub use redis_client::{RedisStreamClient, StreamMessage};
 pub use replay::ReplayMode;
 pub use stream_processor::{
     Checkpoint, EventSender, EventStream, ProcessorCapabilities, ProcessorType, ScanArgs,
@@ -332,8 +326,6 @@ pub enum SatelliteError {
     #[error("gRPC transport error: {0}")]
     GrpcTransport(#[from] tonic::transport::Error),
 
-    #[error("Redis error: {0}")]
-    Redis(#[from] redis::RedisError),
 
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -370,7 +362,6 @@ impl From<SatelliteError> for sinex_types::error::SinexError {
             SatelliteError::GrpcTransport(_) => {
                 sinex_types::error::SinexError::unknown(e.to_string())
             }
-            SatelliteError::Redis(_) => sinex_types::error::SinexError::unknown(e.to_string()),
             SatelliteError::Database(_) => sinex_types::error::SinexError::database(e.to_string()),
             SatelliteError::Serialization(_) => {
                 sinex_types::error::SinexError::serialization(e.to_string())

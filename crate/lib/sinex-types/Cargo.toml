@@ -74,6 +74,7 @@ sqlx = ["dep:sqlx"]
 arbitrary = ["dep:proptest"]
 macros = ["dep:sinex-macros"]
 schema-manager = ["dep:clap", "dep:tracing-subscriber", "dep:sha2", "sqlx"]
+json-schema = []
 
 [[bin]]
 name = "sinex-schema"

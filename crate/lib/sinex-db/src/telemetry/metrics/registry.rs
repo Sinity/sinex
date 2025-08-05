@@ -1002,7 +1002,9 @@ mod tests {
         }
 
         #[sinex_bench]
-        async fn bench_concurrent_counter_access(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+        async fn bench_concurrent_counter_access(
+            ctx: &mut BenchContext,
+        ) -> color_eyre::eyre::Result<()> {
             use std::sync::Arc;
             use std::thread;
 

@@ -1,5 +1,5 @@
-use serde_json::Value;
 use camino::{Utf8Component as Component, Utf8Path as Path, Utf8PathBuf as PathBuf};
+use serde_json::Value;
 use thiserror::Error;
 
 // Error types for validation
@@ -148,10 +148,12 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     let abs_path = if path_buf.is_absolute() {
         path_buf.clone()
     } else {
-        camino::Utf8PathBuf::from_path_buf(std::env::current_dir()
-            .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?)
-            .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
-            .join(&path_buf)
+        camino::Utf8PathBuf::from_path_buf(
+            std::env::current_dir()
+                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?,
+        )
+        .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
+        .join(&path_buf)
     };
 
     // Clean the root path as well
@@ -159,10 +161,12 @@ pub fn validate_path_within_root(path: &str, root: &str) -> Result<PathBuf> {
     let abs_root = if root_path.is_absolute() {
         root_path
     } else {
-        camino::Utf8PathBuf::from_path_buf(std::env::current_dir()
-            .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?)
-            .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
-            .join(&root_path)
+        camino::Utf8PathBuf::from_path_buf(
+            std::env::current_dir()
+                .map_err(|e| ValidationError::Io(format!("Failed to get current dir: {}", e)))?,
+        )
+        .map_err(|_| ValidationError::Io("Path contains invalid UTF-8".to_string()))?
+        .join(&root_path)
     };
 
     // Canonicalize paths to resolve symlinks and normalize

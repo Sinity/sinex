@@ -74,6 +74,5 @@ pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static
         .map_err(|_| eyre!("Failed to set global pool"))?;
 
     info!("Global database pool initialized");
-    POOL.get()
-        .ok_or_else(|| eyre!("Pool not initialized"))
+    POOL.get().ok_or_else(|| eyre!("Pool not initialized"))
 }

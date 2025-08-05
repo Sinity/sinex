@@ -83,25 +83,25 @@ impl ProcessStartedPayload {
             config: serde_json::json!({}),
         }
     }
-    
+
     /// Builder-style method for process type
     pub fn with_process_type(mut self, process_type: impl Into<String>) -> Self {
         self.process_type = process_type.into();
         self
     }
-    
+
     /// Builder-style method for PID
     pub fn with_pid(mut self, pid: u32) -> Self {
         self.pid = pid;
         self
     }
-    
+
     /// Builder-style method for version
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = version.into();
         self
     }
-    
+
     /// Builder-style method for config
     pub fn with_config(mut self, config: serde_json::Value) -> Self {
         self.config = config;
@@ -119,19 +119,19 @@ impl ProcessHeartbeatPayload {
             metrics: None,
         }
     }
-    
+
     /// Builder-style method for sequence
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = sequence;
         self
     }
-    
+
     /// Builder-style method for status
     pub fn with_status(mut self, status: impl Into<String>) -> Self {
         self.status = status.into();
         self
     }
-    
+
     /// Builder-style method for metrics
     pub fn with_metrics(mut self, metrics: serde_json::Value) -> Self {
         self.metrics = Some(metrics);
@@ -151,31 +151,31 @@ impl ProcessShutdownPayload {
             exit_code: 0,
         }
     }
-    
+
     /// Builder-style method for process type
     pub fn with_process_type(mut self, process_type: impl Into<String>) -> Self {
         self.process_type = process_type.into();
         self
     }
-    
+
     /// Builder-style method for PID
     pub fn with_pid(mut self, pid: u32) -> Self {
         self.pid = pid;
         self
     }
-    
+
     /// Builder-style method for uptime
     pub fn with_uptime_seconds(mut self, uptime: u64) -> Self {
         self.uptime_seconds = uptime;
         self
     }
-    
+
     /// Builder-style method for shutdown reason
     pub fn with_shutdown_reason(mut self, reason: impl Into<String>) -> Self {
         self.shutdown_reason = reason.into();
         self
     }
-    
+
     /// Builder-style method for exit code
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
@@ -185,7 +185,10 @@ impl ProcessShutdownPayload {
 
 impl AutomatonErrorPayload {
     /// Create a test payload with sensible defaults
-    pub fn test_default(automaton_name: impl Into<String>, error_message: impl Into<String>) -> Self {
+    pub fn test_default(
+        automaton_name: impl Into<String>,
+        error_message: impl Into<String>,
+    ) -> Self {
         Self {
             automaton_name: automaton_name.into(),
             error_message: error_message.into(),
@@ -194,19 +197,19 @@ impl AutomatonErrorPayload {
             context: None,
         }
     }
-    
+
     /// Builder-style method for error code
     pub fn with_error_code(mut self, code: impl Into<String>) -> Self {
         self.error_code = Some(code.into());
         self
     }
-    
+
     /// Builder-style method for stack trace
     pub fn with_stack_trace(mut self, trace: impl Into<String>) -> Self {
         self.stack_trace = Some(trace.into());
         self
     }
-    
+
     /// Builder-style method for context
     pub fn with_context(mut self, context: serde_json::Value) -> Self {
         self.context = Some(context);
@@ -223,7 +226,7 @@ impl SensorActivatedPayload {
             activation_time: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for activation time
     pub fn with_activation_time(mut self, time: DateTime<Utc>) -> Self {
         self.activation_time = time;
@@ -242,19 +245,19 @@ impl SensorDeactivatedPayload {
             reason: "normal".to_string(),
         }
     }
-    
+
     /// Builder-style method for uptime
     pub fn with_uptime_seconds(mut self, uptime: u64) -> Self {
         self.uptime_seconds = uptime;
         self
     }
-    
+
     /// Builder-style method for events generated
     pub fn with_events_generated(mut self, count: u64) -> Self {
         self.events_generated = count;
         self
     }
-    
+
     /// Builder-style method for reason
     pub fn with_reason(mut self, reason: impl Into<String>) -> Self {
         self.reason = reason.into();

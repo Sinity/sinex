@@ -1,7 +1,7 @@
 //! Native messaging protocol for browser extension communication
 
-use color_eyre::eyre::{bail, Context, Result};
 use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
+use color_eyre::eyre::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::io::{self, Read, Write};

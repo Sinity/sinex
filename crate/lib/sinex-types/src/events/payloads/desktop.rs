@@ -48,19 +48,19 @@ impl DesktopMonitoringStartedPayload {
             start_time: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for clipboard enabled
     pub fn with_clipboard_enabled(mut self, enabled: bool) -> Self {
         self.clipboard_enabled = enabled;
         self
     }
-    
+
     /// Builder-style method for window manager enabled
     pub fn with_window_manager_enabled(mut self, enabled: bool) -> Self {
         self.window_manager_enabled = enabled;
         self
     }
-    
+
     /// Builder-style method for start time
     pub fn with_start_time(mut self, time: DateTime<Utc>) -> Self {
         self.start_time = time;
@@ -78,25 +78,25 @@ impl DesktopSnapshotPayload {
             snapshot_time: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for active watchers
     pub fn with_active_watchers(mut self, count: usize) -> Self {
         self.active_watchers = count;
         self
     }
-    
+
     /// Builder-style method for clipboard enabled
     pub fn with_clipboard_enabled(mut self, enabled: bool) -> Self {
         self.clipboard_enabled = enabled;
         self
     }
-    
+
     /// Builder-style method for window manager enabled
     pub fn with_window_manager_enabled(mut self, enabled: bool) -> Self {
         self.window_manager_enabled = enabled;
         self
     }
-    
+
     /// Builder-style method for snapshot time
     pub fn with_snapshot_time(mut self, time: DateTime<Utc>) -> Self {
         self.snapshot_time = time;
@@ -113,13 +113,13 @@ impl ClipboardHistoricalPayload {
             note: "Test clipboard historical scan".to_string(),
         }
     }
-    
+
     /// Builder-style method for scan type
     pub fn with_scan_type(mut self, scan_type: impl Into<String>) -> Self {
         self.scan_type = scan_type.into();
         self
     }
-    
+
     /// Builder-style method for note
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = note.into();
@@ -137,13 +137,13 @@ impl WindowManagerHistoricalPayload {
             note: "Test window manager historical scan".to_string(),
         }
     }
-    
+
     /// Builder-style method for scan type
     pub fn with_scan_type(mut self, scan_type: impl Into<String>) -> Self {
         self.scan_type = scan_type.into();
         self
     }
-    
+
     /// Builder-style method for note
     pub fn with_note(mut self, note: impl Into<String>) -> Self {
         self.note = note.into();

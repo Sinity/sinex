@@ -21,9 +21,9 @@
 //! - Cross-branch comparisons
 //! - Regression detection
 
-use color_eyre::eyre::Result;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 
 /// A complete benchmark run with metadata and results

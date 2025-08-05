@@ -334,9 +334,9 @@ pub async fn get_row_counts(pool: &DbPool) -> Result<HashMap<String, i64>> {
             .expr(Func::count(Expr::cust("*")))
             .from(Alias::new(table))
             .to_owned();
-        
+
         let (sql, _values) = query.build(PostgresQueryBuilder);
-        
+
         // No parameters to bind since we're using table names directly
         let count = sqlx::query_scalar::<_, i64>(&sql)
             .fetch_one(pool)

@@ -4,9 +4,9 @@
 //! - RPC Server: JSON-RPC over Unix socket for CLI
 //! - Native Messaging: stdin/stdout protocol for browser extensions
 
-use color_eyre::eyre::Result;
-use clap::{Parser, Subcommand};
 use camino::Utf8PathBuf;
+use clap::{Parser, Subcommand};
+use color_eyre::eyre::Result;
 use tracing::info;
 
 #[cfg(not(target_env = "msvc"))]

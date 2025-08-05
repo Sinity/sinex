@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
 use sinex_types::error::SinexError;
-use tokio::time::Duration;
+use tokio::time::Duration as TokioDuration;
 use sinex_db::models::{Event, EventSource, EventType, CanonicalCommandPayload};
 use sinex_db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{

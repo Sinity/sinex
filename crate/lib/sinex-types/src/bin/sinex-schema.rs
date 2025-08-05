@@ -6,8 +6,8 @@
 //! - Validates schema compatibility
 //! - Exports schemas for external use
 
-use color_eyre::eyre::Result;
 use clap::{Parser, Subcommand};
+use color_eyre::eyre::Result;
 use schemars::schema_for;
 use serde_json::Value;
 use sinex_types::events::payloads::*;

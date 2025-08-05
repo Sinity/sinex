@@ -8,8 +8,8 @@
  * - Filesystem permissions
  */
 
-use color_eyre::eyre::{bail, Context, Result};
 use camino::Utf8Path;
+use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tracing::info;
@@ -480,7 +480,8 @@ fn check_file_descriptor_limits() -> Result<Value> {
 fn check_process_limits_info() -> Result<Value> {
     use nix::sys::resource::{getrlimit, Resource};
 
-    let (soft, hard) = getrlimit(Resource::RLIMIT_NPROC).wrap_err("Failed to get process limits")?;
+    let (soft, hard) =
+        getrlimit(Resource::RLIMIT_NPROC).wrap_err("Failed to get process limits")?;
 
     Ok(json!({
         "max_processes_soft": soft,

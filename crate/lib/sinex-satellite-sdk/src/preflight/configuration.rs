@@ -8,8 +8,8 @@
  * - Event source configuration validation
  */
 
-use color_eyre::eyre::{bail, Context, Result};
 use camino::{Utf8Path, Utf8PathBuf};
+use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tracing::{debug, info};

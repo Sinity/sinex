@@ -611,7 +611,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_wait_helpers_multiple_conditions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_wait_helpers_multiple_conditions(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
         let counter1 = Arc::new(AtomicUsize::new(0));
         let counter2 = Arc::new(AtomicUsize::new(0));
 
@@ -652,7 +654,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_timing_patterns_event_processing(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_timing_patterns_event_processing(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
         let counter = TimingPatterns::wait_for_event_processing(5, Duration::from_secs(5))
             .await
             .map_err(|_| SinexError::unknown("Failed to create counter"))?;

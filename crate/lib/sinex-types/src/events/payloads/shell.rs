@@ -281,33 +281,37 @@ impl KittyCommandExecutedPayload {
             kitty_tab_id: "1".to_string(),
         }
     }
-    
+
     /// Builder-style method for working directory
     pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
         self.working_directory = Some(dir.into());
         self
     }
-    
+
     /// Builder-style method for exit status
     pub fn with_exit_status(mut self, status: i32) -> Self {
         self.exit_status = Some(status);
         self
     }
-    
+
     /// Builder-style method for execution time
     pub fn with_execution_time_ms(mut self, time_ms: u64) -> Self {
         self.execution_time_ms = Some(time_ms);
         self
     }
-    
+
     /// Builder-style method for shell type
     pub fn with_shell_type(mut self, shell: impl Into<String>) -> Self {
         self.shell_type = Some(shell.into());
         self
     }
-    
+
     /// Builder-style method for window and tab IDs
-    pub fn with_kitty_ids(mut self, window_id: impl Into<String>, tab_id: impl Into<String>) -> Self {
+    pub fn with_kitty_ids(
+        mut self,
+        window_id: impl Into<String>,
+        tab_id: impl Into<String>,
+    ) -> Self {
         self.kitty_window_id = window_id.into();
         self.kitty_tab_id = tab_id.into();
         self
@@ -333,32 +337,36 @@ impl AtuinCommandExecutedPayload {
             terminal_session_ulid: None,
         }
     }
-    
+
     /// Builder-style method for exit code
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
         self
     }
-    
+
     /// Builder-style method for duration
     pub fn with_duration_ns(mut self, duration: i64) -> Self {
         self.duration_ns = duration;
         self
     }
-    
+
     /// Builder-style method for atuin IDs
-    pub fn with_atuin_ids(mut self, history_id: impl Into<String>, session_id: impl Into<String>) -> Self {
+    pub fn with_atuin_ids(
+        mut self,
+        history_id: impl Into<String>,
+        session_id: impl Into<String>,
+    ) -> Self {
         self.atuin_history_id = history_id.into();
         self.atuin_session_id = session_id.into();
         self
     }
-    
+
     /// Builder-style method for hostname
     pub fn with_hostname(mut self, hostname: impl Into<String>) -> Self {
         self.hostname = hostname.into();
         self
     }
-    
+
     /// Builder-style method for terminal session ULID
     pub fn with_terminal_session_ulid(mut self, ulid: impl Into<String>) -> Self {
         self.terminal_session_ulid = Some(ulid.into());
@@ -385,37 +393,37 @@ impl CanonicalCommandPayload {
             enrichment_history: vec![],
         }
     }
-    
+
     /// Builder-style method for exit code
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
         self
     }
-    
+
     /// Builder-style method for duration
     pub fn with_duration_ms(mut self, duration: u64) -> Self {
         self.duration_ms = duration;
         self
     }
-    
+
     /// Builder-style method for user
     pub fn with_user(mut self, user: impl Into<String>) -> Self {
         self.user = user.into();
         self
     }
-    
+
     /// Builder-style method for session ID
     pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = session_id.into();
         self
     }
-    
+
     /// Builder-style method for source events
     pub fn with_source_events(mut self, events: Vec<String>) -> Self {
         self.source_events = events;
         self
     }
-    
+
     /// Builder-style method for enrichment history
     pub fn with_enrichment_history(mut self, history: Vec<serde_json::Value>) -> Self {
         self.enrichment_history = history;
@@ -428,32 +436,36 @@ impl KittySessionStartedPayload {
     pub fn test_default() -> Self {
         Self {
             window_id: "1".to_string(),
-            tab_id: "1".to_string(), 
+            tab_id: "1".to_string(),
             shell_type: "bash".to_string(),
             working_directory: "/tmp".to_string(),
             env_vars: None,
         }
     }
-    
+
     /// Builder-style method for window and tab IDs
-    pub fn with_kitty_ids(mut self, window_id: impl Into<String>, tab_id: impl Into<String>) -> Self {
+    pub fn with_kitty_ids(
+        mut self,
+        window_id: impl Into<String>,
+        tab_id: impl Into<String>,
+    ) -> Self {
         self.window_id = window_id.into();
         self.tab_id = tab_id.into();
         self
     }
-    
+
     /// Builder-style method for shell type
     pub fn with_shell_type(mut self, shell: impl Into<String>) -> Self {
         self.shell_type = shell.into();
         self
     }
-    
+
     /// Builder-style method for working directory
     pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
         self.working_directory = dir.into();
         self
     }
-    
+
     /// Builder-style method for environment variables
     pub fn with_env_vars(mut self, env_vars: HashMap<String, String>) -> Self {
         self.env_vars = Some(env_vars);
@@ -463,7 +475,11 @@ impl KittySessionStartedPayload {
 
 impl HistoryCommandImportedPayload {
     /// Create a test payload with sensible defaults
-    pub fn test_default(command: impl Into<String>, shell_type: impl Into<String>, source_file: impl Into<String>) -> Self {
+    pub fn test_default(
+        command: impl Into<String>,
+        shell_type: impl Into<String>,
+        source_file: impl Into<String>,
+    ) -> Self {
         Self {
             command: command.into(),
             timestamp: None,
@@ -472,13 +488,13 @@ impl HistoryCommandImportedPayload {
             line_number: None,
         }
     }
-    
+
     /// Builder-style method for timestamp
     pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.timestamp = Some(timestamp);
         self
     }
-    
+
     /// Builder-style method for line number
     pub fn with_line_number(mut self, line: u32) -> Self {
         self.line_number = Some(line);
@@ -494,13 +510,13 @@ impl TerminalMonitoringStartedPayload {
             start_time: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for enabled sources
     pub fn with_enabled_sources(mut self, sources: HashMap<String, bool>) -> Self {
         self.enabled_sources = sources;
         self
     }
-    
+
     /// Builder-style method for start time
     pub fn with_start_time(mut self, time: DateTime<Utc>) -> Self {
         self.start_time = time;

@@ -99,14 +99,14 @@ impl WindowGeometry {
             height: 600,
         }
     }
-    
+
     /// Builder-style method for position
     pub fn with_position(mut self, x: i32, y: i32) -> Self {
         self.x = x;
         self.y = y;
         self
     }
-    
+
     /// Builder-style method for size
     pub fn with_size(mut self, width: u32, height: u32) -> Self {
         self.width = width;
@@ -128,31 +128,31 @@ impl HyprlandWindowOpenedPayload {
             floating: false,
         }
     }
-    
+
     /// Builder-style method for window title
     pub fn with_window_title(mut self, title: impl Into<String>) -> Self {
         self.window_title = title.into();
         self
     }
-    
+
     /// Builder-style method for workspace
     pub fn with_workspace_id(mut self, workspace_id: i32) -> Self {
         self.workspace_id = workspace_id;
         self
     }
-    
+
     /// Builder-style method for monitor
     pub fn with_monitor_id(mut self, monitor_id: i32) -> Self {
         self.monitor_id = monitor_id;
         self
     }
-    
+
     /// Builder-style method for geometry
     pub fn with_geometry(mut self, geometry: WindowGeometry) -> Self {
         self.geometry = geometry;
         self
     }
-    
+
     /// Builder-style method for floating
     pub fn with_floating(mut self, floating: bool) -> Self {
         self.floating = floating;
@@ -171,19 +171,19 @@ impl HyprlandWindowClosedPayload {
             close_reason: None,
         }
     }
-    
+
     /// Builder-style method for window title
     pub fn with_window_title(mut self, title: impl Into<String>) -> Self {
         self.window_title = title.into();
         self
     }
-    
+
     /// Builder-style method for workspace
     pub fn with_workspace_id(mut self, workspace_id: i32) -> Self {
         self.workspace_id = workspace_id;
         self
     }
-    
+
     /// Builder-style method for close reason
     pub fn with_close_reason(mut self, reason: impl Into<String>) -> Self {
         self.close_reason = Some(reason.into());
@@ -202,19 +202,19 @@ impl HyprlandWindowFocusedPayload {
             previous_window_id: None,
         }
     }
-    
+
     /// Builder-style method for window title
     pub fn with_window_title(mut self, title: impl Into<String>) -> Self {
         self.window_title = title.into();
         self
     }
-    
+
     /// Builder-style method for workspace
     pub fn with_workspace_id(mut self, workspace_id: i32) -> Self {
         self.workspace_id = workspace_id;
         self
     }
-    
+
     /// Builder-style method for previous window
     pub fn with_previous_window_id(mut self, prev_id: impl Into<String>) -> Self {
         self.previous_window_id = Some(prev_id.into());
@@ -232,13 +232,13 @@ impl HyprlandWorkspaceSwitchedPayload {
             active_window_id: None,
         }
     }
-    
+
     /// Builder-style method for monitor
     pub fn with_monitor_id(mut self, monitor_id: i32) -> Self {
         self.monitor_id = monitor_id;
         self
     }
-    
+
     /// Builder-style method for active window
     pub fn with_active_window_id(mut self, window_id: impl Into<String>) -> Self {
         self.active_window_id = Some(window_id.into());
@@ -255,7 +255,7 @@ impl HyprlandWindowMovedPayload {
             moved_at: chrono::Utc::now().to_rfc3339(),
         }
     }
-    
+
     /// Builder-style method for moved timestamp
     pub fn with_moved_at(mut self, timestamp: impl Into<String>) -> Self {
         self.moved_at = timestamp.into();
@@ -273,13 +273,13 @@ impl HyprlandMonitorFocusedPayload {
             focused_at: chrono::Utc::now().to_rfc3339(),
         }
     }
-    
+
     /// Builder-style method for previous monitor
     pub fn with_previous_monitor(mut self, prev_monitor: i32) -> Self {
         self.previous_monitor = Some(prev_monitor);
         self
     }
-    
+
     /// Builder-style method for focused timestamp
     pub fn with_focused_at(mut self, timestamp: impl Into<String>) -> Self {
         self.focused_at = timestamp.into();
@@ -299,31 +299,31 @@ impl HyprlandStateCapturedPayload {
             captured_at: chrono::Utc::now().to_rfc3339(),
         }
     }
-    
+
     /// Builder-style method for windows
     pub fn with_windows(mut self, windows: Vec<serde_json::Value>) -> Self {
         self.windows = windows;
         self
     }
-    
+
     /// Builder-style method for workspaces
     pub fn with_workspaces(mut self, workspaces: Vec<serde_json::Value>) -> Self {
         self.workspaces = workspaces;
         self
     }
-    
+
     /// Builder-style method for monitors
     pub fn with_monitors(mut self, monitors: Vec<serde_json::Value>) -> Self {
         self.monitors = monitors;
         self
     }
-    
+
     /// Builder-style method for current workspace
     pub fn with_current_workspace(mut self, workspace_id: i32) -> Self {
         self.current_workspace = workspace_id;
         self
     }
-    
+
     /// Builder-style method for current monitor
     pub fn with_current_monitor(mut self, monitor_id: i32) -> Self {
         self.current_monitor = monitor_id;

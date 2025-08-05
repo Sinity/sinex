@@ -47,6 +47,6 @@ impl From<NatsError> for sinex_types::error::SinexError {
     fn from(err: NatsError) -> Self {
         sinex_types::error::SinexError::service(err.to_string())
             .with_operation("nats")
-            .wrap_err_with("service", "nats")
+            .with_context("service", "nats")
     }
 }
