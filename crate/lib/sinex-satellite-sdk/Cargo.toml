@@ -29,8 +29,7 @@ time = "0.3"
 # Database
 sqlx.workspace = true
 
-# Redis for message bus
-redis = { version = "0.24", features = ["tokio-comp", "streams"] }
+# NATS for message bus (replaces Redis)
 
 # gRPC for communication with ingestd
 tonic = "0.11"

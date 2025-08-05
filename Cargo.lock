@@ -710,20 +710,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
-name = "combine"
-version = "4.6.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
-dependencies = [
- "bytes",
- "futures-core",
- "memchr",
- "pin-project-lite",
- "tokio",
- "tokio-util",
-]
-
-[[package]]
 name = "concurrent-queue"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3341,27 +3327,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "redis"
-version = "0.24.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c580d9cbbe1d1b479e8d67cf9daf6a62c957e6846048408b80b43ac3f6af84cd"
-dependencies = [
- "async-trait",
- "bytes",
- "combine",
- "futures-util",
- "itoa",
- "percent-encoding",
- "pin-project-lite",
- "ryu",
- "sha1_smol",
- "socket2 0.4.10",
- "tokio",
- "tokio-util",
- "url",
-]
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4118,12 +4083,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sha1_smol"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
-
-[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4242,6 +4201,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4419,6 +4379,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "gethostname",
  "mimalloc",
  "serde",
@@ -4554,7 +4515,6 @@ dependencies = [
  "nix 0.28.0",
  "parking_lot",
  "prost",
- "redis",
  "sd-notify",
  "semver",
  "serde",
@@ -4608,6 +4568,7 @@ dependencies = [
  "async-trait",
  "blake3",
  "chrono",
+ "color-eyre",
  "serde",
  "serde_json",
  "sha2",
@@ -4706,6 +4667,7 @@ dependencies = [
 name = "sinex-test-utils"
 version = "0.1.0"
 dependencies = [
+ "ahash",
  "anyhow",
  "async-trait",
  "bon",
@@ -4725,7 +4687,6 @@ dependencies = [
  "pretty_assertions",
  "proptest",
  "rand 0.8.5",
- "redis",
  "rstest",
  "serde",
  "serde_json",
@@ -4850,16 +4811,6 @@ dependencies = [
  "libc",
  "smithay-client-toolkit",
  "wayland-backend",
-]
-
-[[package]]
-name = "socket2"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]

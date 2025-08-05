@@ -48,9 +48,9 @@ sinex-test-utils-macros = { path = "macros" }
 
 # System utilities
 gethostname = "0.4"
+ahash = { workspace = true }
 rand = "0.8"
 tempfile = "3.0"
-redis = "0.24"
 tonic = "0.11"
 fastrand = "2.0"
 jsonschema = "0.17"

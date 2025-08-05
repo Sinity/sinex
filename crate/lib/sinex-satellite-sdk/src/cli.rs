@@ -277,26 +277,26 @@ pub struct MissingItem {
 /// Trait for processor-specific exploration capabilities
 pub trait ExplorationProvider {
     /// Get current source state
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>>;
+    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Get ingestion history
     fn get_ingestion_history(
         &self,
         limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>>;
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Perform coverage analysis
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>>;
+    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>>;
 
     /// Export data for debugging
     fn export_data(
         &self,
         path: &Utf8PathBuf,
         format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
 }
 
 /// Export format options
