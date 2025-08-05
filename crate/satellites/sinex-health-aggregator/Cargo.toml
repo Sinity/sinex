@@ -36,6 +36,7 @@ chrono = { workspace = true }
 # Error handling
 anyhow = { workspace = true }
 thiserror = { workspace = true }
+color-eyre = { workspace = true }
 
 # Logging
 tracing = "0.1"

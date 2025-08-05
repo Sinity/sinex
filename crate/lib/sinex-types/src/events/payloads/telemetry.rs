@@ -69,31 +69,31 @@ impl EventsProcessedPayload {
             processing_rate: 0.0,
         }
     }
-    
+
     /// Builder-style method for time range
     pub fn with_time_range_seconds(mut self, seconds: u64) -> Self {
         self.time_range_seconds = seconds;
         self
     }
-    
+
     /// Builder-style method for total events
     pub fn with_total_events(mut self, count: u64) -> Self {
         self.total_events = count;
         self
     }
-    
+
     /// Builder-style method for events per source
     pub fn with_events_per_source(mut self, events: HashMap<String, u64>) -> Self {
         self.events_per_source = events;
         self
     }
-    
+
     /// Builder-style method for events per type
     pub fn with_events_per_type(mut self, events: HashMap<String, u64>) -> Self {
         self.events_per_type = events;
         self
     }
-    
+
     /// Builder-style method for processing rate
     pub fn with_processing_rate(mut self, rate: f64) -> Self {
         self.processing_rate = rate;
@@ -112,31 +112,31 @@ impl ErrorsSummaryPayload {
             error_rate: 0.0,
         }
     }
-    
+
     /// Builder-style method for time range
     pub fn with_time_range_seconds(mut self, seconds: u64) -> Self {
         self.time_range_seconds = seconds;
         self
     }
-    
+
     /// Builder-style method for total errors
     pub fn with_total_errors(mut self, count: u64) -> Self {
         self.total_errors = count;
         self
     }
-    
+
     /// Builder-style method for errors by severity
     pub fn with_errors_by_severity(mut self, errors: HashMap<String, u64>) -> Self {
         self.errors_by_severity = errors;
         self
     }
-    
+
     /// Builder-style method for errors by component
     pub fn with_errors_by_component(mut self, errors: HashMap<String, u64>) -> Self {
         self.errors_by_component = errors;
         self
     }
-    
+
     /// Builder-style method for error rate
     pub fn with_error_rate(mut self, rate: f64) -> Self {
         self.error_rate = rate;
@@ -158,49 +158,49 @@ impl SystemResourcesPayload {
             network_bytes_received: 0,
         }
     }
-    
+
     /// Builder-style method for CPU usage
     pub fn with_cpu_usage_percent(mut self, percent: f64) -> Self {
         self.cpu_usage_percent = percent;
         self
     }
-    
+
     /// Builder-style method for memory usage
     pub fn with_memory_usage_bytes(mut self, bytes: u64) -> Self {
         self.memory_usage_bytes = bytes;
         self
     }
-    
+
     /// Builder-style method for memory total
     pub fn with_memory_total_bytes(mut self, bytes: u64) -> Self {
         self.memory_total_bytes = bytes;
         self
     }
-    
+
     /// Builder-style method for disk usage
     pub fn with_disk_usage_bytes(mut self, bytes: u64) -> Self {
         self.disk_usage_bytes = bytes;
         self
     }
-    
+
     /// Builder-style method for disk total
     pub fn with_disk_total_bytes(mut self, bytes: u64) -> Self {
         self.disk_total_bytes = bytes;
         self
     }
-    
+
     /// Builder-style method for open file descriptors
     pub fn with_open_file_descriptors(mut self, count: u64) -> Self {
         self.open_file_descriptors = count;
         self
     }
-    
+
     /// Builder-style method for network bytes sent
     pub fn with_network_bytes_sent(mut self, bytes: u64) -> Self {
         self.network_bytes_sent = bytes;
         self
     }
-    
+
     /// Builder-style method for network bytes received
     pub fn with_network_bytes_received(mut self, bytes: u64) -> Self {
         self.network_bytes_received = bytes;
@@ -220,31 +220,31 @@ impl OperationPerformancePayload {
             metrics: HashMap::new(),
         }
     }
-    
+
     /// Builder-style method for duration
     pub fn with_duration_ms(mut self, duration: u64) -> Self {
         self.duration_ms = duration;
         self
     }
-    
+
     /// Builder-style method for items processed
     pub fn with_items_processed(mut self, count: u64) -> Self {
         self.items_processed = count;
         self
     }
-    
+
     /// Builder-style method for success
     pub fn with_success(mut self, success: bool) -> Self {
         self.success = success;
         self
     }
-    
+
     /// Builder-style method for error
     pub fn with_error(mut self, error: impl Into<String>) -> Self {
         self.error = Some(error.into());
         self
     }
-    
+
     /// Builder-style method for metrics
     pub fn with_metrics(mut self, metrics: HashMap<String, serde_json::Value>) -> Self {
         self.metrics = metrics;
@@ -262,19 +262,19 @@ impl ComponentResourceUsagePayload {
             cpu_percent: serde_json::json!({"avg": 0.0, "peak": 0.0}),
         }
     }
-    
+
     /// Builder-style method for period
     pub fn with_period_seconds(mut self, seconds: u64) -> Self {
         self.period_seconds = seconds;
         self
     }
-    
+
     /// Builder-style method for memory metrics
     pub fn with_memory_mb(mut self, memory: serde_json::Value) -> Self {
         self.memory_mb = memory;
         self
     }
-    
+
     /// Builder-style method for CPU metrics
     pub fn with_cpu_percent(mut self, cpu: serde_json::Value) -> Self {
         self.cpu_percent = cpu;

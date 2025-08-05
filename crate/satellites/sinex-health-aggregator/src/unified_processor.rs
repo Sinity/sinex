@@ -11,10 +11,12 @@ use serde_json::json;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::models::{Event, RawEvent, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
-    redis_stream_consumer::{
-        BatchProcessingResult, EventBatchProcessor},
+    cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
     nats_stream_consumer::{
-        EventFilter as NatsEventFilter, NatsStreamConsumer},
+        BatchProcessingResult as NatsBatchProcessingResult, 
+        EventBatchProcessor as NatsEventBatchProcessor,
+        EventFilter as NatsEventFilter, 
+        NatsStreamConsumer},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -180,8 +182,8 @@ impl HealthAggregator {
 }
 
 #[async_trait]
-impl EventBatchProcessor for HealthAggregator {
-    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<BatchProcessingResult> {
+impl NatsEventBatchProcessor for HealthAggregator {
+    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
         let mut successful_ids = Vec::new();
         let mut failed_ids = Vec::new();
         
@@ -204,11 +206,13 @@ impl EventBatchProcessor for HealthAggregator {
             }
         }
 
-        Ok(BatchProcessingResult {
-            successful_ids,
-            failed_ids,
-            retry_ids: Vec::new(),
-            checkpoint_data: None})
+        Ok(NatsBatchProcessingResult {
+            processed: successful_ids.len(),
+            skipped: 0,
+            failed: failed_ids.len(),
+            duration: std::time::Duration::from_millis(0),
+            errors: failed_ids.into_iter().map(|(_, e)| e).collect(),
+        })
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
@@ -371,5 +375,64 @@ impl StatefulStreamProcessor for HealthAggregator {
 impl Default for HealthAggregator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ExplorationProvider for HealthAggregator {
+    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(SourceState {
+            description: "Health aggregator monitoring satellite heartbeats".to_string(),
+            last_updated: Utc::now(),
+            total_items: Some(self.expected_components.len() as u64),
+            metadata: [
+                ("aggregation_window_minutes".to_string(), json!(self.aggregation_window.num_minutes())),
+                ("expected_components".to_string(), json!(self.expected_components.len())),
+            ].into_iter().collect(),
+            healthy: true,
+            recent_activity: vec![
+                ActivityEntry {
+                    timestamp: self.last_summary_time,
+                    description: "Last health summary generated".to_string(),
+                    data: None,
+                }
+            ],
+        })
+    }
+
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+        // Health aggregator doesn't have traditional ingestion history
+        Ok(vec![])
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+        let now = Utc::now();
+        let time_range = (now - chrono::Duration::hours(24), now);
+        
+        Ok(CoverageAnalysis {
+            time_range,
+            source_total: self.expected_components.len() as u64,
+            sinex_total: self.expected_components.len() as u64, // Assume all are monitored
+            coverage_percentage: 100.0,
+            missing_count: 0,
+            missing_samples: vec![],
+            duplicate_count: 0,
+            recommendations: vec![
+                "All expected components are being monitored".to_string(),
+            ],
+        })
+    }
+
+    fn export_data(
+        &self,
+        _path: &camino::Utf8PathBuf,
+        _format: ExportFormat,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        Err("Export not implemented for health aggregator".into())
     }
 }

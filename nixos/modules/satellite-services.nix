@@ -185,13 +185,6 @@ in {
       };
     };
 
-    redis = {
-      url = mkOption {
-        type = types.str;
-        default = "redis://localhost:6379";
-        description = "Redis URL for message bus";
-      };
-    };
 
     nats = {
       servers = mkOption {
@@ -501,13 +494,13 @@ in {
         consumerGroup = mkOption {
           type = types.str;
           default = "canonical-synthesizers";
-          description = "Redis Streams consumer group";
+          description = "NATS consumer group";
         };
 
-        topics = mkOption {
+        subjects = mkOption {
           type = types.listOf types.str;
-          default = [ "sinex:events:kitty" "sinex:events:atuin" ];
-          description = "Redis Streams topics to consume";
+          default = [ "events.terminal.*" "events.filesystem.*" ];
+          description = "NATS JetStream subjects to consume";
         };
 
         batchSize = mkOption {
@@ -557,7 +550,7 @@ in {
         consumerGroup = mkOption {
           type = types.str;
           default = "health-aggregators";
-          description = "Redis Streams consumer group";
+          description = "NATS consumer group";
         };
 
         batchSize = mkOption {

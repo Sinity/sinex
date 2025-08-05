@@ -1153,7 +1153,9 @@ mod tests {
         use sinex_test_utils::prelude::*;
 
         #[sinex_bench]
-        async fn bench_telemetry_record_event(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+        async fn bench_telemetry_record_event(
+            ctx: &mut BenchContext,
+        ) -> color_eyre::eyre::Result<()> {
             let accumulator = TelemetryAccumulator::new("bench");
 
             ctx.bench("record_event_processed", || {
@@ -1164,7 +1166,9 @@ mod tests {
         }
 
         #[sinex_bench]
-        async fn bench_telemetry_record_operation(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+        async fn bench_telemetry_record_operation(
+            ctx: &mut BenchContext,
+        ) -> color_eyre::eyre::Result<()> {
             let accumulator = TelemetryAccumulator::new("bench");
 
             ctx.bench("record_operation_latency", || {
@@ -1175,7 +1179,9 @@ mod tests {
         }
 
         #[sinex_bench]
-        async fn bench_telemetry_record_error(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+        async fn bench_telemetry_record_error(
+            ctx: &mut BenchContext,
+        ) -> color_eyre::eyre::Result<()> {
             let accumulator = TelemetryAccumulator::new("bench");
 
             ctx.bench("record_error", || {

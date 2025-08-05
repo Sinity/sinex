@@ -447,7 +447,9 @@ mod benches {
     use sinex_test_utils::prelude::*;
 
     #[sinex_bench]
-    async fn bench_database_metrics_creation(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+    async fn bench_database_metrics_creation(
+        ctx: &mut BenchContext,
+    ) -> color_eyre::eyre::Result<()> {
         ctx.bench("database_metrics_creation", || {
             let metrics = DatabaseMetrics::new("bench_operation", HashMap::new());
             metrics
@@ -494,7 +496,9 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_concurrent_database_metrics(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+    async fn bench_concurrent_database_metrics(
+        ctx: &mut BenchContext,
+    ) -> color_eyre::eyre::Result<()> {
         use std::thread;
 
         let metrics = Arc::new(DatabaseMetrics::new("concurrent_bench", HashMap::new()));

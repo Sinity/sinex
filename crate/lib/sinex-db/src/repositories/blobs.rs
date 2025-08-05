@@ -3,8 +3,8 @@
 //! Provides access to core.blobs table for managing binary large objects
 //! stored in git-annex with metadata in PostgreSQL.
 
-use color_eyre::eyre::{Context, Result};
 use chrono::Utc;
+use color_eyre::eyre::{Context, Result};
 use num_traits::ToPrimitive;
 use sinex_types::{ulid::Ulid, Id};
 use sqlx::PgPool;

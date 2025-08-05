@@ -5,6 +5,10 @@ use camino::Utf8PathBuf;
 use async_trait::async_trait;
 use chrono::Utc;
 use sinex_satellite_sdk::{
+    nats_stream_consumer::{
+        BatchProcessingResult as NatsBatchProcessingResult,
+        EventBatchProcessor as NatsEventBatchProcessor,
+    },
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
@@ -80,8 +84,24 @@ impl Default for HealthAggregator {
     }
 }
 
+#[async_trait]
+impl NatsEventBatchProcessor for HealthAggregator {
+    async fn process_batch(&mut self, events: Vec<sinex_db::models::Event>) -> SatelliteResult<NatsBatchProcessingResult> {
+        // Simple implementation that just acknowledges all events
+        info!("Health aggregator processed {} events", events.len());
+        
+        Ok(NatsBatchProcessingResult {
+            processed: events.len(),
+            skipped: 0,
+            failed: 0,
+            duration: std::time::Duration::from_millis(0),
+            errors: vec![],
+        })
+    }
+}
+
 impl ExplorationProvider for HealthAggregator {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
+    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
         Ok(SourceState {
             description: "Health aggregator".to_string(),
             last_updated: chrono::Utc::now(),
@@ -95,14 +115,14 @@ impl ExplorationProvider for HealthAggregator {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>> {
+    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
         let now = chrono::Utc::now();
         Ok(CoverageAnalysis {
             time_range: (now - chrono::Duration::days(1), now),
@@ -120,7 +140,7 @@ impl ExplorationProvider for HealthAggregator {
         &self,
         _path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 }

@@ -9,6 +9,8 @@ camino = { workspace = true }
 # Core dependencies
 anyhow.workspace = true
 thiserror.workspace = true
+color-eyre.workspace = true
+bon.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }
 futures = "0.3"
@@ -27,8 +29,7 @@ time = "0.3"
 # Database
 sqlx.workspace = true
 
-# Redis for message bus
-redis = { version = "0.24", features = ["tokio-comp", "streams"] }
+# NATS for message bus (replaces Redis)
 
 # gRPC for communication with ingestd
 tonic = "0.11"

@@ -67,7 +67,7 @@ impl JetStream {
         &self,
         config: jetstream::stream::Config,
     ) -> Result<jetstream::stream::Stream> {
-        let context = self.wrap_err().await;
+        let context = self.context().await;
 
         // Try to get existing stream first
         match context.get_stream(&config.name).await {
@@ -90,7 +90,7 @@ impl JetStream {
 
     /// Get a stream by name
     pub async fn get_stream(&self, name: &str) -> Result<jetstream::stream::Stream> {
-        let context = self.wrap_err().await;
+        let context = self.context().await;
         context
             .get_stream(name)
             .await
@@ -99,7 +99,7 @@ impl JetStream {
 
     /// Delete a stream
     pub async fn delete_stream(&self, name: &str) -> Result<()> {
-        let context = self.wrap_err().await;
+        let context = self.context().await;
         context
             .delete_stream(name)
             .await
@@ -111,7 +111,7 @@ impl JetStream {
 
     /// List all streams
     pub async fn list_streams(&self) -> Result<Vec<String>> {
-        let context = self.wrap_err().await;
+        let context = self.context().await;
         let mut names = Vec::new();
 
         let mut streams = context.streams();

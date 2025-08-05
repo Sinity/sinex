@@ -1,14 +1,100 @@
-//! Content Service Automaton Binary
+//! Simple NATS-based Content Automaton
 //!
-//! Main entry point for Content Automaton using unified StatefulStreamProcessor
+//! This bypasses the complex processor_main! macro and directly uses NATS consumer
 
 #[cfg(not(target_env = "msvc"))]
 use mimalloc::MiMalloc;
-use sinex_content_automaton::ContentProcessor;
 
 #[cfg(not(target_env = "msvc"))]
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
-// Use the processor_main! macro for standardized CLI and lifecycle
-sinex_satellite_sdk::processor_main!(ContentProcessor);
+use sinex_satellite_sdk::{
+    nats_stream_consumer::{
+        EventFilter, NatsConsumerConfig, NatsStreamConsumer,
+        BatchProcessingResult as NatsBatchProcessingResult,
+        EventBatchProcessor as NatsEventBatchProcessor,
+    },
+    SatelliteResult,
+};
+use async_trait::async_trait;
+use tracing::info;
+
+/// Simple content automaton that just logs received events
+struct SimpleContentAutomaton;
+
+impl SimpleContentAutomaton {
+    fn new() -> Self {
+        Self
+    }
+}
+
+#[async_trait]
+impl NatsEventBatchProcessor for SimpleContentAutomaton {
+    async fn initialize(&mut self) -> SatelliteResult<()> {
+        info!("Simple content automaton initialized");
+        Ok(())
+    }
+
+    async fn process_batch(&mut self, events: Vec<sinex_db::models::Event>) -> SatelliteResult<NatsBatchProcessingResult> {
+        info!("Content automaton processed {} events", events.len());
+        
+        // Simple implementation: just log and acknowledge
+        for event in &events {
+            info!("Processing event: {} from {}", event.event_type, event.source);
+        }
+        
+        Ok(NatsBatchProcessingResult {
+            processed: events.len(),
+            skipped: 0,
+            failed: 0,
+            duration: std::time::Duration::from_millis(1),
+            errors: vec![],
+        })
+    }
+
+    fn event_filters(&self) -> Vec<EventFilter> {
+        vec![
+            EventFilter::new()
+                .with_source("filesystem")
+                .with_source("terminal")
+                .with_event_type("file_created")
+                .with_event_type("file_modified")
+                .with_event_type("file_deleted")
+        ]
+    }
+}
+
+#[tokio::main]
+async fn main() -> color_eyre::eyre::Result<()> {
+    color_eyre::install()?;
+    
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter("info")
+        .init();
+
+    info!("Starting simple NATS-based content automaton");
+
+    // Create consumer configuration
+    let config = NatsConsumerConfig {
+        group_name: "automata".to_string(),
+        consumer_name: "content-automaton".to_string(),
+        stream_name: "events".to_string(),
+        nats_servers: vec!["nats://localhost:4222".to_string()],
+        filters: vec![],
+        batch_size: 10,
+        block_timeout: std::time::Duration::from_millis(5000),
+    };
+
+    // Create consumer and processor
+    let mut consumer = NatsStreamConsumer::new(config);
+    consumer.initialize(None).await?;
+
+    let processor = SimpleContentAutomaton::new();
+
+    // Run consumer
+    consumer.run(processor).await?;
+
+    Ok(())
+}

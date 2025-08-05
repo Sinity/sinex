@@ -511,25 +511,25 @@ impl SystemdUnitStatusPayload {
             timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
-    
+
     /// Builder-style method for unit type
     pub fn with_unit_type(mut self, unit_type: impl Into<String>) -> Self {
         self.unit_type = unit_type.into();
         self
     }
-    
+
     /// Builder-style method for description
     pub fn with_description(mut self, description: impl Into<String>) -> Self {
         self.description = description.into();
         self
     }
-    
+
     /// Builder-style method for action
     pub fn with_action(mut self, action: impl Into<String>) -> Self {
         self.action = action.into();
         self
     }
-    
+
     /// Builder-style method for timestamp
     pub fn with_timestamp(mut self, timestamp: impl Into<String>) -> Self {
         self.timestamp = timestamp.into();
@@ -548,25 +548,25 @@ impl JournalEntryPayload {
             timestamp: Utc::now(),
         }
     }
-    
+
     /// Builder-style method for unit
     pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
         self.unit = Some(unit.into());
         self
     }
-    
+
     /// Builder-style method for priority
     pub fn with_priority(mut self, priority: u8) -> Self {
         self.priority = priority;
         self
     }
-    
+
     /// Builder-style method for fields
     pub fn with_fields(mut self, fields: HashMap<String, String>) -> Self {
         self.fields = fields;
         self
     }
-    
+
     /// Builder-style method for timestamp
     pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.timestamp = timestamp;
@@ -581,38 +581,38 @@ impl DbusNotificationSentPayload {
             app_name: app_name.into(),
             summary: summary.into(),
             body: "".to_string(),
-            urgency: 1, // Normal urgency
+            urgency: 1,  // Normal urgency
             timeout: -1, // Default timeout
             actions: vec![],
             hints: HashMap::new(),
             timestamp: chrono::Utc::now().to_rfc3339(),
         }
     }
-    
+
     /// Builder-style method for body
     pub fn with_body(mut self, body: impl Into<String>) -> Self {
         self.body = body.into();
         self
     }
-    
+
     /// Builder-style method for urgency
     pub fn with_urgency(mut self, urgency: u8) -> Self {
         self.urgency = urgency;
         self
     }
-    
+
     /// Builder-style method for timeout
     pub fn with_timeout(mut self, timeout: i32) -> Self {
         self.timeout = timeout;
         self
     }
-    
+
     /// Builder-style method for actions
     pub fn with_actions(mut self, actions: Vec<String>) -> Self {
         self.actions = actions;
         self
     }
-    
+
     /// Builder-style method for hints
     pub fn with_hints(mut self, hints: HashMap<String, serde_json::Value>) -> Self {
         self.hints = hints;
@@ -634,15 +634,21 @@ impl SystemHealthSummaryPayload {
             components: HashMap::new(),
         }
     }
-    
+
     /// Builder-style method for overall status
     pub fn with_overall_status(mut self, status: HealthStatus) -> Self {
         self.overall_status = status;
         self
     }
-    
+
     /// Builder-style method for component counts
-    pub fn with_component_counts(mut self, healthy: u32, degraded: u32, failed: u32, missing: u32) -> Self {
+    pub fn with_component_counts(
+        mut self,
+        healthy: u32,
+        degraded: u32,
+        failed: u32,
+        missing: u32,
+    ) -> Self {
         self.healthy_components = healthy;
         self.degraded_components = degraded;
         self.failed_components = failed;
@@ -650,13 +656,13 @@ impl SystemHealthSummaryPayload {
         self.total_components = healthy + degraded + failed + missing;
         self
     }
-    
+
     /// Builder-style method for components
     pub fn with_components(mut self, components: HashMap<String, ComponentHealth>) -> Self {
         self.components = components;
         self
     }
-    
+
     /// Builder-style method for last updated
     pub fn with_last_updated(mut self, timestamp: DateTime<Utc>) -> Self {
         self.last_updated = timestamp;
@@ -673,7 +679,7 @@ impl ScanStartedPayload {
             options: HashMap::new(),
         }
     }
-    
+
     /// Builder-style method for options
     pub fn with_options(mut self, options: HashMap<String, serde_json::Value>) -> Self {
         self.options = options;
@@ -693,20 +699,20 @@ impl ScanCompletedPayload {
             errors: vec![],
         }
     }
-    
+
     /// Builder-style method for item counts
     pub fn with_item_counts(mut self, scanned: u64, found: u64) -> Self {
         self.items_scanned = scanned;
         self.items_found = found;
         self
     }
-    
+
     /// Builder-style method for duration
     pub fn with_duration_ms(mut self, duration: u64) -> Self {
         self.duration_ms = duration;
         self
     }
-    
+
     /// Builder-style method for errors
     pub fn with_errors(mut self, errors: Vec<String>) -> Self {
         self.errors = errors;
@@ -728,31 +734,31 @@ impl ComponentHealth {
             git_hash: None,
         }
     }
-    
+
     /// Builder-style method for status
     pub fn with_status(mut self, status: HealthStatus) -> Self {
         self.status = status;
         self
     }
-    
+
     /// Builder-style method for uptime
     pub fn with_uptime_seconds(mut self, uptime: i64) -> Self {
         self.uptime_seconds = Some(uptime);
         self
     }
-    
+
     /// Builder-style method for memory usage
     pub fn with_memory_usage_mb(mut self, memory: i32) -> Self {
         self.memory_usage_mb = Some(memory);
         self
     }
-    
+
     /// Builder-style method for events processed
     pub fn with_events_processed(mut self, count: i64) -> Self {
         self.events_processed = Some(count);
         self
     }
-    
+
     /// Builder-style method for version
     pub fn with_version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());

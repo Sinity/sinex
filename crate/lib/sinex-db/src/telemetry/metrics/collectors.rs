@@ -766,7 +766,9 @@ mod benches {
     use sinex_test_utils::prelude::*;
 
     #[sinex_bench]
-    async fn bench_system_metrics_collection(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+    async fn bench_system_metrics_collection(
+        ctx: &mut BenchContext,
+    ) -> color_eyre::eyre::Result<()> {
         let collector =
             SystemMetricsCollector::new("bench_system".to_string(), Duration::from_secs(1));
 
@@ -778,7 +780,9 @@ mod benches {
     }
 
     #[sinex_bench]
-    async fn bench_process_metrics_collection(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
+    async fn bench_process_metrics_collection(
+        ctx: &mut BenchContext,
+    ) -> color_eyre::eyre::Result<()> {
         let collector = ProcessMetricsCollector::new("bench_process".to_string());
 
         ctx.bench("process_metrics_collection", || {

@@ -45,6 +45,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
 use sinex_db::telemetry::telemetry::TelemetryAccumulator;
@@ -854,17 +855,14 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         self.processor.initialize(context).await?;
 
         // Create NATS client and publisher
-        let nats_client = NatsClient::new(nats_config.clone()).await.map_err(|e| {
-            SatelliteError::General(eyre!("Failed to connect to NATS: {}", e))
-        })?;
+        let nats_client = NatsClient::new(nats_config.clone())
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to NATS: {}", e)))?;
 
         let jetstream = JetStream::new(&nats_client, nats_config.jetstream)
             .await
             .map_err(|e| {
-                SatelliteError::General(eyre!(
-                    "Failed to create JetStream context: {}",
-                    e
-                ))
+                SatelliteError::General(eyre!("Failed to create JetStream context: {}", e))
             })?;
 
         let publisher = NatsPublisher::new(jetstream);

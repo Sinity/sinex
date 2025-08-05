@@ -8,8 +8,8 @@
  * - Connection pool validation
  */
 
-use color_eyre::eyre::{bail, Context, Result};
 use camino::Utf8Path;
+use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
 use sinex_types::timeouts;
 // VerificationQueries removed - using direct SQL queries instead

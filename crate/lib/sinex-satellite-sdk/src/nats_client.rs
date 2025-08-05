@@ -3,8 +3,8 @@
 //! This module provides the NATS JetStream implementation for event distribution,
 //! replacing the Redis Streams implementation as per ADR-009.
 
-use color_eyre::eyre::{Context, Result};
 use async_trait::async_trait;
+use color_eyre::eyre::{Context, Result};
 // use bytes::Bytes; // Not needed, use Vec<u8> instead
 use crate::nats::NatsClient;
 use std::sync::Arc;

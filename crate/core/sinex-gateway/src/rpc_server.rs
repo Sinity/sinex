@@ -1,10 +1,10 @@
 //! JSON-RPC server for CLI communication
 
-use color_eyre::eyre::Result;
 use axum::{extract::State, routing::post, Json, Router};
+use camino::Utf8PathBuf;
+use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use camino::Utf8PathBuf;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, error, info};
