@@ -3,7 +3,9 @@
 //! This module provides the NatsStreamConsumer which mirrors the RedisStreamConsumer
 //! interface, enabling automata to consume events from NATS JetStream.
 
+use async_nats::jetstream::AckKind;
 use async_trait::async_trait;
+use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
@@ -225,9 +227,9 @@ impl NatsStreamConsumer {
             self.config.nats_servers.clone()
         };
 
-        let client = async_nats::connect(&servers[0]).await.map_err(|e| {
-            SatelliteError::General(anyhow::anyhow!("Failed to connect to NATS: {}", e))
-        })?;
+        let client = async_nats::connect(&servers[0])
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to NATS: {}", e)))?;
 
         let jetstream = async_nats::jetstream::new(client.clone());
 
@@ -239,9 +241,7 @@ impl NatsStreamConsumer {
                 ..Default::default()
             })
             .await
-            .map_err(|e| {
-                SatelliteError::General(anyhow::anyhow!("Failed to create stream: {}", e))
-            })?;
+            .map_err(|e| SatelliteError::General(eyre!("Failed to create stream: {}", e)))?;
 
         self.nats_client = Some(client);
         self.jetstream = Some(jetstream);
@@ -264,7 +264,7 @@ impl NatsStreamConsumer {
         let jetstream = self
             .jetstream
             .as_ref()
-            .ok_or_else(|| SatelliteError::General(anyhow::anyhow!("Consumer not initialized")))?;
+            .ok_or_else(|| SatelliteError::General(eyre!("Consumer not initialized")))?;
 
         processor.initialize().await?;
 
@@ -293,9 +293,7 @@ impl NatsStreamConsumer {
                 &self.config.stream_name,
             )
             .await
-            .map_err(|e| {
-                SatelliteError::General(anyhow::anyhow!("Failed to create consumer: {}", e))
-            })?;
+            .map_err(|e| SatelliteError::General(eyre!("Failed to create consumer: {}", e)))?;
 
         info!(
             group = %self.config.group_name,
@@ -335,51 +333,55 @@ impl NatsStreamConsumer {
     /// Read a batch of events from the NATS Stream
     async fn read_batch(
         &self,
-        consumer: &async_nats::jetstream::consumer::pull::Consumer,
+        consumer: &async_nats::jetstream::consumer::PullConsumer,
     ) -> SatelliteResult<Vec<Event>> {
-        let messages = consumer
+        let mut messages = consumer
             .batch()
             .max_messages(self.config.batch_size)
             .expires(self.config.block_timeout)
             .messages()
             .await
-            .map_err(|e| {
-                SatelliteError::General(anyhow::anyhow!("Failed to fetch messages: {}", e))
-            })?;
+            .map_err(|e| SatelliteError::General(eyre!("Failed to fetch messages: {}", e)))?;
 
         let mut events = Vec::new();
         let mut pending_acks = Vec::new();
 
-        while let Some(message) = messages.try_next().await.map_err(|e| {
-            SatelliteError::General(anyhow::anyhow!("Failed to receive message: {}", e))
-        })? {
-            match self.parse_message(&message) {
-                Ok(Some(event)) => {
-                    // Apply filters
-                    if self.config.filters.is_empty()
-                        || self.config.filters.iter().any(|f| f.matches(&event))
-                    {
-                        events.push(event);
-                        pending_acks.push(message);
-                    } else {
-                        // Filtered out, acknowledge immediately
-                        if let Err(e) = message.ack().await {
-                            error!("Failed to acknowledge filtered message: {}", e);
+        while let Some(msg) = messages.next().await {
+            match msg {
+                Ok(message) => {
+                    match self.parse_message(&message) {
+                        Ok(Some(event)) => {
+                            // Apply filters
+                            if self.config.filters.is_empty()
+                                || self.config.filters.iter().any(|f| f.matches(&event))
+                            {
+                                events.push(event);
+                                pending_acks.push(message);
+                            } else {
+                                // Filtered out, acknowledge immediately
+                                if let Err(e) = message.ack().await {
+                                    error!("Failed to acknowledge filtered message: {}", e);
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            // Invalid message, acknowledge to avoid redelivery
+                            if let Err(e) = message.ack().await {
+                                error!("Failed to acknowledge invalid message: {}", e);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed to parse message: {}", e);
+                            // NAK to retry later
+                            if let Err(e) = message.ack_with(AckKind::Nak(None)).await {
+                                error!("Failed to NAK message: {}", e);
+                            }
                         }
                     }
                 }
-                Ok(None) => {
-                    // Invalid message, acknowledge to avoid redelivery
-                    if let Err(e) = message.ack().await {
-                        error!("Failed to acknowledge invalid message: {}", e);
-                    }
-                }
                 Err(e) => {
-                    error!("Failed to parse message: {}", e);
-                    // NAK to retry later
-                    if let Err(e) = message.nak().await {
-                        error!("Failed to NAK message: {}", e);
-                    }
+                    error!("Error fetching message: {}", e);
+                    break;
                 }
             }
         }

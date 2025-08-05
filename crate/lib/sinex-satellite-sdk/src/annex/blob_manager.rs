@@ -42,7 +42,7 @@
 
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{bail, eyre, Context, Result};
 use sinex_db::models::{Blob, Event};
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::DbPool;

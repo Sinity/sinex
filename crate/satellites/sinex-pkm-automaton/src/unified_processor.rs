@@ -5,11 +5,11 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
 use sinex_db::repositories::DbPoolExt;
-use sinex_db::models::{Event, RawEvent, RpcPkmResponsePayload, RpcError};
+use sinex_db::models::{Event, RpcPkmResponsePayload, RpcError};
 use sinex_satellite_sdk::{
-    redis_stream_consumer::{
-        BatchProcessingResult, EventBatchProcessor, RedisStreamConsumer,
-        EventFilter as StreamEventFilter},
+    nats_stream_consumer::{
+        BatchProcessingResult as NatsBatchProcessingResult, EventBatchProcessor as NatsEventBatchProcessor, NatsStreamConsumer,
+        EventFilter as NatsEventFilter, NatsConsumerConfig},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -33,7 +33,7 @@ impl PkmServiceProcessor {
     }
 
     /// Handle PKM RPC request
-    async fn handle_pkm_request(&self, event: &RawEvent, request: Value) -> SatelliteResult<Value> {
+    async fn handle_pkm_request(&self, event: &Event, request: Value) -> SatelliteResult<Value> {
         let service = self.service.as_ref().unwrap();
         let method = request.get("method").and_then(|v| v.as_str()).unwrap_or("");
         let params = request.get("params").cloned().unwrap_or(json!({}));
@@ -44,10 +44,10 @@ impl PkmServiceProcessor {
             "pkm.link_entities" => self.handle_link_entities(service, params).await,
             "pkm.register_source_material" => self.handle_register_source_material(service, params).await,
             "pkm.get_recent_materials" => self.handle_get_recent_materials(service, params).await,
-            _ => Err(SatelliteError::General(eyre!(
+            _ => Err(SatelliteError::General(anyhow::anyhow!(
                 "Unknown PKM method: {}",
                 method
-            )))}
+            ).into()))}
     }
 
     async fn handle_create_note(
@@ -241,8 +241,8 @@ impl PkmServiceProcessor {
 }
 
 #[async_trait]
-impl EventBatchProcessor for PkmServiceProcessor {
-    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<BatchProcessingResult> {
+impl NatsEventBatchProcessor for PkmServiceProcessor {
+    async fn process_batch(&mut self, events: Vec<Event>) -> SatelliteResult<NatsBatchProcessingResult> {
         let mut successful_ids = Vec::new();
         let mut failed_ids = Vec::new();
 
@@ -260,7 +260,7 @@ impl EventBatchProcessor for PkmServiceProcessor {
                                 response: Some(response),
                                 error: None,
                                 service: "pkm".to_string(),
-                            });
+                            })?;
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -279,7 +279,7 @@ impl EventBatchProcessor for PkmServiceProcessor {
                                     message: format!("PKM service error: {}", e),
                                 }),
                                 service: "pkm".to_string(),
-                            });
+                            })?;
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -292,11 +292,11 @@ impl EventBatchProcessor for PkmServiceProcessor {
             }
         }
 
-        Ok(BatchProcessingResult {
-            successful_ids,
-            failed_ids,
-            retry_ids: Vec::new(),
-            checkpoint_data: None})
+        Ok(NatsBatchProcessingResult {
+            processed: successful_ids.len(),
+            skipped: 0,
+            failed: failed_ids.len(),
+        })
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {

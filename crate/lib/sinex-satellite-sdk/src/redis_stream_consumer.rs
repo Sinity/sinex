@@ -4,6 +4,7 @@
 //! to consume events from Redis Streams in real-time.
 
 use async_trait::async_trait;
+use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
 use std::collections::HashMap;

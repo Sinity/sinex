@@ -54,6 +54,7 @@
 //! - **Network Streams**: Process packets in real-time, finalize on connection close
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
+use color_eyre::eyre::eyre;
 use sinex_db::models::Event;
 use sinex_db::repositories::DbPoolExt;
 use sinex_db::SqlxPgPool as PgPool;

@@ -45,6 +45,7 @@ use crate::{
 };
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
 use sinex_db::telemetry::telemetry::TelemetryAccumulator;

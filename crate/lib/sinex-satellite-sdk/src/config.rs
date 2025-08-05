@@ -107,7 +107,6 @@ pub struct SatelliteConfig {
     /// This field is optional - not all automata require database access.
     /// Ingestors typically don't need this as they communicate via gRPC.
     #[validate(url(message = "Invalid database URL"))]
-    #[builder(default)]
     pub database_url: Option<String>,
 
     /// Database connection pool size.
@@ -134,7 +133,6 @@ pub struct SatelliteConfig {
 
     /// Replay mode configuration
     #[validate(nested)]
-    #[builder(default)]
     pub replay: Option<ReplayConfig>,
 }
 

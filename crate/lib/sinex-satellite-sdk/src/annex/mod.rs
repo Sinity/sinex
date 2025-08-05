@@ -60,7 +60,7 @@
 //! - Filesystem cache for small annexed files
 
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn};
