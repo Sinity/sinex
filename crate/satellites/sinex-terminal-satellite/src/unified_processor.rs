@@ -804,7 +804,7 @@ impl StatefulStreamProcessor for TerminalProcessor {
 
 // Implementation of ExplorationProvider for diagnostics
 impl ExplorationProvider for TerminalProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
+    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
         let recent_activity = if let Some(ref state) = self.last_state {
             state
                 .recent_activity
@@ -876,7 +876,7 @@ impl ExplorationProvider for TerminalProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
         // In a real implementation, this would query the database for scan history
         // For now, return empty as this requires database access
         Ok(vec![])
@@ -885,7 +885,7 @@ impl ExplorationProvider for TerminalProcessor {
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>> {
+    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
         // In a real implementation, this would compare terminal state with Sinex events
         let (start_time, end_time) = time_range.unwrap_or_else(|| {
             let now = Utc::now();
@@ -933,7 +933,7 @@ impl ExplorationProvider for TerminalProcessor {
         &self,
         path: &Utf8PathBuf,
         format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,

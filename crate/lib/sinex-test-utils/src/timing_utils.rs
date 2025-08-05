@@ -171,8 +171,8 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for event count failed")
-                .wrap_err_with("expected_count", expected_count)
-                .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
                 .with_source(e)
                 .with_operation("wait_for_event_count")
         })?;
@@ -208,9 +208,9 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for source events failed")
-                .wrap_err_with("source", &source)
-                .wrap_err_with("expected_count", expected_count)
-                .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("source", &source)
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
                 .with_source(e)
                 .with_operation("wait_for_source_events")
         })?;
@@ -235,7 +235,7 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Test condition wait failed")
-                .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
                 .with_source(e)
                 .with_operation("wait_for_condition")
         })
@@ -267,8 +267,8 @@ impl WaitHelpers {
             .await
             .map_err(|e| {
                 SinexError::timeout("Multiple conditions wait failed")
-                    .wrap_err_with("condition_count", condition_count)
-                    .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                    .with_context("condition_count", condition_count)
+                    .with_context("timeout_duration", format!("{}s", timeout_secs))
                     .with_source(e)
                     .with_operation("wait_for_multiple_conditions")
             })

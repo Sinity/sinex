@@ -88,7 +88,7 @@ impl IngestdConfig {
         batch_timeout_secs: u64,
         dry_run: bool,
     ) -> IngestdResult<Self> {
-        let mut builder = Self::builder()
+        let builder = Self::builder()
             .nats_url(nats_url)
             .socket_path(socket_path)
             .database_pool_size(pool_size)
@@ -96,9 +96,11 @@ impl IngestdConfig {
             .batch_timeout_secs(batch_timeout_secs)
             .dry_run(dry_run);
 
-        if let Some(db_url) = database_url {
-            builder = builder.database_url(db_url);
-        }
+        let builder = if let Some(db_url) = database_url {
+            builder.database_url(db_url)
+        } else {
+            builder
+        };
 
         Ok(builder.build())
     }

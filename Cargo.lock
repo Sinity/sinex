@@ -3874,6 +3874,18 @@ dependencies = [
 
 [[package]]
 name = "sea-query"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4fd043b8117af233e221f73e3ea8dfbc8e8c3c928017c474296db45c649105c"
+dependencies = [
+ "chrono",
+ "inherent",
+ "sea-query-derive",
+ "uuid",
+]
+
+[[package]]
+name = "sea-query"
 version = "0.32.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64c91783d1514b99754fc6a4079081dcc2c587dadbff65c48c7f62297443536a"
@@ -4351,6 +4363,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "futures",
  "hyper 1.6.0",
  "hyper-util",
@@ -4401,6 +4414,7 @@ dependencies = [
  "ahash",
  "anyhow",
  "async-nats 0.33.0",
+ "bon",
  "camino",
  "clap",
  "dirs 5.0.1",
@@ -4524,6 +4538,7 @@ dependencies = [
  "sinex-types",
  "sqlx",
  "sysinfo 0.31.4",
+ "tempfile",
  "thiserror 2.0.12",
  "time",
  "tokio",
@@ -4673,6 +4688,7 @@ dependencies = [
  "bon",
  "camino",
  "chrono",
+ "color-eyre",
  "divan",
  "fastrand",
  "futures",
@@ -4688,6 +4704,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rstest",
+ "sea-query 0.31.1",
  "serde",
  "serde_json",
  "sha2",

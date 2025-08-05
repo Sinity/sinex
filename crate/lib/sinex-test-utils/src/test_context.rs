@@ -275,8 +275,8 @@ impl TestContext {
             .map_err(|e| {
                 SinexError::database("Failed to insert event")
                     .with_source(e)
-                    .wrap_err_with("event_type", &event.event_type)
-                    .wrap_err_with("source", &event.source)
+                    .with_context("event_type", &event.event_type)
+                    .with_context("source", &event.source)
             })?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().await.push(id.as_ulid().clone());
@@ -942,7 +942,7 @@ impl<'ctx> PerformanceFixtures<'ctx> {
             .map_err(|e| {
                 SinexError::unknown("Failed to generate dataset with custom size")
                     .with_source(e)
-                    .wrap_err_with("count", count)
+                    .with_context("count", count)
             })
     }
 
@@ -1701,7 +1701,7 @@ impl<'ctx> CheckpointBuilder<'ctx> {
         .await
         .map_err(|e| SinexError::database("Failed to insert checkpoint")
             .with_source(e)
-            .wrap_err_with("processor", &processor_name))?;
+            .with_context("processor", &processor_name))?;
 
         Ok(checkpoint_id)
     }

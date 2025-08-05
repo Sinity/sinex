@@ -88,7 +88,7 @@ impl StatefulStreamProcessor for AnalyticsProcessor {
 }
 
 impl ExplorationProvider for AnalyticsProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
+    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
         Ok(SourceState {
             description: "Analytics processor - processes analytics requests".into(),
             last_updated: Utc::now(),
@@ -100,14 +100,14 @@ impl ExplorationProvider for AnalyticsProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
         time_range: Option<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>> {
+    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
         let now = Utc::now();
         let range = time_range.unwrap_or((now - chrono::Duration::hours(24), now));
         
@@ -125,7 +125,7 @@ impl ExplorationProvider for AnalyticsProcessor {
         &self,
         _path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         Ok(())
     }
 }

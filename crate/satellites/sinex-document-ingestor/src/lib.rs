@@ -267,7 +267,7 @@ impl StatefulStreamProcessor for DocumentProcessor {
 }
 
 impl ExplorationProvider for DocumentProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
+    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
         Ok(SourceState {
             description: "Document ingestor for processing files into source material registry"
                 .to_string(),
@@ -282,7 +282,7 @@ impl ExplorationProvider for DocumentProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
         // Document processor doesn't maintain ingestion history
         Ok(Vec::new())
     }
@@ -290,7 +290,7 @@ impl ExplorationProvider for DocumentProcessor {
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>> {
+    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
         Ok(CoverageAnalysis {
             coverage_percentage: 100.0, // All accessible files are processed
             missing_count: 0,
@@ -307,7 +307,7 @@ impl ExplorationProvider for DocumentProcessor {
         &self,
         _output_path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Document processor doesn't support data export
         Err("Document processor does not support data export".into())
     }

@@ -153,8 +153,8 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => {
                     return Err(SinexError::channel_send("Channel closed")
-                        .wrap_err_with("queue_size", queue.len())
-                        .wrap_err_with("operation", "drain_queue"));
+                        .with_context("queue_size", queue.len())
+                        .with_context("operation", "drain_queue"));
                 }
             }
         }
@@ -169,14 +169,14 @@ impl<T: Send> ChannelSenderExt<T> for mpsc::Sender<T> {
                 } else {
                     Err(
                         SinexError::resource_exhausted("Channel full and queue at limit")
-                            .wrap_err_with("max_queue", max_queue)
-                            .wrap_err_with("queue_size", queue.len()),
+                            .with_context("max_queue", max_queue)
+                            .with_context("queue_size", queue.len()),
                     )
                 }
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
                 Err(SinexError::channel_send("Channel closed")
-                    .wrap_err_with("operation", "send_after_drain"))
+                    .with_context("operation", "send_after_drain"))
             }
         }
     }

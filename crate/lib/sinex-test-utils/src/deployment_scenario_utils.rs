@@ -207,7 +207,7 @@ impl ConfigCompatibilityTester {
     pub async fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
             sinex_types::error::SinexError::io("temp_directory")
-                .wrap_err_with("source", e.to_string())
+                .with_context("source", e.to_string())
         })?;
 
         let mut tester = Self {
@@ -838,7 +838,7 @@ impl ConfigCompatibilityTester {
                 .await
                 .map_err(|e| {
                     sinex_types::error::SinexError::io(config_path.display().to_string())
-                        .wrap_err_with("source", e.to_string())
+                        .with_context("source", e.to_string())
                 })?;
         }
 

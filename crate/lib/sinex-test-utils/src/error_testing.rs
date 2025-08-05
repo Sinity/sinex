@@ -216,9 +216,9 @@ impl<'ctx> ValidationTester<'ctx> {
                     .map_err(|e| SinexError::unknown(format!("Validation test case failed: {}", e)))
                     .map_err(|e| {
                         SinexError::validation("Batch validation case failed")
-                            .wrap_err_with("case_name", case_name)
-                            .wrap_err_with("expected_error", error_text)
-                            .wrap_err_with("payload", payload.to_string())
+                            .with_context("case_name", case_name)
+                            .with_context("expected_error", error_text)
+                            .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
                     })?;
@@ -228,8 +228,8 @@ impl<'ctx> ValidationTester<'ctx> {
                     .map_err(|e| SinexError::unknown(format!("Valid payload test failed: {}", e)))
                     .map_err(|e| {
                         SinexError::validation("Expected valid payload but validation failed")
-                            .wrap_err_with("case_name", case_name)
-                            .wrap_err_with("payload", payload.to_string())
+                            .with_context("case_name", case_name)
+                            .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
                     })?;
@@ -649,8 +649,8 @@ mod tests {
     async fn test_error_context_builder(ctx: TestContext) -> crate::Result<()> {
         // Test using production error context patterns
         let error = SinexError::validation("Test validation error")
-            .wrap_err_with("field", "username")
-            .wrap_err_with("value", "invalid@user")
+            .with_context("field", "username")
+            .with_context("value", "invalid@user")
             .with_operation("user_registration");
 
         let error_str = error.to_string();

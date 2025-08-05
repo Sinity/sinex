@@ -326,7 +326,6 @@ pub enum SatelliteError {
     #[error("gRPC transport error: {0}")]
     GrpcTransport(#[from] tonic::transport::Error),
 
-
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
 

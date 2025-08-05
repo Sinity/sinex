@@ -1,7 +1,7 @@
 //! Service container that holds all service instances
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Context, Result};
+use color_eyre::eyre::{Context, Result, WrapErr};
 use sinex_db::create_pool;
 use sinex_db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_satellite_sdk::annex::BlobManager;
@@ -41,7 +41,7 @@ impl ServiceContainer {
 
         // Ensure the annex directory exists
         std::fs::create_dir_all(&annex_path)
-            .wrap_err_with(|| format!("Failed to create annex directory: {:?}", annex_path))?;
+            .with_context(|| format!("Failed to create annex directory: {:?}", annex_path))?;
 
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,

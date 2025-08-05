@@ -376,7 +376,7 @@ async fn create_user_session_fixture(
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
                 .with_source(e)
-                .wrap_err_with("fixture", "user_session")
+                .with_context("fixture", "user_session")
         })?;
         event_ids.push(
             inserted
@@ -412,7 +412,7 @@ async fn create_user_session_fixture(
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
                 .with_source(e)
-                .wrap_err_with("fixture", "user_session")
+                .with_context("fixture", "user_session")
         })?;
         event_ids.push(
             inserted
@@ -444,7 +444,7 @@ async fn create_user_session_fixture(
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
                 .with_source(e)
-                .wrap_err_with("fixture", "user_session")
+                .with_context("fixture", "user_session")
         })?;
         event_ids.push(
             inserted
@@ -596,7 +596,7 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
         let op_id = Ulid::from_str(&op_id_str).map_err(|e| {
             SinexError::parse("Invalid ULID")
                 .with_source(e)
-                .wrap_err_with("ulid_str", &op_id_str)
+                .with_context("ulid_str", &op_id_str)
         })?;
 
         sqlx::query!(
@@ -672,7 +672,7 @@ async fn create_performance_dataset_fixture(
             let inserted = pool.events().insert(event.clone()).await.map_err(|e| {
                 SinexError::database("Failed to insert event")
                     .with_source(e)
-                    .wrap_err_with("fixture", "user_session")
+                    .with_context("fixture", "user_session")
             })?;
             event_ids.push(
                 inserted
@@ -812,7 +812,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
             pool.events().insert(event.clone()).await.map_err(|e| {
                 SinexError::database("Failed to insert event")
                     .with_source(e)
-                    .wrap_err_with("fixture", "user_session")
+                    .with_context("fixture", "user_session")
             })?;
         }
     }
@@ -852,7 +852,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
         let op_id = Ulid::from_str(&op_id_str).map_err(|e| {
             SinexError::parse("Invalid ULID")
                 .with_source(e)
-                .wrap_err_with("ulid_str", &op_id_str)
+                .with_context("ulid_str", &op_id_str)
         })?;
 
         if i % 2 == 0 {

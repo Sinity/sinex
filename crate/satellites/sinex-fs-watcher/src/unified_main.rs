@@ -16,7 +16,7 @@ use camino::Utf8PathBuf;
 use tracing::info;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let args = ProcessorCli::parse();
 
     // Initialize logging based on verbosity
