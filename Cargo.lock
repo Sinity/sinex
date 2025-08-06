@@ -4796,6 +4796,7 @@ dependencies = [
  "serde_json",
  "similar-asserts",
  "sinex-db",
+ "sinex-satellite-sdk",
  "sinex-test-utils",
  "sinex-types",
  "tokio",

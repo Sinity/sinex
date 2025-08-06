@@ -149,7 +149,7 @@ impl ResourceExhaustionMetrics {
 // =============================================================================
 
 /// Test behavior when database connection pool is exhausted
-#[sinex_test]
+#[sinex_bench]
 async fn test_connection_pool_exhaustion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = ResourceExhaustionMetrics::new();
@@ -330,7 +330,7 @@ async fn test_connection_pool_exhaustion(ctx: TestContext) -> color_eyre::eyre::
 }
 
 /// Test memory pressure scenarios
-#[sinex_test]
+#[sinex_bench]
 async fn test_memory_pressure_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = ResourceExhaustionMetrics::new();
@@ -517,7 +517,7 @@ async fn test_memory_pressure_scenarios(ctx: TestContext) -> color_eyre::eyre::R
 }
 
 /// Test Redis stream exhaustion scenarios
-#[sinex_test]
+#[sinex_bench]
 async fn test_redis_stream_exhaustion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut metrics = ResourceExhaustionMetrics::new();
@@ -711,7 +711,7 @@ async fn test_redis_stream_exhaustion(ctx: TestContext) -> color_eyre::eyre::Res
 }
 
 /// Test concurrent resource exhaustion
-#[sinex_test]
+#[sinex_bench]
 async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let shared_metrics = Arc::new(Mutex::new(ResourceExhaustionMetrics::new()));

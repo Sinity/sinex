@@ -190,7 +190,7 @@ publish = false
 sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
 sinex-db = { path = "crate/lib/sinex-db" }
 sinex-types = { path = "crate/lib/sinex-types" }
-# sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Not needed for integration tests
+sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Needed for checkpoint property tests
 
 # Core dependencies for tests
 tokio = { workspace = true }

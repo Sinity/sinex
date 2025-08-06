@@ -170,7 +170,7 @@ impl BaselineTracker {
 // =============================================================================
 
 /// Establish baseline for basic database operations
-#[sinex_test]
+#[sinex_bench]
 async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
@@ -361,7 +361,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_
 }
 
 /// Establish baseline for Redis stream operations
-#[sinex_test]
+#[sinex_bench]
 async fn test_establish_redis_stream_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let redis_client = RedisStreamClient::new("redis://localhost:6379")?;
     let mut redis_conn = redis_client.get_connection().await?;
@@ -538,7 +538,7 @@ async fn test_establish_redis_stream_baselines(ctx: TestContext) -> color_eyre::
 }
 
 /// Establish baseline for concurrent operations
-#[sinex_test]
+#[sinex_bench]
 async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();
@@ -656,7 +656,7 @@ async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> colo
 }
 
 /// Establish baseline for system recovery operations
-#[sinex_test]
+#[sinex_bench]
 async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut tracker = BaselineTracker::new();

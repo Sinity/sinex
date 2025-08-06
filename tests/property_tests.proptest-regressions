@@ -4,6 +4,6 @@
 #
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
-cc 1b0cee77c0659faf6ffbf4a8f597557f73618f62d4c672a5e956f9625afc808b # shrinks to ulid_str = "AA00AAAAA0A00AA0AAP00AAA0A"
-cc dde8d1777ef367d7c7766327e4185b046d0d9c12637c0193b7364d6d84953e41 # shrinks to source = EventSource("0"), event_type = EventType("A"), payload = Null
-cc b5bef62b3fbc8780edc0a866d7f9da94a8aeee9d1c5ffbffdc9709fb9864a1cd # shrinks to count = 854
+cc e70315e3809fc3c22e29632d1477f01534e8a03ba6fa642d4ba7b6bf37daad70 # shrinks to source = EventSource("-"), event_type = EventType("A"), payload = Null
+cc 5455ec74987abb84df3ce3ca23c690bad5327b07ab36926d46649a7eb8df44b1 # shrinks to ulid_str = "J00A0A0M0M0M00A0A000000000"
+cc b3c45f99d540bfb386b40b112ebff30badf4007825b5555f497b1694927b0c1b # shrinks to count = 208

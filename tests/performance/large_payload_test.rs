@@ -180,7 +180,7 @@ async fn test_progressive_payload_sizes(ctx: TestContext) -> color_eyre::eyre::R
 // Deeply Nested JSON Tests
 // =============================================================================
 
-#[sinex_test]
+#[sinex_bench]
 async fn test_deeply_nested_json_structures(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing deeply nested JSON structures...");
 
@@ -419,7 +419,7 @@ async fn test_large_arrays_and_objects(ctx: TestContext) -> color_eyre::eyre::Re
 // Memory Pressure Tests
 // =============================================================================
 
-#[sinex_test]
+#[sinex_bench]
 async fn test_concurrent_large_payload_memory_pressure(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     println!("Testing concurrent large payload memory pressure...");
 

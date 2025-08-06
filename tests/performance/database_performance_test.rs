@@ -159,7 +159,7 @@ impl DatabaseMetrics {
 // =============================================================================
 
 /// Test performance of different query patterns
-#[sinex_test]
+#[sinex_bench]
 async fn test_query_performance_patterns(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
@@ -312,7 +312,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> color_eyre::eyre::
 }
 
 /// Test database performance under concurrent load
-#[sinex_test]
+#[sinex_bench]
 async fn test_concurrent_database_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
@@ -425,7 +425,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> color_eyre::e
 }
 
 /// Test database connection pool performance
-#[sinex_test]
+#[sinex_bench]
 async fn test_connection_pool_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();
@@ -575,7 +575,7 @@ async fn test_connection_pool_performance(ctx: TestContext) -> color_eyre::eyre:
 }
 
 /// Test transaction performance and isolation
-#[sinex_test]
+#[sinex_bench]
 async fn test_transaction_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = DatabaseMetrics::new();

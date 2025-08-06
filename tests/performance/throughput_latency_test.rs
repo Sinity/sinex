@@ -94,7 +94,7 @@ impl PerformanceMetrics {
 // =============================================================================
 
 /// Test maximum event ingestion throughput
-#[sinex_test]
+#[sinex_bench]
 async fn test_event_ingestion_throughput(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let mut metrics = PerformanceMetrics::new();
@@ -179,7 +179,7 @@ async fn test_event_ingestion_throughput(ctx: TestContext) -> color_eyre::eyre::
 }
 
 /// Test event ingestion latency under various loads
-#[sinex_test]
+#[sinex_bench]
 async fn test_event_ingestion_latency_scaling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
     let load_levels = vec![1, 10, 50, 100, 200];
@@ -254,7 +254,7 @@ async fn test_event_ingestion_latency_scaling(ctx: TestContext) -> color_eyre::e
 // =============================================================================
 
 /// Test database query performance across different query patterns
-#[sinex_test]
+#[sinex_bench]
 async fn test_database_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
@@ -403,7 +403,7 @@ async fn test_database_query_performance(ctx: TestContext) -> color_eyre::eyre::
 // =============================================================================
 
 /// Test system performance under concurrent access
-#[sinex_test]
+#[sinex_bench]
 async fn test_concurrent_access_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
@@ -534,7 +534,7 @@ async fn test_concurrent_access_performance(ctx: TestContext) -> color_eyre::eyr
 // =============================================================================
 
 /// Test Redis stream processing performance
-#[sinex_test]
+#[sinex_bench]
 async fn test_stream_processing_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use sinex_satellite_sdk::RedisStreamClient;
 
@@ -672,7 +672,7 @@ async fn test_stream_processing_performance(ctx: TestContext) -> color_eyre::eyr
 // =============================================================================
 
 /// Test end-to-end performance across the entire system
-#[sinex_test]
+#[sinex_bench]
 async fn test_end_to_end_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let pool = ctx.pool().clone();
 
