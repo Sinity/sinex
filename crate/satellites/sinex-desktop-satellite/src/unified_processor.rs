@@ -531,7 +531,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
 // Implementation of ExplorationProvider for diagnostics
 impl ExplorationProvider for DesktopProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         let recent_activity = if let Some(ref state) = self.last_state {
             state
                 .recent_activity
@@ -593,7 +593,7 @@ impl ExplorationProvider for DesktopProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         // In a real implementation, this would query the database for scan history
         // For now, return empty as this requires database access
         Ok(vec![])
@@ -602,7 +602,7 @@ impl ExplorationProvider for DesktopProcessor {
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         // In a real implementation, this would compare desktop state with Sinex events
         let (start_time, end_time) = time_range.unwrap_or_else(|| {
             let now = Utc::now();
@@ -643,7 +643,7 @@ impl ExplorationProvider for DesktopProcessor {
         &self,
         path: &Utf8PathBuf,
         format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,

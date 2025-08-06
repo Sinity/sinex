@@ -8,6 +8,7 @@ description = "Unified document ingestor for all file types using source materia
 mimalloc = { workspace = true }
 anyhow = "1.0"
 async-trait = "0.1"
+color-eyre.workspace = true
 camino = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4.0", features = ["derive"] }

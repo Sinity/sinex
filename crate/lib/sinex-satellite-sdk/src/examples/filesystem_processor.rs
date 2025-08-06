@@ -3,6 +3,7 @@
 //! This example demonstrates how to refactor an existing EventSource to use
 //! the new unified StatefulStreamProcessor interface from Part 16.
 
+use color_eyre::eyre;
 use crate::{
     cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
@@ -389,7 +390,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 }
 
 impl ExplorationProvider for FilesystemProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         let recent_activity = if let Some(ref state) = self.last_state {
             vec![ActivityEntry {
                 timestamp: state.captured_at,
@@ -433,7 +434,7 @@ impl ExplorationProvider for FilesystemProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         // In a real implementation, this would query the database for scan history
         Ok(vec![])
     }
@@ -441,7 +442,7 @@ impl ExplorationProvider for FilesystemProcessor {
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         // In a real implementation, this would compare filesystem state with Sinex events
         let now = Utc::now();
         let hour_ago = now - chrono::Duration::hours(1);
@@ -465,7 +466,7 @@ impl ExplorationProvider for FilesystemProcessor {
         &self,
         path: &Utf8PathBuf,
         format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,

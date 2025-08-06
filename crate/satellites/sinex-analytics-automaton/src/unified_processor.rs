@@ -1,6 +1,7 @@
 //! Unified StatefulStreamProcessor implementation for Analytics Automaton
 
 use async_trait::async_trait;
+use color_eyre::eyre;
 use chrono::Utc;
 use sinex_satellite_sdk::{
     cli::{CoverageAnalysis, ExplorationProvider, IngestionHistoryEntry, SourceState, ExportFormat},
@@ -88,7 +89,7 @@ impl StatefulStreamProcessor for AnalyticsProcessor {
 }
 
 impl ExplorationProvider for AnalyticsProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
             description: "Analytics processor - processes analytics requests".into(),
             last_updated: Utc::now(),
@@ -100,14 +101,14 @@ impl ExplorationProvider for AnalyticsProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
         time_range: Option<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         let now = Utc::now();
         let range = time_range.unwrap_or((now - chrono::Duration::hours(24), now));
         
@@ -125,7 +126,7 @@ impl ExplorationProvider for AnalyticsProcessor {
         &self,
         _path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         Ok(())
     }
 }

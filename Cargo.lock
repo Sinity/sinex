@@ -4184,12 +4184,12 @@ dependencies = [
 name = "sinex-analytics-automaton"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum 0.7.9",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4284,6 +4284,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "copypasta",
  "dirs 5.0.1",
  "futures",
@@ -4312,6 +4313,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "mime_guess",
  "serde",
@@ -4327,11 +4329,11 @@ dependencies = [
 name = "sinex-fs-watcher"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "dirs 5.0.1",
  "glob",
  "mimalloc",
@@ -4559,11 +4561,11 @@ dependencies = [
 name = "sinex-search-automaton"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4603,11 +4605,11 @@ dependencies = [
 name = "sinex-system-satellite"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "dbus",
  "dbus-tokio",
  "dirs 5.0.1",
@@ -4652,11 +4654,11 @@ dependencies = [
 name = "sinex-terminal-satellite"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "dirs 5.0.1",
  "futures",
  "glob",

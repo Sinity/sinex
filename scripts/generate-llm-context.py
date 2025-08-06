@@ -40,7 +40,7 @@ class LLMContextGenerator:
         if self.use_ttok:
             try:
                 result = subprocess.run(
-                    ["ttok", "-"], 
+                    ["ttok"], 
                     input=text.encode('utf-8'),
                     capture_output=True,
                     text=False
