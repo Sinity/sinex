@@ -29,6 +29,9 @@ members = [
   "crate/satellites/sinex-search-automaton",
   "crate/satellites/sinex-content-automaton",
   
+  # Test modules are integration tests within the main workspace
+  # "test/*", # Removed - tests are integration tests, not separate workspace members
+  
   # Disabled/folded crates
   # "crate/sinex-annex", # Folded into sinex-satellite-sdk
   # "crate/sinex-preflight", # Folded into sinex-satellite-sdk
@@ -171,6 +174,40 @@ hex = "0.4"
 
 # Database (for Atuin integration)
 rusqlite = { version = "0.32.1", features = ["bundled"] }
+
+# Workspace-level integration tests package
+[package]
+name = "sinex-workspace"
+version = "0.4.2"
+edition = "2021"
+authors = ["Sinex Exocortex Contributors"]
+repository = "https://github.com/sinex/exocortex"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dependencies]
+# Test utilities and dependencies for workspace-level integration tests
+sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
+sinex-db = { path = "crate/lib/sinex-db" }
+sinex-types = { path = "crate/lib/sinex-types" }
+# sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Not needed for integration tests
+
+# Core dependencies for tests
+tokio = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+color-eyre = { workspace = true }
+futures = { workspace = true }
+uuid = { workspace = true }
+tracing = { workspace = true }
+
+# Modern test infrastructure
+proptest = { workspace = true }
+rstest = { workspace = true }
+insta = { workspace = true }
+tracing-test = { workspace = true }  
+similar-asserts = { workspace = true }
+tokio-test = "0.4"
 
 # Speed-optimized profiles for development
 [profile.dev]

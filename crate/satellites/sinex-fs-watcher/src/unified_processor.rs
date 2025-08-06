@@ -94,6 +94,7 @@
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;

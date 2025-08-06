@@ -1,6 +1,6 @@
 //! Shared RPC method handlers
 
-use color_eyre::eyre::{Context, Result, WrapErr};
+use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_db::models::Entity;
 use sinex_db::models::Event;

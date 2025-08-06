@@ -8,6 +8,7 @@ use camino::Utf8PathBuf;
 use async_trait::async_trait;
 use camino::Utf8Path;
 use chrono::Utc;
+use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_db::models::Event;
 use sinex_satellite_sdk::{

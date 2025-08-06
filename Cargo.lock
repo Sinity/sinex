@@ -4417,6 +4417,7 @@ dependencies = [
  "bon",
  "camino",
  "clap",
+ "color-eyre",
  "dirs 5.0.1",
  "figment",
  "hex",
@@ -4486,13 +4487,13 @@ dependencies = [
 name = "sinex-rpc-dispatcher"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum 0.7.9",
  "byteorder",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4777,6 +4778,28 @@ dependencies = [
  "url",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "sinex-workspace"
+version = "0.4.2"
+dependencies = [
+ "chrono",
+ "color-eyre",
+ "futures",
+ "insta",
+ "proptest",
+ "rstest",
+ "serde_json",
+ "similar-asserts",
+ "sinex-db",
+ "sinex-test-utils",
+ "sinex-types",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-test",
+ "uuid",
 ]
 
 [[package]]

@@ -26,12 +26,12 @@ pub struct IngestdConfig {
 
     /// NATS URL for message bus
     #[validate(length(min = 1, message = "NATS URL cannot be empty"))]
-    #[builder(default = "nats://localhost:4222".into())]
+    #[builder(default = String::from("nats://localhost:4222"))]
     pub nats_url: String,
 
     /// Unix Domain Socket path for gRPC server
     #[validate(custom(function = "validate_socket_path", message = "Invalid socket path"))]
-    #[builder(default = "/run/sinex/ingest.sock".into())]
+    #[builder(default = String::from("/run/sinex/ingest.sock"))]
     pub socket_path: String,
 
     /// Batch size for database writes
@@ -68,12 +68,12 @@ pub struct IngestdConfig {
 
     /// NATS stream name for events
     #[validate(length(min = 1, message = "NATS stream name cannot be empty"))]
-    #[builder(default = "EVENTS".into())]
+    #[builder(default = String::from("EVENTS"))]
     pub nats_stream_name: String,
 
     /// NATS consumer durable name
     #[validate(length(min = 1, message = "NATS consumer name cannot be empty"))]
-    #[builder(default = "ingestd".into())]
+    #[builder(default = String::from("ingestd"))]
     pub nats_consumer_name: String,
 }
 
@@ -96,11 +96,8 @@ impl IngestdConfig {
             .batch_timeout_secs(batch_timeout_secs)
             .dry_run(dry_run);
 
-        let builder = if let Some(db_url) = database_url {
-            builder.database_url(db_url)
-        } else {
-            builder
-        };
+        let db_url = database_url.unwrap_or_else(default_database_url);
+        let builder = builder.database_url(db_url);
 
         Ok(builder.build())
     }
