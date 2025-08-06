@@ -4,7 +4,7 @@
 // performance against established baselines. Includes trend analysis,
 // statistical significance testing, and automated alerting capabilities.
 
-use crate::performance::baseline_performance_test::{
+use super::baseline_performance_test::{
     BaselineTracker, EnvironmentInfo, PerformanceBaseline,
 };
 use serde_json::json;

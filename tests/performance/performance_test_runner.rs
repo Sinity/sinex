@@ -5,9 +5,9 @@
 // Provides unified reporting and performance tracking capabilities.
 
 use sinex_test_utils::prelude::*;
-use crate::performance::baseline_performance_test::{BaselineTracker, EnvironmentInfo};
-use crate::performance::regression_detection_test::RegressionDetector;
-use crate::performance::bottleneck_identification_test::BottleneckDetector;
+use super::baseline_performance_test::{BaselineTracker, EnvironmentInfo};
+use super::regression_detection_test::RegressionDetector;
+use super::bottleneck_identification_test::BottleneckDetector;
 use redis::cmd;
 use serde_json::json;
 use sinex_db::queries::{EventQueries, CheckpointQueries};

@@ -61,15 +61,16 @@ pub mod utils {
     }
 
     /// Generate test data with specific characteristics
-    pub fn generate_adversarial_events(count: usize, attack_pattern: &str) -> Vec<RawEvent> {
+    /// Note: This function has been simplified due to test infrastructure changes
+    pub fn generate_adversarial_events(count: usize, attack_pattern: &str) -> Vec<serde_json::Value> {
         (0..count)
             .map(|_i| {
-                crate::sinex_test_utils::events::generic_adversarial_event(
-                    "adversarial_test",
-                    &format!("{}.attack", attack_pattern),
-                    create_malicious_payload(attack_pattern),
-                    Some("attack_v1.0"),
-                )
+                json!({
+                    "source": "adversarial_test",
+                    "event_type": format!("{}.attack", attack_pattern),
+                    "payload": create_malicious_payload(attack_pattern),
+                    "version": "attack_v1.0"
+                })
             })
             .collect()
     }
