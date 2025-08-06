@@ -173,11 +173,7 @@ impl<'ctx> ValidationTester<'ctx> {
         use sinex_types::domain::*;
         let result = self
             .ctx
-            .event()
-            .source(EventSource::new(source))
-            .type_(EventType::new(event_type))
-            .payload(payload)
-            .insert()
+            .create_test_event(source, event_type, payload)
             .await;
 
         result.assert_contains_error(expected_error)?;
@@ -193,11 +189,7 @@ impl<'ctx> ValidationTester<'ctx> {
     ) -> std::result::Result<Event, SinexError> {
         use sinex_types::domain::*;
         self.ctx
-            .event()
-            .source(EventSource::new(source))
-            .type_(EventType::new(event_type))
-            .payload(payload)
-            .insert()
+            .create_test_event(source, event_type, payload)
             .await
             .map_err(|e| SinexError::unknown(e.to_string()))
     }

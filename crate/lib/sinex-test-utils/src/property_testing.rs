@@ -9,6 +9,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use serde_json::{json, Value};
+use sinex_db::repositories::DbPoolExt;
 use sinex_types::error::SinexError;
 
 /// Property test strategies for common Sinex types
@@ -249,11 +250,7 @@ impl<'ctx> PropertyTester<'ctx> {
             // Property: All valid events should be creatable and insertable
             let event = self
                 .ctx
-                .event()
-                .source(source.as_str())
-                .type_(event_type.as_str())
-                .payload(payload)
-                .insert()
+                .create_test_event(&source, &event_type, payload)
                 .await
                 .map_err(|e| {
                     SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
@@ -281,11 +278,7 @@ impl<'ctx> PropertyTester<'ctx> {
             // Property: Inserted events should be retrievable
             let event = self
                 .ctx
-                .event()
-                .source(source.as_str())
-                .type_(event_type.as_str())
-                .payload(payload)
-                .insert()
+                .create_test_event(&source, &event_type, payload)
                 .await
                 .map_err(|e| {
                     SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
@@ -293,21 +286,28 @@ impl<'ctx> PropertyTester<'ctx> {
 
             // Should be findable by ID
             if let Some(event_id) = &event.id {
-                let by_id = self
-                    .ctx
-                    .events()
-                    .by_id(event_id.clone())
-                    .fetch_one()
-                    .await?;
+                let by_id = self.ctx.pool.events().get_by_id(event_id.clone()).await?;
                 assert!(by_id.is_some());
 
                 // Should be findable by source
-                let by_source = self.ctx.events().by_source(&source).fetch().await?;
+                let source_ref = sinex_types::domain::EventSource::from(source.as_str());
+                let by_source = self
+                    .ctx
+                    .pool
+                    .events()
+                    .get_by_source(&source_ref, Some(10), None)
+                    .await?;
                 assert!(by_source.iter().any(|e| e.id.as_ref() == Some(event_id)));
             }
 
             // Should be findable by type
-            let by_type = self.ctx.events().by_type(&event_type).fetch().await?;
+            let type_ref = sinex_types::domain::EventType::from(event_type.as_str());
+            let by_type = self
+                .ctx
+                .pool
+                .events()
+                .get_by_event_type(&type_ref, Some(10), None)
+                .await?;
             assert!(by_type.iter().any(|e| e.id == event.id));
         }
 
@@ -327,11 +327,7 @@ impl<'ctx> PropertyTester<'ctx> {
             // Property: Malicious payloads should be rejected or sanitized
             let result = self
                 .ctx
-                .event()
-                .source("security_test")
-                .type_("malicious.input")
-                .payload(malicious_payload)
-                .insert()
+                .create_test_event("security_test", "malicious.input", malicious_payload)
                 .await;
 
             // Either the event is rejected (preferred) or it's sanitized

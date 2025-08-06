@@ -217,7 +217,7 @@ pub(crate) async fn standard_user_session(
     let key = format!("standard_user_session_{}", ctx.test_name());
     let registry = get_registry().await;
 
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
     let fixture = registry
         .lock()
         .await
@@ -252,7 +252,7 @@ pub(crate) async fn user_session_with_params(
     );
     let registry = get_registry().await;
 
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
     let fixture = registry.lock().await.get_or_create(key.clone(), || {
         let pool = pool.clone();
         async move {
@@ -265,7 +265,7 @@ pub(crate) async fn user_session_with_params(
 
 /// Create an empty database fixture (useful for isolation tests)
 pub(crate) async fn empty_database(ctx: &TestContext) -> Result<FixtureHandle<()>> {
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
 
     // Clean any test data
     sqlx::query!("DELETE FROM core.events WHERE source LIKE 'test_%'")
@@ -285,7 +285,7 @@ pub(crate) async fn populated_checkpoints(
     let key = format!("populated_checkpoints_{}", ctx.test_name());
     let registry = get_registry().await;
 
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
     let fixture = registry
         .lock()
         .await
@@ -305,7 +305,7 @@ pub(crate) async fn error_scenarios(
     let key = format!("error_scenarios_{}", ctx.test_name());
     let registry = get_registry().await;
 
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
     let fixture = registry
         .lock()
         .await
@@ -338,7 +338,7 @@ pub(crate) async fn performance_dataset_with_size(
     );
     let registry = get_registry().await;
 
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
     let fixture = registry
         .lock()
         .await
@@ -731,16 +731,18 @@ pub(crate) async fn with_transaction_fixture<F, T>(ctx: &TestContext, fixture_fn
 where
     F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> BoxFuture<'a, Result<T>>,
 {
-    let tx = ctx.pool().begin().await?;
+    let mut tx = ctx.pool.begin().await?;
 
     // Create some fixture data in the transaction
-    let event = Event::from_payload(FileCreatedPayload {
-        path: "/test/transaction/file.txt".to_string(),
-        size: 0,
-        created_at: Utc::now(),
-        permissions: None,
-    });
-    let _record = ctx.pool().events().insert(event).await?;
+    let _event = ctx
+        .create_test_event(
+            "transaction_test",
+            "file.created",
+            json!({"path": "/test/transaction/file.txt", "size": 0}),
+        )
+        .await
+        .map_err(|e| SinexError::unknown(e.to_string()))?;
+    // Note: In a real transaction test, you'd use the transaction itself
 
     let result = fixture_fn(tx).await?;
 
@@ -768,7 +770,7 @@ pub(crate) async fn pre_warmed_database(
     let key = format!("pre_warmed_database_{}", ctx.test_name());
     let registry = get_registry().await;
 
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
     let fixture = registry
         .lock()
         .await
@@ -980,7 +982,7 @@ pub(crate) async fn validation_failures(ctx: &TestContext) -> Result<ValidationE
 pub(crate) async fn schema_violations(ctx: &TestContext) -> Result<SchemaViolationsFixture> {
     let key = format!("schema_violations_{}", ctx.test_name());
     let registry = get_registry().await;
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
 
     let fixture = registry
         .lock()
@@ -1019,7 +1021,7 @@ pub(crate) async fn schema_violations(ctx: &TestContext) -> Result<SchemaViolati
 pub(crate) async fn malformed_events(ctx: &TestContext) -> Result<MalformedEventsFixture> {
     let key = format!("malformed_events_{}", ctx.test_name());
     let registry = get_registry().await;
-    let pool = ctx.pool().clone();
+    let pool = ctx.pool.clone();
 
     let fixture = registry
         .lock()
@@ -1085,7 +1087,7 @@ macro_rules! fixture {
             };
 
             let registry = get_registry().await;
-            let pool = ctx.pool().clone();
+            let pool = ctx.pool.clone();
 
             let fixture = registry
                 .lock()
@@ -1167,14 +1169,18 @@ mod tests {
     #[sinex_test]
     async fn test_empty_database_fixture(ctx: TestContext) -> Result<()> {
         // Insert some test data
-        ctx.event().source("test").type_("test").insert().await?;
-        ctx.event().source("test_2").type_("test").insert().await?;
+        ctx.create_test_event("test", "test", json!({})).await?;
+        ctx.create_test_event("test_2", "test", json!({})).await?;
 
         // Create empty database fixture
         let _empty = empty_database(&ctx).await?;
 
         // Should have cleaned test data
-        let count = ctx.events().by_source("test").count().await?;
+        let count = ctx
+            .pool
+            .events()
+            .count_by_source(&sinex_types::domain::EventSource::from("test"))
+            .await?;
         assert_eq!(count, 0, "Test data should be cleaned");
 
         Ok(())

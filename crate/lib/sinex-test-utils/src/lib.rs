@@ -10,26 +10,22 @@
 //!
 //! #[sinex_test]
 //! async fn test_filesystem_event(ctx: TestContext) -> Result<()> {
-//!     // Create events with fluent builders
-//!     let event = ctx.event()
-//!         .filesystem()
-//!         .path("/data/file.txt")
-//!         .size(1024)
-//!         .created()
-//!         .insert()
+//!     // Create events using production Event API - no wrappers
+//!     let event = ctx.create_test_event(
+//!         "fs-watcher",
+//!         "file.created",
+//!         json!({"path": "/data/file.txt", "size": 1024})
+//!     ).await?;
+//!     
+//!     // Query with direct repository access
+//!     let events = ctx.pool.events()
+//!         .get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None)
 //!         .await?;
 //!     
-//!     // Query with type-safe builders
-//!     let events = ctx.events()
-//!         .by_source("fs")
-//!         .limit(10)
-//!         .fetch()
-//!         .await?;
-//!     
-//!     // Rich assertions with context
+//!     // Rich assertions with context  
 //!     ctx.assert("file creation")
 //!         .eq(&events.len(), &1)?
-//!         .that(events[0].payload["size"] == 1024, "size should match")?;
+//!         .that(events[0].payload["size"] == json!(1024), "size should match")?;
 //!     
 //!     Ok(())
 //! }

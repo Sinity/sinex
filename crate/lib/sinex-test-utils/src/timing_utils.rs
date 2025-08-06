@@ -322,7 +322,7 @@ impl<'ctx> TimingUtils<'ctx> {
 
     /// Wait for specific number of events in database
     pub async fn wait_for_event_count(&self, expected_count: usize) -> Result<usize> {
-        WaitHelpers::wait_for_event_count(self.ctx.pool(), expected_count, 10).await
+        WaitHelpers::wait_for_event_count(&self.ctx.pool, expected_count, 10).await
     }
 
     /// Wait for events from specific source
@@ -331,7 +331,7 @@ impl<'ctx> TimingUtils<'ctx> {
         source: &str,
         expected_count: usize,
     ) -> Result<usize> {
-        WaitHelpers::wait_for_source_events(self.ctx.pool(), source, expected_count, 10).await
+        WaitHelpers::wait_for_source_events(&self.ctx.pool, source, expected_count, 10).await
     }
 
     /// Create event counter for coordination using production primitives
@@ -545,7 +545,7 @@ mod tests {
         }
 
         // Wait for event count
-        let count = WaitHelpers::wait_for_event_count(ctx.pool(), 5, 5).await?;
+        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 5, 5).await?;
         assert!(count >= 5);
 
         Ok(())
@@ -573,10 +573,10 @@ mod tests {
         }
 
         // Wait for specific source
-        let count_a = WaitHelpers::wait_for_source_events(ctx.pool(), "source-a", 3, 5).await?;
+        let count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 5).await?;
         assert_eq!(count_a, 3);
 
-        let count_b = WaitHelpers::wait_for_source_events(ctx.pool(), "source-b", 2, 5).await?;
+        let count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 5).await?;
         assert_eq!(count_b, 2);
 
         Ok(())
