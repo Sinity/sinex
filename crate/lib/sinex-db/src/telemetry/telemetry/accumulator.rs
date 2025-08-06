@@ -118,7 +118,7 @@
 //! use std::time::Duration;
 //!
 //! // Create event channel
-//! let (tx, rx) = mpsc::channel(100);
+//! let (tx, rx) = mpsc::unbounded_channel();
 //!
 //! // Create telemetry accumulator
 //! let telemetry = TelemetryAccumulator::new("my-component")
@@ -205,7 +205,6 @@
 
 use crate::models::Event;
 use chrono::{DateTime, Utc};
-use color_eyre::eyre;
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde_json::{json, Value as JsonValue};
@@ -709,6 +708,7 @@ pub fn record_function_telemetry(module: &str, function: &str, duration_ms: f64,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use color_eyre::eyre::eyre;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
     use sinex_types::domain::EventType;
@@ -716,8 +716,8 @@ mod tests {
     use tokio::sync::mpsc;
 
     #[sinex_test]
-    async fn test_telemetry_accumulator_basic(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+    async fn test_telemetry_accumulator_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("test-component")
             .with_event_sender(tx.clone())
             .with_interval(Duration::from_millis(100));
@@ -842,7 +842,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_state_reset(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("reset-test").with_event_sender(tx);
 
         // Record first batch
@@ -912,7 +912,7 @@ mod tests {
         ctx: TestContext,
         #[case] name: &str,
         #[case] values: Vec<f64>,
-    ) -> Result<()> {
+    ) -> color_eyre::eyre::Result<()> {
         // Test percentile edge cases
         let result = calculate_percentiles(&values);
 
@@ -962,7 +962,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_background_emitter(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("background-test")
             .with_event_sender(tx)
             .with_interval(Duration::from_millis(100));
@@ -997,7 +997,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_system_telemetry_emitter(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let emitter = SystemTelemetryEmitter::new(tx).with_interval(Duration::from_millis(100));
 
         // Emit system resources
@@ -1027,7 +1027,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_global_telemetry_integration(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("global-test").with_event_sender(tx);
 
         // Set as global
@@ -1067,7 +1067,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_no_data_emission(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("no-data-test").with_event_sender(tx);
 
         // Emit without recording any data
@@ -1088,7 +1088,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_concurrent_recording(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::channel(100);
+        let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("concurrent-test").with_event_sender(tx);
 
         // Spawn multiple tasks recording metrics concurrently
@@ -1206,7 +1206,7 @@ mod tests {
 
         #[sinex_bench]
         async fn bench_telemetry_emit(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
-            let (tx, _rx) = mpsc::channel(100);
+            let (tx, _rx) = mpsc::unbounded_channel();
             let accumulator = TelemetryAccumulator::new("bench").with_event_sender(tx);
 
             // Pre-populate with data

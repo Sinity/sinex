@@ -371,6 +371,7 @@ impl<'ctx> TimingUtils<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use color_eyre::eyre::eyre;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -536,11 +537,7 @@ mod tests {
     async fn test_wait_helpers_event_count(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Insert some events
         for i in 0..5 {
-            ctx.event()
-                .source("wait-test")
-                .type_("test.event")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("wait-test", "test.event", json!({"index": i}))
                 .await?;
         }
 
@@ -555,20 +552,12 @@ mod tests {
     async fn test_wait_helpers_source_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Insert events from different sources
         for i in 0..3 {
-            ctx.event()
-                .source("source-a")
-                .type_("test.event")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("source-a", "test.event", json!({"index": i}))
                 .await?;
         }
 
         for i in 0..2 {
-            ctx.event()
-                .source("source-b")
-                .type_("test.event")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("source-b", "test.event", json!({"index": i}))
                 .await?;
         }
 
@@ -696,11 +685,7 @@ mod tests {
 
         // Insert events
         for i in 0..3 {
-            ctx.event()
-                .source("timing-test")
-                .type_("integration")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("timing-test", "integration", json!({"index": i}))
                 .await?;
         }
 

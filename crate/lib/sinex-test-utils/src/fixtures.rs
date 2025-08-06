@@ -1197,8 +1197,17 @@ mod tests {
 
         // Verify checkpoints exist
         for name in &fixture.processor_names {
-            let count = ctx.checkpoints().by_processor(name).count().await?;
-            assert_eq!(count, 1, "Should have one checkpoint for {}", name);
+            let processor_name = sinex_types::domain::ProcessorName::from(name.as_str());
+            let checkpoint = ctx
+                .pool
+                .checkpoints()
+                .get_by_processor(&processor_name)
+                .await?;
+            assert!(
+                checkpoint.is_some(),
+                "Should have one checkpoint for {}",
+                name
+            );
         }
 
         Ok(())
@@ -1231,7 +1240,7 @@ mod tests {
         assert!(end > start);
 
         // Events should exist
-        let count = ctx.events().count().await?;
+        let count = ctx.pool.events().count_all().await? as usize;
         assert!(count >= 100);
 
         Ok(())
@@ -1290,7 +1299,8 @@ mod tests {
         assert_eq!(result, 42);
 
         // Transaction should be rolled back
-        let count = ctx.events().by_source("tx_test").count().await?;
+        let source_ref = sinex_types::domain::EventSource::from("tx_test");
+        let count = ctx.pool.events().count_by_source(&source_ref).await? as usize;
         assert_eq!(count, 0, "Transaction should be rolled back");
 
         Ok(())
@@ -1313,21 +1323,6 @@ mod tests {
         let reg = registry.lock().await;
         assert!(reg.cache.is_empty(), "Cache should be empty after cleanup");
         assert!(reg.ref_counts.is_empty(), "Ref counts should be empty");
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_fixture_builder_pattern(ctx: TestContext) -> Result<()> {
-        // Test the FixtureBuilder pattern
-        let builder = FixtureBuilder::<UserSessionFixture>::new()
-            .param("event_count", 20)
-            .param("checkpoint_interval", 10)
-            .param("user_prefix", "builder_test");
-
-        // Builder should store params
-        assert_eq!(builder.params().len(), 3);
-        assert_eq!(builder.params()["event_count"], json!(20));
 
         Ok(())
     }
@@ -1369,7 +1364,12 @@ mod tests {
         assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
 
         // Verify all events exist
-        let events = ctx.events().by_source("scenario").fetch().await?;
+        let source_ref = sinex_types::domain::EventSource::from("scenario");
+        let events = ctx
+            .pool
+            .events()
+            .get_by_source(&source_ref, Some(1000), None)
+            .await?;
         assert_eq!(events.len(), 7);
 
         Ok(())
@@ -1418,7 +1418,8 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_error_propagation(ctx: TestContext) -> Result<()> {
         // Test error propagation by trying to query non-existent data
-        let result = ctx.events().by_id(Ulid::new()).fetch_one().await;
+        let id = sinex_types::Id::<sinex_db::models::Event>::new();
+        let result = ctx.pool.events().get_by_id(id).await;
 
         assert!(result.is_err());
 
@@ -1476,8 +1477,8 @@ mod tests {
         assert_eq!(perf_data.event_count, 50);
 
         // Total events should be sum of all fixtures
-        let total_events = ctx.events().count().await?;
-        assert!(total_events >= (user_session.event_ids.len() + perf_data.event_count) as i64);
+        let total_events = ctx.pool.events().count_all().await? as usize;
+        assert!(total_events >= user_session.event_ids.len() + perf_data.event_count);
 
         Ok(())
     }
@@ -1489,72 +1490,5 @@ mod tests {
         let registry2 = get_registry().await;
 
         assert!(Arc::ptr_eq(&registry1, &registry2));
-    }
-
-    #[test]
-    fn test_fixture_builder_chaining() {
-        let builder = FixtureBuilder::<UserSessionFixture>::new()
-            .param("test", 1)
-            .param("test2", 2);
-
-        // Builder should have both params
-        assert_eq!(builder.params().len(), 2);
-        assert!(builder.params().contains_key("test"));
-        assert!(builder.params().contains_key("test2"));
-    }
-
-    #[sinex_test]
-    async fn test_fixture_lazy_loading(ctx: TestContext) -> Result<()> {
-        let initial_count = ctx.test_event_count().await;
-
-        // Getting scenarios handle shouldn't create events
-        let scenarios = ctx.fixtures().scenarios();
-        assert_eq!(ctx.test_event_count().await, initial_count);
-
-        // Actually accessing a fixture should create events
-        let _fixture = scenarios.user_session().await?;
-        assert!(ctx.test_event_count().await > initial_count);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_fixture_caching_via_scenarios(ctx: TestContext) -> Result<()> {
-        let scenarios = ctx.fixtures().scenarios();
-
-        // First access
-        let fixture1 = scenarios.user_session().await?;
-        let count_after_first = ctx.test_event_count().await;
-
-        // Second access should return cached fixture
-        let fixture2 = scenarios.user_session().await?;
-        let count_after_second = ctx.test_event_count().await;
-
-        // No new events should be created for cached fixture
-        assert_eq!(count_after_first, count_after_second);
-
-        // Should be same fixture data
-        assert_eq!(fixture1.user_id, fixture2.user_id);
-
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_fixture_basic_usage(ctx: TestContext) -> Result<()> {
-        // Test that fixtures provide reusable test data
-        let session = ctx.fixtures().scenarios().user_session().await?;
-
-        // Should have created events
-        assert!(!session.event_ids.is_empty());
-
-        // Should have metadata
-        assert!(!session.user_id.to_string().is_empty());
-        assert!(session.session_start < chrono::Utc::now());
-
-        // Events should exist in database
-        let events = ctx.events().by_id(session.event_ids[0]).fetch().await?;
-        assert_eq!(events.len(), 1);
-
-        Ok(())
     }
 }

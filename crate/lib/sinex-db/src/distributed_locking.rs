@@ -253,7 +253,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_advisory_lock_try_acquire(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let pool = ctx.pool();
+        let pool = &ctx.pool;
 
         // First acquisition should succeed
         let lock1 = AdvisoryLock::try_acquire(&pool, "test_key").await?;
@@ -274,7 +274,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_leadership_pattern(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let pool = ctx.pool();
+        let pool = &ctx.pool;
 
         // Test basic advisory lock functionality
         {

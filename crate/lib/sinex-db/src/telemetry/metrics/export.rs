@@ -527,7 +527,7 @@ mod tests {
             metrics: Vec<MetricEntry>,
         }
 
-        impl crate::collectors::MetricsCollector for TestCollector {
+        impl crate::telemetry::metrics::collectors::MetricsCollector for TestCollector {
             fn collect(&self) -> Vec<MetricEntry> {
                 self.metrics.clone()
             }

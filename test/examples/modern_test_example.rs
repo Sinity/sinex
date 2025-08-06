@@ -19,12 +19,7 @@ async fn test_event_creation_parameterized(
 ) -> Result<()> {
     let ctx = TestContext::new().await?;
     
-    let event = ctx.event()
-        .source(source)
-        .type_(event_type)
-        .payload(payload.clone())
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(source, event_type, payload.clone()).await?;
     
     assert_eq!(event.source.as_str(), source);
     assert_eq!(event.event_type.as_str(), event_type);
@@ -46,17 +41,16 @@ async fn test_with_fixtures(
     // Create events for each source and path combination
     for source in &test_sources {
         for path in &test_paths {
-            ctx.event()
-                .source(*source)
-                .type_("test.fixture")
-                .field("path", path.as_str())
-                .insert()
-                .await?;
+            ctx.create_test_event(
+                *source,
+                "test.fixture",
+                json!({"path": path.as_str()})
+            ).await?;
         }
     }
     
     // Verify all were created
-    let count = ctx.events().count().await?;
+    let count = ctx.pool.events().count().await?;
     assert_eq!(count, (test_sources.len() * test_paths.len()) as i64);
     
     Ok(())
@@ -67,14 +61,15 @@ async fn test_with_fixtures(
 #[sinex_test]
 async fn test_snapshot_testing(ctx: TestContext) -> Result<()> {
     // Create a complex event
-    let event = ctx.event()
-        .filesystem()
-        .path("/home/user/important.doc")
-        .size(2048576)
-        .permissions(0o644)
-        .modified()
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "fs-watcher",
+        "file.modified",
+        json!({
+            "path": "/home/user/important.doc",
+            "size": 2048576,
+            "permissions": "0o644"
+        })
+    ).await?;
     
     // Snapshot the entire event with automatic redactions
     ctx.snapshot_event(&event, Some("filesystem_event"));
@@ -110,11 +105,11 @@ async fn test_with_tracing(ctx: TestContext) -> Result<()> {
     // Do some operations that generate logs
     tracing::info!("Starting test operations");
     
-    let event = ctx.event()
-        .source("tracing-test")
-        .type_("test.logged")
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "tracing-test",
+        "test.logged",
+        json!({})
+    ).await?;
     
     tracing::debug!("Created event with ID: {:?}", event.id);
     
@@ -134,20 +129,14 @@ async fn test_with_tracing(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_similar_assertions(ctx: TestContext) -> Result<()> {
-    let event1 = ctx.event()
-        .source("test")
-        .type_("similar.test")
-        .field("data", vec![1, 2, 3, 4, 5])
-        .build()?;
+    let payload1 = json!({"data": [1, 2, 3, 4, 5]});
+    let payload2 = json!({"data": [1, 2, 3, 4, 5]});
     
-    let event2 = ctx.event()
-        .source("test")
-        .type_("similar.test")
-        .field("data", vec![1, 2, 3, 4, 5])
-        .build()?;
+    let event1 = ctx.create_test_event("test", "similar.test", payload1.clone()).await?;
+    let event2 = ctx.create_test_event("test", "similar.test", payload2.clone()).await?;
     
     // Use similar_asserts for better diff output
-    ctx.assert_similar(&event1.payload, &event2.payload, "Payloads should match")?;
+    ctx.assert_similar(&event1.payload, &event2.payload, "Payloads should match");
     
     // For JSON values specifically
     let json1 = json!({
@@ -189,27 +178,14 @@ async fn test_modern_infrastructure_combined(
     tracing::info!("Testing {} operation", operation);
     
     // Create event based on operation
-    let event = match operation {
-        "create" => ctx.event()
-            .filesystem()
-            .path("/tmp/test.txt")
-            .created()
-            .insert()
-            .await?,
-        "modify" => ctx.event()
-            .filesystem()
-            .path("/tmp/test.txt")
-            .modified()
-            .insert()
-            .await?,
-        "delete" => ctx.event()
-            .filesystem()
-            .path("/tmp/test.txt")
-            .deleted()
-            .insert()
-            .await?,
-        _ => unreachable!(),
-    };
+    let event_type = format!("file.{}", operation);
+    let event = ctx.create_test_event(
+        "fs-watcher",
+        &event_type,
+        json!({
+            "path": "/tmp/test.txt"
+        })
+    ).await?;
     
     // Verify event type
     assert_eq!(event.event_type.as_str(), expected_type);
@@ -237,14 +213,15 @@ async fn test_property_based_with_snapshots(ctx: TestContext) -> Result<()> {
     ];
     
     for (name, content) in test_cases {
-        let event = ctx.event()
-            .source("property-test")
-            .type_("test.content")
-            .field("name", name)
-            .field("content", &content)
-            .field("length", content.len())
-            .insert()
-            .await?;
+        let event = ctx.create_test_event(
+            "property-test",
+            "test.content",
+            json!({
+                "name": name,
+                "content": content,
+                "length": content.len()
+            })
+        ).await?;
         
         // Snapshot each case
         ctx.snapshot_json(

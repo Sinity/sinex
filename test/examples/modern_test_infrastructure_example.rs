@@ -26,14 +26,14 @@ async fn test_event_creation_parameterized(
     tracing::info!("Creating event with source={}, type={}", source, event_type);
     
     // Create event using the test context
-    let event = ctx.event()
-        .source(source)
-        .type_(event_type)
-        .field("data", test_data)
-        .field("test", true)
-        .insert()
-        .await
-        .expect("Failed to create event");
+    let event = ctx.create_test_event(
+        source,
+        event_type,
+        json!({
+            "data": test_data,
+            "test": true
+        })
+    ).await.expect("Failed to create event");
     
     // Basic assertions
     assert_eq!(event.source.as_str(), source);
@@ -43,7 +43,7 @@ async fn test_event_creation_parameterized(
     ctx.snapshot_event(&event, Some(&format!("{}_{}", source, event_type.replace('.', "_"))));
     
     // Query the event back
-    let events = ctx.events()
+    let events = ctx.pool.events()
         .by_source(source)
         .by_type(event_type)
         .fetch()
@@ -67,12 +67,11 @@ async fn test_with_fixtures(
     
     // Create events for all test sources
     for source in test_sources.iter().take(2) {
-        let event = ctx.event()
-            .source(*source)
-            .type_("test.event")
-            .insert()
-            .await
-            .expect("Failed to create event");
+        let event = ctx.create_test_event(
+            *source,
+            "test.event",
+            json!({})
+        ).await.expect("Failed to create event");
             
         assert_eq!(event.source.as_str(), *source);
     }
@@ -90,17 +89,17 @@ async fn test_complex_event_snapshot() {
     let ctx = TestContext::new().await.expect("Failed to create test context");
     
     // Create a complex event
-    let event = ctx.event()
-        .filesystem()
-        .path("/home/user/documents/report.pdf")
-        .size(1024 * 1024) // 1MB
-        .permissions(0o644)
-        .owner("user")
-        .group("users")
-        .modified()
-        .insert()
-        .await
-        .expect("Failed to create filesystem event");
+    let event = ctx.create_test_event(
+        "fs-watcher",
+        "file.modified",
+        json!({
+            "path": "/home/user/documents/report.pdf",
+            "size": 1024 * 1024,
+            "permissions": "0o644",
+            "owner": "user",
+            "group": "users"
+        })
+    ).await.expect("Failed to create filesystem event");
     
     // Snapshot the entire event with redactions
     assert_json_snapshot!(event, {
@@ -131,14 +130,14 @@ async fn test_filesystem_event_handling(
     tracing::info!("Testing filesystem event: {}", event_type);
     
     // Create the event
-    let event = ctx.event()
-        .source("fs-watcher")
-        .type_(event_type)
-        .field("path", "/test/file.txt")
-        .field("trigger_scan", should_trigger_scan)
-        .insert()
-        .await
-        .expect("Failed to create event");
+    let event = ctx.create_test_event(
+        "fs-watcher",
+        event_type,
+        json!({
+            "path": "/test/file.txt",
+            "trigger_scan": should_trigger_scan
+        })
+    ).await.expect("Failed to create event");
     
     // Verify the event
     assert_eq!(event.event_type.as_str(), event_type);
@@ -171,15 +170,16 @@ mod snapshot_organization {
         ];
         
         for (cmd, exit_code, duration_ms) in commands {
-            let event = ctx.event()
-                .terminal()
-                .command(cmd)
-                .exit_code(exit_code)
-                .duration_ms(duration_ms)
-                .working_dir("/project")
-                .insert()
-                .await
-                .expect("Failed to create terminal event");
+            let event = ctx.create_test_event(
+                "terminal",
+                "command.executed",
+                json!({
+                    "command": cmd,
+                    "exit_code": exit_code,
+                    "duration_ms": duration_ms,
+                    "working_dir": "/project"
+                })
+            ).await.expect("Failed to create terminal event");
             
             // Organized snapshot naming
             let snapshot_name = format!("terminal_cmd_{}", cmd.replace(' ', "_").replace('-', "_"));

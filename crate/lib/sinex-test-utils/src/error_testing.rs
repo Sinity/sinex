@@ -412,7 +412,7 @@ mod tests {
         assert_eq!(error.to_string(), "test error");
 
         // Test assert_succeeds
-        let success: Result<i32, SinexError> = Ok(42);
+        let success: Result<i32> = Ok(42);
         let value = success.assert_succeeds()?;
         assert_eq!(value, 42);
 
@@ -427,7 +427,7 @@ mod tests {
     #[sinex_test]
     async fn test_error_assertions_negative_cases(_ctx: TestContext) -> crate::Result<()> {
         // assert_fails should fail on success
-        let success: Result<i32, SinexError> = Ok(42);
+        let success: Result<i32> = Ok(42);
         let result = success.assert_fails();
         assert!(result.is_err());
         assert!(result

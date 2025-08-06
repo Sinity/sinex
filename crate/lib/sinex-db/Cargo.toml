@@ -61,4 +61,5 @@ telemetry = ["dep:prometheus", "dep:sysinfo", "dep:procfs", "dep:parking_lot", "
 
 [dev-dependencies]
 tokio-test = "0.4"
+rstest = { workspace = true }
 sinex-test-utils = { path = "../sinex-test-utils" }

@@ -385,10 +385,7 @@ mod tests {
 
             // Should be usable in event creation
             let event = ctx
-                .event()
-                .source(EventSource::new(&source))
-                .type_("test.property")
-                .insert()
+                .create_test_event(&source, "test.property", json!({}))
                 .await?;
             assert_eq!(event.source.as_str(), source);
         }
@@ -412,10 +409,7 @@ mod tests {
 
             // Should be usable in event creation
             let event = ctx
-                .event()
-                .source(EventSource::new("test"))
-                .type_(EventType::new(&event_type))
-                .insert()
+                .create_test_event("test", &event_type, json!({}))
                 .await?;
             assert_eq!(event.event_type.as_str(), event_type);
         }
@@ -465,11 +459,7 @@ mod tests {
 
             // Should work in event creation
             let event = ctx
-                .event()
-                .source("json-test")
-                .type_("test.json")
-                .payload(payload.clone())
-                .insert()
+                .create_test_event("json-test", "test.json", payload.clone())
                 .await?;
 
             // Payload should match (accounting for potential normalization)
@@ -496,13 +486,7 @@ mod tests {
             assert!(payload["size"].is_number());
 
             // Should create valid events
-            let event = ctx
-                .event()
-                .source(source.as_str())
-                .type_(event_type.as_str())
-                .payload(payload)
-                .insert()
-                .await?;
+            let event = ctx.create_test_event(&source, &event_type, payload).await?;
 
             assert_eq!(event.source.as_str(), "filesystem");
         }
@@ -511,14 +495,10 @@ mod tests {
     }
 
     // Helper function for property test to avoid lifetime issues
-    async fn test_number_property(ctx: &TestContext, value: u32) -> Result<()> {
+    async fn test_number_property(ctx: &TestContext, value: u32) -> color_eyre::eyre::Result<()> {
         // Property: all numbers should be insertable in events
         let event = ctx
-            .event()
-            .source("property")
-            .type_("test.number")
-            .field("value", value)
-            .insert()
+            .create_test_event("property", "test.number", json!({"value": value}))
             .await?;
 
         assert_eq!(event.payload["value"], json!(value));
@@ -568,7 +548,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_complex_property_with_context(ctx: TestContext) -> Result<()> {
-        let runner = proptest::test_runner::TestRunner::deterministic();
+        let _runner = proptest::test_runner::TestRunner::deterministic();
 
         // Complex property: events with same source should be grouped correctly
         let sources = vec!["test-a", "test-b", "test-c"];
@@ -576,18 +556,19 @@ mod tests {
         // Insert events with different sources
         for source in &sources {
             for i in 0..5 {
-                ctx.event()
-                    .source(*source)
-                    .type_("test.property")
-                    .field("index", i)
-                    .insert()
+                ctx.create_test_event(source, "test.property", json!({"index": i}))
                     .await?;
             }
         }
 
         // Property: querying by source should return exactly those events
         for source in &sources {
-            let events = ctx.events().by_source(*source).fetch().await?;
+            let source_ref = sinex_types::domain::EventSource::from(*source);
+            let events = ctx
+                .pool
+                .events()
+                .get_by_source(&source_ref, Some(10), None)
+                .await?;
             assert_eq!(events.len(), 5);
             for event in events {
                 assert_eq!(event.source.as_str(), *source);
@@ -657,7 +638,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_property_based_edge_cases(ctx: TestContext) -> Result<()> {
-        let runner = proptest::test_runner::TestRunner::deterministic();
+        let _runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test edge cases with property strategies
         let long_source = "a".repeat(256);
@@ -675,13 +656,7 @@ mod tests {
         ];
 
         for (source, event_type, payload) in edge_cases {
-            let result = ctx
-                .event()
-                .source(source)
-                .type_(event_type)
-                .payload(payload)
-                .insert()
-                .await;
+            let result = ctx.create_test_event(source, event_type, payload).await;
 
             // Some should fail, some should succeed - just verify no panic
             match result {

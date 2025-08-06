@@ -43,7 +43,7 @@ use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
+use sinex_db::repositories::{DbPoolExt, EnhancedRepository, Repository};
 use sinex_types::{DbPool, Ulid};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -94,6 +94,15 @@ impl TestContext {
         self.start_time.elapsed()
     }
 
+    /// Insert single event
+    pub async fn insert_event(&self, event: &Event) -> Result<Event> {
+        let inserted = self.pool.events().insert(event.clone()).await?;
+        if let Some(id) = &inserted.id {
+            self.created_events.lock().push(id.clone().into());
+        }
+        Ok(inserted)
+    }
+
     /// Insert multiple events (batch operation)
     pub async fn insert_events(&self, events: &[Event]) -> Result<()> {
         for event in events {
@@ -101,6 +110,15 @@ impl TestContext {
             if let Some(id) = &event.id {
                 self.created_events.lock().push(id.clone().into());
             }
+        }
+        Ok(())
+    }
+
+    /// Assert that an event exists by ID
+    pub async fn assert_event_exists(&self, event_id: Ulid) -> Result<()> {
+        let exists = self.pool.events().exists_by_id(&event_id).await?;
+        if !exists {
+            color_eyre::eyre::bail!("Event with ID {} does not exist", event_id);
         }
         Ok(())
     }

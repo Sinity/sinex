@@ -310,7 +310,9 @@ impl ExplorationProvider for DocumentProcessor {
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         // Document processor doesn't support data export
-        Err(color_eyre::eyre::eyre!("Document processor does not support data export"))
+        Err(color_eyre::eyre::eyre!(
+            "Document processor does not support data export"
+        ))
     }
 }
 

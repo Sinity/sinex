@@ -1269,7 +1269,7 @@ mod tests {
 
         // Create a config with path that will be validated
         let config = FilesystemConfig {
-            watch_patterns: vec![format!("{}/**/*.rs", base_path.as_str())],
+            watch_patterns: vec![format!("{}/**/*.rs", base_path.display())],
             ignore_patterns: vec![],
             debounce_ms: 100,
             max_depth: None,

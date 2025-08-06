@@ -23,17 +23,15 @@ async fn test_parameterized_event_creation(
     tracing::info!("Creating event: {} -> {}", source, event_type);
     
     // Create event
-    let event = ctx.event()
-        .source(source)
-        .type_(event_type)
-        .field("test", true)
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        source,
+        event_type,
+        json!({"test": true})
+    ).await?;
     
     // Verify
-    ctx.assert("event creation")
-        .eq(&event.source.as_str(), &source)?
-        .eq(&event.event_type.as_str(), &event_type)?;
+    assert_eq!(event.source.as_str(), source);
+    assert_eq!(event.event_type.as_str(), event_type);
     
     // Use modern test context for snapshot
     ctx.snapshot_event(&event, Some(&format!("{}_{}", source, event_type)));
@@ -50,20 +48,18 @@ async fn test_multiple_sources(
 ) -> Result<()> {
     // Create events from fixture sources
     for source in test_sources.iter().take(3) {
-        let event = ctx.event()
-            .source(*source)
-            .type_("test.fixture")
-            .insert()
-            .await?;
+        let event = ctx.create_test_event(
+            *source,
+            "test.fixture",
+            json!({})
+        ).await?;
             
-        ctx.assert(&format!("event from {}", source))
-            .eq(&event.source.as_str(), source)?;
+        assert_eq!(event.source.as_str(), *source);
     }
     
     // Query all events
-    let events = ctx.events().fetch().await?;
-    ctx.assert("event count")
-        .that(events.len() >= 3, "should have at least 3 events")?;
+    let events = ctx.pool.events().get_recent(10).await?;
+    assert!(events.len() >= 3, "should have at least 3 events");
     
     Ok(())
 }
@@ -72,25 +68,26 @@ async fn test_multiple_sources(
 #[sinex_test]
 async fn test_snapshot_complex_event(ctx: TestContext) -> Result<()> {
     // Create a complex filesystem event
-    let event = ctx.event()
-        .filesystem()
-        .path("/data/important/document.pdf")
-        .size(2 * 1024 * 1024) // 2MB
-        .permissions(0o600)
-        .owner("admin")
-        .group("staff")
-        .modified()
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "fs-watcher",
+        "file.modified",
+        json!({
+            "path": "/data/important/document.pdf",
+            "size": 2 * 1024 * 1024,
+            "permissions": "0o600",
+            "owner": "admin",
+            "group": "staff"
+        })
+    ).await?;
     
     // Snapshot with redactions
     ctx.snapshot(&event, Some("complex_filesystem_event"));
     
     // Query and verify
-    let found = ctx.events()
-        .by_id(event.id.unwrap())
-        .fetch_one()
-        .await?;
+    let found = ctx.pool.events()
+        .get_by_id(event.id.unwrap())
+        .await?
+        .expect("Event should exist");
     
     // Use similar_assert for better diffs
     ctx.assert_similar(&found.payload, &event.payload, "payloads should match");
@@ -113,20 +110,22 @@ async fn test_terminal_command_outcomes(
     tracing::debug!("Testing exit code: {}", exit_code);
     
     // Create terminal command event
-    let event = ctx.event()
-        .terminal()
-        .command("test-command")
-        .exit_code(exit_code)
-        .duration_ms(100)
-        .working_dir("/tmp")
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "terminal",
+        "command.executed",
+        json!({
+            "command": "test-command",
+            "exit_code": exit_code,
+            "duration_ms": 100,
+            "working_dir": "/tmp",
+            "success": expected_success
+        })
+    ).await?;
     
     // Verify payload
     let payload = &event.payload;
-    ctx.assert("command outcome")
-        .eq(&payload["exit_code"].as_i64().unwrap(), &(exit_code as i64))?
-        .eq(&payload["success"].as_bool().unwrap(), &expected_success)?;
+    assert_eq!(payload["exit_code"].as_i64().unwrap(), exit_code as i64);
+    assert_eq!(payload["success"].as_bool().unwrap(), expected_success);
     
     // Snapshot each case
     ctx.snapshot_event(&event, Some(&format!("terminal_exit_{}", exit_code)));
@@ -146,13 +145,14 @@ async fn test_batch_event_creation(ctx: TestContext) -> Result<()> {
     
     let mut created_events = Vec::new();
     for (path, size) in events {
-        let event = ctx.event()
-            .filesystem()
-            .path(&format!("/data/{}", path))
-            .size(size)
-            .created()
-            .insert()
-            .await?;
+        let event = ctx.create_test_event(
+            "fs-watcher",
+            "file.created",
+            json!({
+                "path": format!("/data/{}", path),
+                "size": size
+            })
+        ).await?;
         created_events.push(event);
     }
     
@@ -160,13 +160,12 @@ async fn test_batch_event_creation(ctx: TestContext) -> Result<()> {
     ctx.snapshot(&created_events, Some("batch_filesystem_events"));
     
     // Query and verify count
-    let fs_events = ctx.events()
+    let fs_events = ctx.pool.events()
         .by_source("fs-watcher")
         .fetch()
         .await?;
     
-    ctx.assert("batch creation")
-        .that(fs_events.len() >= 3, "should have created at least 3 events")?;
+    assert!(fs_events.len() >= 3, "should have created at least 3 events");
     
     Ok(())
 }

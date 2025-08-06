@@ -358,9 +358,9 @@ pub async fn run_migrations(_pool: DbPoolRef<'_>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Event;
     use chrono::Utc;
     use serde_json::json;
-    use sinex_db::models::Event;
     use sinex_test_utils::prelude::*;
     use sinex_types::ulid::Ulid;
 

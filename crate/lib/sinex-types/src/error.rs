@@ -716,7 +716,7 @@ impl From<tokio::sync::oneshot::error::RecvError> for SinexError {
 // Note: SinexError automatically converts to color_eyre::eyre::Error via std::error::Error trait
 
 // Re-export anyhow utilities
-pub use color_eyre::eyre::{bail, ensure, Context as AnyhowContext};
+pub use color_eyre::eyre::{bail, ensure, Context as AnyhowContext, ContextCompat};
 
 pub type Result<T> = std::result::Result<T, SinexError>;
 
@@ -818,8 +818,8 @@ mod tests {
     #[test]
     fn test_error_with_context() {
         let error = SinexError::database("Connection failed")
-            .wrap_err_with("host", "localhost")
-            .wrap_err_with("port", 5432);
+            .with_context("host", "localhost")
+            .with_context("port", 5432);
 
         let error_str = error.to_string();
         assert!(error_str.contains("Connection failed"));
@@ -868,8 +868,8 @@ mod tests {
     #[test]
     fn test_error_serialization() {
         let error = SinexError::database("Connection failed")
-            .wrap_err_with("host", "localhost")
-            .wrap_err_with("port", 5432);
+            .with_context("host", "localhost")
+            .with_context("port", 5432);
 
         let json = serde_json::to_string(&error).unwrap();
         assert!(json.contains("Database"));
@@ -904,8 +904,8 @@ mod tests {
     #[test]
     fn test_context_preservation() {
         let error = SinexError::database("Connection failed")
-            .wrap_err_with("attempt", 3)
-            .wrap_err_with("retry_after", "5s");
+            .with_context("attempt", 3)
+            .with_context("retry_after", "5s");
 
         let context = error.context_map();
         assert_eq!(context.get("attempt"), Some(&"3".to_string()));
@@ -915,9 +915,9 @@ mod tests {
     #[test]
     fn test_ordered_context() {
         let error = SinexError::validation("Invalid input")
-            .wrap_err_with("field", "email")
-            .wrap_err_with("value", "not-an-email")
-            .wrap_err_with("reason", "missing @ symbol");
+            .with_context("field", "email")
+            .with_context("value", "not-an-email")
+            .with_context("reason", "missing @ symbol");
 
         let error_str = error.to_string();
         // IndexMap preserves insertion order
@@ -945,7 +945,7 @@ mod tests {
     #[test]
     fn test_accessor_methods() {
         let error = SinexError::database("Query failed")
-            .wrap_err_with("table", "users")
+            .with_context("table", "users")
             .with_source("Connection timeout");
 
         assert_eq!(error.message(), "Query failed");
@@ -990,8 +990,8 @@ mod tests {
     #[test]
     fn test_error_details_display() {
         let details = crate::error::ErrorDetails::new("Base error")
-            .wrap_err_with("key1", "value1")
-            .wrap_err_with("key2", "value2")
+            .with_context("key1", "value1")
+            .with_context("key2", "value2")
             .with_source("Source 1")
             .with_source("Source 2");
 
@@ -1060,8 +1060,8 @@ mod tests {
     #[test]
     fn test_serialization_roundtrip() {
         let original = SinexError::database("Connection failed")
-            .wrap_err_with("host", "localhost")
-            .wrap_err_with("port", 5432)
+            .with_context("host", "localhost")
+            .with_context("port", 5432)
             .with_source("Network timeout")
             .with_source("DNS failed");
 
@@ -1136,7 +1136,7 @@ mod tests {
     #[test]
     fn test_error_equality_after_cloning() {
         let error = SinexError::validation("Test error")
-            .wrap_err_with("field", "email")
+            .with_context("field", "email")
             .with_source("Invalid format");
 
         let cloned = error.clone();
@@ -1155,9 +1155,9 @@ mod tests {
         map.insert("key", "value");
 
         let error = SinexError::service("Processing failed")
-            .wrap_err_with("json", serde_json::json!({"nested": {"value": 42}}))
-            .wrap_err_with("array", format!("{:?}", vec![1, 2, 3]))
-            .wrap_err_with("map", format!("{:?}", map));
+            .with_context("json", serde_json::json!({"nested": {"value": 42}}))
+            .with_context("array", format!("{:?}", vec![1, 2, 3]))
+            .with_context("map", format!("{:?}", map));
 
         let context = error.context_map();
         assert!(context.get("json").unwrap().contains("nested"));
@@ -1168,10 +1168,10 @@ mod tests {
     #[test]
     fn test_indexmap_preserves_order() {
         let error = SinexError::validation("Test")
-            .wrap_err_with("a", "1")
-            .wrap_err_with("b", "2")
-            .wrap_err_with("c", "3")
-            .wrap_err_with("d", "4");
+            .with_context("a", "1")
+            .with_context("b", "2")
+            .with_context("c", "3")
+            .with_context("d", "4");
 
         let keys: Vec<_> = error.context_map().keys().collect();
         assert_eq!(keys, vec!["a", "b", "c", "d"]);
@@ -1190,9 +1190,9 @@ mod tests {
 
         // Unicode in context
         let error = SinexError::parse("Failed")
-            .wrap_err_with("emoji", "🦀")
-            .wrap_err_with("chinese", "你好")
-            .wrap_err_with("arabic", "مرحبا");
+            .with_context("emoji", "🦀")
+            .with_context("chinese", "你好")
+            .with_context("arabic", "مرحبا");
 
         assert_eq!(error.context_map().get("emoji"), Some(&"🦀".to_string()));
         assert_eq!(

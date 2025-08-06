@@ -399,8 +399,9 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
         tokio::fs::write(&test_file, b"hello world").await.unwrap();
+        let test_file = Utf8Path::from_path(&test_file).unwrap();
 
-        let hash = GitAnnex::compute_blake3_hash(&test_file).await.unwrap();
+        let hash = GitAnnex::compute_blake3_hash(test_file).await.unwrap();
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64); // BLAKE3 hex string length
     }

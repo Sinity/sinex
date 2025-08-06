@@ -4244,6 +4244,7 @@ dependencies = [
  "parking_lot",
  "procfs",
  "prometheus",
+ "rstest",
  "sea-orm-migration",
  "sea-query 0.30.7",
  "serde",

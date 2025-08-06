@@ -13,13 +13,11 @@ async fn test_event_creation_with_cases(
     #[case] event_type: &str,
 ) -> Result<()> {
     // Each case gets its own TestContext from the pool
-    let event = ctx
-        .event()
-        .source(source)
-        .type_(event_type)
-        .field("rstest", true)
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        source,
+        event_type,
+        json!({"rstest": true})
+    ).await?;
     
     assert_eq!(event.source.as_str(), source);
     assert_eq!(event.event_type.as_str(), event_type);
@@ -54,13 +52,11 @@ async fn test_payload_variations(
         "size_kb": size / 1024,
     });
     
-    let result = ctx
-        .event()
-        .source("test")
-        .type_("payload.test")
-        .payload(payload.clone())
-        .insert()
-        .await;
+    let result = ctx.create_test_event(
+        "test",
+        "payload.test",
+        payload.clone()
+    ).await;
     
     if expected_valid {
         let event = result?;
@@ -82,15 +78,15 @@ async fn test_with_fixture_and_cases(
 ) -> Result<()> {
     // Create events for each source with the given event type
     for source in &test_sources {
-        ctx.event()
-            .source(*source)
-            .type_(event_type)
-            .insert()
-            .await?;
+        ctx.create_test_event(
+            *source,
+            event_type,
+            json!({})
+        ).await?;
     }
     
     // Verify they were created
-    let count = ctx.events()
+    let count = ctx.pool.events()
         .by_type(event_type)
         .count()
         .await?;
@@ -109,11 +105,11 @@ async fn test_with_tracing_and_cases(
 ) -> Result<()> {
     tracing::info!("Testing {} operation", operation);
     
-    let event = ctx.event()
-        .source("traced")
-        .type_(operation)
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "traced",
+        operation,
+        json!({})
+    ).await?;
     
     tracing::debug!("Created event: {:?}", event.id);
     
@@ -130,12 +126,11 @@ async fn test_snapshots_with_cases(
     #[case] scenario: &str,
     #[case] data: serde_json::Value,
 ) -> Result<()> {
-    let event = ctx.event()
-        .source("snapshot-test")
-        .type_(scenario)
-        .payload(data.clone())
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "snapshot-test",
+        scenario,
+        data.clone()
+    ).await?;
     
     // Snapshot paths are automatically configured by sinex_test
     // to include the test name and case identifier
@@ -173,13 +168,11 @@ mod actual_tests {
             source: &str,
             event_type: &str,
         ) -> Result<()> {
-            let event = ctx
-                .event()
-                .source(source)
-                .type_(event_type)
-                .field("rstest", true)
-                .insert()
-                .await?;
+            let event = ctx.create_test_event(
+                source,
+                event_type,
+                json!({"rstest": true})
+            ).await?;
             
             assert_eq!(event.source.as_str(), source);
             assert_eq!(event.event_type.as_str(), event_type);

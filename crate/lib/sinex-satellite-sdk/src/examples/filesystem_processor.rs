@@ -3,7 +3,6 @@
 //! This example demonstrates how to refactor an existing EventSource to use
 //! the new unified StatefulStreamProcessor interface from Part 16.
 
-use color_eyre::eyre;
 use crate::{
     cli::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
@@ -18,6 +17,7 @@ use crate::{
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
 use std::collections::HashMap;

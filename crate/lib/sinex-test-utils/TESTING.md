@@ -24,18 +24,15 @@ use sinex_test_utils::prelude::*;
 #[sinex_test]
 async fn test_basic_event_flow(ctx: TestContext) -> TestResult<()> {
     // Create an event
-    let event = ctx.event()
-        .source("my-service")
-        .type_("action.performed")
-        .field("user_id", 123)
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "my-service",
+        "action.performed",
+        json!({"user_id": 123})
+    ).await?;
     
     // Query it back
-    let events = ctx.events()
-        .by_source("my-service")
-        .fetch()
-        .await?;
+    let source_ref = sinex_types::domain::EventSource::from("my-service");
+    let events = ctx.pool.events().get_by_source(&source_ref, Some(10), None).await?;
     
     // Assert
     ctx.assert("event created")
@@ -60,8 +57,8 @@ async fn test_basic_event_flow(ctx: TestContext) -> TestResult<()> {
 TestContext provides everything you need:
 
 ```rust
-ctx.event()       // Create events
-ctx.events()      // Query events
+ctx.create_test_event() // Create events
+ctx.pool.events()       // Query events
 ctx.assert()      // Rich assertions
 ctx.timing()      // Synchronization
 ctx.mocks()       // Mock objects
@@ -74,7 +71,7 @@ ctx.scenarios()   // Test fixtures
 
 ```rust
 // Filesystem events
-ctx.event()
+ctx.create_test_event()
     .filesystem()
     .path("/etc/config.yml")
     .size(2048)
@@ -84,7 +81,7 @@ ctx.event()
     .await?;
 
 // Terminal commands
-ctx.event()
+ctx.create_test_event()
     .terminal()
     .command("docker-compose up -d")
     .working_dir("/app")
@@ -94,7 +91,7 @@ ctx.event()
     .await?;
 
 // System events
-ctx.event()
+ctx.create_test_event()
     .system()
     .service("postgresql")
     .started()
@@ -106,7 +103,7 @@ ctx.event()
 
 ```rust
 // Build fields incrementally
-let event = ctx.event()
+let event = ctx.create_test_event()
     .source("analytics")
     .type_("metric.recorded")
     .field("metric_name", "api_latency")
@@ -116,7 +113,7 @@ let event = ctx.event()
     .await?;
 
 // Batch field insertion
-ctx.event()
+ctx.create_test_event()
     .source("monitoring")
     .type_("alert.triggered")
     .fields(vec![
@@ -211,7 +208,7 @@ async fn test_file_operations(ctx: TestContext) -> TestResult<()> {
         ("large file", "/tmp/large.bin", 10485760, true),
         ("invalid path", "", 0, false),
     ], |(name, path, size, should_succeed)| {
-        let result = ctx.event()
+        let result = ctx.create_test_event()
             .filesystem()
             .path(path)
             .size(size)
@@ -252,7 +249,7 @@ async fn test_event_builder_properties(ctx: TestContext) -> TestResult<()> {
                 .map(char::from)
                 .collect::<String>();
             
-            let event = ctx.event()
+            let event = ctx.create_test_event()
                 .source(&source)
                 .type_("test.property")
                 .insert()
@@ -273,7 +270,7 @@ async fn test_event_builder_properties(ctx: TestContext) -> TestResult<()> {
 #[sinex_test]
 async fn test_event_processing_pipeline(ctx: TestContext) -> TestResult<()> {
     // 1. Create source event
-    let source_event = ctx.event()
+    let source_event = ctx.create_test_event()
         .terminal()
         .command("git commit -m 'Initial commit'")
         .success()
@@ -281,7 +278,7 @@ async fn test_event_processing_pipeline(ctx: TestContext) -> TestResult<()> {
         .await?;
     
     // 2. Simulate processing (would be done by automaton)
-    let processed = ctx.event()
+    let processed = ctx.create_test_event()
         .source("git-analyzer")
         .type_("git.commit.analyzed")
         .field("source_event_id", source_event.id)
@@ -434,7 +431,7 @@ async fn test_event_ordering(ctx: TestContext) -> TestResult<()> {
     // Create events with timestamps
     let mut events = vec![];
     for i in 0..5 {
-        let event = ctx.event()
+        let event = ctx.create_test_event()
             .source("ordered")
             .type_("sequence")
             .field("index", i)
@@ -514,7 +511,7 @@ async fn test_concurrent_stress(ctx: TestContext) -> TestResult<()> {
         
         async move {
             for i in 0..100 {
-                match ctx.event()
+                match ctx.create_test_event()
                     .source(format!("stress-{}", worker_id))
                     .type_("load.test")
                     .field("iteration", i)
@@ -667,8 +664,8 @@ ctx.timing().delay(Duration::from_millis(100)).await;
 **Solution**: Ensure proper event relationships:
 ```rust
 // Create parent before child
-let parent = ctx.event().source("parent").insert().await?;
-let child = ctx.event()
+let parent = ctx.create_test_event().source("parent").insert().await?;
+let child = ctx.create_test_event()
     .source("child")
     .field("parent_id", parent.id)
     .insert()
@@ -727,7 +724,7 @@ fn check_database_pool_health() {
 
 ## Best Practices
 
-1. **Use Domain Builders**: Prefer `ctx.event().filesystem()` over manual construction
+1. **Use Domain Builders**: Prefer `ctx.create_test_event().filesystem()` over manual construction
 2. **Leverage Fixtures**: Reuse common scenarios via `ctx.scenarios()`
 3. **Assert with Context**: Use `ctx.assert("description")` for better error messages
 4. **Clean Test Names**: Use descriptive names that explain what's being tested

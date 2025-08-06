@@ -9,7 +9,7 @@
 //! use sinex_test_utils::prelude::*;
 //!
 //! #[sinex_test]
-//! async fn test_filesystem_event(ctx: TestContext) -> Result<()> {
+//! async fn test_filesystem_event(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //!     // Create events using production Event API - no wrappers
 //!     let event = ctx.create_test_event(
 //!         "fs-watcher",
@@ -49,7 +49,7 @@
 //! - Provides progress indicators
 //! - Integrates with proptest
 //!
-//! ## Event Creation 
+//! ## Event Creation
 //! Direct production API usage - no wrapper builders:
 //!
 //! ```rust
@@ -67,7 +67,7 @@
 //!
 //! // For quick tests without specific payload types
 //! ctx.create_test_event(
-//!     "my-service", 
+//!     "my-service",
 //!     "user.action",
 //!     json!({"user_id": 123, "action": "login"})
 //! ).await?;
@@ -109,10 +109,10 @@
 //!
 //! ```rust
 //! #[sinex_test]
-//! async fn test_file_processing_pipeline(ctx: TestContext) -> Result<()> {
+//! async fn test_file_processing_pipeline(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //!     // 1. Create test events using production API
 //!     let file_event = ctx.create_test_event(
-//!         "fs-watcher", 
+//!         "fs-watcher",
 //!         "file.created",
 //!         json!({
 //!             "path": "/data/input.csv",
@@ -143,7 +143,7 @@
 //!
 //! ```rust
 //! #[sinex_test]
-//! async fn test_edge_cases(ctx: TestContext) -> Result<()> {
+//! async fn test_edge_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
 //!     let test_cases = [
 //!         ("empty", ""),
 //!         ("unicode", "Hello 世界 🌍"),
@@ -531,31 +531,37 @@ mod tests {
     // Module-specific tests should be in their respective modules.
 
     #[sinex_test]
-    async fn test_complete_workflow(ctx: TestContext) -> Result<()> {
+    async fn test_complete_workflow(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Demonstrates a complete workflow using production APIs
 
         // 1. Create events using production event creation
-        let fs_event = ctx.create_test_event(
-            "fs-watcher", 
-            "file.created",
-            json!({
-                "path": "/data/report.pdf",
-                "size": 2048
-            })
-        ).await?;
+        let fs_event = ctx
+            .create_test_event(
+                "fs-watcher",
+                "file.created",
+                json!({
+                    "path": "/data/report.pdf",
+                    "size": 2048
+                }),
+            )
+            .await?;
 
-        let term_event = ctx.create_test_event(
-            "terminal",
-            "command.executed", 
-            json!({
-                "command": "process-report /data/report.pdf",
-                "working_dir": "/app",
-                "exit_code": 0
-            })
-        ).await?;
+        let term_event = ctx
+            .create_test_event(
+                "terminal",
+                "command.executed",
+                json!({
+                    "command": "process-report /data/report.pdf",
+                    "working_dir": "/app",
+                    "exit_code": 0
+                }),
+            )
+            .await?;
 
         // 2. Query using direct repository access
-        let events = ctx.pool.events()
+        let events = ctx
+            .pool
+            .events()
             .get_by_source(&EventSource::from("fs-watcher"), Some(10), None)
             .await?;
         assert!(!events.is_empty());
@@ -581,25 +587,20 @@ mod tests {
     // - Fixture tests -> fixtures.rs
     // - Assertion tests -> test_context.rs
 
-    #[rstest]
+    #[sinex_test]
     #[case("fs", "file.created")]
     #[case("shell", "cmd.run")]
     #[case("service-123", "event.processed")]
     #[case("xxxxxxxxxxxxxxxxxxx", "type.test")]
-    #[tokio::test]
     async fn test_database_with_rstest(
-        #[future] rstest_ctx: TestContext,
+        ctx: TestContext,
         #[case] source: &str,
         #[case] event_type: &str,
-    ) -> Result<()> {
-        let ctx = rstest_ctx.await;
-
+    ) -> color_eyre::eyre::Result<()> {
         // Create event with parameterized values
-        let event = ctx.create_test_event(
-            source,
-            event_type,
-            json!({"param_test": true})
-        ).await?;
+        let event = ctx
+            .create_test_event(source, event_type, json!({"param_test": true}))
+            .await?;
 
         // Verify event was created correctly
         assert_eq!(event.source.as_str(), source);
@@ -607,10 +608,14 @@ mod tests {
         assert_eq!(event.payload["param_test"], json!(true));
 
         // Query it back using direct repository access
-        let source_events = ctx.pool.events()
+        let source_events = ctx
+            .pool
+            .events()
             .get_by_source(&EventSource::from(source), Some(10), None)
             .await?;
-        let type_events = ctx.pool.events()
+        let type_events = ctx
+            .pool
+            .events()
             .get_by_event_type(&EventType::from(event_type), Some(10), None)
             .await?;
         // Should find the event in both queries
@@ -628,21 +633,19 @@ mod tests {
     async fn test_string_length_variations(
         #[case] name: &str,
         #[case] length: usize,
-    ) -> Result<()> {
+    ) -> color_eyre::eyre::Result<()> {
         let ctx = TestContext::new().await?;
 
         let source = "a".repeat(length);
-        let event = ctx.create_test_event(
-            &source,
-            "proptest.length",
-            json!({"test_name": name})
-        ).await?;
+        let event = ctx
+            .create_test_event(&source, "proptest.length", json!({"test_name": name}))
+            .await?;
         assert_eq!(event.source.as_str(), source);
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_property_testing_integration(ctx: TestContext) -> Result<()> {
+    async fn test_property_testing_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Comprehensive property test with database - test various valid inputs
 
         // Test edge cases with various valid inputs
@@ -657,11 +660,9 @@ mod tests {
         ];
 
         for (source, event_type, payload) in test_cases {
-            let event = ctx.create_test_event(
-                source,
-                event_type,
-                payload.clone()
-            ).await?;
+            let event = ctx
+                .create_test_event(source, event_type, payload.clone())
+                .await?;
             assert_eq!(event.source.as_str(), source);
             assert_eq!(event.event_type.as_str(), event_type);
             assert_eq!(event.payload, payload);
@@ -670,7 +671,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_edge_cases(ctx: TestContext) -> Result<()> {
+    async fn test_edge_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test edge cases
         for (size_kb, special_chars, nested_depth) in [
             (10, "normal text", 3),
@@ -679,22 +680,22 @@ mod tests {
         ] {
             // Large payload test
             let large = "x".repeat(size_kb * 1024);
-            let event = ctx.create_test_event(
-                "edge",
-                "large",
-                json!({
-                    "data": large.as_str(),
-                    "size_kb": size_kb
-                })
-            ).await?;
+            let event = ctx
+                .create_test_event(
+                    "edge",
+                    "large",
+                    json!({
+                        "data": large.as_str(),
+                        "size_kb": size_kb
+                    }),
+                )
+                .await?;
             assert_eq!(event.payload["size_kb"], json!(size_kb));
 
             // Special characters test
-            let event = ctx.create_test_event(
-                "edge",
-                "special",
-                json!({"text": special_chars})
-            ).await?;
+            let event = ctx
+                .create_test_event("edge", "special", json!({"text": special_chars}))
+                .await?;
             assert_eq!(event.payload["text"], json!(special_chars));
 
             // Deeply nested JSON
@@ -702,18 +703,14 @@ mod tests {
             for _ in 0..nested_depth {
                 nested = json!({"nested": nested});
             }
-            ctx.create_test_event(
-                "edge",
-                "nested",
-                nested
-            ).await?;
+            ctx.create_test_event("edge", "nested", nested).await?;
         }
 
         Ok(())
     }
 
     #[sinex_test]
-    async fn test_concurrent_test_execution(ctx: TestContext) -> Result<()> {
+    async fn test_concurrent_test_execution(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that multiple tests can run concurrently without interference
         let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(5));
         let mut handles = vec![];
@@ -721,7 +718,8 @@ mod tests {
         for i in 0..5 {
             let barrier_clone = barrier.clone();
             let handle = tokio::spawn(async move {
-                let ctx = TestContext::with_name(&format!("concurrent_{}", i)).await
+                let ctx = TestContext::with_name(&format!("concurrent_{}", i))
+                    .await
                     .map_err(|e| SinexError::unknown(e.to_string()))?;
 
                 // Synchronize all tasks to start at same time
@@ -730,24 +728,30 @@ mod tests {
                 // Each performs operations
                 for j in 0..10 {
                     let task_source = format!("task_{}", i);
-                    ctx.create_test_event(
-                        &task_source,
-                        "concurrent.test",
-                        json!({"iteration": j})
-                    ).await.map_err(|e| SinexError::unknown(e.to_string()))?;
+                    ctx.create_test_event(&task_source, "concurrent.test", json!({"iteration": j}))
+                        .await
+                        .map_err(|e| SinexError::unknown(e.to_string()))?;
                 }
 
                 // Verify only sees own events using direct repository access
-                let events = ctx.pool.events()
-                    .get_by_source(&EventSource::from(&format!("task_{}", i)), Some(100), None)
+                let events = ctx
+                    .pool
+                    .events()
+                    .get_by_source(&EventSource::from(format!("task_{}", i)), Some(100), None)
                     .await?;
                 assert_eq!(events.len(), 10);
 
                 // Should not see any other task's events
                 for k in 0..5 {
                     if k != i {
-                        let other_events = ctx.pool.events()
-                            .get_by_source(&EventSource::from(&format!("task_{}", k)), Some(100), None)
+                        let other_events = ctx
+                            .pool
+                            .events()
+                            .get_by_source(
+                                &EventSource::from(format!("task_{}", k)),
+                                Some(100),
+                                None,
+                            )
                             .await?;
                         assert_eq!(other_events.len(), 0);
                     }
@@ -769,20 +773,22 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_error_propagation(ctx: TestContext) -> Result<()> {
+    async fn test_error_propagation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that errors propagate correctly through Result
 
         // Test validation error
-        let result = ctx.create_test_event(
-            "", // Empty source should fail
-            "test",
-            json!({})
-        ).await;
+        let result = ctx
+            .create_test_event(
+                "", // Empty source should fail
+                "test",
+                json!({}),
+            )
+            .await;
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("source"));
 
         // Test that custom errors work with Result
-        fn failing_operation() -> Result<()> {
+        fn failing_operation() -> color_eyre::eyre::Result<()> {
             Err(SinexError::validation("Custom validation error".to_string()).into())
         }
 
@@ -794,7 +800,7 @@ mod tests {
     }
 
     #[sinex_test(timeout = 5)]
-    async fn test_timeout_handling(ctx: TestContext) -> Result<()> {
+    async fn test_timeout_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that the timeout attribute works
         // This test should complete quickly, well under 5 seconds
 
@@ -802,11 +808,8 @@ mod tests {
 
         // Do some work
         for i in 0..10 {
-            ctx.create_test_event(
-                "timeout_test",
-                "test",
-                json!({"index": i})
-            ).await?;
+            ctx.create_test_event("timeout_test", "test", json!({"index": i}))
+                .await?;
         }
 
         let elapsed = start.elapsed();
@@ -819,9 +822,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_result_type_alias(_ctx: TestContext) -> Result<()> {
+    async fn test_result_type_alias(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that Result is properly aliased
-        fn returns_test_result() -> Result<String> {
+        fn returns_test_result() -> color_eyre::eyre::Result<String> {
             Ok("success".to_string())
         }
 
@@ -829,7 +832,7 @@ mod tests {
         assert!(result.is_ok());
         assert_eq!(result?, "success");
 
-        fn returns_error() -> Result<()> {
+        fn returns_error() -> color_eyre::eyre::Result<()> {
             Err(SinexError::unknown("test error".to_string()).into())
         }
 
@@ -840,19 +843,15 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_builder_method_chaining_order(ctx: TestContext) -> Result<()> {
+    async fn test_builder_method_chaining_order(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that events can be created with different parameter orders
-        let event1 = ctx.create_test_event(
-            "order1",
-            "test", 
-            json!({"a": 1})
-        ).await?;
+        let event1 = ctx
+            .create_test_event("order1", "test", json!({"a": 1}))
+            .await?;
 
-        let event2 = ctx.create_test_event(
-            "order2",
-            "test",
-            json!({"a": 1})
-        ).await?;
+        let event2 = ctx
+            .create_test_event("order2", "test", json!({"a": 1}))
+            .await?;
 
         // Both should succeed despite different order
         assert_eq!(event1.event_type.as_str(), "test");
@@ -862,7 +861,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_assertion_edge_cases(ctx: TestContext) -> Result<()> {
+    async fn test_assertion_edge_cases(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test assertion boundary conditions
         let empty_vec: Vec<i32> = vec![];
         let non_empty_vec = vec![1, 2, 3];
@@ -897,18 +896,16 @@ mod tests {
     // Test Framework Infrastructure Tests - Core State Management
 
     #[sinex_test]
-    async fn test_context_event_count_tracking_accuracy(ctx: TestContext) -> Result<()> {
+    async fn test_context_event_count_tracking_accuracy(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
         // Test that event counting is accurate across operations
         let initial_count = ctx.test_event_count().await;
         assert_eq!(initial_count, 0, "Should start with zero events");
 
         // Insert events one by one and verify count
         for i in 1..=5 {
-            ctx.event()
-                .source("count-test")
-                .type_("increment")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("count-test", "increment", json!({"index": i}))
                 .await?;
 
             let current_count = ctx.test_event_count().await;
@@ -941,7 +938,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_context_timing_measurement_precision(ctx: TestContext) -> Result<()> {
+    async fn test_context_timing_measurement_precision(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
         // Test that timing measurements are precise and monotonic
         let start_elapsed = ctx.elapsed();
 
@@ -985,7 +984,9 @@ mod tests {
     // Database Pool Management Tests
 
     #[sinex_test]
-    async fn test_database_pool_concurrent_allocation(ctx: TestContext) -> Result<()> {
+    async fn test_database_pool_concurrent_allocation(
+        ctx: TestContext,
+    ) -> color_eyre::eyre::Result<()> {
         // Test that multiple contexts can be allocated concurrently without deadlock
         use std::sync::atomic::{AtomicU32, Ordering};
         use std::sync::Arc;
@@ -1003,11 +1004,8 @@ mod tests {
                 match TestContext::with_name(&format!("concurrent_alloc_{}", i)).await {
                     Ok(ctx) => {
                         // Do some work to hold the context
-                        ctx.create_test_event(
-                            "pool-test",
-                            "allocation",
-                            json!({"task_id": i})
-                        ).await?;
+                        ctx.create_test_event("pool-test", "allocation", json!({"task_id": i}))
+                            .await?;
 
                         success_count.fetch_add(1, Ordering::SeqCst);
                         Ok(())
@@ -1036,7 +1034,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_database_cleanup_on_drop(ctx: TestContext) -> Result<()> {
+    async fn test_database_cleanup_on_drop(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that database is properly cleaned when context is dropped
         let test_id = uuid::Uuid::new_v4().to_string();
 
@@ -1045,14 +1043,14 @@ mod tests {
             let temp_ctx = TestContext::with_name(&format!("cleanup_test_{}", test_id)).await?;
 
             // Insert identifiable data
-            temp_ctx.create_test_event(
-                "cleanup-test",
-                "marker",
-                json!({"test_id": test_id})
-            ).await?;
+            temp_ctx
+                .create_test_event("cleanup-test", "marker", json!({"test_id": test_id}))
+                .await?;
 
             // Verify it exists using direct repository access
-            let events = temp_ctx.pool.events()
+            let events = temp_ctx
+                .pool
+                .events()
                 .get_by_source(&EventSource::from("cleanup-test"), Some(10), None)
                 .await?;
             assert_eq!(events.len(), 1);
@@ -1062,7 +1060,9 @@ mod tests {
 
         // In our main context, verify we can't see the dropped context's data
         // This verifies isolation, not cleanup (since we can't access the dropped DB)
-        let leaked_events = ctx.pool.events()
+        let leaked_events = ctx
+            .pool
+            .events()
             .get_by_source(&EventSource::from("cleanup-test"), Some(10), None)
             .await?;
 
@@ -1078,22 +1078,16 @@ mod tests {
     // Test Fixture Lifecycle Management
 
     #[sinex_test]
-    async fn test_fixture_lazy_initialization(ctx: TestContext) -> Result<()> {
+    async fn test_fixture_lazy_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that context initialization is lazy and doesn't create unnecessary events
         let initial_count = ctx.test_event_count().await;
-        
+
         // Context should start with zero events
-        assert_eq!(
-            initial_count, 0,
-            "Context should start with zero events"
-        );
+        assert_eq!(initial_count, 0, "Context should start with zero events");
 
         // Create a test event to verify functionality
-        ctx.create_test_event(
-            "fixture-test",
-            "initialization",
-            json!({"lazy": true})
-        ).await?;
+        ctx.create_test_event("fixture-test", "initialization", json!({"lazy": true}))
+            .await?;
 
         // Should have created one event
         let after_event = ctx.test_event_count().await;
@@ -1106,7 +1100,7 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_fixture_resource_cleanup(ctx: TestContext) -> Result<()> {
+    async fn test_fixture_resource_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that fixture resources are cleaned up properly
         use std::sync::atomic::{AtomicBool, Ordering};
         use std::sync::Arc;
@@ -1149,9 +1143,9 @@ mod tests {
     }
 
     #[sinex_test]
-    async fn test_complex_event_relationships(ctx: TestContext) -> Result<()> {
+    async fn test_complex_event_relationships(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that we can create and query events with dependencies
-        
+
         // Create a checkpoint event
         ctx.create_test_event(
             "sinex",
@@ -1159,21 +1153,25 @@ mod tests {
             json!({
                 "checkpoint_id": "test_checkpoint_123",
                 "status": "saved"
-            })
-        ).await?;
+            }),
+        )
+        .await?;
 
         // Create an automaton event that references the checkpoint
         ctx.create_test_event(
             "automaton",
-            "checkpoint.processed", 
+            "checkpoint.processed",
             json!({
                 "checkpoint_id": "test_checkpoint_123",
                 "processing_time_ms": 42
-            })
-        ).await?;
+            }),
+        )
+        .await?;
 
         // Verify the events were created using direct repository access
-        let checkpoints = ctx.pool.events()
+        let checkpoints = ctx
+            .pool
+            .events()
             .get_by_source(&EventSource::from("sinex"), Some(100), None)
             .await?
             .into_iter()
@@ -1186,12 +1184,14 @@ mod tests {
         );
 
         // Verify related automaton events
-        let events = ctx.pool.events()
+        let events = ctx
+            .pool
+            .events()
             .get_by_source(&EventSource::from("automaton"), Some(100), None)
             .await?;
 
         assert!(!events.is_empty(), "Should have automaton events");
-        
+
         // Verify relationship
         let automaton_event = &events[0];
         assert_eq!(

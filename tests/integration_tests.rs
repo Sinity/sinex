@@ -9,26 +9,14 @@
 //! - `#[sinex_test]` macro for async tests
 //! - Modern test infrastructure (rstest, insta, tracing-test, similar-asserts)
 
-// Import test utilities without broad prelude to avoid Event type conflicts
-use chrono::{Duration, Utc};
-use color_eyre::{
-    eyre,
-    eyre::{bail, ensure, eyre, Context},
-};
-use futures::future::join_all;
-use insta::{assert_debug_snapshot, assert_json_snapshot, assert_snapshot, assert_yaml_snapshot};
-use rstest::{fixture, rstest};
+// Import test utilities with proper prelude for consistent testing
+use color_eyre::eyre::Result;
 use serde_json::json;
-use similar_asserts::{assert_eq as assert_similar, assert_str_eq};
 use sinex_db::models::{Blob, Event as DbEvent};
 use sinex_db::repositories::DbPoolExt;
-use sinex_test_utils::{sinex_test, TestContext};
-use sinex_types::domain::{EventSource, EventType, HostName};
-use sinex_types::{Id, Ulid};
-use std::collections::HashSet;
-use std::time::Duration as StdDuration;
-use tracing;
-use tracing_test::traced_test;
+use sinex_test_utils::prelude::*;
+use sinex_types::domain::{EventSource, EventType};
+use sinex_types::Id;
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS - Core functionality tests
@@ -40,12 +28,14 @@ async fn test_basic_event_insertion_and_retrieval(
 ) -> color_eyre::eyre::Result<()> {
     // Test the fundamental event lifecycle: create -> insert -> retrieve
     let event = ctx
-        .event()
-        .source("integration-test")
-        .type_("basic.test")
-        .field("test_value", 42)
-        .field("description", "Basic integration test")
-        .insert()
+        .create_test_event(
+            "integration-test",
+            "basic.test",
+            json!({
+                "test_value": 42,
+                "description": "Basic integration test"
+            }),
+        )
         .await?;
 
     // Verify event structure
@@ -56,7 +46,7 @@ async fn test_basic_event_insertion_and_retrieval(
 
     // Query back using repository pattern
     let retrieved_events = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(
             &EventSource::from_static("integration-test"),
@@ -72,25 +62,26 @@ async fn test_basic_event_insertion_and_retrieval(
 }
 
 #[sinex_test]
-async fn test_batch_event_insertion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_batch_event_insertion(ctx: TestContext) -> Result<()> {
     // Test batch insertion performance and correctness
-    let events = (0..10)
-        .map(|i| {
-            ctx.event()
-                .source("batch-test")
-                .type_("batch.event")
-                .field("index", i)
-                .field("batch_id", "test-batch-001")
-                .build()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    // Insert events using batch operation
-    ctx.insert_events(&events).await?;
+    let mut events = Vec::new();
+    for i in 0..10 {
+        let event = ctx
+            .create_test_event(
+                "batch-test",
+                "batch.item",
+                json!({
+                    "index": i,
+                    "batch_id": "test-batch-001"
+                }),
+            )
+            .await?;
+        events.push(event);
+    }
 
     // Verify all events were inserted
     let retrieved = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("batch-test"), Some(20), None)
         .await?;
@@ -129,11 +120,7 @@ async fn test_different_event_sources(ctx: TestContext) -> color_eyre::eyre::Res
     for (source, event_type, payload) in test_cases {
         // Test various event source patterns
         let event = ctx
-            .event()
-            .source(source)
-            .type_(event_type)
-            .payload(payload.clone())
-            .insert()
+            .create_test_event(source, event_type, payload.clone())
             .await?;
 
         assert_eq!(event.source.as_str(), source);
@@ -142,7 +129,7 @@ async fn test_different_event_sources(ctx: TestContext) -> color_eyre::eyre::Res
 
         // Verify event can be queried by source
         let source_events = ctx
-            .pool()
+            .pool
             .events()
             .get_by_source(&EventSource::new(source), Some(10), None)
             .await?;
@@ -165,11 +152,7 @@ async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> color_eyre::eyr
 
     for i in 0..5 {
         let event = ctx
-            .event()
-            .source("ulid-test")
-            .type_("ordering.test")
-            .field("sequence", i)
-            .insert()
+            .create_test_event("ulid-test", "ordering.test", json!({"sequence": i}))
             .await?;
 
         event_ids.push(event.id.unwrap());
@@ -216,10 +199,10 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
         .build();
 
     // Insert and verify
-    ctx.pool().events().insert(event.into()).await?;
+    ctx.pool.events().insert(event.into()).await?;
 
     let retrieved_events = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("id-test"), Some(1), None)
         .await?;
@@ -243,27 +226,14 @@ async fn test_repository_pattern_functionality(ctx: TestContext) -> color_eyre::
     // Test the repository pattern with various query operations
 
     // Insert test data
-    let events = vec![
-        ctx.event()
-            .source("repo-test")
-            .type_("type.a")
-            .field("category", "alpha")
-            .build()?,
-        ctx.event()
-            .source("repo-test")
-            .type_("type.b")
-            .field("category", "beta")
-            .build()?,
-        ctx.event()
-            .source("repo-test")
-            .type_("type.a")
-            .field("category", "gamma")
-            .build()?,
-    ];
+    ctx.create_test_event("repo-test", "type.a", json!({"category": "alpha"}))
+        .await?;
+    ctx.create_test_event("repo-test", "type.b", json!({"category": "beta"}))
+        .await?;
+    ctx.create_test_event("repo-test", "type.a", json!({"category": "gamma"}))
+        .await?;
 
-    ctx.insert_events(&events).await?;
-
-    let repo = ctx.pool().events();
+    let repo = ctx.pool.events();
 
     // Test querying by source
     let by_source = repo
@@ -291,19 +261,12 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
     // Test pagination functionality
 
     // Insert 20 test events
-    let events = (0..20)
-        .map(|i| {
-            ctx.event()
-                .source("pagination-test")
-                .type_("page.test")
-                .field("index", i)
-                .build()
-        })
-        .collect::<Result<Vec<_>, _>>()?;
+    for i in 0..20 {
+        ctx.create_test_event("pagination-test", "page.test", json!({"index": i}))
+            .await?;
+    }
 
-    ctx.insert_events(&events).await?;
-
-    let repo = ctx.pool().events();
+    let repo = ctx.pool.events();
 
     // Test limit
     let limited = repo
@@ -329,10 +292,8 @@ async fn test_repository_pagination_and_limits(ctx: TestContext) -> color_eyre::
 // =============================================================================
 
 #[sinex_test]
-async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<()> {
     // Test concurrent insertions don't interfere with each other
-    use std::sync::Arc;
-    // use tokio::task::JoinSet; // Not needed for this test
 
     // Create events concurrently using separate contexts
     let mut handles = Vec::new();
@@ -342,12 +303,14 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
         let handle = tokio::spawn(async move {
             let ctx = TestContext::new().await?;
             let event = ctx
-                .event()
-                .source("concurrent-test")
-                .type_("concurrent.event")
-                .field("task_id", i)
-                .field("timestamp", chrono::Utc::now().timestamp())
-                .insert()
+                .create_test_event(
+                    "concurrent-test",
+                    "concurrent.event",
+                    json!({
+                        "task_id": i,
+                        "timestamp": chrono::Utc::now().timestamp()
+                    }),
+                )
                 .await?;
 
             Ok::<_, color_eyre::eyre::Error>(event.id.unwrap())
@@ -373,7 +336,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 
     // Verify all events are in database
     let db_events = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("concurrent-test"), Some(20), None)
         .await?;
@@ -388,19 +351,19 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::ey
     let test_id = uuid::Uuid::new_v4().to_string();
 
     // Create event in this context
-    ctx.event()
-        .source("isolation-test")
-        .type_("isolation.marker")
-        .field("test_id", test_id.clone())
-        .insert()
-        .await?;
+    ctx.create_test_event(
+        "isolation-test",
+        "isolation.marker",
+        json!({"test_id": test_id.clone()}),
+    )
+    .await?;
 
     // Create another context (should be isolated)
     let other_ctx = TestContext::new().await?;
 
     // Other context should not see our event
     let other_events = other_ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("isolation-test"), Some(10), None)
         .await?;
@@ -409,7 +372,7 @@ async fn test_database_transaction_isolation(ctx: TestContext) -> color_eyre::ey
 
     // But our context should see it
     let our_events = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("isolation-test"), Some(10), None)
         .await?;
@@ -459,19 +422,19 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre
         description: Some("Test schema for filesystem events".to_string()),
         examples: None,
     };
-    let _schema = ctx.pool().events().register_schema(new_schema).await?;
+    let _schema = ctx.pool.events().register_schema(new_schema).await?;
 
     // Test valid event
     let valid_event = ctx
-        .event()
-        .source("filesystem")
-        .type_("file.created")
-        .payload(json!({
-            "file_path": "/test/valid.txt",
-            "file_size": 1024,
-            "permissions": "644"
-        }))
-        .insert()
+        .create_test_event(
+            "filesystem",
+            "file.created",
+            json!({
+                "file_path": "/test/valid.txt",
+                "file_size": 1024,
+                "permissions": "644"
+            }),
+        )
         .await?;
 
     assert_eq!(valid_event.source.as_str(), "filesystem");
@@ -513,16 +476,12 @@ async fn test_large_payload_handling(ctx: TestContext) -> color_eyre::eyre::Resu
     });
 
     let event = ctx
-        .event()
-        .source("performance-test")
-        .type_("large.payload")
-        .payload(large_payload.clone())
-        .insert()
+        .create_test_event("performance-test", "large.payload", large_payload.clone())
         .await?;
 
     // Verify large payload was stored correctly
     let retrieved = ctx
-        .pool()
+        .pool
         .events()
         .get_by_id(event.id.unwrap())
         .await?
@@ -545,13 +504,14 @@ async fn test_high_throughput_insertion(ctx: TestContext) -> color_eyre::eyre::R
     // Create events using single context (faster than separate contexts)
     let mut handles = Vec::new();
     for i in 0..event_count {
-        let handle = ctx
-            .event()
-            .source("throughput-test")
-            .type_("high.throughput")
-            .field("index", i)
-            .field("batch", "throughput-001")
-            .insert();
+        let handle = ctx.create_test_event(
+            "throughput-test",
+            "high.throughput",
+            json!({
+                "index": i,
+                "batch": "throughput-001"
+            }),
+        );
         handles.push(handle);
     }
 
@@ -577,7 +537,7 @@ async fn test_high_throughput_insertion(ctx: TestContext) -> color_eyre::eyre::R
 
     // Verify events are in database
     let inserted_events = ctx
-        .pool()
+        .pool
         .events()
         .count_by_source(&EventSource::from_static("throughput-test"))
         .await?;
@@ -598,21 +558,22 @@ async fn test_error_propagation_and_recovery(ctx: TestContext) -> color_eyre::ey
 
     // Test invalid source (empty string)
     let invalid_result = ctx
-        .event()
-        .source("") // Empty source should fail
-        .type_("error.test")
-        .insert()
+        .create_test_event(
+            "", // Empty source should fail
+            "error.test",
+            json!({}),
+        )
         .await;
 
     assert!(invalid_result.is_err(), "Empty source should cause error");
 
     // Test that pool is still usable after error
     let valid_event = ctx
-        .event()
-        .source("error-recovery-test")
-        .type_("recovery.test")
-        .field("recovery", true)
-        .insert()
+        .create_test_event(
+            "error-recovery-test",
+            "recovery.test",
+            json!({"recovery": true}),
+        )
         .await?;
 
     assert_eq!(valid_event.source.as_str(), "error-recovery-test");
@@ -634,13 +595,15 @@ async fn test_unicode_and_special_characters(ctx: TestContext) -> color_eyre::ey
 
     for (test_name, test_value, description) in test_cases {
         let event = ctx
-            .event()
-            .source("unicode-test")
-            .type_("character.test")
-            .field("test_name", test_name)
-            .field("test_value", test_value)
-            .field("description", description)
-            .insert()
+            .create_test_event(
+                "unicode-test",
+                "character.test",
+                json!({
+                    "test_name": test_name,
+                    "test_value": test_value,
+                    "description": description
+                }),
+            )
             .await?;
 
         // Verify data was stored correctly
@@ -648,7 +611,7 @@ async fn test_unicode_and_special_characters(ctx: TestContext) -> color_eyre::ey
 
         // Verify retrieval
         let retrieved = ctx
-            .pool()
+            .pool
             .events()
             .get_by_id(event.id.unwrap())
             .await?
@@ -699,20 +662,11 @@ async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()
 
     // Create test data
     let events = vec![
-        ctx.event()
-            .source("assertion-test")
-            .type_("test.a")
-            .insert()
+        ctx.create_test_event("assertion-test", "test.a", json!({}))
             .await?,
-        ctx.event()
-            .source("assertion-test")
-            .type_("test.b")
-            .insert()
+        ctx.create_test_event("assertion-test", "test.b", json!({}))
             .await?,
-        ctx.event()
-            .source("assertion-test")
-            .type_("test.c")
-            .insert()
+        ctx.create_test_event("assertion-test", "test.c", json!({}))
             .await?,
     ];
 
@@ -729,7 +683,8 @@ async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()
     }
 
     // Test database count assertion
-    ctx.assert_event_count(3).await?;
+    let count = ctx.test_event_count().await;
+    assert_eq!(count, 3);
 
     Ok(())
 }
@@ -747,18 +702,20 @@ async fn test_rstest_integration_10(ctx: TestContext) -> color_eyre::eyre::Resul
 
     // Create specified number of events
     for i in 0..event_count {
-        ctx.event()
-            .source("rstest-integration")
-            .type_("parameterized.test")
-            .field("index", i)
-            .field("total", event_count)
-            .insert()
-            .await?;
+        ctx.create_test_event(
+            "rstest-integration",
+            "parameterized.test",
+            json!({
+                "index": i,
+                "total": event_count
+            }),
+        )
+        .await?;
     }
 
     // Verify count
     let actual_count = ctx
-        .pool()
+        .pool
         .events()
         .count_by_source(&EventSource::from_static("rstest-integration"))
         .await?;
@@ -773,25 +730,21 @@ async fn test_rstest_integration_10(ctx: TestContext) -> color_eyre::eyre::Resul
 #[sinex_test]
 async fn test_insta_snapshots(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test snapshot testing with insta
-    let events = vec![
-        ctx.event()
-            .source("snapshot-test")
-            .type_("snapshot.a")
-            .field("value", 1)
-            .field("name", "first")
-            .build()?,
-        ctx.event()
-            .source("snapshot-test")
-            .type_("snapshot.b")
-            .field("value", 2)
-            .field("name", "second")
-            .build()?,
-    ];
-
-    ctx.insert_events(&events).await?;
+    ctx.create_test_event(
+        "snapshot-test",
+        "snapshot.a",
+        json!({"value": 1, "name": "first"}),
+    )
+    .await?;
+    ctx.create_test_event(
+        "snapshot-test",
+        "snapshot.b",
+        json!({"value": 2, "name": "second"}),
+    )
+    .await?;
 
     let retrieved = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("snapshot-test"), Some(10), None)
         .await?;
@@ -844,50 +797,57 @@ async fn test_complete_event_processing_workflow(ctx: TestContext) -> color_eyre
     // Test a complete end-to-end workflow
 
     // 1. Create initial event
-    let initial_event = ctx
-        .event()
-        .source("workflow-test")
-        .type_("workflow.started")
-        .field("workflow_id", "wf-001")
-        .field("step", 1)
-        .insert()
+    let _initial_event = ctx
+        .create_test_event(
+            "workflow-test",
+            "workflow.started",
+            json!({
+                "workflow_id": "wf-001",
+                "step": 1
+            }),
+        )
         .await?;
 
     // 2. Create processing events
-    let processing_events = vec![
-        ctx.event()
-            .source("workflow-test")
-            .type_("workflow.processing")
-            .field("workflow_id", "wf-001")
-            .field("step", 2)
-            .field("action", "validate_input")
-            .build()?,
-        ctx.event()
-            .source("workflow-test")
-            .type_("workflow.processing")
-            .field("workflow_id", "wf-001")
-            .field("step", 3)
-            .field("action", "transform_data")
-            .build()?,
-    ];
+    ctx.create_test_event(
+        "workflow-test",
+        "workflow.processing",
+        json!({
+            "workflow_id": "wf-001",
+            "step": 2,
+            "action": "validate_input"
+        }),
+    )
+    .await?;
 
-    ctx.insert_events(&processing_events).await?;
+    ctx.create_test_event(
+        "workflow-test",
+        "workflow.processing",
+        json!({
+            "workflow_id": "wf-001",
+            "step": 3,
+            "action": "transform_data"
+        }),
+    )
+    .await?;
 
     // 3. Create completion event
     let _completion_event = ctx
-        .event()
-        .source("workflow-test")
-        .type_("workflow.completed")
-        .field("workflow_id", "wf-001")
-        .field("step", 4)
-        .field("result", "success")
-        .field("duration_ms", 1250)
-        .insert()
+        .create_test_event(
+            "workflow-test",
+            "workflow.completed",
+            json!({
+                "workflow_id": "wf-001",
+                "step": 4,
+                "result": "success",
+                "duration_ms": 1250
+            }),
+        )
         .await?;
 
     // 4. Verify complete workflow
     let workflow_events = ctx
-        .pool()
+        .pool
         .events()
         .get_by_source(&EventSource::from_static("workflow-test"), Some(10), None)
         .await?;

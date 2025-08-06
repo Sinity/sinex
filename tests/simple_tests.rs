@@ -24,18 +24,14 @@ fn test_event_source_creation() {
 #[sinex_test]
 async fn test_basic_database_connection(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Just verify we can get a database connection
-    let _pool = ctx.pool();
+    let _pool = &ctx.pool;
     Ok(())
 }
 
 #[sinex_test]
 async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let event = ctx
-        .event()
-        .source("test")
-        .type_("test.event")
-        .field("value", 42)
-        .insert()
+        .create_test_event("test", "test.event", json!({"value": 42}))
         .await?;
 
     assert_eq!(event.source.as_str(), "test");

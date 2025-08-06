@@ -346,24 +346,19 @@ proptest! {
             let ctx = TestContext::new().await.unwrap();
 
             // Create batch of events
-            let mut events = Vec::new();
             for i in 0..batch_size {
-                let event = ctx.event()
-                    .source(source.as_str())
-                    .type_("batch.test")
-                    .field("index", i)
-                    .field("batch_size", batch_size)
-                    .build()
-                    .unwrap();
-                events.push(event);
+                ctx.create_test_event(
+                    source.as_str(),
+                    "batch.test",
+                    json!({
+                        "index": i,
+                        "batch_size": batch_size
+                    })
+                ).await.unwrap();
             }
 
-            // Property: Batch insertion should succeed
-            let insert_result = ctx.insert_events(&events).await;
-            prop_assert!(insert_result.is_ok());
-
             // Property: All events should be retrievable
-            let retrieved = ctx.pool().events()
+            let retrieved = ctx.pool.events()
                 .get_by_source(&EventSource::new(&source), Some(batch_size as i64 + 10), None)
                 .await
                 .unwrap();
@@ -559,13 +554,11 @@ proptest! {
 
             // Create events with small delays
             for i in 0..event_count {
-                let event = ctx.event()
-                    .source("ordering-prop-test")
-                    .type_("ordering.test")
-                    .field("sequence", i)
-                    .insert()
-                    .await
-                    .unwrap();
+                let event = ctx.create_test_event(
+                    "ordering-prop-test",
+                    "ordering.test",
+                    json!({"sequence": i})
+                ).await.unwrap();
 
                 event_ids.push(event.id.unwrap());
 
@@ -579,7 +572,7 @@ proptest! {
             }
 
             // Property: Retrieved events should maintain order
-            let retrieved = ctx.pool().events()
+            let retrieved = ctx.pool.events()
                 .get_by_source(&EventSource::from_static("ordering-prop-test"), Some(event_count as i64 + 10), None)
                 .await
                 .unwrap();

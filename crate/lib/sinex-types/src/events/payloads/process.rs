@@ -268,12 +268,11 @@ impl SensorDeactivatedPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::EventPayload;
+    use crate::events::event_payload::EventPayload;
 
     #[test]
     fn test_event_payload_constants() {
         // Verify that the EventPayload trait is implemented
-        use crate::EventPayload;
         assert_eq!(ProcessHeartbeatPayload::SOURCE.as_str(), "sinex");
         assert_eq!(
             ProcessHeartbeatPayload::EVENT_TYPE.as_str(),

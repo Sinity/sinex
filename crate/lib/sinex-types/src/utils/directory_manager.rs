@@ -160,7 +160,7 @@ mod tests {
     async fn test_directory_manager_create() {
         let temp_dir = TempDir::new().unwrap();
         let config = DirectoryConfig {
-            base_path: temp_dir.path().to_path_buf(),
+            base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
             ..Default::default()
         };
 
@@ -182,7 +182,7 @@ mod tests {
     async fn test_directory_manager_list() {
         let temp_dir = TempDir::new().unwrap();
         let config = DirectoryConfig {
-            base_path: temp_dir.path().to_path_buf(),
+            base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
             ..Default::default()
         };
 
@@ -199,7 +199,7 @@ mod tests {
         // Check that both directories are present
         let dir_names: Vec<String> = entries
             .iter()
-            .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+            .filter_map(|p| p.file_name())
             .map(|s| s.to_string())
             .collect();
 
@@ -211,7 +211,7 @@ mod tests {
     async fn test_directory_manager_remove() {
         let temp_dir = TempDir::new().unwrap();
         let config = DirectoryConfig {
-            base_path: temp_dir.path().to_path_buf(),
+            base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
             ..Default::default()
         };
 
