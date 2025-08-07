@@ -88,3 +88,4 @@ pub mod modern_test_infrastructure_test;
 // Failure handling and recovery
 pub mod critical_failure_modes_test;
 pub mod preflight_integration_test;
+pub mod typed_clipboard_integration_test;

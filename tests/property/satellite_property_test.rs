@@ -14,7 +14,7 @@ use std::time::Duration;
 /// Property test strategies for event data
 mod strategies {
     use super::*;
-    
+
     /// Strategy for generating realistic event sequences
     pub fn event_sequences() -> impl Strategy<Value = Vec<Event>> {
         (1usize..=100).prop_flat_map(|size| {
@@ -92,7 +92,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
-            
+
             // Skip if no events to test
             if events.is_empty() {
                 return;
@@ -112,7 +112,7 @@ proptest! {
 
             // Wait for all events to be processed
             tokio::time::sleep(Duration::from_millis(100)).await;
-            
+
             // Check that we have the expected count
             let actual_count = ctx.test_event_count().await;
             assert_eq!(actual_count, processed_events.len() as i64);
@@ -144,7 +144,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
-            
+
             // Skip if no events to test
             if events.is_empty() {
                 return;
@@ -164,7 +164,7 @@ proptest! {
                         .event_type(EventType::new(event_type))
                         .payload(payload.clone())
                         .build();
-                    
+
                     let result = ctx.pool.events().insert(invalid_event).await;
                     if result.is_err() {
                         failed_events += 1;
@@ -176,7 +176,7 @@ proptest! {
                         .event_type(EventType::new(event_type))
                         .payload(payload.clone())
                         .build();
-                    
+
                     ctx.pool.events().insert(event).await.unwrap();
                     successful_events += 1;
                 }
@@ -187,7 +187,7 @@ proptest! {
 
             // Wait for processing to complete
             tokio::time::sleep(Duration::from_millis(100)).await;
-            
+
             let final_count = ctx.test_event_count().await;
             assert_eq!(final_count, successful_events as i64);
 
@@ -212,31 +212,31 @@ proptest! {
             // Generate events for concurrent processing
             let mut total_events = 0;
             let mut handles = Vec::new();
-            
+
             for i in 0..concurrent_operations {
                 let ctx_clone = TestContext::new().await.unwrap();
                 let source = format!("concurrent-{}", i);
-                
+
                 let handle = tokio::spawn(async move {
                     let mut operation_events = 0;
-                    
+
                     for j in 0..events_per_operation {
                         let event = Event::schemaless()
                             .source(EventSource::new(&source))
                             .event_type(EventType::new(&format!("test.event.{}", j)))
                             .payload(json!({"operation": i, "event": j}))
                             .build();
-                        
+
                         ctx_clone.pool.events().insert(event).await.unwrap();
                         operation_events += 1;
-                        
+
                         // Small processing delay
                         tokio::time::sleep(Duration::from_millis(processing_delay)).await;
                     }
-                    
+
                     operation_events
                 });
-                
+
                 handles.push(handle);
                 total_events += events_per_operation;
             }
@@ -252,7 +252,7 @@ proptest! {
 
             // Wait for final consistency
             tokio::time::sleep(Duration::from_millis(200)).await;
-            
+
             let final_count = ctx.test_event_count().await;
             assert_eq!(final_count, total_events as i64);
         });
@@ -268,7 +268,7 @@ proptest! {
         _timeout_secs in 1u64..3600u64,
     ) {
         use sinex_satellite_sdk::config::SatelliteConfig;
-        
+
         // Test config creation with various valid parameters
         let config = SatelliteConfig::builder()
             .service_name(service_name.clone())
@@ -276,10 +276,10 @@ proptest! {
 
         // Configuration should be valid with proper inputs
         assert_eq!(config.service_name, service_name);
-        
+
         // Validate the configuration
         assert!(config.validate_config().is_ok());
-        
+
         // Test environment-based loading doesn't panic
         let env_config = SatelliteConfig::load_from_env(&service_name);
         assert_eq!(env_config.service_name, service_name);
@@ -300,7 +300,7 @@ proptest! {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
-            
+
             // Skip if no events to test
             if events.is_empty() {
                 return;
@@ -314,7 +314,7 @@ proptest! {
                     .event_type(EventType::new(event_type))
                     .payload(payload.clone())
                     .build();
-                
+
                 ctx.pool.events().insert(event).await.unwrap();
             }
 
@@ -328,7 +328,7 @@ proptest! {
                     .event_type(EventType::new(event_type))
                     .payload(payload.clone())
                     .build();
-                
+
                 ctx.pool.events().insert(event).await.unwrap();
             }
 
@@ -362,7 +362,7 @@ proptest! {
                     .event_type(EventType::new(&format!("before.{}", i)))
                     .payload(json!({"phase": "before", "index": i}))
                     .build();
-                
+
                 ctx.pool.events().insert(event).await.unwrap();
             }
 
@@ -377,7 +377,7 @@ proptest! {
                     .event_type(EventType::new(&format!("during.{}", i)))
                     .payload(json!({"phase": "during", "index": i}))
                     .build();
-                
+
                 // Try to insert with timeout to simulate network issues
                 let _ = tokio::time::timeout(
                     Duration::from_millis(50),
@@ -395,7 +395,7 @@ proptest! {
                     .event_type(EventType::new(&format!("after.{}", i)))
                     .payload(json!({"phase": "after", "index": i}))
                     .build();
-                
+
                 ctx.pool.events().insert(event).await.unwrap();
             }
 
@@ -422,12 +422,12 @@ proptest! {
             let ctx = TestContext::new().await.unwrap();
 
             let mut handles = Vec::new();
-            
+
             // Create concurrent event producers
             for source_id in 0..concurrent_sources {
                 let ctx_clone = TestContext::new().await.unwrap();
                 let source_name = format!("ordering-test-{}", source_id);
-                
+
                 let handle = tokio::spawn(async move {
                     for event_id in 0..events_per_source {
                         let event = Event::schemaless()
@@ -439,14 +439,14 @@ proptest! {
                                 "timestamp": chrono::Utc::now().timestamp_millis()
                             }))
                             .build();
-                        
+
                         ctx_clone.pool.events().insert(event).await.unwrap();
-                        
+
                         // Add jitter to simulate real-world timing variations
                         tokio::time::sleep(Duration::from_millis(processing_jitter)).await;
                     }
                 });
-                
+
                 handles.push(handle);
             }
 
@@ -465,7 +465,7 @@ proptest! {
 
             // Group events by source and verify ordering within each source
             let mut events_by_source: std::collections::HashMap<String, Vec<_>> = std::collections::HashMap::new();
-            
+
             for event in all_events {
                 let source = event.source.to_string();
                 events_by_source.entry(source).or_default().push(event);
@@ -482,7 +482,7 @@ proptest! {
                         (None, None) => std::cmp::Ordering::Equal,
                     }
                 });
-                
+
                 // Verify sequential event_ids within payload
                 for window in source_events.windows(2) {
                     if let (payload1, payload2) = (&window[0].payload, &window[1].payload) {

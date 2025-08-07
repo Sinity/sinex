@@ -2,7 +2,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
 use sinex_test_utils::prelude::*;
-use sinex_types::validation::{ValidationError, validate_json};
+use sinex_types::validation::{validate_json, ValidationError};
 
 /// Property tests for schema validation functionality
 ///
@@ -293,22 +293,22 @@ async fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
 fn test_validation_chain_properties() {
     proptest!(|(
         test_strings in prop::collection::vec(".*", 1..=10)
-    )| {        
+    )| {
         for test_string in test_strings.iter() {
             // Use basic validation patterns instead of complex chaining
             let is_empty = test_string.is_empty();
             let is_too_long = test_string.len() > 1000;
-            
+
             // Property: Empty strings should be considered invalid
             if is_empty {
                 prop_assert!(test_string.is_empty(), "Empty strings should be empty");
             }
-            
+
             // Property: Very long strings should be detectable
             if is_too_long {
                 prop_assert!(test_string.len() > 1000, "Long strings should be long");
             }
-            
+
             // Property: Non-empty, reasonable length strings should be valid
             if !is_empty && !is_too_long {
                 prop_assert!(!test_string.is_empty(), "Valid strings should not be empty");
@@ -323,18 +323,18 @@ fn test_validation_chain_properties() {
 fn test_validation_chain_numeric_properties() {
     proptest!(|(
         test_numbers in prop::collection::vec(any::<i64>(), 1..=10)
-    )| {        
+    )| {
         for &test_number in test_numbers.iter() {
             // Property: Numbers should have predictable range behavior
             let in_valid_range = test_number >= 0 && test_number <= 1000;
             let too_small = test_number < 0;
             let too_large = test_number > 1000;
-            
+
             // Exactly one should be true
             let flags = [in_valid_range, too_small, too_large];
             let true_count = flags.iter().filter(|&&x| x).count();
             prop_assert_eq!(true_count, 1, "Exactly one range condition should be true for {}", test_number);
-            
+
             // Verify range classifications
             if in_valid_range {
                 prop_assert!(test_number >= 0, "Valid range numbers should be >= 0");
@@ -448,7 +448,7 @@ async fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
         // Should not panic
         let json_str = payload.to_string();
         let _result = validate_json(&json_str);
-        
+
         // The main property we're testing is that it doesn't crash
         assert!(true);
     }
@@ -461,11 +461,15 @@ async fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
 // =============================================================================
 
 #[sinex_test]
-async fn test_json_validation_database_integration(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_json_validation_database_integration(
+    ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
     // Test basic JSON validation with database integration
 
     // Should be able to create events and validate them
-    let event = ctx.create_test_event("test_source", "test.event", json!({"key": "value"})).await?;
+    let event = ctx
+        .create_test_event("test_source", "test.event", json!({"key": "value"}))
+        .await?;
 
     // Basic validation should not fail
     let json_str = event.payload.to_string();
@@ -546,7 +550,7 @@ mod unit_tests {
     #[sinex_test]
     async fn test_validator_with_real_events() -> color_eyre::eyre::Result<()> {
         // Test JSON validation with realistic event payloads
-        
+
         let valid_payload = json!({
             "path": "/home/user/test.txt",
             "size": 1024,
@@ -567,14 +571,14 @@ mod unit_tests {
 
         // At minimum, these should not panic
         match valid_result {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) => println!("Valid payload failed: {}", e),
         }
 
         match invalid_result {
             Ok(_) | Err(_) => {} // Any result is acceptable for testing
         }
-        
+
         Ok(())
     }
 
@@ -619,7 +623,7 @@ mod unit_tests {
         // Test basic validation concepts using simple logic
         let valid_name = "Alice";
         let valid_age = 30u32;
-        
+
         // Test successful validation conditions
         assert!(!valid_name.is_empty());
         assert!(valid_name.len() <= 10);
@@ -629,7 +633,7 @@ mod unit_tests {
         // Test failed validation conditions
         let invalid_name = "";
         let invalid_age = 15u32;
-        
+
         assert!(invalid_name.is_empty()); // Should fail length check
         assert!(invalid_age < 18); // Should fail age check
     }
@@ -639,7 +643,7 @@ mod unit_tests {
         // Test different validation scenarios
         let empty_value = "";
         let valid_value = "test";
-        
+
         // Test that we can detect validation issues
         assert!(empty_value.is_empty()); // Should fail validation
         assert!(!valid_value.is_empty()); // Should pass validation

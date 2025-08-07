@@ -88,7 +88,7 @@ proptest! {
             let state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
             prop_assert_eq!(state.max_processed, initial_state.processed_count);
             prop_assert!(state.last_update.is_some());
-            
+
             Ok::<(), proptest::test_runner::TestCaseError>(())
         });
     }
@@ -138,7 +138,7 @@ proptest! {
             // Verify final state
             let state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
             prop_assert_eq!(state.max_processed, expected_final_count);
-            
+
             Ok::<(), proptest::test_runner::TestCaseError>(())
         });
     }
@@ -198,7 +198,7 @@ proptest! {
             // Verify final state is consistent
             let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
             prop_assert!(final_state.last_update.is_some());
-            
+
             Ok::<(), proptest::test_runner::TestCaseError>(())
         });
     }
@@ -254,7 +254,7 @@ proptest! {
                 prop_assert_eq!(retrieved_state.max_processed, current_count);
                 prop_assert!(retrieved_state.last_update.is_some());
             }
-            
+
             Ok::<(), proptest::test_runner::TestCaseError>(())
         });
     }
@@ -337,7 +337,7 @@ proptest! {
             let final_state = checkpoint_manager.get_checkpoint_stats().await.unwrap();
             prop_assert_eq!(final_state.max_processed, processed_count);
             prop_assert!(final_state.last_update.is_some());
-            
+
             Ok::<(), proptest::test_runner::TestCaseError>(())
         });
     }
@@ -400,7 +400,7 @@ proptest! {
             // Verify cleanup maintains isolation
             let remaining_checkpoint = cleaned_manager.get_checkpoint_stats().await.unwrap();
             prop_assert!(remaining_checkpoint.last_update.is_some());
-            
+
             Ok::<(), proptest::test_runner::TestCaseError>(())
         });
     }
@@ -494,20 +494,18 @@ mod unit_tests {
     async fn test_strategy_generators() -> Result<()> {
         // Test processor name strategy
         let mut runner = proptest::test_runner::TestRunner::deterministic();
-        let processor_name = processor_names()
-            .new_tree(&mut runner)
-            .unwrap()
-            .current();
-        
+        let processor_name = processor_names().new_tree(&mut runner).unwrap().current();
+
         assert!(!processor_name.is_empty());
-        assert!(processor_name.contains("automaton") || processor_name.contains("canonicalizer") || processor_name.contains("aggregator"));
+        assert!(
+            processor_name.contains("automaton")
+                || processor_name.contains("canonicalizer")
+                || processor_name.contains("aggregator")
+        );
 
         // Test checkpoint data strategy
-        let checkpoint_data = checkpoint_data()
-            .new_tree(&mut runner)
-            .unwrap()
-            .current();
-        
+        let checkpoint_data = checkpoint_data().new_tree(&mut runner).unwrap().current();
+
         assert!(checkpoint_data.is_null() || checkpoint_data.is_object());
 
         Ok(())
@@ -516,7 +514,7 @@ mod unit_tests {
     #[sinex_test]
     async fn test_checkpoint_state_methods(_ctx: TestContext) -> Result<()> {
         let mut state = CheckpointState::default();
-        
+
         // Test initial state
         assert_eq!(state.last_processed_id(), None);
         assert_eq!(state.processed_count, 0);

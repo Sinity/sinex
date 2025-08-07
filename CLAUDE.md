@@ -244,5 +244,3 @@ just errors                # Show compilation errors
 just warnings              # Show compilation warnings
 just recent-changes        # Show recent git changes for context
 ```
-
-# Da Plan: @docs/REFACTORING_UNIFIED.md

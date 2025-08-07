@@ -544,7 +544,7 @@ mod property {
 // REGRESSION PROPERTY TESTS - Preserve important system invariants
 // =============================================================================
 
-// Temporarily disabled due to proptest/async incompatibility  
+// Temporarily disabled due to proptest/async incompatibility
 // TODO: Fix async proptest pattern
 /* #[sinex_test]
 async fn test_event_ordering_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -593,9 +593,8 @@ async fn test_event_ordering_properties(ctx: TestContext) -> color_eyre::eyre::R
     Ok(())
 } */
 
-
 // =============================================================================
-// Include modernized event property tests  
+// Include modernized event property tests
 // =============================================================================
 
 mod event_property;

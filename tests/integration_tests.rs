@@ -9,6 +9,11 @@
 //! - `#[sinex_test]` macro for async tests
 //! - Modern test infrastructure (rstest, insta, tracing-test, similar-asserts)
 
+mod integration {
+    pub mod resource_management_test;
+    pub mod test_automation_integration_test;
+}
+
 // Import test utilities with proper prelude for consistent testing
 use color_eyre::eyre::Result;
 use serde_json::json;

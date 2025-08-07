@@ -15,51 +15,63 @@ mod database {
     use super::VerificationStatus;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
-    
-    pub async fn verify_database_connectivity() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_database_connectivity() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let db_url = std::env::var("DATABASE_URL").unwrap_or_default();
         if db_url.contains("invalid") || db_url.contains("192.0.2.1") {
             let details = HashMap::new();
             let messages = vec!["connection failed - timeout or invalid URL".to_string()];
             return Ok((VerificationStatus::Fail, details, messages));
         }
-        
+
         let mut details = HashMap::new();
         details.insert("database_url".to_string(), serde_json::json!("mock_url"));
         details.insert("postgresql_version".to_string(), serde_json::json!("13.0"));
-        details.insert("connection_pool".to_string(), serde_json::json!({"size": 10}));
-        
+        details.insert(
+            "connection_pool".to_string(),
+            serde_json::json!({"size": 10}),
+        );
+
         let messages = vec!["connection established successfully".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
-    
-    pub async fn verify_postgresql_extensions() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_postgresql_extensions() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let db_url = std::env::var("DATABASE_URL").unwrap_or_default();
         if db_url.contains("invalid") {
             return Err("Database connection failed".into());
         }
-        
+
         let mut details = HashMap::new();
         let mut extensions = HashMap::new();
         extensions.insert("uuid-ossp", serde_json::json!({"version": "1.1"}));
         extensions.insert("pgx_ulid", serde_json::json!({"version": "1.0"}));
         extensions.insert("timescaledb", serde_json::json!({"version": "2.0"}));
         details.insert("extensions".to_string(), serde_json::json!(extensions));
-        
+
         let messages = vec!["extensions verified".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
-    
-    pub async fn verify_migration_readiness() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_migration_readiness() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let db_url = std::env::var("DATABASE_URL").unwrap_or_default();
         if db_url.contains("invalid") {
             return Err("Database connection failed".into());
         }
-        
+
         let mut details = HashMap::new();
         details.insert("current_migrations".to_string(), serde_json::json!(5));
         details.insert("discovered_migrations".to_string(), serde_json::json!(5));
-        
+
         let messages = vec!["migrations ready".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
@@ -69,18 +81,27 @@ mod resources {
     use super::VerificationStatus;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
-    
-    pub async fn verify_system_resources() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_system_resources() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let mut details = HashMap::new();
-        details.insert("memory".to_string(), serde_json::json!({
-            "total_gb": 16,
-            "available_gb": 8,
-            "meets_requirements": true
-        }));
+        details.insert(
+            "memory".to_string(),
+            serde_json::json!({
+                "total_gb": 16,
+                "available_gb": 8,
+                "meets_requirements": true
+            }),
+        );
         details.insert("disk".to_string(), serde_json::json!({"free_gb": 100}));
         details.insert("cpu".to_string(), serde_json::json!({"cores": 8}));
-        details.insert("filesystem".to_string(), serde_json::json!({"writable": true}));
-        
+        details.insert(
+            "filesystem".to_string(),
+            serde_json::json!({"writable": true}),
+        );
+
         let messages = vec!["system resources adequate".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
@@ -90,21 +111,33 @@ mod configuration {
     use super::VerificationStatus;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
-    
-    pub async fn verify_configuration_generation() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_configuration_generation() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let db_url = std::env::var("DATABASE_URL");
         if db_url.is_err() {
             let mut details = HashMap::new();
-            details.insert("environment".to_string(), serde_json::json!({"status": "invalid"}));
+            details.insert(
+                "environment".to_string(),
+                serde_json::json!({"status": "invalid"}),
+            );
             let messages = vec!["DATABASE_URL missing from environment".to_string()];
             return Ok((VerificationStatus::Fail, details, messages));
         }
-        
+
         let mut details = HashMap::new();
-        details.insert("environment".to_string(), serde_json::json!({"status": "valid"}));
-        details.insert("toml_generation".to_string(), serde_json::json!({"status": "ok"}));
+        details.insert(
+            "environment".to_string(),
+            serde_json::json!({"status": "valid"}),
+        );
+        details.insert(
+            "toml_generation".to_string(),
+            serde_json::json!({"status": "ok"}),
+        );
         details.insert("event_sources".to_string(), serde_json::json!({"count": 4}));
-        
+
         let messages = vec!["configuration valid".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
@@ -114,13 +147,25 @@ mod services {
     use super::VerificationStatus;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
-    
-    pub async fn verify_service_dependencies() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_service_dependencies() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let mut details = HashMap::new();
-        details.insert("binaries".to_string(), serde_json::json!({"found": 5, "missing": 0}));
-        details.insert("systemd_services".to_string(), serde_json::json!({"active": 3}));
-        details.insert("external_dependencies".to_string(), serde_json::json!({"available": true}));
-        
+        details.insert(
+            "binaries".to_string(),
+            serde_json::json!({"found": 5, "missing": 0}),
+        );
+        details.insert(
+            "systemd_services".to_string(),
+            serde_json::json!({"active": 3}),
+        );
+        details.insert(
+            "external_dependencies".to_string(),
+            serde_json::json!({"available": true}),
+        );
+
         let messages = vec!["service dependencies satisfied".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
@@ -130,19 +175,28 @@ mod verification {
     use super::VerificationStatus;
     use serde_json::Value as JsonValue;
     use std::collections::HashMap;
-    
-    pub async fn verify_end_to_end_integration() -> Result<(VerificationStatus, HashMap<String, JsonValue>, Vec<String>), Box<dyn std::error::Error + Send + Sync>> {
+
+    pub async fn verify_end_to_end_integration() -> Result<
+        (VerificationStatus, HashMap<String, JsonValue>, Vec<String>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
         let db_url = std::env::var("DATABASE_URL").unwrap_or_default();
         if db_url.contains("invalid") {
             let mut details = HashMap::new();
-            details.insert("database_integration".to_string(), serde_json::json!({"status": "failed"}));
+            details.insert(
+                "database_integration".to_string(),
+                serde_json::json!({"status": "failed"}),
+            );
             let messages = vec!["Database integration test failed".to_string()];
             return Ok((VerificationStatus::Fail, details, messages));
         }
-        
+
         let mut details = HashMap::new();
-        details.insert("database_integration".to_string(), serde_json::json!({"status": "passed"}));
-        
+        details.insert(
+            "database_integration".to_string(),
+            serde_json::json!({"status": "passed"}),
+        );
+
         let messages = vec!["integration tests passed".to_string()];
         Ok((VerificationStatus::Pass, details, messages))
     }
@@ -188,11 +242,12 @@ async fn test_verification_status_comparisons(_ctx: TestContext) -> color_eyre::
 
 /// Test Phase 1: Database connectivity verification with valid connection
 #[sinex_test]
-async fn test_phase1_database_connectivity_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase1_database_connectivity_success(
+    ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
     // Set valid database URL - get it from environment or use default
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql:///sinex_test?host=/run/postgresql".to_string()
-    });
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string());
     env::set_var("DATABASE_URL", &db_url);
 
     let (status, details, messages) = database::verify_database_connectivity()
@@ -215,7 +270,9 @@ async fn test_phase1_database_connectivity_success(ctx: TestContext) -> color_ey
 
 /// Test Phase 1: Database connectivity with invalid URL
 #[sinex_test]
-async fn test_phase1_database_connectivity_failure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase1_database_connectivity_failure(
+    _ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
     // Set invalid database URL
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
@@ -239,7 +296,9 @@ async fn test_phase1_database_connectivity_failure(_ctx: TestContext) -> color_e
 
 /// Test Phase 1: Database connectivity timeout handling
 #[sinex_test]
-async fn test_phase1_database_connectivity_timeout(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase1_database_connectivity_timeout(
+    _ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
     // Use a non-responsive IP to trigger timeout
     env::set_var("DATABASE_URL", "postgresql://192.0.2.1:5432/test"); // RFC 5737 test IP
 
@@ -273,9 +332,8 @@ async fn test_phase1_database_connectivity_timeout(_ctx: TestContext) -> color_e
 /// Test Phase 2: PostgreSQL extensions verification
 #[sinex_test]
 async fn test_phase2_postgresql_extensions(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql:///sinex_test?host=/run/postgresql".to_string()
-    });
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string());
     env::set_var("DATABASE_URL", &db_url);
 
     let (status, details, messages) = database::verify_postgresql_extensions()
@@ -322,9 +380,8 @@ async fn test_phase2_extensions_db_failure(_ctx: TestContext) -> color_eyre::eyr
 /// Test Phase 3: Migration readiness verification
 #[sinex_test]
 async fn test_phase3_migration_readiness(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql:///sinex_test?host=/run/postgresql".to_string()
-    });
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string());
     env::set_var("DATABASE_URL", &db_url);
 
     let (status, details, messages) = database::verify_migration_readiness()
@@ -347,7 +404,9 @@ async fn test_phase3_migration_readiness(ctx: TestContext) -> color_eyre::eyre::
 
 /// Test Phase 3: Migration readiness with invalid database
 #[sinex_test]
-async fn test_phase3_migration_readiness_db_failure(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+async fn test_phase3_migration_readiness_db_failure(
+    _ctx: TestContext,
+) -> color_eyre::eyre::Result<()> {
     env::set_var("DATABASE_URL", "postgresql://invalid:5432/nonexistent");
 
     let result = database::verify_migration_readiness().await;
@@ -401,12 +460,13 @@ async fn test_phase4_filesystem_permissions(_ctx: TestContext) -> color_eyre::ey
         .map_err(|e| color_eyre::eyre::eyre!("Failed to write test file: {}", e))?;
 
     // Test read permissions
-    let content =
-        fs::read_to_string(&test_file).map_err(|e| color_eyre::eyre::eyre!("Failed to read test file: {}", e))?;
+    let content = fs::read_to_string(&test_file)
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to read test file: {}", e))?;
     assert_eq!(content, "test content");
 
     // Test cleanup
-    fs::remove_file(&test_file).map_err(|e| color_eyre::eyre::eyre!("Failed to remove test file: {}", e))?;
+    fs::remove_file(&test_file)
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to remove test file: {}", e))?;
 
     Ok(())
 }
@@ -416,9 +476,8 @@ async fn test_phase4_filesystem_permissions(_ctx: TestContext) -> color_eyre::ey
 /// Test Phase 5: Configuration verification success
 #[sinex_test]
 async fn test_phase5_configuration_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql:///sinex_test?host=/run/postgresql".to_string()
-    });
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string());
     env::set_var("DATABASE_URL", &db_url);
 
     let (status, details, messages) = configuration::verify_configuration_generation()
@@ -448,7 +507,9 @@ async fn test_phase5_configuration_missing_env(_ctx: TestContext) -> color_eyre:
 
     let (status, _details, messages) = configuration::verify_configuration_generation()
         .await
-        .map_err(|e| color_eyre::eyre::eyre!("Configuration test should handle missing vars: {}", e))?;
+        .map_err(|e| {
+            color_eyre::eyre::eyre!("Configuration test should handle missing vars: {}", e)
+        })?;
 
     assert_eq!(status, VerificationStatus::Fail);
     assert!(messages
@@ -536,9 +597,8 @@ async fn test_phase6_binary_availability(_ctx: TestContext) -> color_eyre::eyre:
 /// Test Phase 7: End-to-end integration verification
 #[sinex_test]
 async fn test_phase7_integration_success(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let db_url = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
-        "postgresql:///sinex_test?host=/run/postgresql".to_string()
-    });
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgresql:///sinex_test?host=/run/postgresql".to_string());
     env::set_var("DATABASE_URL", &db_url);
 
     let (status, details, messages) = verification::verify_end_to_end_integration()
@@ -591,7 +651,7 @@ async fn test_verification_status_properties(_ctx: TestContext) -> color_eyre::e
         // Test equality and cloning
         let cloned_status = status.clone();
         assert_eq!(status, cloned_status);
-        
+
         // Test debug formatting
         let debug_str = format!("{:?}", status);
         assert!(!debug_str.is_empty());

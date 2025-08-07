@@ -7,14 +7,14 @@
 //! - Event field constraints
 //! - Edge case handling
 
-use sinex_test_utils::prelude::*;
 use chrono::{Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
+use sinex_test_utils::prelude::*;
 
 /// Property tests for Event-related functionality
-/// 
+///
 /// These tests migrate from the old RawEvent-based system to the modern
 /// unified Event architecture using the schemaless builder pattern.
 
@@ -142,24 +142,22 @@ fn arb_event() -> impl Strategy<Value = Event> {
         arb_json_value(),
         prop::option::of(arb_timestamp()),
     )
-        .prop_map(
-            |(source, event_type, payload, ts_orig)| {
-                let mut event = Event::schemaless()
-                    .source(EventSource::new(source))
-                    .event_type(EventType::new(event_type))
-                    .payload(payload)
-                    .build();
+        .prop_map(|(source, event_type, payload, ts_orig)| {
+            let mut event = Event::schemaless()
+                .source(EventSource::new(source))
+                .event_type(EventType::new(event_type))
+                .payload(payload)
+                .build();
 
-                // Set ts_ingest manually since it's skipped by the builder
-                event.ts_ingest = Utc::now();
+            // Set ts_ingest manually since it's skipped by the builder
+            event.ts_ingest = Utc::now();
 
-                if let Some(ts) = ts_orig {
-                    event.ts_orig = Some(ts);
-                }
+            if let Some(ts) = ts_orig {
+                event.ts_orig = Some(ts);
+            }
 
-                event
-            },
-        )
+            event
+        })
 }
 
 // =============================================================================
@@ -204,10 +202,10 @@ fn test_event_id_properties() -> Result<()> {
             .payload(payload.clone())
             .build();
         event1.ts_ingest = Utc::now();
-        
+
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
-        
+
         let mut event2 = Event::schemaless()
             .source(EventSource::new(source))
             .event_type(EventType::new(event_type))
@@ -305,7 +303,7 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
                 .build();
             event.ts_ingest = Utc::now();
             events.push(event);
-            
+
             // Small delay to ensure timestamp ordering
             std::thread::sleep(std::time::Duration::from_millis(1));
         }
@@ -318,7 +316,7 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
     Ok(())
 }
 
-#[sinex_test] 
+#[sinex_test]
 fn test_event_edge_case_payloads() -> Result<()> {
     proptest::proptest!(|(
         source in arb_source_name(),
@@ -403,7 +401,7 @@ fn arb_registry_source_name() -> impl Strategy<Value = String> {
 fn test_event_type_validation_property() -> Result<()> {
     proptest::proptest!(|(event_type_str in arb_event_type())| {
         let event_type = EventType::new(event_type_str.clone());
-        
+
         // Test validation rules
         match event_type.validate() {
             Ok(()) => {
@@ -412,7 +410,7 @@ fn test_event_type_validation_property() -> Result<()> {
                 prop_assert!(!event_type_str.starts_with('.'));
                 prop_assert!(!event_type_str.ends_with('.'));
                 prop_assert!(!event_type_str.contains(".."));
-                prop_assert!(event_type_str.chars().all(|c| 
+                prop_assert!(event_type_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
                 ));
             }
@@ -422,11 +420,11 @@ fn test_event_type_validation_property() -> Result<()> {
                     event_type_str.starts_with('.') ||
                     event_type_str.ends_with('.') ||
                     event_type_str.contains("..") ||
-                    !event_type_str.chars().all(|c| 
+                    !event_type_str.chars().all(|c|
                         c.is_ascii_lowercase() || c == '.' || c == '_' || c == '-'
                     );
-                prop_assert!(violates_rules, 
-                    "Event type '{}' failed validation but doesn't violate known rules", 
+                prop_assert!(violates_rules,
+                    "Event type '{}' failed validation but doesn't violate known rules",
                     event_type_str);
             }
         }
@@ -438,20 +436,20 @@ fn test_event_type_validation_property() -> Result<()> {
 fn test_event_source_validation_property() -> Result<()> {
     proptest::proptest!(|(source_str in arb_registry_source_name())| {
         let source = EventSource::new(source_str.clone());
-        
+
         // Test validation rules
         match source.validate() {
             Ok(()) => {
                 // Valid sources should follow naming conventions
                 prop_assert!(!source_str.is_empty());
-                prop_assert!(source_str.chars().all(|c| 
+                prop_assert!(source_str.chars().all(|c|
                     c.is_ascii_lowercase() || c == '-' || c == '_'
                 ));
             }
             Err(_) => {
                 // Invalid sources should violate at least one rule
                 let violates_rules = source_str.is_empty() ||
-                    !source_str.chars().all(|c| 
+                    !source_str.chars().all(|c|
                         c.is_ascii_lowercase() || c == '-' || c == '_'
                     );
                 prop_assert!(violates_rules,

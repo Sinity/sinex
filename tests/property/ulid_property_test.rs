@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
-use sinex_test_utils::{sinex_test};
+use sinex_test_utils::sinex_test;
 use sinex_types::Ulid;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};

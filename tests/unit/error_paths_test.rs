@@ -3,8 +3,8 @@
 //! This module tests all error conditions that could trigger unwrap() or expect()
 //! failures in production code, ensuring graceful error handling.
 
-use sinex_test_utils::prelude::*;
 use sinex_db::query_helpers::ulid_to_uuid;
+use sinex_test_utils::prelude::*;
 use std::str::FromStr;
 
 // =============================================================================
@@ -39,7 +39,10 @@ fn test_checkpoint_invalid_ulid_parsing() {
         // Test direct parsing
         match Ulid::from_str(invalid) {
             Ok(ulid) => {
-                println!("  ! Unexpectedly accepted (may be lenient parsing): {} -> {}", invalid, ulid);
+                println!(
+                    "  ! Unexpectedly accepted (may be lenient parsing): {} -> {}",
+                    invalid, ulid
+                );
                 // Some ULID implementations might be more lenient than expected
                 // This is still valuable information for understanding error handling
             }
@@ -50,13 +53,18 @@ fn test_checkpoint_invalid_ulid_parsing() {
 
         // Basic format validation - these should all be invalid in some way
         // ULIDs must be 26 characters and contain only valid base32 characters (0-9, A-Z)
-        let appears_valid = invalid.len() == 26 
-            && invalid.chars().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-        
+        let appears_valid = invalid.len() == 26
+            && invalid
+                .chars()
+                .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+
         // Most of our test cases should not appear valid at first glance
         // The one that might appear valid is the mixed case one, but that's invalid in ULID rules
         if appears_valid && !invalid.contains(char::is_lowercase) {
-            println!("    Note: {} appears valid but should be rejected by ULID parser", invalid);
+            println!(
+                "    Note: {} appears valid but should be rejected by ULID parser",
+                invalid
+            );
         }
     }
 }
@@ -117,8 +125,7 @@ fn test_timestamp_conversion_boundaries() {
                 // Verify that valid timestamps can round-trip
                 let epoch_secs = dt.timestamp();
                 assert_eq!(
-                    epoch_secs,
-                    timestamp_secs,
+                    epoch_secs, timestamp_secs,
                     "Timestamp round-trip failed for {}",
                     description
                 );
@@ -224,13 +231,13 @@ fn test_json_parsing_edge_cases() {
 // =============================================================================
 
 // =============================================================================
-// Query Builder Error Tests  
+// Query Builder Error Tests
 // =============================================================================
 
 #[test]
 fn test_query_builder_invalid_operations() {
     // NOTE: This test focuses on SQL injection prevention and basic query validation.
-    
+
     println!("Testing query security and validation...");
 
     // Test invalid input patterns that could cause SQL injection
@@ -249,7 +256,7 @@ fn test_query_builder_invalid_operations() {
         // This demonstrates proper escaping techniques
         let escaped = format!("\"{}\"", malicious_input.replace("\"", "\"\""));
         println!("    Escaped form: {}", escaped);
-        
+
         // The escaped form should contain the original DROP, but it's now safely quoted
         // This demonstrates that the dangerous content is neutralized by escaping
         if malicious_input.contains("DROP") {
@@ -308,7 +315,7 @@ fn test_ulid_generation_properties() {
     let mut sorted = ulids.clone();
     sorted.sort();
     sorted.dedup();
-    
+
     assert_eq!(sorted.len(), ulids.len(), "All ULIDs should be unique");
 
     // Check ordering (ULIDs should be mostly ordered by timestamp)
@@ -321,8 +328,15 @@ fn test_ulid_generation_properties() {
 
     // Most ULIDs should be in order (allowing for some clock jitter)
     let ordering_ratio = ordered_count as f64 / (ulids.len() - 1) as f64;
-    assert!(ordering_ratio > 0.95, "ULIDs should be mostly ordered: {}", ordering_ratio);
+    assert!(
+        ordering_ratio > 0.95,
+        "ULIDs should be mostly ordered: {}",
+        ordering_ratio
+    );
 
-    println!("  ✓ Generated {} unique ULIDs with {:.2}% ordering", ulids.len(), ordering_ratio * 100.0);
+    println!(
+        "  ✓ Generated {} unique ULIDs with {:.2}% ordering",
+        ulids.len(),
+        ordering_ratio * 100.0
+    );
 }
-

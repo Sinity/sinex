@@ -55,7 +55,7 @@ async fn test_resource_access() -> color_eyre::eyre::Result<()> {
         assert_eq!(inner.len(), 5);
         assert_eq!(inner[2], 3);
     }
-    
+
     Ok(())
 }
 
@@ -78,7 +78,7 @@ async fn test_cleanup_with_resource_data() -> color_eyre::eyre::Result<()> {
 
     let data = cleanup_data.lock().await;
     assert_eq!(*data, "Cleaned up: important_data");
-    
+
     Ok(())
 }
 
@@ -122,7 +122,7 @@ async fn test_multiple_guards_cleanup_order() -> color_eyre::eyre::Result<()> {
     assert!(order.contains(&1));
     assert!(order.contains(&2));
     assert!(order.contains(&3));
-    
+
     Ok(())
 }
 
@@ -145,7 +145,7 @@ async fn test_panic_during_cleanup() -> color_eyre::eyre::Result<()> {
 
     // Cleanup should still be called even if it panics
     assert!(cleanup_called.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -188,7 +188,7 @@ async fn test_complex_resource_types() -> color_eyre::eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(closed_flag.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -234,7 +234,7 @@ async fn test_database_connection_pattern() -> color_eyre::eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert_eq!(connection_count.load(Ordering::SeqCst), 0);
-    
+
     Ok(())
 }
 
@@ -272,7 +272,7 @@ async fn test_lock_guard_pattern() -> color_eyre::eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(!held_flag.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -293,7 +293,7 @@ async fn test_resource_guard_take() -> color_eyre::eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(cleanup_called.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -325,7 +325,7 @@ async fn test_async_cleanup_with_delay() -> color_eyre::eyre::Result<()> {
     // Wait for cleanup to complete
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     assert!(cleanup_complete.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -345,7 +345,7 @@ async fn test_zero_sized_type() -> color_eyre::eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(cleanup_called.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -367,7 +367,7 @@ async fn test_resource_release_without_cleanup() -> color_eyre::eyre::Result<()>
     // Wait a bit and verify cleanup was not called
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(!cleanup_called.load(Ordering::SeqCst));
-    
+
     Ok(())
 }
 
@@ -384,6 +384,6 @@ async fn test_sync_cleanup_variant() -> color_eyre::eyre::Result<()> {
 
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
     assert!(cleanup_called.load(Ordering::SeqCst));
-    
+
     Ok(())
 }

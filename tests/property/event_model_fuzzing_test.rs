@@ -26,9 +26,12 @@ use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use sinex_satellite_sdk::Event; // Modern Event API
-use sinex_types::{Ulid, domain::{EventSource, EventType, HostName}};
 use sinex_db::repositories::DbPoolExt;
+use sinex_satellite_sdk::Event; // Modern Event API
+use sinex_types::{
+    domain::{EventSource, EventType, HostName},
+    Ulid,
+};
 
 // ============================================================================
 // Proptest Strategies for Generating Fuzzed Data
@@ -162,34 +165,26 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
 /// Strategy for generating fuzzed Event instances using modern API
 fn fuzzed_events() -> impl Strategy<Value = Event> {
     (
-        problematic_strings(),                      // source
-        problematic_strings(),                      // event_type
-        problematic_timestamps(),                   // ts_orig
-        problematic_strings(),                      // host
-        malformed_json_values(),                    // payload
+        problematic_strings(),    // source
+        problematic_strings(),    // event_type
+        problematic_timestamps(), // ts_orig
+        problematic_strings(),    // host
+        malformed_json_values(),  // payload
     )
-        .prop_map(
-            |(
-                source,
-                event_type,
-                ts_orig,
-                host,
-                payload,
-            )| {
-                let mut event = Event::schemaless()
-                    .source(EventSource::new(source))
-                    .event_type(EventType::new(event_type))
-                    .host(HostName::new(host))
-                    .payload(payload)
-                    .build();
-                
-                // Set required timestamp fields
-                event.ts_ingest = Utc::now();
-                event.ts_orig = Some(ts_orig);
-                
-                event
-            },
-        )
+        .prop_map(|(source, event_type, ts_orig, host, payload)| {
+            let mut event = Event::schemaless()
+                .source(EventSource::new(source))
+                .event_type(EventType::new(event_type))
+                .host(HostName::new(host))
+                .payload(payload)
+                .build();
+
+            // Set required timestamp fields
+            event.ts_ingest = Utc::now();
+            event.ts_orig = Some(ts_orig);
+
+            event
+        })
 }
 
 // ============================================================================
@@ -462,12 +457,12 @@ fn test_filesystem_events_robustness() -> Result<()> {
             .event_type(EventType::new(event_type.to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-        
+
         // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
@@ -500,12 +495,12 @@ fn test_terminal_events_robustness() -> Result<()> {
             .event_type(EventType::new(event_type.to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-        
+
         // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
@@ -529,12 +524,12 @@ fn test_clipboard_events_robustness() -> Result<()> {
             .event_type(EventType::new(event_type.to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-        
+
         // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
@@ -564,12 +559,12 @@ fn test_window_manager_events_robustness() -> Result<()> {
             .event_type(EventType::new(event_type.to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-        
+
         // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
@@ -599,12 +594,12 @@ fn test_system_events_robustness() -> Result<()> {
             .event_type(EventType::new(event_type.to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should not panic during event operations
         let _json_result = serde_json::to_string(&event);
-        
+
         // Test field access
         let _ = event.source.as_str();
         let _ = event.event_type.as_str();
@@ -624,7 +619,7 @@ fn test_json_serialization_robustness() -> Result<()> {
             .event_type(EventType::new("test.event".to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Test that JSON serialization never panics
@@ -669,7 +664,7 @@ fn test_ulid_robustness_with_extreme_timestamps() -> Result<()> {
             .event_type(EventType::new("test.event".to_string()))
             .payload(serde_json::json!({}))
             .build();
-        
+
         event.ts_ingest = timestamp;
         event.ts_orig = Some(timestamp);
 
@@ -693,7 +688,7 @@ fn test_string_handling_robustness() -> Result<()> {
             .host(HostName::new(host.clone()))
             .payload(serde_json::json!({}))
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Test serialization with problematic strings
@@ -713,14 +708,14 @@ fn test_string_handling_robustness() -> Result<()> {
 #[sinex_test]
 async fn test_database_insertion_robustness(ctx: TestContext) -> Result<()> {
     use proptest::test_runner::TestRunner;
-    
+
     let mut runner = TestRunner::deterministic();
-    
+
     // Generate multiple fuzzed events and test serialization robustness
     // Focus on the parts that are most likely to cause issues: JSON serialization
     for _ in 0..100 {
         let event = fuzzed_events().new_tree(&mut runner).unwrap().current();
-        
+
         // Test JSON serialization (this is the critical path for database storage)
         let json_result = serde_json::to_string(&event);
         match json_result {
@@ -738,12 +733,12 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }
 
 /// Test event creation with extreme payloads in database context
-#[sinex_test] 
+#[sinex_test]
 async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> {
     // Test various extreme payload scenarios
     let test_cases = vec![
@@ -752,7 +747,6 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
             "huge_field": "x".repeat(1_000_000), // 1MB string
             "description": "large_string_test"
         }),
-        
         // Deeply nested JSON
         {
             let mut nested = json!("deep_value");
@@ -761,7 +755,6 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
             }
             nested
         },
-        
         // Special float values
         json!({
             "infinity": f64::INFINITY,
@@ -770,7 +763,6 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
             "very_large": f64::MAX,
             "very_small": f64::MIN,
         }),
-        
         // Unicode stress test
         json!({
             "emoji": "🦀🔥💀🌟⚡🎯🚀💎",
@@ -778,7 +770,6 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
             "zero_width": "\u{200B}\u{FEFF}\u{00A0}",
             "math_symbols": "𝕋𝕖𝕤𝕥 ∑∫∆∇",
         }),
-        
         // Control characters and special cases
         json!({
             "null_bytes": "test\0data\0here",
@@ -803,7 +794,10 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
                 let deserialize_result = serde_json::from_str::<Event>(&json_str);
                 if deserialize_result.is_err() {
                     // Log for debugging but don't fail - the important thing is no panic
-                    eprintln!("Warning: Event {} failed to deserialize after successful serialization", i);
+                    eprintln!(
+                        "Warning: Event {} failed to deserialize after successful serialization",
+                        i
+                    );
                 }
             }
             Err(e) => {
@@ -833,13 +827,13 @@ mod additional_tests {
             .host(HostName::new("test\0host".to_string()))
             .payload(serde_json::json!({"null_bytes": "test\0data"}))
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should not panic even with null bytes
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
-        
+
         Ok(())
     }
 
@@ -859,13 +853,13 @@ mod additional_tests {
             .event_type(EventType::new("test.large".to_string()))
             .payload(large_payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should handle large payloads gracefully (may succeed or fail, but shouldn't panic)
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
-        
+
         Ok(())
     }
 
@@ -884,13 +878,13 @@ mod additional_tests {
             .event_type(EventType::new("test.numbers".to_string()))
             .payload(payload)
             .build();
-        
+
         event.ts_ingest = Utc::now();
 
         // Should handle special float values gracefully
         // Test serialization instead of database insertion
         let _result = serde_json::to_string(&event);
-        
+
         Ok(())
     }
 
@@ -910,12 +904,12 @@ mod additional_tests {
                     }
                 }))
                 .build();
-            
+
             event.ts_ingest = Utc::now();
 
             // Test JSON serialization
             let _json_result = serde_json::to_string(&event);
-            
+
             // Test field access
             let _ = event.source.as_str();
             let _ = event.event_type.as_str();

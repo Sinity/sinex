@@ -7,11 +7,11 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use sinex_test_utils::prelude::*;
 use sinex_db::repositories::DbPoolExt;
+use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
-use std::sync::Arc;
 use std::str::FromStr;
+use std::sync::Arc;
 
 // =============================================================================
 // CORE DATABASE OPERATIONS
@@ -42,7 +42,7 @@ async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Re
     // This would be: let inserted_event = ctx.pool.events().insert(event).await?;
     // The error "operator is not unique: ulid = uuid" suggests a PostgreSQL
     // operator resolution issue that needs to be addressed in the database layer
-    
+
     Ok(())
 }
 
@@ -50,14 +50,14 @@ async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Re
 async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test query pattern setup - demonstrates modern repository pattern
     // Note: Actual database queries skipped due to operator resolution issue
-    
+
     // Demonstrate event creation patterns for different sources
     let fs_event = Event::schemaless()
         .source(EventSource::from("fs-watcher"))
         .event_type(EventType::from("file.created"))
         .payload(json!({"path": "/tmp/1.txt"}))
         .build();
-        
+
     let terminal_event = Event::schemaless()
         .source(EventSource::from("terminal"))
         .event_type(EventType::from("command.executed"))
@@ -67,10 +67,10 @@ async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Verify event properties
     assert_eq!(fs_event.source.as_str(), "fs-watcher");
     assert_eq!(fs_event.event_type.as_str(), "file.created");
-    
+
     assert_eq!(terminal_event.source.as_str(), "terminal");
     assert_eq!(terminal_event.event_type.as_str(), "command.executed");
-    
+
     // Repository pattern would be:
     // let fs_events = ctx.pool.events().get_by_source(&EventSource::from("fs-watcher"), Some(10), None).await?;
     // let command_events = ctx.pool.events().get_by_event_type(&EventType::from("command.executed"), Some(10), None).await?;
@@ -101,18 +101,20 @@ async fn test_edge_case_payloads(
     #[case] payload: serde_json::Value,
 ) -> color_eyre::eyre::Result<()> {
     let ctx = TestContext::new().await?;
-    
+
     // Each edge case should persist correctly
-    let event = ctx.create_test_event("edge-test", test_name, payload.clone()).await?;
-    
+    let event = ctx
+        .create_test_event("edge-test", test_name, payload.clone())
+        .await?;
+
     // Verify payload preserved exactly
     assert_eq!(event.payload, payload);
-    
+
     // Retrieve and verify
     let event_id = event.id.unwrap();
     let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
     assert_eq!(retrieved.payload, payload);
-    
+
     Ok(())
 }
 
@@ -121,73 +123,87 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
     // Test concurrent insertion from multiple tasks
     let num_tasks = 10;
     let events_per_task = 10;
-    
+
     let mut handles = vec![];
     let barrier = Arc::new(tokio::sync::Barrier::new(num_tasks));
-    
+
     for task_id in 0..num_tasks {
         let barrier_clone = barrier.clone();
-        
+
         let handle = tokio::spawn(async move {
             // Create isolated test context for each task
             let task_ctx = TestContext::with_name(&format!("concurrent_{}", task_id))
                 .await
                 .map_err(|e| SinexError::unknown(e.to_string()))?;
-            
+
             // Wait for all tasks to start simultaneously
             barrier_clone.wait().await;
-            
+
             let mut task_ids = Vec::new();
-            
+
             // Insert events concurrently
             for event_num in 0..events_per_task {
-                let event = task_ctx.create_test_event(
-                    &format!("task-{}", task_id),
-                    "concurrent.test",
-                    json!({
-                        "task_id": task_id,
-                        "event_num": event_num,
-                        "timestamp": chrono::Utc::now()
-                    })
-                ).await.map_err(|e| SinexError::unknown(e.to_string()))?;
-                
+                let event = task_ctx
+                    .create_test_event(
+                        &format!("task-{}", task_id),
+                        "concurrent.test",
+                        json!({
+                            "task_id": task_id,
+                            "event_num": event_num,
+                            "timestamp": chrono::Utc::now()
+                        }),
+                    )
+                    .await
+                    .map_err(|e| SinexError::unknown(e.to_string()))?;
+
                 task_ids.push(event.id.unwrap());
             }
-            
+
             // Verify all events for this task
-            let events = task_ctx.pool.events()
-                .get_by_source(&EventSource::from(format!("task-{}", task_id)), Some(100), None)
+            let events = task_ctx
+                .pool
+                .events()
+                .get_by_source(
+                    &EventSource::from(format!("task-{}", task_id)),
+                    Some(100),
+                    None,
+                )
                 .await?;
             assert_eq!(events.len(), events_per_task);
-            
+
             Ok::<Vec<Id<Event>>, SinexError>(task_ids)
         });
-        
+
         handles.push(handle);
     }
-    
+
     // Collect all results as strings since IDs don't implement Hash
     let mut all_id_strings: HashSet<String> = HashSet::new();
     let mut total_events = 0;
-    
+
     for handle in handles {
-        let task_ids = handle.await
+        let task_ids = handle
+            .await
             .map_err(|e| SinexError::service(format!("Task failed: {}", e)))??;
-        
+
         // Verify no duplicate IDs across tasks
         for id in &task_ids {
             let id_str = id.to_string();
-            assert!(!all_id_strings.contains(&id_str), "ID collision detected: {}", id);
+            assert!(
+                !all_id_strings.contains(&id_str),
+                "ID collision detected: {}",
+                id
+            );
             all_id_strings.insert(id_str);
         }
-        
+
         total_events += task_ids.len();
     }
-    
+
     // Verify total count
     assert_eq!(total_events, num_tasks * events_per_task);
     assert_eq!(all_id_strings.len(), total_events);
-    
+
     Ok(())
 }
 
@@ -198,37 +214,39 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 #[sinex_test]
 async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let initial_count = ctx.test_event_count().await;
-    
+
     // Test successful transaction
-    let _success_event = ctx.create_test_event(
-        "transaction-test",
-        "success",
-        json!({"test": "commit"})
-    ).await?;
-    
+    let _success_event = ctx
+        .create_test_event("transaction-test", "success", json!({"test": "commit"}))
+        .await?;
+
     let after_success = ctx.test_event_count().await;
     assert_eq!(after_success, initial_count + 1);
-    
+
     // Note: Complex transaction rollback testing requires low-level database access
     // For now, we test that invalid events are properly rejected
-    let invalid_result = ctx.create_test_event(
-        "", // Empty source should be rejected
-        "rollback",
-        json!({"test": "rollback"})
-    ).await;
-    
+    let invalid_result = ctx
+        .create_test_event(
+            "", // Empty source should be rejected
+            "rollback",
+            json!({"test": "rollback"}),
+        )
+        .await;
+
     assert!(invalid_result.is_err(), "Empty source should be rejected");
-    
+
     // Event count should be unchanged after rejection
     let after_rejection = ctx.test_event_count().await;
     assert_eq!(after_rejection, after_success);
-    
+
     // Verify no rollback events were persisted
-    let rollback_events = ctx.pool.events()
+    let rollback_events = ctx
+        .pool
+        .events()
         .get_by_event_type(&EventType::from("rollback"), Some(10), None)
         .await?;
     assert_eq!(rollback_events.len(), 0);
-    
+
     Ok(())
 }
 
@@ -239,34 +257,38 @@ async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result
 #[sinex_test]
 async fn test_schema_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test creating events with valid payloads
-    let valid_event = ctx.create_test_event(
-        "schema-test",
-        "valid.event",
-        json!({
-            "required_field": "value",
-            "optional_field": 42
-        })
-    ).await?;
-    
+    let valid_event = ctx
+        .create_test_event(
+            "schema-test",
+            "valid.event",
+            json!({
+                "required_field": "value",
+                "optional_field": 42
+            }),
+        )
+        .await?;
+
     assert!(valid_event.id.is_some());
-    
+
     // Test that malformed events are handled gracefully
     // Note: The test infrastructure should handle validation internally
     // We're testing the repository layer behavior
-    
-    let edge_case_event = ctx.create_test_event(
-        "schema-test", 
-        "edge.case",
-        json!({
-            "string_field": "",  // Empty string
-            "number_field": 0,   // Zero value
-            "array_field": [],   // Empty array
-            "object_field": {}   // Empty object
-        })
-    ).await?;
-    
+
+    let edge_case_event = ctx
+        .create_test_event(
+            "schema-test",
+            "edge.case",
+            json!({
+                "string_field": "",  // Empty string
+                "number_field": 0,   // Zero value
+                "array_field": [],   // Empty array
+                "object_field": {}   // Empty object
+            }),
+        )
+        .await?;
+
     assert!(edge_case_event.id.is_some());
-    
+
     Ok(())
 }
 
@@ -278,7 +300,7 @@ async fn test_schema_validation(ctx: TestContext) -> color_eyre::eyre::Result<()
 async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let batch_size = 100;
     let start_time = std::time::Instant::now();
-    
+
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
@@ -292,24 +314,29 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
             .build();
         events.push(event);
     }
-    
+
     // Insert all events
     ctx.insert_events(&events).await?;
-    
+
     let insert_duration = start_time.elapsed();
-    
+
     // Verify all events were inserted
-    let inserted_events = ctx.pool.events()
+    let inserted_events = ctx
+        .pool
+        .events()
         .get_by_source(&EventSource::from("performance-test"), Some(200), None)
         .await?;
     assert_eq!(inserted_events.len(), batch_size);
-    
+
     // Performance assertion - should complete reasonably quickly
     // Allow generous time for CI environments
-    assert!(insert_duration.as_millis() < 5000, 
-        "Bulk insert of {} events took {}ms, should be < 5000ms", 
-        batch_size, insert_duration.as_millis());
-    
+    assert!(
+        insert_duration.as_millis() < 5000,
+        "Bulk insert of {} events took {}ms, should be < 5000ms",
+        batch_size,
+        insert_duration.as_millis()
+    );
+
     Ok(())
 }
 
@@ -318,7 +345,7 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
     // Insert test data
     let num_events = 1000;
     let mut events = Vec::new();
-    
+
     for i in 0..num_events {
         let source = format!("query-perf-{}", i % 10); // 10 different sources
         let event = Event::schemaless()
@@ -331,37 +358,41 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
             .build();
         events.push(event);
     }
-    
+
     ctx.insert_events(&events).await?;
-    
+
     // Test various query patterns
     let start_time = std::time::Instant::now();
-    
+
     // Query by source
-    let source_events = ctx.pool.events()
+    let source_events = ctx
+        .pool
+        .events()
         .get_by_source(&EventSource::from("query-perf-0"), Some(200), None)
         .await?;
     assert!(!source_events.is_empty());
-    
+
     // Query by event type
-    let type_events = ctx.pool.events()
+    let type_events = ctx
+        .pool
+        .events()
         .get_by_event_type(&EventType::from("query.test"), Some(200), None)
         .await?;
     assert!(!type_events.is_empty());
-    
+
     // Query recent events
-    let recent_events = ctx.pool.events()
-        .get_recent(50)
-        .await?;
+    let recent_events = ctx.pool.events().get_recent(50).await?;
     assert_eq!(recent_events.len(), 50);
-    
+
     let query_duration = start_time.elapsed();
-    
+
     // Performance assertion
-    assert!(query_duration.as_millis() < 1000,
+    assert!(
+        query_duration.as_millis() < 1000,
         "Query operations took {}ms, should be < 1000ms",
-        query_duration.as_millis());
-    
+        query_duration.as_millis()
+    );
+
     Ok(())
 }
 
@@ -373,65 +404,69 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
 async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
-    
+
     let event = Event::schemaless()
         .source(EventSource::from("ulid-test"))
         .event_type(EventType::from("regression.test"))
         .payload(json!({"ulid": test_ulid.to_string()}))
         .build();
-    
+
     let inserted_event = ctx.insert_event(&event).await?;
-    
+
     // Verify the event was inserted (ULID is auto-generated)
     assert!(inserted_event.id.is_some());
-    
+
     // Retrieve by the generated ID and verify
     let event_id = inserted_event.id.unwrap();
-    let retrieved = ctx.pool.events()
+    let retrieved = ctx
+        .pool
+        .events()
         .get_by_id(event_id.clone())
         .await?
         .unwrap();
-    
+
     assert_eq!(retrieved.id.unwrap(), event_id);
     assert_eq!(retrieved.payload["ulid"], json!(test_ulid.to_string()));
-    
+
     Ok(())
 }
 
 #[sinex_test]
 async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     use chrono::{TimeZone, Utc};
-    
+
     // Test with specific original timestamp
     let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
-    
+
     let event = Event::schemaless()
         .source(EventSource::from("timestamp-test"))
         .event_type(EventType::from("time.test"))
         .ts_orig(Some(original_time))
         .payload(json!({"test": "timestamp"}))
         .build();
-    
+
     let before_insert = Utc::now();
     let inserted_event = ctx.insert_event(&event).await?;
     let after_insert = Utc::now();
-    
+
     // Verify original timestamp preserved
     assert_eq!(inserted_event.ts_orig, Some(original_time));
-    
+
     // Verify ingestion timestamp is recent
     assert!(inserted_event.ts_ingest >= before_insert);
     assert!(inserted_event.ts_ingest <= after_insert);
-    
+
     // Retrieve and verify timestamps persist
-    let retrieved = ctx.pool.events()
+    let retrieved = ctx
+        .pool
+        .events()
         .get_by_id(inserted_event.id.unwrap())
         .await?
         .unwrap();
-    
+
     assert_eq!(retrieved.ts_orig, Some(original_time));
     assert_eq!(retrieved.ts_ingest, inserted_event.ts_ingest);
-    
+
     Ok(())
 }
 
@@ -442,35 +477,39 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
 #[sinex_test]
 async fn test_constraint_violations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test handling of constraint violations gracefully
-    
+
     // Empty source should be rejected
-    let empty_source_result = ctx.create_test_event(
-        "",  // Empty source
-        "test.event",
-        json!({"data": "test"})
-    ).await;
+    let empty_source_result = ctx
+        .create_test_event(
+            "", // Empty source
+            "test.event",
+            json!({"data": "test"}),
+        )
+        .await;
     assert!(empty_source_result.is_err());
-    
+
     // Empty event type should be rejected
-    let empty_type_result = ctx.create_test_event(
-        "test-source",
-        "",  // Empty event type
-        json!({"data": "test"})
-    ).await;
+    let empty_type_result = ctx
+        .create_test_event(
+            "test-source",
+            "", // Empty event type
+            json!({"data": "test"}),
+        )
+        .await;
     assert!(empty_type_result.is_err());
-    
+
     // Verify no invalid events were inserted
     let all_events = ctx.pool.events().get_recent(100).await?;
     assert!(all_events.iter().all(|e| !e.source.as_str().is_empty()));
     assert!(all_events.iter().all(|e| !e.event_type.as_str().is_empty()));
-    
+
     Ok(())
 }
 
-#[sinex_test] 
+#[sinex_test]
 async fn test_database_recovery_scenarios(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test various scenarios that could cause database issues
-    
+
     // Large JSON payload
     let large_payload = json!({
         "large_string": "x".repeat(1_000_000),
@@ -485,23 +524,29 @@ async fn test_database_recovery_scenarios(ctx: TestContext) -> color_eyre::eyre:
             }
         }
     });
-    
-    let large_event = ctx.create_test_event(
-        "recovery-test",
-        "large.payload",
-        large_payload
-    ).await?;
-    
+
+    let large_event = ctx
+        .create_test_event("recovery-test", "large.payload", large_payload)
+        .await?;
+
     assert!(large_event.id.is_some());
-    
+
     // Retrieve large event to ensure it persisted correctly
-    let retrieved = ctx.pool.events()
+    let retrieved = ctx
+        .pool
+        .events()
         .get_by_id(large_event.id.unwrap())
         .await?
         .unwrap();
-    
-    assert_eq!(retrieved.payload["large_string"].as_str().unwrap().len(), 1_000_000);
-    assert_eq!(retrieved.payload["large_array"].as_array().unwrap().len(), 10_000);
-    
+
+    assert_eq!(
+        retrieved.payload["large_string"].as_str().unwrap().len(),
+        1_000_000
+    );
+    assert_eq!(
+        retrieved.payload["large_array"].as_array().unwrap().len(),
+        10_000
+    );
+
     Ok(())
 }
