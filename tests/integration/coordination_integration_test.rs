@@ -8,14 +8,12 @@
 
 use sinex_core_utils::{CoordinationPrimitive, ResourceGuard};
 use sinex_db::distributed_locking::{AdvisoryLock, DistributedCoordination};
-use sinex_satellite_sdk::coordination::SatelliteCoordination;
+use sinex_satellite_sdk::coordination::{SatelliteCoordination, InstanceMode};
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
-use test_sinex_test_utils::TestContext;
+use sinex_test_utils::{sinex_test, TestContext};
 
 #[sinex_test]
-async fn test_coordination_primitive_unified_api() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-
+async fn test_coordination_primitive_unified_api(ctx: TestContext) -> color_eyre::Result<()> {
     // Test event counter factory method
     let counter = CoordinationPrimitive::event_counter(100, "test_counter");
     assert_eq!(counter.current_value(), 0);
@@ -36,9 +34,7 @@ async fn test_coordination_primitive_unified_api() -> color_eyre::eyre::Result<(
 }
 
 #[sinex_test]
-async fn test_coordination_primitive_barrier() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-
+async fn test_coordination_primitive_barrier(ctx: TestContext) -> color_eyre::Result<()> {
     // Test barrier factory method  
     let barrier = CoordinationPrimitive::barrier(3, "worker_sync");
     assert_eq!(barrier.current_value(), 0);
@@ -55,9 +51,7 @@ async fn test_coordination_primitive_barrier() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_coordination_primitive_synchronizer() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-
+async fn test_coordination_primitive_synchronizer(ctx: TestContext) -> color_eyre::Result<()> {
     // Test synchronizer factory method
     let sync = CoordinationPrimitive::synchronizer("service_ready");
     assert!(!sync.is_complete());
@@ -69,9 +63,7 @@ async fn test_coordination_primitive_synchronizer() -> color_eyre::eyre::Result<
 }
 
 #[sinex_test]
-async fn test_resource_guard_cleanup() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-    
+async fn test_resource_guard_cleanup(ctx: TestContext) -> color_eyre::Result<()> {
     let cleanup_called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
     let cleanup_called_clone = cleanup_called.clone();
     
@@ -93,8 +85,7 @@ async fn test_resource_guard_cleanup() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_advisory_lock_basic() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
+async fn test_advisory_lock_basic(ctx: TestContext) -> color_eyre::Result<()> {
     let pool = ctx.db_pool();
     
     // Test basic lock acquisition
@@ -116,9 +107,7 @@ async fn test_advisory_lock_basic() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_satellite_version_comparison() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-    
+async fn test_satellite_version_comparison(ctx: TestContext) -> color_eyre::Result<()> {
     let v1 = SatelliteVersion::parse("1.0.100+abc123").unwrap();
     let v2 = SatelliteVersion::parse("1.0.200+def456").unwrap();
     let v3 = SatelliteVersion::parse("1.1.50+ghi789").unwrap();
@@ -132,9 +121,7 @@ async fn test_satellite_version_comparison() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_satellite_instance_creation() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-    
+async fn test_satellite_instance_creation(ctx: TestContext) -> color_eyre::Result<()> {
     let instance = SatelliteInstance::new(
         "test-service",
         SatelliteVersion::parse("1.0.100+abc123").unwrap()
@@ -148,9 +135,7 @@ async fn test_satellite_instance_creation() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test] 
-async fn test_coordination_tables_exist() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-    
+async fn test_coordination_tables_exist(ctx: TestContext) -> color_eyre::Result<()> {
     // Test that coordination tables were created by migration
     let tables = ctx.query_raw(
         "SELECT table_name FROM information_schema.tables 
@@ -168,8 +153,7 @@ async fn test_coordination_tables_exist() -> color_eyre::eyre::Result<()> {
 }
 
 #[sinex_test]
-async fn test_distributed_coordination_leadership() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
+async fn test_distributed_coordination_leadership(ctx: TestContext) -> color_eyre::Result<()> {
     let pool = ctx.db_pool();
     
     // Create coordination instances
@@ -201,20 +185,8 @@ async fn test_distributed_coordination_leadership() -> color_eyre::eyre::Result<
     Ok(())
 }
 
-// Helper function for testing coordination without full SatelliteCoordination
-async fn create_test_processor() -> Box<dyn Fn() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), Box<dyn std::error::Error>>> + Send>> + Send> {
-    Box::new(|| {
-        Box::pin(async {
-            // Simulate processing work
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-            Ok(())
-        })
-    })
-}
-
 #[sinex_test]
-async fn test_satellite_coordination_basic() -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
+async fn test_satellite_coordination_basic(ctx: TestContext) -> color_eyre::Result<()> {
     let pool = ctx.db_pool();
     
     let instance = SatelliteInstance::new(
@@ -228,61 +200,7 @@ async fn test_satellite_coordination_basic() -> color_eyre::eyre::Result<()> {
     coordination.initialize().await?;
     
     // Test mode checking
-    assert_eq!(coordination.current_mode(), &sinex_satellite_sdk::coordination::InstanceMode::Standby);
+    assert_eq!(coordination.current_mode(), &InstanceMode::Standby);
     
     Ok(())
 }
-
-mod test_common {
-    use sinex_core_types::Result as color_eyre::eyre::Result<()>;
-    use sinex_db::DbPool;
-    use std::collections::HashMap;
-    
-    pub struct TestContext {
-        pool: DbPool,
-    }
-    
-    impl TestContext {
-        pub async fn new() -> color_eyre::eyre::Result<Self> {
-            let database_url = std::env::var("DATABASE_URL")
-                .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
-            
-            let pool = sqlx::PgPool::connect(&database_url).await?;
-            
-            Ok(Self { pool })
-        }
-        
-        pub fn db_pool(&self) -> &DbPool {
-            &self.pool
-        }
-        
-        pub async fn query_raw(&self, sql: &str) -> color_eyre::eyre::Result<Vec<HashMap<String, serde_json::Value>>> {
-            let rows = sqlx::query(sql).fetch_all(&self.pool).await?;
-            
-            let mut results = Vec::new();
-            for row in rows {
-                let mut map = HashMap::new();
-                for (i, column) in row.columns().iter().enumerate() {
-                    let value: serde_json::Value = row.try_get(i)?;
-                    map.insert(column.name().to_string(), value);
-                }
-                results.push(map);
-            }
-            
-            Ok(results)
-        }
-    }
-}
-
-// Re-export for sinex_test macro
-use test_sinex_test_utils::TestContext;
-type color_eyre::eyre::Result<T> = sinex_core_types::Result<T>;
-
-// Mock sinex_test macro for compilation
-macro_rules! sinex_test {
-    () => {
-        #[tokio::test]
-    };
-}
-
-use sinex_test;
