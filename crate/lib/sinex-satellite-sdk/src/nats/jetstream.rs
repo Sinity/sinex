@@ -275,8 +275,8 @@ use futures::TryStreamExt;
 
 #[cfg(test)]
 mod tests {
-    use super::config::NatsConfig;
     use super::*;
+    use crate::nats::{client::NatsClient, config::NatsConfig};
 
     #[tokio::test]
     #[ignore] // Requires NATS server with JetStream

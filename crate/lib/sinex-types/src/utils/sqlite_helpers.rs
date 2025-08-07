@@ -129,7 +129,7 @@ mod tests {
     fn test_sqlite_connection_helpers() {
         // Create a temporary database
         let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
+        let path = Utf8Path::from_path(temp_file.path()).unwrap();
 
         // Test read-write connection
         let conn = SqliteConnection::open_readwrite(path, "test_operation").unwrap();

@@ -379,7 +379,11 @@ pub struct StreamProcessorContext {
     /// Checkpoint manager for state persistence
     pub checkpoint_manager: CheckpointManager,
 
-    /// Processor-specific configuration
+    /// Legacy processor-specific configuration (deprecated).
+    /// 
+    /// This field is maintained for backward compatibility but should not be used
+    /// by new processors. Use the typed configuration passed to `initialize()` instead.
+    /// This will be removed in a future version.
     pub config: HashMap<String, serde_json::Value>,
 
     /// Event sender channel for scan operations
@@ -462,18 +466,37 @@ impl StreamProcessorContext {
 /// - The `scan()` method is the core interface - other methods provide metadata
 /// - Checkpointing is handled externally via `StreamProcessorContext`
 /// - Graceful shutdown should be implemented in `shutdown()`
+/// - Each processor defines its own `Config` type for type-safe configuration
 ///
 /// # Examples
 /// ```ignore
 /// use sinex_satellite_sdk::*;
 /// use async_trait::async_trait;
+/// use serde::{Deserialize, Serialize};
+///
+/// #[derive(Debug, Clone, Deserialize, Serialize)]
+/// struct MyIngestorConfig {
+///     max_files: usize,
+///     watch_interval: std::time::Duration,
+/// }
+///
+/// impl Default for MyIngestorConfig {
+///     fn default() -> Self {
+///         Self {
+///             max_files: 100,
+///             watch_interval: std::time::Duration::from_secs(60),
+///         }
+///     }
+/// }
 ///
 /// struct MyIngestor;
 ///
 /// #[async_trait]
 /// impl StatefulStreamProcessor for MyIngestor {
-///     async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
-///         // Initialize with context
+///     type Config = MyIngestorConfig;
+///
+///     async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+///         // Initialize with context and typed configuration
 ///         Ok(())
 ///     }
 ///
@@ -493,8 +516,40 @@ impl StreamProcessorContext {
 /// ```
 #[async_trait]
 pub trait StatefulStreamProcessor: Send + Sync {
-    /// Initialize the processor with the given context
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()>;
+    /// Associated configuration type for this processor.
+    /// 
+    /// This type must implement Deserialize for parsing from JSON/TOML configuration,
+    /// Default for fallback values, and Send + Sync for thread safety.
+    /// The 'de lifetime bound enables deserialization from any source.
+    type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
+
+    /// Initialize the processor with the given context and typed configuration.
+    /// 
+    /// The configuration is parsed once at the system boundary and passed as a
+    /// strongly-typed object, eliminating the need for processors to handle
+    /// configuration parsing and validation internally.
+    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()>;
+
+    /// Backward compatibility method for processors that need access to legacy config format.
+    /// 
+    /// This method is called by the old initialization path and can be used to convert
+    /// from the legacy HashMap format. Most processors should implement the new
+    /// `initialize` method instead.
+    async fn initialize_legacy(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+        // Extract processor-specific config from the legacy format
+        let config = if ctx.config.is_empty() {
+            Self::Config::default()
+        } else {
+            // Try to deserialize from the generic config map
+            let config_value = serde_json::to_value(&ctx.config)
+                .map_err(|e| SatelliteError::Configuration(format!("Failed to serialize legacy config: {}", e)))?;
+            
+            serde_json::from_value(config_value)
+                .map_err(|e| SatelliteError::Configuration(format!("Failed to parse legacy config: {}", e)))?
+        };
+
+        self.initialize(ctx, config).await
+    }
 
     /// Core scan method - the heart of the unified architecture.
     ///
@@ -670,7 +725,108 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         }
     }
 
-    /// Initialize the processor with configuration
+    /// Initialize the processor with typed configuration
+    pub async fn initialize_with_config(
+        &mut self,
+        service_name: String,
+        config: T::Config,
+        db_pool: PgPool,
+        ingest_client: IngestClient,
+        work_dir: std::path::PathBuf,
+        dry_run: bool,
+    ) -> SatelliteResult<()> {
+        // Create event channel
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event>();
+
+        // Create shutdown channels
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (processor_shutdown_sender, processor_shutdown_receiver) =
+            tokio::sync::oneshot::channel();
+        self.shutdown_receiver = Some(shutdown_receiver);
+        self.event_processor_shutdown = Some(processor_shutdown_sender);
+
+        // Get hostname
+        let host = gethostname::gethostname().to_string_lossy().to_string();
+
+        // Initialize checkpoint manager
+        let checkpoint_manager = CheckpointManager::new(
+            db_pool.clone(),
+            service_name.clone(),
+            "default".to_string(), // Default consumer group
+            format!("{}-{}", host, std::process::id()), // Unique consumer name
+        );
+
+        // Create telemetry accumulator
+        let telemetry = if !dry_run {
+            // Create event sender for telemetry (bounded channel as expected by telemetry)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Event>();
+
+            // Spawn task to forward telemetry events to main event channel
+            let main_event_sender = event_sender.clone();
+            tokio::spawn(async move {
+                while let Some(event) = telemetry_rx.recv().await {
+                    if let Err(e) = main_event_sender.send(event) {
+                        warn!("Failed to forward telemetry event: {}", e);
+                    }
+                }
+            });
+
+            let accumulator = TelemetryAccumulator::new(&service_name)
+                .with_event_sender(telemetry_tx)
+                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
+
+            // Set global telemetry
+            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+
+            // Spawn telemetry emitter
+            accumulator.clone().spawn_emitter();
+
+            Some(accumulator)
+        } else {
+            None
+        };
+
+        // Create context with empty legacy config
+        let context = StreamProcessorContext {
+            service_name: service_name.clone(),
+            host,
+            work_dir,
+            dry_run,
+            db_pool,
+            ingest_client: ingest_client.clone(),
+            checkpoint_manager,
+            config: HashMap::new(), // Empty legacy config
+            event_sender,
+            telemetry,
+        };
+
+        // Initialize the processor with typed config
+        self.processor.initialize(context, config).await?;
+
+        // Create event transport (default to gRPC)
+        let transport = EventTransport::Grpc(ingest_client);
+
+        // Spawn event processor
+        let processor_config = EventProcessorConfig::default();
+        self.event_processor_handle = Some(spawn_event_processor(
+            transport,
+            processor_config,
+            event_receiver,
+            processor_shutdown_receiver,
+        ));
+
+        info!(
+            service = %service_name,
+            processor = %self.processor.processor_name(),
+            processor_type = ?self.processor.processor_type(),
+            transport = "gRPC",
+            "Stream processor initialized with typed config"
+        );
+
+        Ok(())
+    }
+
+    /// Initialize the processor with configuration (legacy)
     pub async fn initialize(
         &mut self,
         service_name: String,
@@ -745,8 +901,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             telemetry,
         };
 
-        // Initialize the processor
-        self.processor.initialize(context).await?;
+        // Initialize the processor with legacy config conversion
+        self.processor.initialize_legacy(context).await?;
 
         // Create event transport (default to gRPC)
         let transport = EventTransport::Grpc(ingest_client);
@@ -771,7 +927,125 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
-    /// Initialize the processor with NATS configuration
+    /// Initialize the processor with NATS and typed configuration
+    pub async fn initialize_with_nats_config(
+        &mut self,
+        service_name: String,
+        config: T::Config,
+        db_pool: PgPool,
+        nats_config: NatsConfig,
+        work_dir: std::path::PathBuf,
+        dry_run: bool,
+    ) -> SatelliteResult<()> {
+        // Create event channel
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event>();
+
+        // Create shutdown channels
+        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (processor_shutdown_sender, processor_shutdown_receiver) =
+            tokio::sync::oneshot::channel();
+        self.shutdown_receiver = Some(shutdown_receiver);
+        self.event_processor_shutdown = Some(processor_shutdown_sender);
+
+        // Get hostname
+        let host = gethostname::gethostname().to_string_lossy().to_string();
+
+        // Initialize checkpoint manager
+        let checkpoint_manager = CheckpointManager::new(
+            db_pool.clone(),
+            service_name.clone(),
+            "default".to_string(), // Default consumer group
+            format!("{}-{}", host, std::process::id()), // Unique consumer name
+        );
+
+        // Create telemetry accumulator
+        let telemetry = if !dry_run {
+            // Create event sender for telemetry (bounded channel as expected by telemetry)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Event>();
+
+            // Spawn task to forward telemetry events to main event channel
+            let main_event_sender = event_sender.clone();
+            tokio::spawn(async move {
+                while let Some(event) = telemetry_rx.recv().await {
+                    if let Err(e) = main_event_sender.send(event) {
+                        warn!("Failed to forward telemetry event: {}", e);
+                    }
+                }
+            });
+
+            let accumulator = TelemetryAccumulator::new(&service_name)
+                .with_event_sender(telemetry_tx)
+                .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
+
+            // Set global telemetry
+            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+
+            // Spawn telemetry emitter
+            accumulator.clone().spawn_emitter();
+
+            Some(accumulator)
+        } else {
+            None
+        };
+
+        // Create dummy ingest client (not used with NATS)
+        let ingest_client = IngestClient::new("/dev/null")
+            .await
+            .unwrap_or_else(|_| panic!("Failed to create dummy ingest client"));
+
+        // Create context with empty legacy config
+        let context = StreamProcessorContext {
+            service_name: service_name.clone(),
+            host,
+            work_dir,
+            dry_run,
+            db_pool,
+            ingest_client,
+            checkpoint_manager,
+            config: HashMap::new(), // Empty legacy config
+            event_sender,
+            telemetry,
+        };
+
+        // Initialize the processor with typed config
+        self.processor.initialize(context, config).await?;
+
+        // Create NATS client and publisher
+        let nats_client = NatsClient::new(nats_config.clone())
+            .await
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to NATS: {}", e)))?;
+
+        let jetstream = JetStream::new(&nats_client, nats_config.jetstream)
+            .await
+            .map_err(|e| {
+                SatelliteError::General(eyre!("Failed to create JetStream context: {}", e))
+            })?;
+
+        let publisher = NatsPublisher::new(jetstream);
+        let transport = EventTransport::Nats(publisher);
+
+        // Spawn event processor
+        let processor_config = EventProcessorConfig::default();
+        self.event_processor_handle = Some(spawn_event_processor(
+            transport,
+            processor_config,
+            event_receiver,
+            processor_shutdown_receiver,
+        ));
+
+        info!(
+            service = %service_name,
+            processor = %self.processor.processor_name(),
+            processor_type = ?self.processor.processor_type(),
+            transport = "NATS",
+            servers = ?nats_config.servers,
+            "Stream processor initialized with NATS and typed config"
+        );
+
+        Ok(())
+    }
+
+    /// Initialize the processor with NATS configuration (legacy)
     pub async fn initialize_with_nats(
         &mut self,
         service_name: String,
@@ -851,8 +1125,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             telemetry,
         };
 
-        // Initialize the processor
-        self.processor.initialize(context).await?;
+        // Initialize the processor with legacy config conversion
+        self.processor.initialize_legacy(context).await?;
 
         // Create NATS client and publisher
         let nats_client = NatsClient::new(nats_config.clone())

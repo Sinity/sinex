@@ -10,7 +10,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_enhanced_repository_count_all(ctx: TestContext) -> Result<()> {
-        let pool = ctx.pool();
+        let pool = &ctx.pool;
 
         // Test with checkpoints repository
         let checkpoints_repo = pool.checkpoints();
@@ -24,7 +24,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_enhanced_repository_exists_by_id(ctx: TestContext) -> Result<()> {
-        let pool = ctx.pool();
+        let pool = &ctx.pool;
 
         // Test with checkpoints repository
         let checkpoints_repo = pool.checkpoints();
@@ -39,7 +39,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_repository_polymorphism(ctx: TestContext) -> Result<()> {
-        let pool = ctx.pool();
+        let pool = &ctx.pool;
 
         // We can use EnhancedRepository trait methods on different repository types
         async fn count_records<'a, R: EnhancedRepository<'a>>(repo: &R) -> DbResult<i64> {
@@ -61,7 +61,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_seaquery_integration(ctx: TestContext) -> Result<()> {
-        let pool = ctx.pool();
+        let pool = &ctx.pool;
 
         // Build a query using SeaQuery and TableDef
         let query = Query::select()

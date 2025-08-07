@@ -171,8 +171,8 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for event count failed")
-                .wrap_err_with("expected_count", expected_count)
-                .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
                 .with_source(e)
                 .with_operation("wait_for_event_count")
         })?;
@@ -208,9 +208,9 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Wait for source events failed")
-                .wrap_err_with("source", &source)
-                .wrap_err_with("expected_count", expected_count)
-                .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("source", &source)
+                .with_context("expected_count", expected_count)
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
                 .with_source(e)
                 .with_operation("wait_for_source_events")
         })?;
@@ -235,7 +235,7 @@ impl WaitHelpers {
         .await
         .map_err(|e| {
             SinexError::timeout("Test condition wait failed")
-                .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                .with_context("timeout_duration", format!("{}s", timeout_secs))
                 .with_source(e)
                 .with_operation("wait_for_condition")
         })
@@ -267,8 +267,8 @@ impl WaitHelpers {
             .await
             .map_err(|e| {
                 SinexError::timeout("Multiple conditions wait failed")
-                    .wrap_err_with("condition_count", condition_count)
-                    .wrap_err_with("timeout_duration", format!("{}s", timeout_secs))
+                    .with_context("condition_count", condition_count)
+                    .with_context("timeout_duration", format!("{}s", timeout_secs))
                     .with_source(e)
                     .with_operation("wait_for_multiple_conditions")
             })
@@ -322,7 +322,7 @@ impl<'ctx> TimingUtils<'ctx> {
 
     /// Wait for specific number of events in database
     pub async fn wait_for_event_count(&self, expected_count: usize) -> Result<usize> {
-        WaitHelpers::wait_for_event_count(self.ctx.pool(), expected_count, 10).await
+        WaitHelpers::wait_for_event_count(&self.ctx.pool, expected_count, 10).await
     }
 
     /// Wait for events from specific source
@@ -331,7 +331,7 @@ impl<'ctx> TimingUtils<'ctx> {
         source: &str,
         expected_count: usize,
     ) -> Result<usize> {
-        WaitHelpers::wait_for_source_events(self.ctx.pool(), source, expected_count, 10).await
+        WaitHelpers::wait_for_source_events(&self.ctx.pool, source, expected_count, 10).await
     }
 
     /// Create event counter for coordination using production primitives
@@ -371,6 +371,7 @@ impl<'ctx> TimingUtils<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use color_eyre::eyre::eyre;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
@@ -536,16 +537,12 @@ mod tests {
     async fn test_wait_helpers_event_count(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Insert some events
         for i in 0..5 {
-            ctx.event()
-                .source("wait-test")
-                .type_("test.event")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("wait-test", "test.event", json!({"index": i}))
                 .await?;
         }
 
         // Wait for event count
-        let count = WaitHelpers::wait_for_event_count(ctx.pool(), 5, 5).await?;
+        let count = WaitHelpers::wait_for_event_count(&ctx.pool, 5, 5).await?;
         assert!(count >= 5);
 
         Ok(())
@@ -555,28 +552,20 @@ mod tests {
     async fn test_wait_helpers_source_events(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Insert events from different sources
         for i in 0..3 {
-            ctx.event()
-                .source("source-a")
-                .type_("test.event")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("source-a", "test.event", json!({"index": i}))
                 .await?;
         }
 
         for i in 0..2 {
-            ctx.event()
-                .source("source-b")
-                .type_("test.event")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("source-b", "test.event", json!({"index": i}))
                 .await?;
         }
 
         // Wait for specific source
-        let count_a = WaitHelpers::wait_for_source_events(ctx.pool(), "source-a", 3, 5).await?;
+        let count_a = WaitHelpers::wait_for_source_events(&ctx.pool, "source-a", 3, 5).await?;
         assert_eq!(count_a, 3);
 
-        let count_b = WaitHelpers::wait_for_source_events(ctx.pool(), "source-b", 2, 5).await?;
+        let count_b = WaitHelpers::wait_for_source_events(&ctx.pool, "source-b", 2, 5).await?;
         assert_eq!(count_b, 2);
 
         Ok(())
@@ -696,11 +685,7 @@ mod tests {
 
         // Insert events
         for i in 0..3 {
-            ctx.event()
-                .source("timing-test")
-                .type_("integration")
-                .field("index", i)
-                .insert()
+            ctx.create_test_event("timing-test", "integration", json!({"index": i}))
                 .await?;
         }
 

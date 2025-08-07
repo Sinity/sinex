@@ -176,6 +176,7 @@ pub fn build_test_satellite_config(service_name: &str, socket_path: &str) -> ser
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prelude::*;
 
     #[sinex_test]
     async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {
@@ -228,7 +229,7 @@ mod tests {
             "buffer_size": 100,
         });
 
-        let handle = TestSatelliteHandle::start(config.clone(), ctx.pool().clone()).await?;
+        let handle = TestSatelliteHandle::start(config.clone(), ctx.pool.clone()).await?;
 
         assert_eq!(handle.name, "test-satellite");
 
@@ -241,7 +242,7 @@ mod tests {
             "name": "stop-test-satellite",
         });
 
-        let mut handle = TestSatelliteHandle::start(config, ctx.pool().clone()).await?;
+        let mut handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
 
         // Should be able to stop without error
         handle.stop().await?;
@@ -259,7 +260,7 @@ mod tests {
             "source": "test",
         });
 
-        let handle = TestSatelliteHandle::start(config, ctx.pool().clone()).await?;
+        let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
 
         assert_eq!(handle.name, "test-satellite");
 
@@ -311,7 +312,7 @@ mod tests {
             "name": "orchestrated-satellite",
         });
 
-        let handle = TestSatelliteHandle::start(config, ctx.pool().clone()).await?;
+        let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
 
         orchestrator.register_satellite("test", handle);
 
@@ -371,7 +372,7 @@ mod tests {
                 "name": format!("satellite-{}", i),
             });
 
-            let handle = TestSatelliteHandle::start(config, ctx.pool().clone()).await?;
+            let handle = TestSatelliteHandle::start(config, ctx.pool.clone()).await?;
             orchestrator.register_satellite(&format!("sat-{}", i), handle);
         }
 

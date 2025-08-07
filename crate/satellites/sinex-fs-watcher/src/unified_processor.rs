@@ -94,6 +94,7 @@
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
@@ -793,7 +794,9 @@ impl Default for FilesystemProcessor {
 #[sinex_satellite_sdk::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=filesystem"])]
 #[async_trait]
 impl StatefulStreamProcessor for FilesystemProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = FilesystemConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
@@ -1078,7 +1081,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
 // Implementation of ExplorationProvider for diagnostics
 impl ExplorationProvider for FilesystemProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         let recent_activity = if let Some(ref state) = self.last_state {
             vec![ActivityEntry {
                 timestamp: state.captured_at,
@@ -1135,7 +1138,7 @@ impl ExplorationProvider for FilesystemProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         // In a real implementation, this would query the database for scan history
         // For now, return empty as this requires database access
         Ok(vec![])
@@ -1144,7 +1147,7 @@ impl ExplorationProvider for FilesystemProcessor {
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         // In a real implementation, this would compare filesystem state with Sinex events
         let (start_time, end_time) = time_range.unwrap_or_else(|| {
             let now = Utc::now();
@@ -1179,7 +1182,7 @@ impl ExplorationProvider for FilesystemProcessor {
         &self,
         path: &Utf8PathBuf,
         format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,
@@ -1268,7 +1271,7 @@ mod tests {
 
         // Create a config with path that will be validated
         let config = FilesystemConfig {
-            watch_patterns: vec![format!("{}/**/*.rs", base_path.as_str())],
+            watch_patterns: vec![format!("{}/**/*.rs", base_path.display())],
             ignore_patterns: vec![],
             debounce_ms: 100,
             max_depth: None,

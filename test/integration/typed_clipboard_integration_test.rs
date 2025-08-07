@@ -6,8 +6,8 @@ use sinex_types::events::{
 };
 use sinex_types::ulid::Ulid;
 
-#[test]
-fn test_typed_clipboard_event_builder() {
+#[sinex_test]
+async fn test_typed_clipboard_event_builder(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let builder = TypedClipboardEventBuilder::new("clipboard");
 
     // Test clipboard copy event
@@ -29,10 +29,12 @@ fn test_typed_clipboard_event_builder() {
         }
         _ => panic!("Expected ContentCopied variant"),
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_clipboard_selected_event() {
+#[sinex_test]
+async fn test_clipboard_selected_event(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let builder = TypedClipboardEventBuilder::new("clipboard");
 
     // Test primary selection event
@@ -50,10 +52,12 @@ fn test_clipboard_selected_event() {
         }
         _ => panic!("Expected ContentSelected variant"),
     }
+    
+    Ok(())
 }
 
-#[test]
-fn test_event_to_json_conversion() {
+#[sinex_test]
+async fn test_event_to_json_conversion(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Create a typed clipboard event
     let payload = ClipboardCopiedPayload {
         content_type: "text".to_string(),
@@ -85,10 +89,12 @@ fn test_event_to_json_conversion() {
     assert_eq!(json_event.payload["text_preview"], "Test content");
     assert_eq!(json_event.payload["content_hash"], "hash123");
     assert_eq!(json_event.payload["source_app"], "test_app");
+    
+    Ok(())
 }
 
-#[test]
-fn test_event_registry_compatibility() {
+#[sinex_test]
+async fn test_event_registry_compatibility(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Verify that our clipboard events use the expected event type strings
     // that are registered in the EventRegistry
 
@@ -108,4 +114,6 @@ fn test_event_registry_compatibility() {
     } else {
         panic!("Expected ContentSelected variant");
     }
+    
+    Ok(())
 }

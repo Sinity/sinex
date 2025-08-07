@@ -115,12 +115,12 @@ pub mod behavior {
             (false, false) => Ok(()), // Expected receive
             (false, true) => Err(
                 SinexError::validation("Expected timeout but received value")
-                    .wrap_err_with("timeout_duration", format!("{:?}", timeout))
+                    .with_context("timeout_duration", format!("{:?}", timeout))
                     .into(),
             ),
             (true, false) => Err(
                 SinexError::validation("Expected receive but got timeout/close")
-                    .wrap_err_with("timeout_duration", format!("{:?}", timeout))
+                    .with_context("timeout_duration", format!("{:?}", timeout))
                     .into(),
             ),
         }
@@ -153,8 +153,8 @@ pub mod behavior {
                 return Err(SinexError::validation(
                     "Received empty batch before all items collected",
                 )
-                .wrap_err_with("total_received", total_received)
-                .wrap_err_with("expected_total", items.len()));
+                .with_context("total_received", total_received)
+                .with_context("expected_total", items.len()));
             }
 
             total_received += batch.len();
@@ -164,7 +164,7 @@ pub mod behavior {
             if batch_count > 100 {
                 return Err(
                     SinexError::validation("Too many batches - possible infinite loop")
-                        .wrap_err_with("batch_count", batch_count),
+                        .with_context("batch_count", batch_count),
                 );
             }
         }

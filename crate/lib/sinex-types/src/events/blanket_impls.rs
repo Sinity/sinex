@@ -191,7 +191,7 @@ macro_rules! wrapped_payload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::payloads::filesystem::FileCreatedPayload;
+    use crate::events::payloads::filesystem::FileCreatedPayload;
 
     #[test]
     fn test_option_payload() {

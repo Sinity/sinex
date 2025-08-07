@@ -17,11 +17,36 @@ use crate::{
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
+use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_db::models::Event;
 use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
+
+/// Configuration for the filesystem processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FilesystemProcessorConfig {
+    /// Maximum number of files to process in one scan
+    pub max_files: Option<usize>,
+    /// File extensions to include (empty means all)
+    pub include_extensions: Vec<String>,
+    /// File extensions to exclude
+    pub exclude_extensions: Vec<String>,
+    /// Follow symbolic links
+    pub follow_symlinks: bool,
+}
+
+impl Default for FilesystemProcessorConfig {
+    fn default() -> Self {
+        Self {
+            max_files: None,
+            include_extensions: Vec::new(),
+            exclude_extensions: Vec::new(),
+            follow_symlinks: false,
+        }
+    }
+}
 
 /// Example filesystem processor implementing unified stream processor interface
 #[derive(Debug)]
@@ -195,7 +220,9 @@ impl FilesystemProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for FilesystemProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = FilesystemProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             watch_paths = ?self.watch_paths,
@@ -389,7 +416,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 }
 
 impl ExplorationProvider for FilesystemProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         let recent_activity = if let Some(ref state) = self.last_state {
             vec![ActivityEntry {
                 timestamp: state.captured_at,
@@ -433,7 +460,7 @@ impl ExplorationProvider for FilesystemProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         // In a real implementation, this would query the database for scan history
         Ok(vec![])
     }
@@ -441,7 +468,7 @@ impl ExplorationProvider for FilesystemProcessor {
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         // In a real implementation, this would compare filesystem state with Sinex events
         let now = Utc::now();
         let hour_ago = now - chrono::Duration::hours(1);
@@ -465,7 +492,7 @@ impl ExplorationProvider for FilesystemProcessor {
         &self,
         path: &Utf8PathBuf,
         format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,

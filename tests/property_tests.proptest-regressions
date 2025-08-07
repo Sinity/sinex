@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc e70315e3809fc3c22e29632d1477f01534e8a03ba6fa642d4ba7b6bf37daad70 # shrinks to source = EventSource("-"), event_type = EventType("A"), payload = Null
+cc 5455ec74987abb84df3ce3ca23c690bad5327b07ab36926d46649a7eb8df44b1 # shrinks to ulid_str = "J00A0A0M0M0M00A0A000000000"
+cc b3c45f99d540bfb386b40b112ebff30badf4007825b5555f497b1694927b0c1b # shrinks to count = 208

@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -14,6 +15,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for Content Processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContentProcessorConfig {
+    /// Content analysis settings
+    pub analysis_settings: HashMap<String, serde_json::Value>,
+}
+
+impl Default for ContentProcessorConfig {
+    fn default() -> Self {
+        Self {
+            analysis_settings: HashMap::new(),
+        }
+    }
+}
 
 /// Content Processor using unified StatefulStreamProcessor architecture
 pub struct ContentProcessor {
@@ -28,7 +44,9 @@ impl ContentProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for ContentProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = ContentProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing content processor");
         self.context = Some(ctx);
         Ok(())
@@ -81,7 +99,7 @@ impl Default for ContentProcessor {
 }
 
 impl ExplorationProvider for ContentProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
             description: "Content processor".to_string(),
             last_updated: chrono::Utc::now(),
@@ -95,14 +113,14 @@ impl ExplorationProvider for ContentProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         let now = chrono::Utc::now();
         Ok(CoverageAnalysis {
             time_range: (now - chrono::Duration::days(1), now),
@@ -120,7 +138,7 @@ impl ExplorationProvider for ContentProcessor {
         &self,
         _path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         Ok(())
     }
 }

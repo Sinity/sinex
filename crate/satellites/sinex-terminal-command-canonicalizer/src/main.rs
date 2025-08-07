@@ -9,15 +9,15 @@ use mimalloc::MiMalloc;
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
 
+use async_trait::async_trait;
 use sinex_satellite_sdk::{
     nats_stream_consumer::{
-        EventFilter, NatsConsumerConfig, NatsStreamConsumer,
         BatchProcessingResult as NatsBatchProcessingResult,
-        EventBatchProcessor as NatsEventBatchProcessor,
+        EventBatchProcessor as NatsEventBatchProcessor, EventFilter, NatsConsumerConfig,
+        NatsStreamConsumer,
     },
     SatelliteResult,
 };
-use async_trait::async_trait;
 use tracing::info;
 
 /// Simple terminal command canonicalizer that just logs received events
@@ -36,14 +36,23 @@ impl NatsEventBatchProcessor for SimpleTerminalCanonicalizer {
         Ok(())
     }
 
-    async fn process_batch(&mut self, events: Vec<sinex_db::models::Event>) -> SatelliteResult<NatsBatchProcessingResult> {
-        info!("Terminal command canonicalizer processed {} events", events.len());
-        
+    async fn process_batch(
+        &mut self,
+        events: Vec<sinex_db::models::Event>,
+    ) -> SatelliteResult<NatsBatchProcessingResult> {
+        info!(
+            "Terminal command canonicalizer processed {} events",
+            events.len()
+        );
+
         // Simple implementation: just log and acknowledge
         for event in &events {
-            info!("Processing event: {} from {}", event.event_type, event.source);
+            info!(
+                "Processing event: {} from {}",
+                event.event_type, event.source
+            );
         }
-        
+
         Ok(NatsBatchProcessingResult {
             processed: events.len(),
             skipped: 0,
@@ -54,24 +63,20 @@ impl NatsEventBatchProcessor for SimpleTerminalCanonicalizer {
     }
 
     fn event_filters(&self) -> Vec<EventFilter> {
-        vec![
-            EventFilter::new()
-                .with_source("terminal")
-                .with_event_type("command_executed")
-                .with_event_type("terminal_session_started")
-                .with_event_type("terminal_session_ended")
-        ]
+        vec![EventFilter::new()
+            .with_source("terminal")
+            .with_event_type("command_executed")
+            .with_event_type("terminal_session_started")
+            .with_event_type("terminal_session_ended")]
     }
 }
 
 #[tokio::main]
 async fn main() -> color_eyre::eyre::Result<()> {
     color_eyre::install()?;
-    
+
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("info")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("info").init();
 
     info!("Starting simple NATS-based terminal command canonicalizer");
 

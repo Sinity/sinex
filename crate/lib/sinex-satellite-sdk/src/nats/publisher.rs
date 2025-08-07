@@ -275,7 +275,7 @@ impl NatsPublisher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use super::{client::NatsClient, config::NatsConfig};
+    use crate::nats::{client::NatsClient, config::NatsConfig};
 
     #[tokio::test]
     #[ignore] // Requires NATS server

@@ -379,7 +379,7 @@ impl Default for HealthAggregator {
 }
 
 impl ExplorationProvider for HealthAggregator {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
             description: "Health aggregator monitoring satellite heartbeats".to_string(),
             last_updated: Utc::now(),
@@ -402,7 +402,7 @@ impl ExplorationProvider for HealthAggregator {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         // Health aggregator doesn't have traditional ingestion history
         Ok(vec![])
     }
@@ -410,7 +410,7 @@ impl ExplorationProvider for HealthAggregator {
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         let now = Utc::now();
         let time_range = (now - chrono::Duration::hours(24), now);
         
@@ -432,7 +432,7 @@ impl ExplorationProvider for HealthAggregator {
         &self,
         _path: &camino::Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         Err("Export not implemented for health aggregator".into())
     }
 }

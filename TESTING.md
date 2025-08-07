@@ -12,18 +12,15 @@ use sinex_test_utils::prelude::*;
 #[sinex_test]
 async fn test_example(ctx: TestContext) -> TestResult<()> {
     // Create an event
-    let event = ctx.event()
-        .source("my-component")
-        .type_("action.performed")
-        .field("user_id", "123")
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "my-component",
+        "action.performed",
+        json!({"user_id": "123"})
+    ).await?;
     
     // Query events
-    let events = ctx.events()
-        .by_source("my-component")
-        .fetch()
-        .await?;
+    let source_ref = sinex_types::domain::EventSource::from("my-component");
+    let events = ctx.pool.events().get_by_source(&source_ref, Some(10), None).await?;
     
     // Assert
     assert_eq!(events.len(), 1);
