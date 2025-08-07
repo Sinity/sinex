@@ -139,8 +139,8 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Event;
     use serde_json::json;
-    use sinex_db::models::Event;
     use sinex_test_utils::prelude::*;
     use sinex_types::domain::EventType;
 

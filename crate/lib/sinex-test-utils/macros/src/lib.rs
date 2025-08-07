@@ -248,7 +248,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
         // 3. Handle TestContext specially - it gets created per test case
 
         let fn_vis = &input.vis;
-        let fn_sig = &input.sig;
+        let _fn_sig = &input.sig;
         let fn_body = &input.block;
 
         // Build the function signature without TestContext (if present)
@@ -310,7 +310,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     std::time::Duration::from_secs(#timeout_secs),
                     async { #test_body }
                 ).await
-                .map_err(|_| eyre!("Test timed out after {} seconds", #timeout_secs))?;
+                .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
                 let elapsed = start.elapsed();
                 if result.is_ok() {
@@ -439,10 +439,10 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                                     Ok(()) => Ok(()),
                                     Err(e) => {
                                         // Convert the non-Send error to anyhow error
-                                        Err(eyre!("Proptest failed: {}", e))
+                                        Err(color_eyre::eyre::eyre!("Proptest failed: {}", e))
                                     }
                                 },
-                                Err(e) => Err(eyre!(e)),
+                                Err(e) => Err(color_eyre::eyre::eyre!(e)),
                             }?
                         };
 
@@ -462,7 +462,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         std::time::Duration::from_secs(#timeout_secs),
                         test_future
                     ).await
-                    .map_err(|_| eyre!("Test timed out after {} seconds", #timeout_secs))?
+                    .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
                 }
             }
         } else {
@@ -527,7 +527,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                         std::time::Duration::from_secs(#timeout_secs),
                         test_future
                     ).await
-                    .map_err(|_| eyre!("Test timed out after {} seconds", #timeout_secs))?
+                    .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?
                 }
             }
         }
@@ -544,7 +544,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
                     std::time::Duration::from_secs(#timeout_secs),
                     async { #fn_body }
                 ).await
-                .map_err(|_| eyre!("Test timed out after {} seconds", #timeout_secs))?;
+                .map_err(|_| color_eyre::eyre::eyre!("Test timed out after {} seconds", #timeout_secs))?;
 
                 let elapsed = start.elapsed();
                 if result.is_ok() {

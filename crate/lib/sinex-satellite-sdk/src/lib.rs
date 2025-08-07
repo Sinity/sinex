@@ -320,12 +320,14 @@ pub enum SatelliteError {
     #[error("Configuration error: {0}")]
     Config(#[from] config::ConfigError),
 
+    #[error("Configuration parsing error: {0}")]
+    Configuration(String),
+
     #[error("gRPC communication error: {0}")]
     Grpc(#[from] tonic::Status),
 
     #[error("gRPC transport error: {0}")]
     GrpcTransport(#[from] tonic::transport::Error),
-
 
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
@@ -356,6 +358,9 @@ impl From<SatelliteError> for sinex_types::error::SinexError {
     fn from(e: SatelliteError) -> Self {
         match e {
             SatelliteError::Config(_) => {
+                sinex_types::error::SinexError::configuration(e.to_string())
+            }
+            SatelliteError::Configuration(_) => {
                 sinex_types::error::SinexError::configuration(e.to_string())
             }
             SatelliteError::Grpc(_) => sinex_types::error::SinexError::unknown(e.to_string()),

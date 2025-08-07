@@ -841,7 +841,7 @@ impl<'a> StateRepository<'a> {
         host: &str,
         payload: JsonValue,
     ) -> DbResult<Id<Event>> {
-        let id = Id::<Event>::new();
+        let id = Id::<crate::models::Event>::new();
 
         sqlx::query!(
             r#"
@@ -1171,10 +1171,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_checkpoint_operations(ctx: TestContext) -> Result<()> {
-        let repo = ctx.pool().state();
+        let repo = &ctx.pool.state();
 
         // Create a checkpoint
-        let id = Id::<Event>::new();
+        let id = Id::<crate::models::Event>::new();
         let checkpoint = CheckpointInput {
             processor_name: "test-processor".into(),
             consumer_group: None,
@@ -1190,16 +1190,16 @@ mod tests {
         assert_eq!(saved.checkpoint_version, 1);
 
         // Update the checkpoint
-        let new_id = Id::<Event>::new();
+        let new_id = Id::<crate::models::Event>::new();
         let update = CheckpointInput::new("test-processor")
-            .with_last_processed_id(new_id)
+            .with_last_processed_id(new_id.clone())
             .with_last_processed_ts(Utc::now())
             .with_checkpoint_data(serde_json::json!({ "batch_size": 200 }));
 
         let updated = repo.save_checkpoint(update).await?;
         assert_eq!(updated.processor_name.as_ref(), "test-processor");
         assert_eq!(updated.checkpoint_version, 2);
-        assert_eq!(updated.last_processed_id, Some(new_event_id));
+        assert_eq!(updated.last_processed_id, Some(new_id));
 
         // Get checkpoint
         let retrieved = repo.get_checkpoint("test-processor").await?;
@@ -1218,14 +1218,14 @@ mod tests {
 
     #[sinex_test]
     async fn test_operation_logging(ctx: TestContext) -> Result<()> {
-        let repo = ctx.pool().state();
+        let repo = &ctx.pool.state();
 
         // Log a successful operation
         let operation = NewOperation {
             operation_type: OperationType::EventIngested,
             performed_by: "ingestd".to_string(),
             target_type: Some("events".to_string()),
-            target_id: Some(Id::<Event>::new().to_string()),
+            target_id: Some(Id::<crate::models::Event>::new().to_string()),
             description: "Ingested event from fs-watcher".to_string(),
             metadata: Some(serde_json::json!({ "source": "fs-watcher" })),
             result: OperationResult::Success,
@@ -1277,7 +1277,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_operation_statistics(ctx: TestContext) -> Result<()> {
-        let repo = ctx.pool().state();
+        let repo = &ctx.pool.state();
 
         // Log various operations
         let operations = vec![

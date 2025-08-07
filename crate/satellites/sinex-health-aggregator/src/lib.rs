@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     nats_stream_consumer::{
         BatchProcessingResult as NatsBatchProcessingResult,
@@ -19,6 +20,21 @@ use sinex_satellite_sdk::{
 use std::collections::HashMap;
 use tracing::info;
 
+/// Configuration for Health Aggregator processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HealthAggregatorConfig {
+    /// Health check intervals in seconds
+    pub check_intervals: HashMap<String, u64>,
+}
+
+impl Default for HealthAggregatorConfig {
+    fn default() -> Self {
+        Self {
+            check_intervals: HashMap::new(),
+        }
+    }
+}
+
 /// Health Aggregator using unified StatefulStreamProcessor architecture
 pub struct HealthAggregator {
     context: Option<StreamProcessorContext>,
@@ -32,7 +48,9 @@ impl HealthAggregator {
 
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = HealthAggregatorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
         self.context = Some(ctx);
         Ok(())
@@ -86,10 +104,13 @@ impl Default for HealthAggregator {
 
 #[async_trait]
 impl NatsEventBatchProcessor for HealthAggregator {
-    async fn process_batch(&mut self, events: Vec<sinex_db::models::Event>) -> SatelliteResult<NatsBatchProcessingResult> {
+    async fn process_batch(
+        &mut self,
+        events: Vec<sinex_db::models::Event>,
+    ) -> SatelliteResult<NatsBatchProcessingResult> {
         // Simple implementation that just acknowledges all events
         info!("Health aggregator processed {} events", events.len());
-        
+
         Ok(NatsBatchProcessingResult {
             processed: events.len(),
             skipped: 0,
@@ -101,7 +122,7 @@ impl NatsEventBatchProcessor for HealthAggregator {
 }
 
 impl ExplorationProvider for HealthAggregator {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
             description: "Health aggregator".to_string(),
             last_updated: chrono::Utc::now(),
@@ -115,14 +136,14 @@ impl ExplorationProvider for HealthAggregator {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         let now = chrono::Utc::now();
         Ok(CoverageAnalysis {
             time_range: (now - chrono::Duration::days(1), now),
@@ -140,7 +161,7 @@ impl ExplorationProvider for HealthAggregator {
         &self,
         _path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> color_eyre::eyre::Result<()> {
         Ok(())
     }
 }

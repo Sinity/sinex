@@ -173,11 +173,7 @@ impl<'ctx> ValidationTester<'ctx> {
         use sinex_types::domain::*;
         let result = self
             .ctx
-            .event()
-            .source(EventSource::new(source))
-            .type_(EventType::new(event_type))
-            .payload(payload)
-            .insert()
+            .create_test_event(source, event_type, payload)
             .await;
 
         result.assert_contains_error(expected_error)?;
@@ -193,11 +189,7 @@ impl<'ctx> ValidationTester<'ctx> {
     ) -> std::result::Result<Event, SinexError> {
         use sinex_types::domain::*;
         self.ctx
-            .event()
-            .source(EventSource::new(source))
-            .type_(EventType::new(event_type))
-            .payload(payload)
-            .insert()
+            .create_test_event(source, event_type, payload)
             .await
             .map_err(|e| SinexError::unknown(e.to_string()))
     }
@@ -216,9 +208,9 @@ impl<'ctx> ValidationTester<'ctx> {
                     .map_err(|e| SinexError::unknown(format!("Validation test case failed: {}", e)))
                     .map_err(|e| {
                         SinexError::validation("Batch validation case failed")
-                            .wrap_err_with("case_name", case_name)
-                            .wrap_err_with("expected_error", error_text)
-                            .wrap_err_with("payload", payload.to_string())
+                            .with_context("case_name", case_name)
+                            .with_context("expected_error", error_text)
+                            .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
                     })?;
@@ -228,8 +220,8 @@ impl<'ctx> ValidationTester<'ctx> {
                     .map_err(|e| SinexError::unknown(format!("Valid payload test failed: {}", e)))
                     .map_err(|e| {
                         SinexError::validation("Expected valid payload but validation failed")
-                            .wrap_err_with("case_name", case_name)
-                            .wrap_err_with("payload", payload.to_string())
+                            .with_context("case_name", case_name)
+                            .with_context("payload", payload.to_string())
                             .with_source(e)
                             .with_operation("batch_validation_test")
                     })?;
@@ -420,7 +412,7 @@ mod tests {
         assert_eq!(error.to_string(), "test error");
 
         // Test assert_succeeds
-        let success: Result<i32, SinexError> = Ok(42);
+        let success: Result<i32> = Ok(42);
         let value = success.assert_succeeds()?;
         assert_eq!(value, 42);
 
@@ -435,7 +427,7 @@ mod tests {
     #[sinex_test]
     async fn test_error_assertions_negative_cases(_ctx: TestContext) -> crate::Result<()> {
         // assert_fails should fail on success
-        let success: Result<i32, SinexError> = Ok(42);
+        let success: Result<i32> = Ok(42);
         let result = success.assert_fails();
         assert!(result.is_err());
         assert!(result
@@ -649,8 +641,8 @@ mod tests {
     async fn test_error_context_builder(ctx: TestContext) -> crate::Result<()> {
         // Test using production error context patterns
         let error = SinexError::validation("Test validation error")
-            .wrap_err_with("field", "username")
-            .wrap_err_with("value", "invalid@user")
+            .with_context("field", "username")
+            .with_context("value", "invalid@user")
             .with_operation("user_registration");
 
         let error_str = error.to_string();

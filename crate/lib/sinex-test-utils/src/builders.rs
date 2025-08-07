@@ -8,34 +8,54 @@ use crate::prelude::*;
 use bon::Builder;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_db::models::*;
 use sinex_db::{self, repositories::DbPoolExt, DbPool};
-use sinex_types::events::*;
 
 // Test data builders using bon derive macros
 
-/// Builder for checkpoint test data
-#[derive(Debug, Clone, Builder)]
-#[builder(on(String, into))]
+/// Builder for checkpoint test data - manual implementation for simplicity
+#[derive(Debug, Clone)]
 pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
     last_processed_id: Option<Id<Event>>,
-    #[builder(default = 0)]
     processed_count: i64,
     state_data: Option<JsonValue>,
-    #[builder(default = 1)]
     checkpoint_version: i32,
     checkpoint_data: Option<JsonValue>,
 }
 
 impl TestCheckpointBuilder {
-    /// Create a new checkpoint builder
+    /// Create a new checkpoint builder  
     pub fn new(processor_name: &str) -> Self {
-        TestCheckpointBuilder::builder()
-            .processor_name(processor_name)
-            .build()
+        Self {
+            processor_name: processor_name.to_string(),
+            consumer_group: None,
+            consumer_name: None,
+            last_processed_id: None,
+            processed_count: 0,
+            state_data: None,
+            checkpoint_version: 1,
+            checkpoint_data: None,
+        }
+    }
+
+    /// Set processed count
+    pub fn processed_count(mut self, count: i64) -> Self {
+        self.processed_count = count;
+        self
+    }
+
+    /// Set last processed ID
+    pub fn last_processed_id(mut self, id: Id<Event>) -> Self {
+        self.last_processed_id = Some(id);
+        self
+    }
+
+    /// Set state data
+    pub fn state_data(mut self, data: JsonValue) -> Self {
+        self.state_data = Some(data);
+        self
     }
 
     /// Insert the checkpoint
@@ -71,12 +91,10 @@ impl TestCheckpointBuilder {
     }
 }
 
-/// Builder for test scenarios with multiple events
-#[derive(Debug, Builder)]
+/// Builder for test scenarios with multiple events - manual implementation
+#[derive(Debug)]
 pub(crate) struct TestScenarioBuilder {
-    #[builder(default = Vec::new())]
     events: Vec<Event>,
-    #[builder(default = Vec::new())]
     checkpoints: Vec<TestCheckpointBuilder>,
     pool: Option<DbPool>,
 }
@@ -84,9 +102,18 @@ pub(crate) struct TestScenarioBuilder {
 impl TestScenarioBuilder {
     /// Create a new scenario builder
     pub fn new() -> Self {
-        TestScenarioBuilder::builder().build()
+        Self {
+            events: Vec::new(),
+            checkpoints: Vec::new(),
+            pool: None,
+        }
     }
 
+    /// Set the database pool
+    pub fn pool(mut self, pool: DbPool) -> Self {
+        self.pool = Some(pool);
+        self
+    }
     /// Add multiple events from the same source
     pub fn with_events_from_source(mut self, source: &str, event_type: &str, count: usize) -> Self {
         for i in 0..count {

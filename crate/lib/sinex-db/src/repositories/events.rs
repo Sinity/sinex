@@ -2035,10 +2035,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let pool = ctx.db_pool();
+        let pool = &ctx.pool;
 
         // Create an event
-        let event = Event::builder()
+        let event = crate::models::Event::builder()
             .source(EventSource::new("test.source"))
             .event_type(EventType::new("test.event"))
             .host(HostName::new("test-host"))
@@ -2062,10 +2062,10 @@ mod tests {
 
     #[sinex_test]
     async fn test_event_record_with_provenance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let pool = ctx.db_pool();
+        let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = Event::builder()
+        let source_event = crate::models::Event::builder()
             .source(EventSource::new("test.source"))
             .event_type(EventType::new("source.event"))
             .host(HostName::new("test-host"))
@@ -2073,23 +2073,24 @@ mod tests {
             .build();
 
         let source = pool.events().insert(source_event).await?;
+        let source_id = source.id.unwrap();
 
         // Create derived event with provenance
-        let derived_event = Event::builder()
+        let derived_event = crate::models::Event::builder()
             .source(EventSource::new("test.processor"))
             .event_type(EventType::new("derived.event"))
             .host(HostName::new("test-host"))
             .payload(json!({"derived": true}))
-            .provenance(Some(Provenance::Events(vec![source.id])))
+            .provenance(crate::models::Provenance::Events(vec![source_id.clone()]))
             .build();
 
         let inserted = pool.events().insert(derived_event).await?;
 
         // Verify provenance was preserved through EventRecord
         match inserted.provenance {
-            Some(Provenance::Events(ids)) => {
+            Some(crate::models::Provenance::Events(ids)) => {
                 assert_eq!(ids.len(), 1);
-                assert_eq!(ids[0], source.id);
+                assert_eq!(ids[0], source_id);
             }
             _ => panic!("Expected Events provenance"),
         }

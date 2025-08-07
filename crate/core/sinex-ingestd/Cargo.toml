@@ -15,6 +15,7 @@ ahash = { workspace = true }
 
 # Core dependencies
 anyhow.workspace = true
+color-eyre.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["full"] }
 tracing.workspace = true
@@ -46,6 +47,7 @@ figment = { workspace = true }
 # Validation
 jsonschema.workspace = true
 validator = { workspace = true }
+bon = { workspace = true }
 
 # Concurrency
 parking_lot = "0.12"

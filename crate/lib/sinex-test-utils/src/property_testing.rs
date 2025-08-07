@@ -9,6 +9,7 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use serde_json::{json, Value};
+use sinex_db::repositories::DbPoolExt;
 use sinex_types::error::SinexError;
 
 /// Property test strategies for common Sinex types
@@ -249,11 +250,7 @@ impl<'ctx> PropertyTester<'ctx> {
             // Property: All valid events should be creatable and insertable
             let event = self
                 .ctx
-                .event()
-                .source(source.as_str())
-                .type_(event_type.as_str())
-                .payload(payload)
-                .insert()
+                .create_test_event(&source, &event_type, payload)
                 .await
                 .map_err(|e| {
                     SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
@@ -281,11 +278,7 @@ impl<'ctx> PropertyTester<'ctx> {
             // Property: Inserted events should be retrievable
             let event = self
                 .ctx
-                .event()
-                .source(source.as_str())
-                .type_(event_type.as_str())
-                .payload(payload)
-                .insert()
+                .create_test_event(&source, &event_type, payload)
                 .await
                 .map_err(|e| {
                     SinexError::validation(format!("Property test case {} failed: {}", case_num, e))
@@ -293,21 +286,28 @@ impl<'ctx> PropertyTester<'ctx> {
 
             // Should be findable by ID
             if let Some(event_id) = &event.id {
-                let by_id = self
-                    .ctx
-                    .events()
-                    .by_id(event_id.clone())
-                    .fetch_one()
-                    .await?;
+                let by_id = self.ctx.pool.events().get_by_id(event_id.clone()).await?;
                 assert!(by_id.is_some());
 
                 // Should be findable by source
-                let by_source = self.ctx.events().by_source(&source).fetch().await?;
+                let source_ref = sinex_types::domain::EventSource::from(source.as_str());
+                let by_source = self
+                    .ctx
+                    .pool
+                    .events()
+                    .get_by_source(&source_ref, Some(10), None)
+                    .await?;
                 assert!(by_source.iter().any(|e| e.id.as_ref() == Some(event_id)));
             }
 
             // Should be findable by type
-            let by_type = self.ctx.events().by_type(&event_type).fetch().await?;
+            let type_ref = sinex_types::domain::EventType::from(event_type.as_str());
+            let by_type = self
+                .ctx
+                .pool
+                .events()
+                .get_by_event_type(&type_ref, Some(10), None)
+                .await?;
             assert!(by_type.iter().any(|e| e.id == event.id));
         }
 
@@ -327,11 +327,7 @@ impl<'ctx> PropertyTester<'ctx> {
             // Property: Malicious payloads should be rejected or sanitized
             let result = self
                 .ctx
-                .event()
-                .source("security_test")
-                .type_("malicious.input")
-                .payload(malicious_payload)
-                .insert()
+                .create_test_event("security_test", "malicious.input", malicious_payload)
                 .await;
 
             // Either the event is rejected (preferred) or it's sanitized
@@ -389,10 +385,7 @@ mod tests {
 
             // Should be usable in event creation
             let event = ctx
-                .event()
-                .source(EventSource::new(&source))
-                .type_("test.property")
-                .insert()
+                .create_test_event(&source, "test.property", json!({}))
                 .await?;
             assert_eq!(event.source.as_str(), source);
         }
@@ -416,10 +409,7 @@ mod tests {
 
             // Should be usable in event creation
             let event = ctx
-                .event()
-                .source(EventSource::new("test"))
-                .type_(EventType::new(&event_type))
-                .insert()
+                .create_test_event("test", &event_type, json!({}))
                 .await?;
             assert_eq!(event.event_type.as_str(), event_type);
         }
@@ -469,11 +459,7 @@ mod tests {
 
             // Should work in event creation
             let event = ctx
-                .event()
-                .source("json-test")
-                .type_("test.json")
-                .payload(payload.clone())
-                .insert()
+                .create_test_event("json-test", "test.json", payload.clone())
                 .await?;
 
             // Payload should match (accounting for potential normalization)
@@ -500,13 +486,7 @@ mod tests {
             assert!(payload["size"].is_number());
 
             // Should create valid events
-            let event = ctx
-                .event()
-                .source(source.as_str())
-                .type_(event_type.as_str())
-                .payload(payload)
-                .insert()
-                .await?;
+            let event = ctx.create_test_event(&source, &event_type, payload).await?;
 
             assert_eq!(event.source.as_str(), "filesystem");
         }
@@ -515,14 +495,10 @@ mod tests {
     }
 
     // Helper function for property test to avoid lifetime issues
-    async fn test_number_property(ctx: &TestContext, value: u32) -> Result<()> {
+    async fn test_number_property(ctx: &TestContext, value: u32) -> color_eyre::eyre::Result<()> {
         // Property: all numbers should be insertable in events
         let event = ctx
-            .event()
-            .source("property")
-            .type_("test.number")
-            .field("value", value)
-            .insert()
+            .create_test_event("property", "test.number", json!({"value": value}))
             .await?;
 
         assert_eq!(event.payload["value"], json!(value));
@@ -572,7 +548,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_complex_property_with_context(ctx: TestContext) -> Result<()> {
-        let runner = proptest::test_runner::TestRunner::deterministic();
+        let _runner = proptest::test_runner::TestRunner::deterministic();
 
         // Complex property: events with same source should be grouped correctly
         let sources = vec!["test-a", "test-b", "test-c"];
@@ -580,18 +556,19 @@ mod tests {
         // Insert events with different sources
         for source in &sources {
             for i in 0..5 {
-                ctx.event()
-                    .source(*source)
-                    .type_("test.property")
-                    .field("index", i)
-                    .insert()
+                ctx.create_test_event(source, "test.property", json!({"index": i}))
                     .await?;
             }
         }
 
         // Property: querying by source should return exactly those events
         for source in &sources {
-            let events = ctx.events().by_source(*source).fetch().await?;
+            let source_ref = sinex_types::domain::EventSource::from(*source);
+            let events = ctx
+                .pool
+                .events()
+                .get_by_source(&source_ref, Some(10), None)
+                .await?;
             assert_eq!(events.len(), 5);
             for event in events {
                 assert_eq!(event.source.as_str(), *source);
@@ -661,7 +638,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_property_based_edge_cases(ctx: TestContext) -> Result<()> {
-        let runner = proptest::test_runner::TestRunner::deterministic();
+        let _runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test edge cases with property strategies
         let long_source = "a".repeat(256);
@@ -679,13 +656,7 @@ mod tests {
         ];
 
         for (source, event_type, payload) in edge_cases {
-            let result = ctx
-                .event()
-                .source(source)
-                .type_(event_type)
-                .payload(payload)
-                .insert()
-                .await;
+            let result = ctx.create_test_event(source, event_type, payload).await;
 
             // Some should fail, some should succeed - just verify no panic
             match result {

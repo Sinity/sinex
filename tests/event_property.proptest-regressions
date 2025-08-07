@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5a3b4cd999cdfa51789c5e743410cb9c5b833c8ba360f6a4074a7291b43d5584 # shrinks to source = "a00", event_type = "file.created", payload = Null
+cc 7a874e3753442482feee2fe08cf5fae672ebb52a7ccd3b7c882afc3a6a06f914 # shrinks to event = Event { id: None, source: EventSource("a--"), event_type: EventType("file.created"), payload: Null, ts_ingest: 1970-01-01T00:00:00Z, ts_orig: None, host: HostName("sinnix-prime"), ingestor_version: None, payload_schema_id: None, provenance: None, anchor_byte: None, associated_blob_ids: None }

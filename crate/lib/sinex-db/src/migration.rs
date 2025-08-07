@@ -1,7 +1,7 @@
 //! Database migration utilities for SeaORM integration
 
 #[cfg(feature = "migration")]
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::Result;
 #[cfg(feature = "migration")]
 use sea_orm_migration::prelude::*;
 #[cfg(feature = "migration")]

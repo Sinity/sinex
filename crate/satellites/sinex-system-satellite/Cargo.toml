@@ -12,7 +12,7 @@ path = "src/main.rs"
 camino = { workspace = true }
 mimalloc = { workspace = true }
 # Core dependencies
-anyhow.workspace = true
+color-eyre = { workspace = true }
 thiserror.workspace = true
 async-trait.workspace = true
 tokio = { workspace = true, features = ["full"] }

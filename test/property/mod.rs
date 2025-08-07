@@ -11,8 +11,6 @@ use sinex_test_utils::prelude::*;
 // pub mod event_model_fuzzing_test;
 // Disabled - references obsolete EventRegistry
 // pub mod event_property_test;
-// Disabled - references missing ConnectionManager
-// pub mod redis_streams_property_test;
 pub mod automation_property_test;
 pub mod checkpoint_property_test;
 pub mod satellite_property_test;
@@ -140,15 +138,15 @@ pub mod strategies {
         })
     }
 
-    /// Strategy for generating Redis stream keys
-    pub fn redis_stream_keys() -> impl Strategy<Value = String> {
+    /// Strategy for generating NATS subjects
+    pub fn nats_subjects() -> impl Strategy<Value = String> {
         prop_oneof![
-            Just("sinex:events".to_string()),
-            Just("test:events".to_string()),
-            Just("automaton:command-canonicalizer".to_string()),
-            Just("automaton:health-aggregator".to_string()),
-            Just("api:command:analytics".to_string()),
-            Just("api:response:analytics".to_string()),
+            Just("events.filesystem.file_created".to_string()),
+            Just("events.terminal.command_executed".to_string()),
+            Just("events.desktop.clipboard_changed".to_string()),
+            Just("events.system.journal_entry".to_string()),
+            Just("events.test.boundary_test".to_string()),
+            Just("events.performance.test".to_string()),
         ]
     }
 

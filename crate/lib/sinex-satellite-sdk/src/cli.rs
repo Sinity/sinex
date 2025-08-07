@@ -7,6 +7,7 @@ use crate::stream_processor::{Checkpoint, ScanReport, TimeHorizon};
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use color_eyre::eyre::{self, Context};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
@@ -133,14 +134,13 @@ pub enum ProcessorCommand {
 }
 
 /// Parse checkpoint from string representation
-pub fn parse_checkpoint(checkpoint_str: &str) -> Result<Checkpoint, String> {
+pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
     match checkpoint_str.to_lowercase().as_str() {
         "none" | "start" => Ok(Checkpoint::None),
         _ => {
             // Try to parse as JSON first
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(checkpoint_str) {
-                serde_json::from_value::<Checkpoint>(value)
-                    .map_err(|e| format!("Invalid checkpoint JSON: {}", e))
+                serde_json::from_value::<Checkpoint>(value).context("Invalid checkpoint JSON")
             } else if let Ok(timestamp) = checkpoint_str.parse::<DateTime<Utc>>() {
                 // Parse as ISO timestamp
                 Ok(Checkpoint::timestamp(timestamp, None))
@@ -153,20 +153,19 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> Result<Checkpoint, String> {
 }
 
 /// Parse time horizon from string representation
-pub fn parse_time_horizon(horizon_str: &str) -> Result<TimeHorizon, String> {
+pub fn parse_time_horizon(horizon_str: &str) -> eyre::Result<TimeHorizon> {
     match horizon_str.to_lowercase().as_str() {
         "continuous" | "stream" | "sensor" => Ok(TimeHorizon::Continuous),
         "snapshot" | "current" | "now" => Ok(TimeHorizon::Snapshot),
         _ => {
             // Try to parse as ISO timestamp for historical scan
-            horizon_str.parse::<DateTime<Utc>>()
-                .map(|dt| TimeHorizon::Historical {
-                    end_time: dt,
-                })
-                .map_err(|e| {
+            horizon_str
+                .parse::<DateTime<Utc>>()
+                .map(|dt| TimeHorizon::Historical { end_time: dt })
+                .with_context(|| {
                     format!(
-                        "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp: {}",
-                        horizon_str, e
+                        "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp",
+                        horizon_str
                     )
                 })
         }
@@ -277,26 +276,23 @@ pub struct MissingItem {
 /// Trait for processor-specific exploration capabilities
 pub trait ExplorationProvider {
     /// Get current source state
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error + Send + Sync>>;
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState>;
 
     /// Get ingestion history
     fn get_ingestion_history(
         &self,
         limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>>;
 
     /// Perform coverage analysis
     fn get_coverage_analysis(
         &self,
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error + Send + Sync>>;
+    ) -> color_eyre::eyre::Result<CoverageAnalysis>;
 
     /// Export data for debugging
-    fn export_data(
-        &self,
-        path: &Utf8PathBuf,
-        format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>;
+    fn export_data(&self, path: &Utf8PathBuf, format: ExportFormat)
+        -> color_eyre::eyre::Result<()>;
 }
 
 /// Export format options
@@ -328,7 +324,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
     }
 
     /// Run the CLI with parsed arguments
-    pub async fn run(&mut self, args: ProcessorCli) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(&mut self, args: ProcessorCli) -> color_eyre::eyre::Result<()> {
         use crate::grpc_client::IngestClient;
         use crate::nats::config::NatsConfig;
         use crate::stream_processor::{ScanArgs, StreamProcessorRunner};
@@ -348,13 +344,17 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
         // Parse processor configuration
         let processor_config: HashMap<String, serde_json::Value> =
             if let Some(config_str) = args.processor_config {
-                serde_json::from_str(&config_str)?
+                serde_json::from_str(&config_str)
+                    .context("Failed to parse processor configuration JSON")?
             } else {
                 HashMap::new()
             };
 
         // Take ownership of the processor
-        let processor = self.processor.take().ok_or("Processor already consumed")?;
+        let processor = self
+            .processor
+            .take()
+            .ok_or_else(|| eyre::eyre!("Processor already consumed"))?;
 
         match args.command {
             ProcessorCommand::Service {
@@ -376,11 +376,15 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
 
                 // Create database pool
                 let db_pool = if let Some(db_url) = args.database_url {
-                    SqlxPgPool::connect(&db_url).await?
+                    SqlxPgPool::connect(&db_url)
+                        .await
+                        .context("Failed to connect to database")?
                 } else {
-                    let db_url =
-                        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL not set")?;
-                    SqlxPgPool::connect(&db_url).await?
+                    let db_url = std::env::var("DATABASE_URL")
+                        .context("DATABASE_URL environment variable not set")?;
+                    SqlxPgPool::connect(&db_url)
+                        .await
+                        .context("Failed to connect to database using DATABASE_URL")?
                 };
 
                 // Initialize runner with NATS by default, gRPC as legacy option
@@ -389,7 +393,9 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     info!("Using legacy gRPC mode for event publishing");
 
                     // Create ingest client
-                    let ingest_client = IngestClient::new(&args.ingest_socket_path).await?;
+                    let ingest_client = IngestClient::new(&args.ingest_socket_path)
+                        .await
+                        .context("Failed to create ingest client")?;
 
                     // Initialize runner
                     runner
@@ -478,8 +484,9 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
             } => {
                 info!("Running scan operation");
 
-                let checkpoint = parse_checkpoint(&from)?;
-                let time_horizon = parse_time_horizon(&until)?;
+                let checkpoint = parse_checkpoint(&from).context("Failed to parse checkpoint")?;
+                let time_horizon =
+                    parse_time_horizon(&until).context("Failed to parse time horizon")?;
 
                 // Create stream processor runner
                 let mut runner = StreamProcessorRunner::new(processor);
@@ -500,23 +507,33 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         Err(_) => {
                             // If no database available, try environment variable
                             if let Ok(db_url) = std::env::var("DATABASE_URL") {
-                                SqlxPgPool::connect(&db_url).await?
+                                SqlxPgPool::connect(&db_url)
+                                    .await
+                                    .context("Failed to connect to database")?
                             } else {
-                                return Err("Database connection required even for dry runs".into());
+                                return Err(eyre::eyre!(
+                                    "Database connection required even for dry runs"
+                                ));
                             }
                         }
                     }
                 } else if let Some(db_url) = args.database_url {
-                    SqlxPgPool::connect(&db_url).await?
+                    SqlxPgPool::connect(&db_url)
+                        .await
+                        .context("Failed to connect to database")?
                 } else {
-                    let db_url =
-                        std::env::var("DATABASE_URL").map_err(|_| "DATABASE_URL not set")?;
-                    SqlxPgPool::connect(&db_url).await?
+                    let db_url = std::env::var("DATABASE_URL")
+                        .context("DATABASE_URL environment variable not set")?;
+                    SqlxPgPool::connect(&db_url)
+                        .await
+                        .context("Failed to connect to database using DATABASE_URL")?
                 };
 
                 // Initialize runner with NATS by default (unless dry run or legacy mode)
                 if args.use_grpc || dry_run {
-                    let ingest_client = IngestClient::new(&args.ingest_socket_path).await?;
+                    let ingest_client = IngestClient::new(&args.ingest_socket_path)
+                        .await
+                        .context("Failed to create ingest client")?;
 
                     // Initialize runner
                     runner
@@ -822,7 +839,7 @@ macro_rules! processor_main {
                 // SatelliteCoordination integrated below in service mode
             }
 
-            runner.run(args).await.map_err(Into::into)
+            runner.run(args).await
         }
     };
 
@@ -855,7 +872,7 @@ macro_rules! processor_main {
                 // SatelliteCoordination integrated below in service mode
             }
 
-            runner.run(args).await.map_err(Into::into)
+            runner.run(args).await
         }
     };
 }

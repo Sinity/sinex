@@ -14,13 +14,11 @@ async fn test_event_creation_with_rstest(
     #[case] event_type: &str,
 ) -> Result<()> {
     // Each test case runs with its own TestContext from the pool
-    let event = ctx
-        .event()
-        .source(source)
-        .type_(event_type)
-        .field("test_case", true)
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        source,
+        event_type, 
+        json!({"test_case": true})
+    ).await?;
     
     // Verify the event was created correctly
     assert_eq!(event.source.as_str(), source);
@@ -28,8 +26,7 @@ async fn test_event_creation_with_rstest(
     assert_eq!(event.payload["test_case"], json!(true));
     
     // Query it back to ensure it's in the database
-    let events = ctx
-        .events()
+    let events = ctx.pool.events()
         .by_source(source)
         .by_type(event_type)
         .fetch()
@@ -55,15 +52,13 @@ async fn test_payload_size_validation(
 ) -> Result<()> {
     let large_data = "x".repeat(size);
     
-    let result = ctx
-        .event()
-        .source("test")
-        .type_("payload.size")
-        .field("name", name)
-        .field("data", large_data.as_str())
-        .field("size_bytes", size)
-        .insert()
-        .await;
+    let payload = json!({
+        "name": name,
+        "data": large_data,
+        "size_bytes": size
+    });
+    
+    let result = ctx.create_test_event("test", "payload.size", payload.clone()).await;
     
     if should_succeed {
         let event = result?;
@@ -71,11 +66,10 @@ async fn test_payload_size_validation(
         assert_eq!(event.payload["size_bytes"], json!(size));
         
         // Verify we can query it back
-        let found = ctx
-            .events()
-            .by_id(&event.id)
-            .fetch_one()
-            .await?;
+        let found = ctx.pool.events()
+            .get_by_id(event.id.unwrap())
+            .await?
+            .expect("Event should exist");
         assert_eq!(found.id, event.id);
     } else {
         // Should fail for payloads that are too large
@@ -99,17 +93,15 @@ async fn test_filesystem_events_with_fixture(
     
     // Create events for each path
     for path in &test_paths {
-        ctx.event()
-            .filesystem()
-            .path(path.as_str())
-            .custom_type(&event_type)
-            .insert()
-            .await?;
+        ctx.create_test_event(
+            "fs-watcher",
+            &event_type,
+            json!({"path": path.as_str()})
+        ).await?;
     }
     
     // Verify all were created
-    let events = ctx
-        .events()
+    let events = ctx.pool.events()
         .by_source("fs-watcher")
         .by_type(&event_type)
         .fetch()
@@ -140,13 +132,11 @@ async fn test_snapshots_per_case(
     #[case] source: &str,
     #[case] payload: Value,
 ) -> Result<()> {
-    let event = ctx
-        .event()
-        .source(source)
-        .type_("snapshot.test")
-        .payload(payload)
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        source,
+        "snapshot.test",
+        payload
+    ).await?;
     
     // Each test case gets its own snapshot
     // The snapshot path includes both test name and case identifier
@@ -159,12 +149,11 @@ async fn test_snapshots_per_case(
 #[sinex_test]
 async fn test_regular_sinex_test_still_works(ctx: TestContext) -> Result<()> {
     // This is a regular test without rstest - should work as before
-    let event = ctx
-        .event()
-        .source("test")
-        .type_("regular.test")
-        .insert()
-        .await?;
+    let event = ctx.create_test_event(
+        "test",
+        "regular.test",
+        json!({})
+    ).await?;
     
     assert_eq!(event.source.as_str(), "test");
     assert_eq!(event.event_type.as_str(), "regular.test");

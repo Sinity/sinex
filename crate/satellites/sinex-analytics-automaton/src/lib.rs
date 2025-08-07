@@ -1,9 +1,11 @@
 //! Analytics Automaton - Unified StatefulStreamProcessor implementation
 
 use camino::Utf8PathBuf;
+use color_eyre::eyre;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -14,6 +16,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for Analytics Processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AnalyticsProcessorConfig {
+    /// Analytics computation settings
+    pub computation_settings: HashMap<String, serde_json::Value>,
+}
+
+impl Default for AnalyticsProcessorConfig {
+    fn default() -> Self {
+        Self {
+            computation_settings: HashMap::new(),
+        }
+    }
+}
 
 /// Analytics Processor using unified StatefulStreamProcessor architecture
 pub struct AnalyticsProcessor {
@@ -28,7 +45,9 @@ impl AnalyticsProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for AnalyticsProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = AnalyticsProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing analytics processor");
         self.context = Some(ctx);
         Ok(())
@@ -81,7 +100,7 @@ impl Default for AnalyticsProcessor {
 }
 
 impl ExplorationProvider for AnalyticsProcessor {
-    fn get_source_state(&self) -> Result<SourceState, Box<dyn std::error::Error>> {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
         Ok(SourceState {
             description: "Analytics processor".to_string(),
             last_updated: chrono::Utc::now(),
@@ -95,14 +114,14 @@ impl ExplorationProvider for AnalyticsProcessor {
     fn get_ingestion_history(
         &self,
         _limit: u64,
-    ) -> Result<Vec<IngestionHistoryEntry>, Box<dyn std::error::Error>> {
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
         Ok(Vec::new())
     }
 
     fn get_coverage_analysis(
         &self,
         _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-    ) -> Result<CoverageAnalysis, Box<dyn std::error::Error>> {
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         let now = chrono::Utc::now();
         Ok(CoverageAnalysis {
             time_range: (now - chrono::Duration::days(1), now),
@@ -120,7 +139,7 @@ impl ExplorationProvider for AnalyticsProcessor {
         &self,
         _path: &Utf8PathBuf,
         _format: ExportFormat,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> color_eyre::eyre::Result<()> {
         Ok(())
     }
 }

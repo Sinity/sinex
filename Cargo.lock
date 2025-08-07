@@ -3874,6 +3874,18 @@ dependencies = [
 
 [[package]]
 name = "sea-query"
+version = "0.31.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b4fd043b8117af233e221f73e3ea8dfbc8e8c3c928017c474296db45c649105c"
+dependencies = [
+ "chrono",
+ "inherent",
+ "sea-query-derive",
+ "uuid",
+]
+
+[[package]]
+name = "sea-query"
 version = "0.32.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "64c91783d1514b99754fc6a4079081dcc2c587dadbff65c48c7f62297443536a"
@@ -4172,12 +4184,12 @@ dependencies = [
 name = "sinex-analytics-automaton"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum 0.7.9",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4232,6 +4244,7 @@ dependencies = [
  "parking_lot",
  "procfs",
  "prometheus",
+ "rstest",
  "sea-orm-migration",
  "sea-query 0.30.7",
  "serde",
@@ -4272,6 +4285,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "copypasta",
  "dirs 5.0.1",
  "futures",
@@ -4300,6 +4314,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "mime_guess",
  "serde",
@@ -4315,11 +4330,11 @@ dependencies = [
 name = "sinex-fs-watcher"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "dirs 5.0.1",
  "glob",
  "mimalloc",
@@ -4351,6 +4366,7 @@ dependencies = [
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "futures",
  "hyper 1.6.0",
  "hyper-util",
@@ -4401,8 +4417,10 @@ dependencies = [
  "ahash",
  "anyhow",
  "async-nats 0.33.0",
+ "bon",
  "camino",
  "clap",
+ "color-eyre",
  "dirs 5.0.1",
  "figment",
  "hex",
@@ -4472,13 +4490,13 @@ dependencies = [
 name = "sinex-rpc-dispatcher"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "axum 0.7.9",
  "byteorder",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4524,6 +4542,7 @@ dependencies = [
  "sinex-types",
  "sqlx",
  "sysinfo 0.31.4",
+ "tempfile",
  "thiserror 2.0.12",
  "time",
  "tokio",
@@ -4543,11 +4562,11 @@ dependencies = [
 name = "sinex-search-automaton"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
@@ -4587,11 +4606,11 @@ dependencies = [
 name = "sinex-system-satellite"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "dbus",
  "dbus-tokio",
  "dirs 5.0.1",
@@ -4636,11 +4655,11 @@ dependencies = [
 name = "sinex-terminal-satellite"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
  "camino",
  "chrono",
  "clap",
+ "color-eyre",
  "dirs 5.0.1",
  "futures",
  "glob",
@@ -4673,6 +4692,7 @@ dependencies = [
  "bon",
  "camino",
  "chrono",
+ "color-eyre",
  "divan",
  "fastrand",
  "futures",
@@ -4688,6 +4708,7 @@ dependencies = [
  "proptest",
  "rand 0.8.5",
  "rstest",
+ "sea-query 0.31.1",
  "serde",
  "serde_json",
  "sha2",
@@ -4760,6 +4781,29 @@ dependencies = [
  "url",
  "uuid",
  "validator",
+]
+
+[[package]]
+name = "sinex-workspace"
+version = "0.4.2"
+dependencies = [
+ "chrono",
+ "color-eyre",
+ "futures",
+ "insta",
+ "proptest",
+ "rstest",
+ "serde_json",
+ "similar-asserts",
+ "sinex-db",
+ "sinex-satellite-sdk",
+ "sinex-test-utils",
+ "sinex-types",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "tracing-test",
+ "uuid",
 ]
 
 [[package]]

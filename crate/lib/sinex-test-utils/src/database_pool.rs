@@ -26,7 +26,7 @@
 //! #[sinex_test]
 //! async fn test_something(ctx: TestContext) -> Result<()> {
 //!     // Database automatically acquired and cleaned
-//!     ctx.event().source("test").insert().await?;
+//!     ctx.create_test_event("test", "test.event", json!({})).await?;
 //!     Ok(())
 //! }
 //!
