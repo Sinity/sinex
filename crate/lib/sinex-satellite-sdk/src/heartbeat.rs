@@ -320,7 +320,7 @@ mod tests {
         assert_eq!(handle.get_errors_count(), 1);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_heartbeat_metrics_creation() {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         emitter.increment_events_processed(10);
@@ -332,7 +332,7 @@ mod tests {
         assert!(metrics.last_error_message.is_some());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_emit_heartbeat_macro() {
         // This test just ensures the macro compiles
         emit_heartbeat!("test-service");

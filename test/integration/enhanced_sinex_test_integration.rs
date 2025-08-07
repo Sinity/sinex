@@ -181,7 +181,7 @@ mod verification {
     use super::*;
     
     // Verify that the macro expansion works correctly
-    #[test]
+    #[sinex_test]
     fn verify_macro_expansion_compiles() {
         // The fact that this module compiles proves the macro works
     }

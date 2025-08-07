@@ -590,7 +590,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_strategy_determinism() {
         let mut runner1 = proptest::test_runner::TestRunner::deterministic();
         let mut runner2 = proptest::test_runner::TestRunner::deterministic();
@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(tree1.current(), tree2.current());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_malicious_payload_generation() {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 

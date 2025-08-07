@@ -35,7 +35,7 @@ mod unit {
 // ULID CORE FUNCTIONALITY TESTS - Time-ordered identifiers
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_ulid_basic_properties() {
     let ulid1 = Ulid::new();
     let ulid2 = Ulid::new();
@@ -51,7 +51,7 @@ fn test_ulid_basic_properties() {
     assert!(ulid1 <= ulid2);
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_string_conversion() {
     let ulid = Ulid::new();
     let ulid_str = ulid.to_string();
@@ -61,7 +61,7 @@ fn test_ulid_string_conversion() {
     assert_eq!(parsed, ulid);
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_ordering_consistency() {
     let mut ulids = Vec::new();
     for _ in 0..10 {
@@ -89,7 +89,7 @@ fn test_ulid_ordering_consistency() {
     );
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_specific_format() {
     // Test with a known ULID to ensure format consistency
     let ulid_str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -99,7 +99,7 @@ fn test_ulid_specific_format() {
     assert_eq!(ulid.to_string().len(), 26);
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_invalid_strings() {
     let invalid_cases = vec![
         "",                                // Empty string
@@ -121,7 +121,7 @@ fn test_ulid_invalid_strings() {
 // GENERIC ID SYSTEM TESTS - Type-safe identifiers
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_generic_id_creation() {
     let event_id = Id::<DbEvent>::new();
     let event_id2 = Id::<DbEvent>::new();
@@ -135,7 +135,7 @@ fn test_generic_id_creation() {
     assert_eq!(event_id, id_from_ulid);
 }
 
-#[test]
+#[sinex_test]
 fn test_generic_id_type_safety() {
     let event_id = Id::<DbEvent>::new();
 
@@ -147,7 +147,7 @@ fn test_generic_id_type_safety() {
     assert!(!event_id.to_string().is_empty());
 }
 
-#[test]
+#[sinex_test]
 fn test_generic_id_string_conversion() {
     let id = Id::<DbEvent>::new();
     let id_str = id.to_string();
@@ -162,7 +162,7 @@ fn test_generic_id_string_conversion() {
     assert_eq!(id, new_id);
 }
 
-#[test]
+#[sinex_test]
 fn test_generic_id_collections() {
     // Test IDs work properly in collections
     let mut ids = Vec::new();
@@ -198,7 +198,7 @@ fn test_generic_id_collections() {
 // DOMAIN TYPES TESTS - EventSource, EventType, etc.
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_event_source_creation() {
     // Static creation
     let source_static = EventSource::from_static("filesystem");
@@ -214,7 +214,7 @@ fn test_event_source_creation() {
     assert_eq!(source1, source2);
 }
 
-#[test]
+#[sinex_test]
 fn test_event_type_creation() {
     // Static creation
     let type_static = EventType::from_static("file.created");
@@ -230,7 +230,7 @@ fn test_event_type_creation() {
     assert_eq!(type1, type2);
 }
 
-#[test]
+#[sinex_test]
 fn test_hostname_creation() {
     // Test hostname creation
     let hostname = HostName::new("test-host");
@@ -241,7 +241,7 @@ fn test_hostname_creation() {
     assert!(!current.as_str().is_empty());
 }
 
-#[test]
+#[sinex_test]
 fn test_domain_type_validation() {
     // Test empty string handling
     let empty_source = EventSource::new("");
@@ -282,7 +282,7 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 // EVENT CREATION TESTS - DbEvent::schemaless() builder
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_event_schemaless_builder() {
     let source = EventSource::from_static("test-source");
     let event_type = EventType::from_static("test.event");
@@ -306,7 +306,7 @@ fn test_event_schemaless_builder() {
     assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).unwrap());
 }
 
-#[test]
+#[sinex_test]
 fn test_event_builder_with_optional_fields() {
     let event = DbEvent::schemaless()
         .source(EventSource::from_static("optional-test"))
@@ -321,7 +321,7 @@ fn test_event_builder_with_optional_fields() {
     assert_eq!(event.payload["basic"], json!(true));
 }
 
-#[test]
+#[sinex_test]
 fn test_event_builder_with_timestamps() {
     use chrono::{DateTime, Utc};
 
@@ -361,7 +361,7 @@ fn test_event_builder_with_various_payloads(#[case] payload: serde_json::Value) 
 // ERROR HANDLING TESTS - color-eyre integration
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_result_type_compatibility() {
     // Test that our Result type works with color-eyre
     fn returns_success() -> color_eyre::eyre::Result<String> {
@@ -402,7 +402,7 @@ async fn test_sinex_error_propagation(ctx: TestContext) -> color_eyre::eyre::Res
 // VALIDATION AND EDGE CASES - Robustness testing
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_edge_case_strings() {
     let long_string = "x".repeat(1000);
     let edge_cases = vec![
@@ -434,7 +434,7 @@ fn test_edge_case_strings() {
     }
 }
 
-#[test]
+#[sinex_test]
 fn test_concurrent_ulid_generation() {
     use std::sync::{Arc, Mutex};
     use std::thread;
@@ -472,7 +472,7 @@ fn test_concurrent_ulid_generation() {
     }
 }
 
-#[test]
+#[sinex_test]
 fn test_large_payload_creation() {
     // Test creating events with large payloads
     let large_string = "x".repeat(100_000); // 100KB string
@@ -504,7 +504,7 @@ fn test_large_payload_creation() {
 // SERIALIZATION AND DESERIALIZATION TESTS - JSON handling
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_domain_type_serialization() {
     // Test that domain types serialize/deserialize correctly
     let source = EventSource::from_static("serialization-test");
@@ -525,7 +525,7 @@ fn test_domain_type_serialization() {
     assert_eq!(deserialized_type, event_type);
 }
 
-#[test]
+#[sinex_test]
 fn test_event_json_roundtrip() {
     let original_event = DbEvent::schemaless()
         .source(EventSource::from_static("json-test"))
@@ -557,7 +557,7 @@ fn test_event_json_roundtrip() {
 // PERFORMANCE TESTS - Basic performance characteristics
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_ulid_generation_performance() {
     use std::time::Instant;
 
@@ -586,7 +586,7 @@ fn test_ulid_generation_performance() {
     assert_eq!(unique_ulids.len(), count);
 }
 
-#[test]
+#[sinex_test]
 fn test_event_creation_performance() {
     use std::time::Instant;
 

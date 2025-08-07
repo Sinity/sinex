@@ -326,14 +326,14 @@ fn default_replay() -> ReplayPolicy {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_default_config() {
         let config = NatsConfig::default();
         assert_eq!(config.servers, vec!["nats://localhost:4222"]);
         assert!(config.jetstream.enabled);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_test_config() {
         let config = NatsConfig::test();
         assert_eq!(config.client_name, "sinex-test");

@@ -423,7 +423,7 @@ mod tests {
     use super::*;
     use syn::parse_quote;
 
-    #[test]
+    #[sinex_test]
     fn test_result_type_detection() {
         // Test valid Result types
         let result_unit: Type = parse_quote!(Result<(), SinexError>);
@@ -443,7 +443,7 @@ mod tests {
         assert!(!is_result_type(&simple_type));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_return_type_detection() {
         // Test valid return types
         let return_result: ReturnType = parse_quote!(-> Result<(), SinexError>);

@@ -8,7 +8,7 @@ use serde_json::Value;
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
-    #[test]
+    #[sinex_test]
     fn valid_events_pass_validation(
         event in arbitrary_event()
     ) {
@@ -28,7 +28,7 @@ proptest! {
         prop_assert!(result.is_ok(), "Generated event should pass validation: {:?}", result);
     }
 
-    #[test]
+    #[sinex_test]
     fn empty_source_fails_validation(
         event in empty_source_event()
     ) {
@@ -52,7 +52,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn event_field_constraints(
         source in "[a-z][a-z0-9_]{0,49}",
         event_type in "[a-z][a-z0-9_.]{0,99}",
@@ -70,7 +70,7 @@ proptest! {
         prop_assert!(event.host.len() <= 255);
     }
 
-    #[test]
+    #[sinex_test]
     fn payload_size_validation(
         size_kb in 1usize..=10_000usize
     ) {
@@ -94,7 +94,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn event_timestamp_consistency(
         event in arbitrary_event()
     ) {
@@ -110,7 +110,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn ulid_properties_in_events(
         events in proptest::collection::vec(arbitrary_event(), 2..100)
     ) {
@@ -128,7 +128,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn source_event_id_validation(
         parent_events in proptest::collection::vec(crate::property::ulid_property_test::arbitrary_ulid(), 0..10),
         event in arbitrary_event()
@@ -148,7 +148,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn json_schema_compatibility(
         event in arbitrary_event()
     ) {
@@ -162,7 +162,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn event_metadata_fields(
         event in metadata_rich_events()
     ) {
@@ -184,7 +184,7 @@ proptest! {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn boundary_condition_handling(
         event in boundary_condition_events()
     ) {
@@ -219,7 +219,7 @@ mod concurrent_tests {
     use tokio::sync::Mutex;
     
     proptest! {
-        #[test]
+        #[sinex_test]
         fn concurrent_event_ordering(
             events in concurrent_operation_events()
         ) {
@@ -256,7 +256,7 @@ mod performance_tests {
     use std::time::Instant;
     
     proptest! {
-        #[test]
+        #[sinex_test]
         fn event_creation_performance(
             events in performance_characteristic_events()
         ) {
@@ -275,7 +275,7 @@ mod performance_tests {
     }
     
     proptest! {
-        #[test]
+        #[sinex_test]
         fn validation_errors_are_deterministic(
             source in "[a-z]*", // May be empty
             event_type in "[a-z]*", // May be empty
@@ -312,7 +312,7 @@ mod performance_tests {
             }
         }
 
-        #[test]
+        #[sinex_test]
         fn validation_preserves_error_hierarchy(
             event in arbitrary_event()
         ) {

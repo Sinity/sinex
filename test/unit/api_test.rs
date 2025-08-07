@@ -281,7 +281,7 @@ async fn test_invalid_event_handling(ctx: TestContext) -> color_eyre::eyre::Resu
 // CONFIGURATION PARSING TESTS
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_toml_configuration_parsing() -> color_eyre::eyre::Result<()> {
     let config_str = r#"
         [database]
@@ -326,7 +326,7 @@ fn test_toml_configuration_parsing() -> color_eyre::eyre::Result<()> {
     Ok(())
 }
 
-#[test]
+#[sinex_test]
 fn test_configuration_edge_cases() -> color_eyre::eyre::Result<()> {
     let config_str = r#"
         [empty_section]
@@ -600,7 +600,7 @@ async fn test_event_id_consistency(ctx: TestContext) -> color_eyre::eyre::Result
     Ok(())
 }
 
-#[test]
+#[sinex_test]
 fn test_domain_type_edge_cases() -> color_eyre::eyre::Result<()> {
     // Test EventSource edge cases
     let static_source = EventSource::from_static("static-source");

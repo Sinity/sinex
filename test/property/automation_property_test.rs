@@ -11,7 +11,7 @@ use tokio::sync::Mutex;
 
 /// Test automaton event processing is deterministic
 proptest! {
-    #[test]
+    #[sinex_test]
     fn automaton_processing_is_deterministic(
         processor_name in processor_names(),
         events in proptest::collection::vec(
@@ -77,7 +77,7 @@ proptest! {
 
 /// Test automaton state consistency under concurrent operations
 proptest! {
-    #[test]
+    #[sinex_test]
     fn automaton_state_consistency_under_concurrency(
         processor_name in processor_names(),
         concurrent_operations in concurrent_operations(),
@@ -152,7 +152,7 @@ proptest! {
 
 /// Test automaton recovery from checkpoint
 proptest! {
-    #[test]
+    #[sinex_test]
     fn automaton_recovery_from_checkpoint_is_correct(
         processor_name in processor_names(),
         initial_events in proptest::collection::vec(
@@ -229,7 +229,7 @@ proptest! {
 
 /// Test automaton batch processing efficiency
 proptest! {
-    #[test]
+    #[sinex_test]
     fn automaton_batch_processing_is_efficient(
         processor_name in processor_names(),
         batch_size in batch_sizes(),
@@ -284,7 +284,7 @@ proptest! {
 
 /// Test automaton error handling and recovery
 proptest! {
-    #[test]
+    #[sinex_test]
     fn automaton_error_handling_is_robust(
         processor_name in processor_names(),
         valid_events in proptest::collection::vec(
@@ -362,7 +362,7 @@ proptest! {
 
 /// Test automaton memory usage under load
 proptest! {
-    #[test]
+    #[sinex_test]
     fn automaton_memory_usage_is_bounded(
         processor_name in processor_names(),
         large_events in proptest::collection::vec(
@@ -417,7 +417,7 @@ proptest! {
 
 /// Test automaton coordination with multiple instances
 proptest! {
-    #[test]
+    #[sinex_test]
     fn multiple_automata_coordination_is_correct(
         processor_names in proptest::collection::vec(processor_names(), 2..=5),
         events in proptest::collection::vec(

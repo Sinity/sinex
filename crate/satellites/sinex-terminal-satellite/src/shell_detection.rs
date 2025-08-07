@@ -220,7 +220,7 @@ fn get_parent_pid() -> Option<u32> {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_shell_type_detection() {
         assert_eq!(detect_shell_type("/bin/bash"), ShellType::Bash);
         assert_eq!(detect_shell_type("/usr/bin/zsh"), ShellType::Zsh);
@@ -232,7 +232,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[sinex_test]
     fn test_shell_capabilities() {
         let bash_caps = detect_capabilities(&ShellType::Bash);
         assert!(bash_caps.supports_hooks);

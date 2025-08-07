@@ -9,13 +9,13 @@ use sinex_test_utils::prelude::*;
 use sinex_types::domain::{EventSource, EventType};
 use sinex_types::{Id, Ulid};
 
-#[test]
+#[sinex_test]
 fn test_ulid_generation() {
     let ulid = Ulid::new();
     assert_eq!(ulid.to_string().len(), 26);
 }
 
-#[test]
+#[sinex_test]
 fn test_event_source_creation() {
     let source = EventSource::from_static("test-source");
     assert_eq!(source.as_str(), "test-source");

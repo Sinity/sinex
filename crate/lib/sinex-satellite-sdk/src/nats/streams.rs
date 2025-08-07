@@ -279,7 +279,7 @@ impl StreamManager {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_stream_configs() {
         let raw = StreamConfig::raw_events();
         assert_eq!(raw.name, "SINEX_RAW_EVENTS");
@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(metrics.name, "SINEX_METRICS");
     }
 
-    #[test]
+    #[sinex_test]
     fn test_subject_creation() {
         assert_eq!(
             StreamManager::event_subject("filesystem", "created"),

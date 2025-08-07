@@ -584,7 +584,7 @@ mod tests {
         register_collector(Box::new(collector));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_prometheus_export() {
         let output = export_prometheus();
         // Should contain Prometheus format metrics
@@ -623,7 +623,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_entry_to_json() {
         let metric = MetricEntry {
             name: "test_metric".to_string(),
@@ -668,7 +668,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_entry_to_openmetrics_all_types() {
         // Test Counter
         let counter = MetricEntry {
@@ -735,7 +735,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_entry_to_influxdb_with_labels() {
         let metric = MetricEntry {
             name: "test_gauge".to_string(),
@@ -776,7 +776,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_entry_to_statsd_all_types() {
         // Counter
         let counter = MetricEntry {
@@ -851,7 +851,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_labels_to_openmetrics() {
         // Empty labels
         assert_eq!(labels_to_openmetrics(&HashMap::new()), "");
@@ -872,7 +872,7 @@ mod tests {
         assert!(openmetrics.ends_with("}"));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_type_to_openmetrics() {
         assert_eq!(metric_type_to_openmetrics(MetricType::Counter), "counter");
         assert_eq!(metric_type_to_openmetrics(MetricType::Gauge), "gauge");

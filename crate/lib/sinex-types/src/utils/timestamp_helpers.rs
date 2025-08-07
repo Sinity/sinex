@@ -80,7 +80,7 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_timestamp_conversions() {
         // Test seconds conversion
         let dt = timestamp_to_datetime(1700000000);
@@ -98,7 +98,7 @@ mod tests {
         assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_flexible_parsing() {
         // Test RFC3339
         let dt = parse_flexible_timestamp("2023-11-14T12:00:00Z").unwrap();

@@ -696,7 +696,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_error_type_matching() {
         // Test SinexError variant matching
         let validation_err = SinexError::validation("test");

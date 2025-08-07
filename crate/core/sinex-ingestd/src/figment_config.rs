@@ -228,7 +228,7 @@ mod tests {
     use super::*;
     use std::env;
 
-    #[test]
+    #[sinex_test]
     fn test_default_config() {
         let config = IngestdFigmentConfig::default();
         assert_eq!(config.database_pool_size, 25);
@@ -238,7 +238,7 @@ mod tests {
         assert!(config.validate_schemas);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_config_validation() {
         let mut config = IngestdFigmentConfig::default();
         config.database_url = "postgresql://localhost/test".to_string();
@@ -251,7 +251,7 @@ mod tests {
         assert!(config.validate_config().is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_from_args() {
         let config = IngestdFigmentConfig::from_args(
             Some("postgresql://custom/db".to_string()),
@@ -272,7 +272,7 @@ mod tests {
         assert!(config.dry_run);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_env_override() {
         // Set environment variables
         env::set_var("INGESTD_BATCH_SIZE", "500");

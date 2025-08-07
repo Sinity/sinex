@@ -747,9 +747,9 @@ mod sqlx_impl {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_string_type_creation() {
-        let source = EventSource::new("fs-watcher");
+        let source = crate::events::payloads::filesystem::FileCreatedPayload::SOURCE;
         assert_eq!(source.as_str(), "fs-watcher");
         assert_eq!(source.to_string(), "fs-watcher");
 
@@ -757,7 +757,7 @@ mod tests {
         assert_eq!(event_type.as_str(), "file.created");
     }
 
-    #[test]
+    #[sinex_test]
     fn test_event_type_validation() {
         // Valid event types
         assert!(EventType::new("file.created").validate().is_ok());
@@ -772,12 +772,24 @@ mod tests {
         assert!(EventType::new("File.Created").validate().is_err()); // uppercase not allowed
     }
 
-    #[test]
+    #[sinex_test]
     fn test_event_source_validation() {
         // Valid sources
-        assert!(EventSource::new("fs-watcher").validate().is_ok());
-        assert!(EventSource::new("terminal").validate().is_ok());
-        assert!(EventSource::new("desktop_monitor").validate().is_ok());
+        assert!(
+            crate::events::payloads::filesystem::FileCreatedPayload::SOURCE
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            crate::events::payloads::shell::TerminalMonitoringStartedPayload::SOURCE
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            crate::events::payloads::desktop::DesktopMonitoringStartedPayload::SOURCE
+                .validate()
+                .is_ok()
+        );
 
         // Invalid sources
         assert!(EventSource::new("").validate().is_err());
@@ -785,7 +797,7 @@ mod tests {
         assert!(EventSource::new("fs watcher").validate().is_err()); // spaces not allowed
     }
 
-    #[test]
+    #[sinex_test]
     fn test_schema_version_validation() {
         // Valid versions
         assert!(SchemaVersion::new("1.0.0").validate().is_ok());
@@ -799,7 +811,7 @@ mod tests {
         assert!(SchemaVersion::new("1.0.alpha").validate().is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_type_safety() {
         let source = EventSource::new("test");
         let event_type = EventType::new("test");
@@ -811,7 +823,7 @@ mod tests {
         assert_eq!(source.as_str(), event_type.as_str());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_sanitized_path_validation() {
         // Valid paths should work (in test environment, assuming /tmp exists)
         // Note: In real environments this would do actual path canonicalization
@@ -823,7 +835,7 @@ mod tests {
         assert!(SanitizedPath::from_str("/path/with/../traversal").is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_relative_path_validation() {
         // Valid relative paths
         assert!(RelativePath::from_str("file.txt").is_ok());
@@ -836,7 +848,7 @@ mod tests {
         assert!(RelativePath::from_str("../parent").is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_absolute_uri_validation() {
         // Valid absolute URIs
         assert!(AbsoluteUri::from_str("https://example.com").is_ok());
@@ -849,7 +861,7 @@ mod tests {
         assert!(AbsoluteUri::from_str("relative/path").is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_blake3_hash_validation() {
         // Valid BLAKE3 hash (64 hex chars)
         let valid_hash = "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3";
@@ -873,7 +885,7 @@ mod tests {
         assert_eq!(hash.as_str(), valid_hash);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_sha256_hash_validation() {
         // Valid SHA256 hash (64 hex chars)
         let valid_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
@@ -897,7 +909,7 @@ mod tests {
         assert_eq!(hash.as_str(), valid_hash);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_annex_key_validation() {
         // Valid annex keys
         assert!(AnnexKey::from_str("SHA256E-s12345--filename.txt").is_ok());
@@ -912,7 +924,7 @@ mod tests {
         assert!(AnnexKey::from_str("multiple--double--dashes").is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_annex_key_parsing() {
         let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt").unwrap();
         let (backend, size, mtime, filename) = key.parse_components().unwrap();
@@ -932,7 +944,7 @@ mod tests {
         assert_eq!(filename, "document.pdf");
     }
 
-    #[test]
+    #[sinex_test]
     fn test_nats_subject_validation() {
         // Valid NATS subjects
         assert!(NatsSubject::from_str("events").is_ok());
@@ -949,7 +961,7 @@ mod tests {
         assert!(NatsSubject::from_str("events.file@system").is_err()); // @ not allowed
     }
 
-    #[test]
+    #[sinex_test]
     fn test_service_name_and_job_id() {
         // These use the basic string type without additional validation
         assert!(ServiceName::from_str("sinex-ingestd").is_ok());

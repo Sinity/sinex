@@ -412,7 +412,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(1000))]
 
     /// Test that output_event never panics with arbitrary fuzzed events
-    #[test]
+    #[sinex_test]
     fn test_output_event_never_panics_with_fuzzed_events(
         event in fuzzed_raw_events(),
         to_database in any::<bool>(),
@@ -455,7 +455,7 @@ proptest! {
     }
 
     /// Test filesystem events with extreme payloads
-    #[test]
+    #[sinex_test]
     fn test_filesystem_events_robustness(
         payload in fuzzed_filesystem_payloads(),
         source in problematic_strings(),
@@ -496,7 +496,7 @@ proptest! {
     }
 
     /// Test terminal events with extreme payloads
-    #[test]
+    #[sinex_test]
     fn test_terminal_events_robustness(
         payload in fuzzed_terminal_payloads(),
         source in prop_oneof![
@@ -540,7 +540,7 @@ proptest! {
     }
 
     /// Test clipboard events with extreme payloads
-    #[test]
+    #[sinex_test]
     fn test_clipboard_events_robustness(
         payload in fuzzed_clipboard_payloads(),
         event_type in prop_oneof![
@@ -575,7 +575,7 @@ proptest! {
     }
 
     /// Test window manager events with extreme payloads
-    #[test]
+    #[sinex_test]
     fn test_window_manager_events_robustness(
         payload in fuzzed_window_manager_payloads(),
         event_type in prop_oneof![
@@ -616,7 +616,7 @@ proptest! {
     }
 
     /// Test system events with extreme payloads
-    #[test]
+    #[sinex_test]
     fn test_system_events_robustness(
         payload in fuzzed_system_payloads(),
         source in prop_oneof![
@@ -657,7 +657,7 @@ proptest! {
     }
 
     /// Test JSON serialization robustness with extreme payloads
-    #[test]
+    #[sinex_test]
     fn test_json_serialization_robustness(
         payload in malformed_json_values(),
     ) {
@@ -693,7 +693,7 @@ proptest! {
     }
 
     /// Test ULID robustness with extreme timestamps
-    #[test]
+    #[sinex_test]
     fn test_ulid_robustness_with_extreme_timestamps(
         timestamp in problematic_timestamps(),
     ) {
@@ -724,7 +724,7 @@ proptest! {
     }
 
     /// Test string handling robustness
-    #[test]
+    #[sinex_test]
     fn test_string_handling_robustness(
         source in problematic_strings(),
         event_type in problematic_strings(),
@@ -761,7 +761,7 @@ mod additional_tests {
     use super::*;
     use std::panic;
 
-    #[test]
+    #[sinex_test]
     fn test_output_event_with_null_bytes() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -790,7 +790,7 @@ mod additional_tests {
         });
     }
 
-    #[test]
+    #[sinex_test]
     fn test_output_event_with_extremely_large_payload() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -828,7 +828,7 @@ mod additional_tests {
         });
     }
 
-    #[test]
+    #[sinex_test]
     fn test_output_event_with_infinite_numbers() {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
@@ -865,7 +865,7 @@ mod additional_tests {
         });
     }
 
-    #[test]
+    #[sinex_test]
     fn test_panic_safety_with_catch_unwind() {
         let rt = tokio::runtime::Runtime::new().unwrap();
 

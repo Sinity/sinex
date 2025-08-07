@@ -327,7 +327,7 @@ pub fn sinex_test(attr: TokenStream, item: TokenStream) -> TokenStream {
     let output = if !is_async {
         // Sync test handling
         quote! {
-            #[test]
+            #[sinex_test]
             #fn_vis fn #fn_name() -> color_eyre::eyre::Result<()> {
                 use std::thread;
                 use std::time::{Duration, Instant};

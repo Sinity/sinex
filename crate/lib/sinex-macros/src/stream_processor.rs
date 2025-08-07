@@ -1117,7 +1117,7 @@ fn generate_error_handling_helpers(
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_stream_processor_args_parsing() {
         let input = quote! {
             processor_type = "ingestor",
@@ -1131,7 +1131,7 @@ mod tests {
         assert_eq!(parsed.source, Some("filesystem".to_string()));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_state_field_extraction() {
         let input = quote! {
             {

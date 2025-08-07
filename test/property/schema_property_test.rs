@@ -332,7 +332,7 @@ async fn test_schema_evolution_properties() -> AnyhowResult<(), color_eyre::eyre
 // =============================================================================
 
 /// Test validation chain behavior with various inputs
-#[test]
+#[sinex_test]
 fn test_validation_chain_properties() {
     proptest!(|(
         test_strings in prop::collection::vec(".*", 1..=10),
@@ -382,7 +382,7 @@ fn test_validation_chain_properties() {
 }
 
 /// Test validation chain with numeric values
-#[test]
+#[sinex_test]
 fn test_validation_chain_numeric_properties() {
     proptest!(|(
         test_numbers in prop::collection::vec(any::<i64>(), 1..=10),
@@ -610,7 +610,7 @@ async fn test_event_validator_database_integration(ctx: TestContext) -> color_ey
 // Performance Properties
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_validation_performance_properties() {
     proptest!(|(
         payload_sizes in prop::collection::vec(100usize..=10000, 1..=10),
@@ -705,7 +705,7 @@ mod unit_tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn test_payload_generators() {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
@@ -727,7 +727,7 @@ mod unit_tests {
         assert!(problematic.is_object()); // All problematic payloads are objects
     }
 
-    #[test]
+    #[sinex_test]
     fn test_source_type_generator() {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let (source, event_type) = arb_event_source_type()
@@ -741,7 +741,7 @@ mod unit_tests {
         assert!(event_type.len() >= 3); // 1 + 2 minimum
     }
 
-    #[test]
+    #[sinex_test]
     fn test_validation_chain_basic_functionality() {
         use sinex_core_types::ValidationChain;
 
@@ -763,7 +763,7 @@ mod unit_tests {
         assert!(result.is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_validation_error_types() {
         use sinex_core_types::ValidationChain;
 

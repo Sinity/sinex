@@ -666,7 +666,7 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
 mod unit_tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_work_tracker_basic_operations() {
         let tracker = WorkTracker::new();
         
@@ -690,7 +690,7 @@ mod unit_tests {
         assert_eq!(tracker.get_assigned_worker("nonexistent"), None);
     }
     
-    #[test]
+    #[sinex_test]
     fn test_work_tracker_concurrent_claiming() {
         let tracker = WorkTracker::new();
         let tracker_clone = tracker.clone();
@@ -704,7 +704,7 @@ mod unit_tests {
         assert_eq!(tracker.get_processed_count(), 1);
     }
     
-    #[test]
+    #[sinex_test]
     fn test_work_tracker_multiple_workers() {
         let tracker = WorkTracker::new();
         

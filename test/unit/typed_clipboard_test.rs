@@ -2,7 +2,7 @@
 use sinex_types::events::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_test_utils::prelude::*;
 
-#[test]
+#[sinex_test]
 fn test_clipboard_copied_payload() {
     let payload = ClipboardCopiedPayload {
         content_type: "text".to_string(),
@@ -23,7 +23,7 @@ fn test_clipboard_copied_payload() {
     assert_eq!(json_value["source_app"], "firefox");
 }
 
-#[test]
+#[sinex_test]
 fn test_clipboard_selected_payload() {
     let payload = ClipboardSelectedPayload {
         content_type: "text".to_string(),
@@ -42,7 +42,7 @@ fn test_clipboard_selected_payload() {
     assert_eq!(json_value["selection_type"], "primary");
 }
 
-#[test]
+#[sinex_test]
 fn test_payload_compatibility() {
     // Test that our simplified payloads produce compatible JSON structures
     let copied_payload = ClipboardCopiedPayload {

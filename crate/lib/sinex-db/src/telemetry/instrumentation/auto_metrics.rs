@@ -471,7 +471,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_track_function_helper() {
         let guard = track_function_call("helper_test", "test_module");
 

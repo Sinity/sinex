@@ -190,7 +190,7 @@ pub fn format_validation_errors_with_context(errors: &ValidationErrors, context:
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_database_config_validation() {
         let valid_config = DatabaseConfig {
             connection_url: "postgresql://user:pass@localhost/db".to_string(),
@@ -217,7 +217,7 @@ mod tests {
         assert!(errors.field_errors().contains_key("database_name"));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_event_validation() {
         let valid_event = EventValidation {
             event_type: "user.created".to_string(),
@@ -238,7 +238,7 @@ mod tests {
         assert!(invalid_event.validate().is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_friendly_error_formatting() {
         let config = DatabaseConfig {
             connection_url: "invalid".to_string(),

@@ -369,7 +369,7 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_path_validation() {
         // Valid paths
         assert!(validate_path("normal/path.txt").is_ok());
@@ -385,7 +385,7 @@ mod tests {
         assert_eq!(cleaned, PathBuf::from("path/file.txt"));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_filename_sanitization() {
         // Normal filename
         assert_eq!(
@@ -405,7 +405,7 @@ mod tests {
         assert!(sanitize_filename_component("").is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_json_validation() {
         // Valid JSON
         let valid = r#"{"key": "value", "number": 42}"#;
@@ -428,7 +428,7 @@ mod tests {
         assert!(validate_json(&deep).is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_validate_json_value() {
         use serde_json::json;
 
@@ -450,7 +450,7 @@ mod tests {
         assert!(validate_json_value(&deep_value).is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_deserialize_json_with_validation() {
         #[derive(Debug, serde::Deserialize, PartialEq)]
         struct TestStruct {
@@ -477,7 +477,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_unicode_normalization() {
         // Normal text
         assert_eq!(normalize_unicode("hello").unwrap(), "hello");
@@ -489,7 +489,7 @@ mod tests {
         assert!(normalize_unicode("file\u{202E}txt.exe").is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_shell_metacharacters() {
         assert!(!contains_shell_metacharacters("normal command"));
         assert!(!contains_shell_metacharacters("rm -rf /")); // This is dangerous but has no metacharacters

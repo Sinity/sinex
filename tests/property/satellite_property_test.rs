@@ -84,7 +84,7 @@ use strategies::*;
 
 /// Test event processing preserves order
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_event_processing_preserves_order(
         events in event_sequences(),
         batch_size in 1usize..100usize,
@@ -132,7 +132,7 @@ proptest! {
 
 /// Test satellite fault tolerance with intermittent failures
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_handles_intermittent_failures(
         failure_rate in 0.0..0.3f64, // Up to 30% failure rate
         events in proptest::collection::vec(
@@ -199,7 +199,7 @@ proptest! {
 
 /// Test satellite resource management with concurrent processing
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_manages_resources_efficiently(
         concurrent_operations in 1usize..5usize,
         events_per_operation in 1usize..50usize,
@@ -261,7 +261,7 @@ proptest! {
 
 /// Test satellite configuration validation properties
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_config_validation_is_robust(
         service_name in "[a-zA-Z0-9_-]+",
         _batch_size in 1usize..10000usize,
@@ -288,7 +288,7 @@ proptest! {
 
 /// Test event processing with varying batch configurations
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_batch_processing_is_consistent(
         initial_batch_size in 1usize..100usize,
         updated_batch_size in 1usize..100usize,
@@ -344,7 +344,7 @@ proptest! {
 
 /// Test satellite resilience to processing interruptions
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_survives_processing_interruptions(
         interruption_duration in 1u64..100u64,
         events_before_interruption in 1usize..20usize,
@@ -411,7 +411,7 @@ proptest! {
 
 /// Test event ordering properties under concurrent load
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_maintains_event_ordering_under_load(
         concurrent_sources in 1usize..5usize,
         events_per_source in 1usize..20usize,

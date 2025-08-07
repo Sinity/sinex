@@ -386,7 +386,7 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
+    #[sinex_test]
     fn test_annex_key_parsing() {
         let key = AnnexKey::parse("SHA256E-s12345--abcdef123456.dat").unwrap();
         assert_eq!(key.backend, "SHA256E");

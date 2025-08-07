@@ -512,7 +512,7 @@ impl BlobManager {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_mime_type_detection() {
         let path = Utf8Path::new("test.txt");
         let mime = BlobManager::detect_mime_type(path).unwrap();

@@ -262,7 +262,7 @@ pub fn list_discovered_payloads() {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_content_hash() {
         let schema = serde_json::json!({
             "type": "object",

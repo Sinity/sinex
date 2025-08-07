@@ -270,7 +270,7 @@ mod tests {
     use super::*;
     use crate::events::event_payload::EventPayload;
 
-    #[test]
+    #[sinex_test]
     fn test_event_payload_constants() {
         // Verify that the EventPayload trait is implemented
         assert_eq!(ProcessHeartbeatPayload::SOURCE.as_str(), "sinex");

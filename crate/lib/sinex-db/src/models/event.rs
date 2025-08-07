@@ -295,7 +295,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[test]
+    #[sinex_test]
     fn test_schemaless_event_builder() {
         let event = Event::schemaless()
             .source(EventSource::new("test"))
@@ -311,7 +311,7 @@ mod tests {
         assert!(!event.is_persisted());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_simple_constructor() {
         let event = Event::simple(
             EventSource::new("test"),
@@ -324,7 +324,7 @@ mod tests {
         assert!(event.id.is_none());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_synthesis_event() {
         let source_ids = vec![Id::<Event>::new(), Id::<Event>::new()];
         let event = Event::schemaless()
@@ -340,14 +340,14 @@ mod tests {
         assert_eq!(event.get_source_event_ids().unwrap(), &source_ids);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_to_envelope() {
         use serde_json::json;
         use sinex_types::events::{EventEnvelope, FileCreatedPayload};
 
         // Create an event with a known payload type
         let event = Event::simple(
-            sinex_types::domain::EventSource::new("fs-watcher"),
+            sinex_types::events::payloads::filesystem::FileCreatedPayload::SOURCE,
             sinex_types::domain::EventType::new("file.created"),
             json!({
                 "path": "/test/file.txt",
@@ -368,7 +368,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn test_to_envelope_unknown() {
         use serde_json::json;
         use sinex_types::events::EventEnvelope;

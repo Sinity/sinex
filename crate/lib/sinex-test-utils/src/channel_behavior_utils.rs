@@ -987,7 +987,7 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_channel_monitor_thread_safety() {
         use std::thread;
 

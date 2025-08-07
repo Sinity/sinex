@@ -8,7 +8,7 @@ use serde_json::Value;
 ///
 /// # Example
 /// ```ignore
-/// #[test]
+/// #[sinex_test]
 /// fn test_file_created_migration() {
 ///     let v1_json = json!({
 ///         "path": "/test.txt",
@@ -77,7 +77,7 @@ pub fn test_event_with_version<P: EventPayload>(
 ///
 /// # Example
 /// ```ignore
-/// #[test]
+/// #[sinex_test]
 /// fn test_incompatible_migration() {
 ///     let bad_json = json!({
 ///         "path": "/test.txt",
@@ -210,7 +210,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn test_migration_helper() {
         let v1_json = json!({
             "name": "test"

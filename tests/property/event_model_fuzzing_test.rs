@@ -888,7 +888,7 @@ mod additional_tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_panic_safety_with_catch_unwind() {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {

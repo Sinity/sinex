@@ -44,7 +44,7 @@ pub struct TestPayload {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-#[test]
+#[sinex_test]
 fn test_satellite_processor_basic_functionality() {
     let processor = TestProcessor::new();
 
@@ -58,7 +58,7 @@ fn test_satellite_processor_basic_functionality() {
     assert_eq!(processor.processed_count, 0);
 }
 
-#[test]
+#[sinex_test]
 fn test_event_handler_basic_functionality() {
     let handler = TestEventHandler::default();
 
@@ -70,7 +70,7 @@ fn test_event_handler_basic_functionality() {
     assert_eq!(handler.max_retries, 0);
 }
 
-#[test]
+#[sinex_test]
 fn test_satellite_config_basic_functionality() {
     let config = TestConfig::default();
 
@@ -85,7 +85,7 @@ fn test_satellite_config_basic_functionality() {
     assert!(config.is_valid());
 }
 
-#[test]
+#[sinex_test]
 fn test_satellite_config_environment_loading() {
     let config = TestConfig::from_env();
 
@@ -95,7 +95,7 @@ fn test_satellite_config_environment_loading() {
     assert_eq!(config.batch_size, 0);
 }
 
-#[test]
+#[sinex_test]
 fn test_satellite_config_hierarchical_loading() {
     let result = TestConfig::load();
     assert!(result.is_ok());
@@ -104,7 +104,7 @@ fn test_satellite_config_hierarchical_loading() {
     assert!(config.is_valid());
 }
 
-#[test]
+#[sinex_test]
 fn test_satellite_config_json_serialization() {
     let config = TestConfig::default();
 
@@ -125,7 +125,7 @@ fn test_satellite_config_json_serialization() {
     assert_eq!(from_json_config.enabled, config.enabled);
 }
 
-#[test]
+#[sinex_test]
 fn test_payload_extractor_basic_functionality() {
     let extractor = TestPayloadExtractor::default();
 
@@ -147,7 +147,7 @@ fn test_payload_extractor_basic_functionality() {
     assert_eq!(extracted.size, test_payload.size);
 }
 
-#[test]
+#[sinex_test]
 fn test_payload_extractor_validation() {
     let extractor = TestPayloadExtractor::default();
 
@@ -168,7 +168,7 @@ fn test_payload_extractor_validation() {
     assert_eq!(validated.size, test_payload.size);
 }
 
-#[test]
+#[sinex_test]
 fn test_payload_extractor_can_extract() {
     let extractor = TestPayloadExtractor::default();
 
@@ -189,7 +189,7 @@ fn test_payload_extractor_can_extract() {
     assert!(extractor.can_extract(&invalid_payload));
 }
 
-#[test]
+#[sinex_test]
 fn test_payload_extractor_type_coercion() {
     let extractor = TestPayloadExtractor::default();
 
@@ -210,7 +210,7 @@ fn test_payload_extractor_type_coercion() {
     assert_eq!(coerced.size, test_payload.size);
 }
 
-#[test]
+#[sinex_test]
 fn test_integration_all_macros() {
     // Test that all macros work together in a realistic scenario
     let processor = TestProcessor::new();
@@ -240,7 +240,7 @@ fn test_integration_all_macros() {
     assert_eq!(handler.get_batch_size(), 100);
 }
 
-#[test]
+#[sinex_test]
 fn test_error_handling_scenarios() {
     let extractor = TestPayloadExtractor::default();
 
@@ -255,7 +255,7 @@ fn test_error_handling_scenarios() {
     assert!(result2.is_err());
 }
 
-#[test]
+#[sinex_test]
 fn test_empty_collections() {
     let config = TestConfig::default();
 
@@ -264,7 +264,7 @@ fn test_empty_collections() {
     assert!(config.is_valid());
 }
 
-#[test]
+#[sinex_test]
 fn test_configuration_field_access() {
     let config = TestConfig::default();
 
@@ -278,7 +278,7 @@ fn test_configuration_field_access() {
     assert!(set_result.is_err()); // Expected with current implementation
 }
 
-#[test]
+#[sinex_test]
 fn test_macro_generated_methods_exist() {
     // Test that all expected methods are generated and callable
     let processor = TestProcessor::new();

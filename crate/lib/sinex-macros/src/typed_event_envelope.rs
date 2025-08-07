@@ -293,7 +293,7 @@ mod tests {
     use super::*;
     use syn::parse_quote;
 
-    #[test]
+    #[sinex_test]
     fn test_typed_event_envelope_parsing() {
         let input = quote! {
             pub enum EventEnvelope {
@@ -313,7 +313,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn test_typed_raw_event_detection() {
         let typed_event: Type = parse_quote!(TypedRawEvent<FileCreatedPayload>);
         assert!(is_typed_raw_event_type(&typed_event));

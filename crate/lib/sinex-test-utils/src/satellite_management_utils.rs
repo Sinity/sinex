@@ -395,7 +395,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_ingestd_handle_drop() {
         // Test that drop doesn't panic even with no process
         let handle = TestIngestdHandle {
@@ -406,7 +406,7 @@ mod tests {
         drop(handle); // Should not panic
     }
 
-    #[test]
+    #[sinex_test]
     fn test_orchestrator_thread_safety() {
         use std::sync::Arc;
         use std::thread;

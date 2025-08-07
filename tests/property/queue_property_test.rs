@@ -901,7 +901,7 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> color_eyre::ey
 mod unit_tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_processing_tracker() {
         let tracker = ProcessingTracker::new();
         let id1 = "test-msg-1";
@@ -957,7 +957,7 @@ mod unit_tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_crash_simulation_deterministic() {
         // Test that crash simulation is deterministic with same seed
         let seed = 12345u64;
@@ -995,7 +995,7 @@ mod unit_tests {
         assert_ne!(consumer_hash, different_consumer_hash);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_processing_tracker_thread_safety() {
         // Test that ProcessingTracker works correctly under concurrent access
         let tracker = ProcessingTracker::new();
@@ -1034,7 +1034,7 @@ mod unit_tests {
 
 proptest! {
     /// Test JetStream consumer retry behavior with exponential backoff
-    #[test]
+    #[sinex_test]
     fn test_consumer_retry_timing_boundaries(
         attempts in 0i32..20,
         base_delay in 1.0f64..300.0,
@@ -1062,7 +1062,7 @@ proptest! {
     }
 
     /// Test JetStream consumer retry patterns with realistic scenarios
-    #[test]
+    #[sinex_test]
     fn test_jetstream_consumer_retry_patterns(
         failure_count in 0usize..10,
         base_retry_ms in 100u64..5000,
@@ -1090,7 +1090,7 @@ proptest! {
     }
 
     /// Test JetStream sequence number monotonicity properties
-    #[test]
+    #[sinex_test]
     fn test_sequence_number_monotonicity(
         base_sequence in 1u64..1000,
         sequence_increment in 1u64..100,
@@ -1111,7 +1111,7 @@ proptest! {
     }
 
     /// Test JetStream message timestamp ordering properties
-    #[test] 
+    #[sinex_test] 
     fn test_message_timestamp_ordering(
         base_timestamp_ms in 1600000000000u64..1700000000000u64,
         time_increment_ms in 1u64..10000,

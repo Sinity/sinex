@@ -11,7 +11,7 @@ use std::str::FromStr;
 // ULID Parsing Error Tests
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_checkpoint_invalid_ulid_parsing() {
     // Test various invalid ULID formats that could cause parsing errors
     let invalid_ulids = vec![
@@ -69,7 +69,7 @@ fn test_checkpoint_invalid_ulid_parsing() {
     }
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_uuid_conversion_errors() {
     // Test ULID to UUID conversion edge cases
     let edge_cases = vec![
@@ -101,7 +101,7 @@ fn test_ulid_uuid_conversion_errors() {
 // Timestamp Conversion Error Tests
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_timestamp_conversion_boundaries() {
     // Test timestamp values that could cause conversion errors
     let edge_timestamps = vec![
@@ -137,7 +137,7 @@ fn test_timestamp_conversion_boundaries() {
     }
 }
 
-#[test]
+#[sinex_test]
 fn test_timestamp_overflow_in_calculations() {
     // Test timestamp arithmetic that could overflow
     let base_time = chrono::Utc::now();
@@ -168,7 +168,7 @@ fn test_timestamp_overflow_in_calculations() {
 // JSON Parsing Error Tests
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_json_parsing_edge_cases() {
     use serde_json::{json, Value};
 
@@ -234,7 +234,7 @@ fn test_json_parsing_edge_cases() {
 // Query Builder Error Tests
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_query_builder_invalid_operations() {
     // NOTE: This test focuses on SQL injection prevention and basic query validation.
 
@@ -267,7 +267,7 @@ fn test_query_builder_invalid_operations() {
     println!("  ✓ Query security patterns validated");
 }
 
-#[test]
+#[sinex_test]
 fn test_event_creation_validation_errors() {
     // Test synchronous event creation errors without database
     println!("Testing event creation validation...");
@@ -301,7 +301,7 @@ fn test_event_creation_validation_errors() {
     println!("  ✓ Complex JSON payload handled correctly");
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_generation_properties() {
     // Test ULID generation properties (synchronous)
     println!("Testing ULID generation properties...");

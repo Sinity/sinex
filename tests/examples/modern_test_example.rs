@@ -269,7 +269,7 @@ mod tests {
     use super::*;
     
     // This ensures all examples compile and can run
-    #[test]
+    #[sinex_test]
     fn examples_compile() {
         // The examples above serve as both documentation and tests
     }

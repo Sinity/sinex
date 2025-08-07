@@ -432,7 +432,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_track_database_query_helper() {
         let guard = track_database_query("TEST_QUERY");
 

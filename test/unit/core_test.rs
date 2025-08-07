@@ -18,7 +18,7 @@ use std::collections::HashSet;
 // ULID TESTS - Core functionality verification
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_ulid_basic_properties() {
     let ulid1 = Ulid::new();
     let ulid2 = Ulid::new();
@@ -34,7 +34,7 @@ fn test_ulid_basic_properties() {
     assert!(ulid1 <= ulid2);
 }
 
-#[test] 
+#[sinex_test] 
 fn test_ulid_string_conversion() {
     let ulid = Ulid::new();
     let ulid_str = ulid.to_string();
@@ -44,7 +44,7 @@ fn test_ulid_string_conversion() {
     assert_eq!(parsed, ulid);
 }
 
-#[test]
+#[sinex_test]
 fn test_ulid_ordering_consistency() {
     let mut ulids = Vec::new();
     for _ in 0..10 {
@@ -70,7 +70,7 @@ fn test_ulid_ordering_consistency() {
 // GENERIC ID TESTS - New architecture verification
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_generic_id_creation() {
     let event_id = Id::<Event>::new();
     let event_id2 = Id::<Event>::new();
@@ -84,7 +84,7 @@ fn test_generic_id_creation() {
     assert_eq!(event_id, id_from_ulid);
 }
 
-#[test]
+#[sinex_test]
 fn test_generic_id_type_safety() {
     let event_id = Id::<Event>::new();
     
@@ -342,7 +342,7 @@ async fn test_assertion_helpers(ctx: TestContext) -> color_eyre::eyre::Result<()
 // REGRESSION TESTS - Preserve important behaviors
 // =============================================================================
 
-#[test]
+#[sinex_test]
 fn test_ulid_specific_format() {
     // Test with a known ULID to ensure format consistency
     let ulid_str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";

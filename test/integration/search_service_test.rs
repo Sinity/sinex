@@ -717,7 +717,7 @@ mod sql_construction_tests {
 
     /// This test demonstrates the SQL construction vulnerability
     /// The params vector is built but never actually used in the query execution
-    #[test]
+    #[sinex_test]
     fn test_sql_params_not_bound() {
         // The current implementation builds params but passes raw SQL to sqlx::query_as
         // This is a critical security flaw that must be fixed

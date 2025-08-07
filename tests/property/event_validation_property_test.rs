@@ -211,7 +211,7 @@ fn test_valid_events_pass_validation() -> Result<()> {
     proptest::proptest! {
         #![proptest_config(ProptestConfig::with_cases(1000))]
 
-        #[test]
+        #[sinex_test]
         fn property_valid_events_pass_validation(
             event in arbitrary_event()
         ) {
@@ -227,7 +227,7 @@ fn test_valid_events_pass_validation() -> Result<()> {
 #[sinex_test]
 fn test_empty_source_fails_validation() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_empty_source_fails_validation(
             event in empty_source_event()
         ) {
@@ -247,7 +247,7 @@ fn test_empty_source_fails_validation() -> Result<()> {
 #[sinex_test]
 fn test_event_field_constraints() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_event_field_constraints(
             source in "[a-z][a-z0-9_]{0,49}",
             event_type in "[a-z][a-z0-9_.]{0,99}",
@@ -277,7 +277,7 @@ fn test_event_field_constraints() -> Result<()> {
 #[sinex_test]
 fn test_payload_size_validation() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_payload_size_validation(
             size_kb in 1usize..=1000usize // Reduced size for faster tests
         ) {
@@ -312,7 +312,7 @@ fn test_payload_size_validation() -> Result<()> {
 #[sinex_test]
 fn test_event_timestamp_consistency() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_event_timestamp_consistency(
             event in arbitrary_event()
         ) {
@@ -334,7 +334,7 @@ fn test_event_timestamp_consistency() -> Result<()> {
 #[sinex_test]
 fn test_event_uniqueness_properties() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_event_uniqueness(
             events in proptest::collection::vec(arbitrary_event(), 2..100)
         ) {
@@ -358,7 +358,7 @@ fn test_event_uniqueness_properties() -> Result<()> {
 #[sinex_test]
 fn test_source_event_id_validation() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_source_event_id_validation(
             parent_events in proptest::collection::vec(Just(()).prop_map(|_| Ulid::new()), 0..10),
             event in arbitrary_event()
@@ -378,7 +378,7 @@ fn test_source_event_id_validation() -> Result<()> {
 #[sinex_test]
 fn test_json_schema_compatibility() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_json_schema_compatibility(
             event in arbitrary_event()
         ) {
@@ -398,7 +398,7 @@ fn test_json_schema_compatibility() -> Result<()> {
 #[sinex_test]
 fn test_event_metadata_fields() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_event_metadata_fields(
             event in metadata_rich_events()
         ) {
@@ -419,7 +419,7 @@ fn test_event_metadata_fields() -> Result<()> {
 #[sinex_test]
 fn test_boundary_condition_handling() -> Result<()> {
     proptest::proptest! {
-        #[test]
+        #[sinex_test]
         fn property_boundary_condition_handling(
             event in boundary_condition_events()
         ) {
@@ -451,7 +451,7 @@ mod concurrent_tests {
     #[sinex_test]
     fn test_concurrent_event_ordering() -> Result<()> {
         proptest::proptest! {
-            #[test]
+            #[sinex_test]
             fn property_concurrent_event_ordering(
                 events in concurrent_operation_events()
             ) {
@@ -495,7 +495,7 @@ mod performance_tests {
     #[sinex_test]
     fn test_event_creation_performance() -> Result<()> {
         proptest::proptest! {
-            #[test]
+            #[sinex_test]
             fn property_event_creation_performance(
                 events in performance_characteristic_events()
             ) {
@@ -518,7 +518,7 @@ mod performance_tests {
     #[sinex_test]
     fn test_validation_errors_are_deterministic() -> Result<()> {
         proptest::proptest! {
-            #[test]
+            #[sinex_test]
             fn property_validation_errors_deterministic(
                 source in "[a-z]*", // May be empty
                 event_type in "[a-z]*", // May be empty
@@ -561,7 +561,7 @@ mod performance_tests {
     #[sinex_test]
     fn test_validation_preserves_error_hierarchy() -> Result<()> {
         proptest::proptest! {
-            #[test]
+            #[sinex_test]
             fn property_validation_error_hierarchy(
                 event in arbitrary_event()
             ) {

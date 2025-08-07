@@ -783,7 +783,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_barrier_generation_tracking() {
         let barrier = TestBarrier::new(2);
 

@@ -415,7 +415,7 @@ impl NatsConsumer {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_consumer_config() {
         let config = ConsumerConfig::default();
         assert_eq!(config.name, "default-consumer");
@@ -425,7 +425,7 @@ mod tests {
         assert_eq!(js_config.ack_policy, AckPolicy::Explicit);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_consumer_config_serialization() {
         let config = ConsumerConfig {
             name: "test-consumer".to_string(),

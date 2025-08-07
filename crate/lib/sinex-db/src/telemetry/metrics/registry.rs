@@ -620,13 +620,13 @@ mod tests {
     use crate::telemetry::metrics::collectors::{MetricEntry, MetricType, MetricValue};
     use sinex_test_utils::prelude::*;
 
-    #[test]
+    #[sinex_test]
     fn test_metrics_registry_creation() {
         let registry = MetricsRegistry::new();
         assert!(registry.get_all_metric_families().is_empty());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_counter_registration() {
         let registry = MetricsRegistry::new();
         let counter = registry
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(counter_vec.with_label_values(&["POST", "201"]).get(), 2.0);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_gauge_registration() {
         let registry = MetricsRegistry::new();
         let gauge = registry
@@ -680,7 +680,7 @@ mod tests {
         assert_eq!(gauge_vec.with_label_values(&["memory"]).get(), 80.2);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_histogram_registration() {
         let registry = MetricsRegistry::new();
         let histogram = registry
@@ -721,7 +721,7 @@ mod tests {
         );
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_family_retrieval() {
         let registry = MetricsRegistry::new();
 
@@ -761,7 +761,7 @@ mod tests {
         assert_eq!(families.len(), 3);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_duplicate_registration() {
         let registry = MetricsRegistry::new();
 
@@ -776,7 +776,7 @@ mod tests {
             .is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_prometheus_export() {
         let registry = MetricsRegistry::new();
         let counter = registry
@@ -792,7 +792,7 @@ mod tests {
         assert!(prometheus_output.contains("# TYPE test_counter counter"));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_json_export() {
         let registry = MetricsRegistry::new();
         let counter = registry
@@ -818,7 +818,7 @@ mod tests {
             .contains("Counter"));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_json_export_with_labels() {
         let registry = MetricsRegistry::new();
         let mut labels = HashMap::new();
@@ -849,7 +849,7 @@ mod tests {
         assert_eq!(metric.get("value").unwrap().as_f64().unwrap(), 5.0);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_global_metrics() {
         let counter = GlobalMetrics::get_or_create_counter(
             "global_test_counter",
@@ -870,7 +870,7 @@ mod tests {
         assert_eq!(counter2.get(), 1.0); // Same counter, retains value
     }
 
-    #[test]
+    #[sinex_test]
     fn test_external_metrics_collector() {
         let collector = ExternalMetricsCollector::new("test_collector".to_string());
 

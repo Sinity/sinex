@@ -232,7 +232,7 @@ mod tests {
     use super::*;
     use tracing_test::traced_test;
 
-    #[test]
+    #[sinex_test]
     #[traced_test]
     fn test_tracing_context_extraction() {
         let span = info_span!("test_operation", user_id = 42);
@@ -246,7 +246,7 @@ mod tests {
         assert!(!error.context_map().is_empty() || error_str.contains("test_operation"));
     }
 
-    #[test]
+    #[sinex_test]
     fn test_result_extension() {
         let span = info_span!("file_operation", path = "/tmp/test");
         let _guard = span.enter();
@@ -265,7 +265,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     #[traced_test]
     fn test_span_macro() {
         fn operation_with_span() -> Result<String, SinexError> {
@@ -278,7 +278,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_error_from_span() {
         let span = info_span!("database_query", table = "users");
         let _guard = span.enter();

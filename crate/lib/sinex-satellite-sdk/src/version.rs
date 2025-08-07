@@ -217,14 +217,14 @@ pub fn print_version_info() {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_version_parsing() {
         let version = satellite_version();
         assert!(version.major >= 1);
         assert!(version.patch > 0); // Should have some commits
     }
 
-    #[test]
+    #[sinex_test]
     fn test_version_comparison() {
         let v1 = SatelliteVersion {
             version: Version::new(1, 0, 100),
@@ -251,7 +251,7 @@ mod tests {
         assert!(v2 > v1);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_dirty_build_preference() {
         let clean = SatelliteVersion {
             version: Version::new(1, 0, 100),

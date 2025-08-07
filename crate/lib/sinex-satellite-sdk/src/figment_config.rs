@@ -304,7 +304,7 @@ pub fn generate_example_configs() -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_satellite_config_defaults() {
         let config = SatelliteFigmentConfig {
             service_name: "test-satellite".to_string(),
@@ -323,7 +323,7 @@ mod tests {
         assert_eq!(config.checkpoint_interval_secs, 300);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_event_source_validation() {
         let mut config = EventSourceFigmentConfig {
             base: SatelliteFigmentConfig {
@@ -349,7 +349,7 @@ mod tests {
         assert!(config.validate().is_ok());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_automaton_config_validation() {
         let config = AutomatonFigmentConfig {
             base: SatelliteFigmentConfig {

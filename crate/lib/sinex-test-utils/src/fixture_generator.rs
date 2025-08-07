@@ -458,7 +458,7 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_dataset_configs() {
         let small = DatasetConfig::small();
         assert_eq!(small.event_count, 1_000);
@@ -471,7 +471,7 @@ mod tests {
         assert_eq!(large.event_count, 10_000_000);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_deterministic_generation() {
         let config = DatasetConfig::small();
 

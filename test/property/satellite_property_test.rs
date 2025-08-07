@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 
 /// Test satellite configuration parsing and validation
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_config_parsing_is_robust(
         ingest_socket_path in "[a-zA-Z0-9_/.-]+",
         redis_url in "redis://[a-zA-Z0-9:./-]+",
@@ -54,7 +54,7 @@ proptest! {
 
 /// Test satellite event processing pipeline
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_event_processing_preserves_order(
         events in event_sequences(),
         batch_size in 1usize..100usize,
@@ -107,7 +107,7 @@ proptest! {
 
 /// Test satellite fault tolerance
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_handles_intermittent_failures(
         failure_rate in 0.0..0.3f64, // Up to 30% failure rate
         events in proptest::collection::vec(
@@ -169,7 +169,7 @@ proptest! {
 
 /// Test satellite resource management
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_manages_resources_efficiently(
         concurrent_satellites in 1usize..5usize,
         events_per_satellite in 1usize..100usize,
@@ -220,7 +220,7 @@ proptest! {
 
 /// Test satellite configuration updates
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_config_updates_are_atomic(
         initial_batch_size in 1usize..100usize,
         updated_batch_size in 1usize..100usize,
@@ -273,7 +273,7 @@ proptest! {
 
 /// Test satellite network partitioning resilience
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_survives_network_partitions(
         partition_duration in 1u64..100u64,
         events_before_partition in 1usize..20usize,
@@ -331,7 +331,7 @@ proptest! {
 
 /// Test satellite coordination with automata
 proptest! {
-    #[test]
+    #[sinex_test]
     fn satellite_automaton_coordination_is_correct(
         automaton_type in prop_oneof![
             Just("command-canonicalizer"),

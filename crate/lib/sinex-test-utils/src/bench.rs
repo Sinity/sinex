@@ -183,7 +183,7 @@ mod tests {
     use super::*;
 
     #[cfg(feature = "bench")]
-    #[test]
+    #[sinex_test]
     fn test_extract_suite() {
         assert_eq!(
             extract_suite("sinex_db::events::bench_insert"),
@@ -197,7 +197,7 @@ mod tests {
     }
 
     #[cfg(feature = "bench")]
-    #[test]
+    #[sinex_test]
     fn test_format_duration() {
         assert_eq!(format_duration_ns(500), "500ns");
         assert_eq!(format_duration_ns(1_500), "1.5µs");
@@ -206,7 +206,7 @@ mod tests {
     }
 
     #[cfg(feature = "bench")]
-    #[test]
+    #[sinex_test]
     fn test_calculate_change() {
         assert_eq!(calculate_change_percent(100, 110), 10.0);
         assert_eq!(calculate_change_percent(100, 90), -10.0);
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[cfg(feature = "bench")]
-    #[test]
+    #[sinex_test]
     fn test_significance() {
         // Without std dev
         assert!(is_significant_change(10.0, None));
