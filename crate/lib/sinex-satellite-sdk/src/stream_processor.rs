@@ -380,7 +380,7 @@ pub struct StreamProcessorContext {
     pub checkpoint_manager: CheckpointManager,
 
     /// Legacy processor-specific configuration (deprecated).
-    /// 
+    ///
     /// This field is maintained for backward compatibility but should not be used
     /// by new processors. Use the typed configuration passed to `initialize()` instead.
     /// This will be removed in a future version.
@@ -517,21 +517,25 @@ impl StreamProcessorContext {
 #[async_trait]
 pub trait StatefulStreamProcessor: Send + Sync {
     /// Associated configuration type for this processor.
-    /// 
+    ///
     /// This type must implement Deserialize for parsing from JSON/TOML configuration,
     /// Default for fallback values, and Send + Sync for thread safety.
     /// The 'de lifetime bound enables deserialization from any source.
     type Config: for<'de> Deserialize<'de> + Default + Send + Sync;
 
     /// Initialize the processor with the given context and typed configuration.
-    /// 
+    ///
     /// The configuration is parsed once at the system boundary and passed as a
     /// strongly-typed object, eliminating the need for processors to handle
     /// configuration parsing and validation internally.
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()>;
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        config: Self::Config,
+    ) -> SatelliteResult<()>;
 
     /// Backward compatibility method for processors that need access to legacy config format.
-    /// 
+    ///
     /// This method is called by the old initialization path and can be used to convert
     /// from the legacy HashMap format. Most processors should implement the new
     /// `initialize` method instead.
@@ -541,11 +545,13 @@ pub trait StatefulStreamProcessor: Send + Sync {
             Self::Config::default()
         } else {
             // Try to deserialize from the generic config map
-            let config_value = serde_json::to_value(&ctx.config)
-                .map_err(|e| SatelliteError::Configuration(format!("Failed to serialize legacy config: {}", e)))?;
-            
-            serde_json::from_value(config_value)
-                .map_err(|e| SatelliteError::Configuration(format!("Failed to parse legacy config: {}", e)))?
+            let config_value = serde_json::to_value(&ctx.config).map_err(|e| {
+                SatelliteError::Configuration(format!("Failed to serialize legacy config: {}", e))
+            })?;
+
+            serde_json::from_value(config_value).map_err(|e| {
+                SatelliteError::Configuration(format!("Failed to parse legacy config: {}", e))
+            })?
         };
 
         self.initialize(ctx, config).await

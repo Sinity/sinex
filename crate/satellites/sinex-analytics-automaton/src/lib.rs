@@ -47,7 +47,11 @@ impl AnalyticsProcessor {
 impl StatefulStreamProcessor for AnalyticsProcessor {
     type Config = AnalyticsProcessorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing analytics processor");
         self.context = Some(ctx);
         Ok(())

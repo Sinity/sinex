@@ -44,6 +44,7 @@
 
 pub mod domain;
 pub mod error;
+pub mod error_tracing;
 pub mod events;
 pub mod ids;
 pub mod ulid;

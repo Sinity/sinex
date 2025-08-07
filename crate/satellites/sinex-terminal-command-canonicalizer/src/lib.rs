@@ -46,7 +46,11 @@ impl TerminalCommandCanonicalizer {
 impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
     type Config = TerminalCommandCanonicalizerConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing terminal command canonicalizer");
         self.context = Some(ctx);
         Ok(())

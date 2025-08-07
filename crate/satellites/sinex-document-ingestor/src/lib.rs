@@ -168,7 +168,11 @@ fn determine_material_type(mime_type: &str) -> String {
 impl StatefulStreamProcessor for DocumentProcessor {
     type Config = DocumentProcessorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing document processor");
 
         // Initialize stage-as-you-go context for real-time provenance

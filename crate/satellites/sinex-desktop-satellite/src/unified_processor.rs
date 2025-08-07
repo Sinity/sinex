@@ -280,7 +280,11 @@ impl Default for DesktopProcessor {
 impl StatefulStreamProcessor for DesktopProcessor {
     type Config = DesktopConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,

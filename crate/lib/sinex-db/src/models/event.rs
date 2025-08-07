@@ -342,8 +342,8 @@ mod tests {
 
     #[test]
     fn test_to_envelope() {
-        use sinex_types::events::{EventEnvelope, FileCreatedPayload};
         use serde_json::json;
+        use sinex_types::events::{EventEnvelope, FileCreatedPayload};
 
         // Create an event with a known payload type
         let event = Event::simple(
@@ -370,8 +370,8 @@ mod tests {
 
     #[test]
     fn test_to_envelope_unknown() {
-        use sinex_types::events::EventEnvelope;
         use serde_json::json;
+        use sinex_types::events::EventEnvelope;
 
         // Create an event with an unknown payload type
         let event = Event::simple(

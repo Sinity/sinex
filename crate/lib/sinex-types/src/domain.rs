@@ -3,11 +3,11 @@
 //! This module provides strongly-typed string wrappers to prevent
 //! accidental mixing of different string types (e.g., EventSource vs EventType).
 
+use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
-use camino::{Utf8Path, Utf8PathBuf};
 
 /// Macro to define a new string type with common implementations
 macro_rules! define_string_type {
@@ -107,7 +107,7 @@ macro_rules! define_validated_string_type {
             pub fn new(s: impl Into<String>) -> Self {
                 Self(Cow::Owned(s.into()))
             }
-            
+
             /// Create a new instance from a string without validation
             /// Alias for new() for clarity
             pub fn new_unchecked(s: impl Into<String>) -> Self {
@@ -439,20 +439,21 @@ impl SanitizedPath {
         if path.is_empty() {
             return Err("Path cannot be empty".into());
         }
-        
+
         // Check for directory traversal attempts
         if path.contains("..") {
             return Err("Path cannot contain directory traversal sequences (..)".into());
         }
-        
+
         // Ensure path is valid UTF-8 by parsing it
         let utf8_path = Utf8Path::new(path);
-        let canonical = utf8_path.canonicalize_utf8()
+        let canonical = utf8_path
+            .canonicalize_utf8()
             .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
-            
+
         Ok(canonical)
     }
-    
+
     /// Create a validated sanitized path from a string
     pub fn from_str_validated(s: &str) -> Result<Self, String> {
         let validated_path = Self::validate(s)?;
@@ -462,7 +463,7 @@ impl SanitizedPath {
 
 impl FromStr for SanitizedPath {
     type Err = String;
-    
+
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Self::from_str_validated(s)
     }
@@ -474,17 +475,17 @@ impl RelativePath {
         if path.is_empty() {
             return Err("Path cannot be empty".into());
         }
-        
+
         let utf8_path = Utf8Path::new(path);
         if utf8_path.is_absolute() {
             return Err("Path must be relative".into());
         }
-        
+
         // Check for directory traversal attempts
         if path.contains("..") {
             return Err("Path cannot contain directory traversal sequences (..)".into());
         }
-        
+
         Ok(())
     }
 }
@@ -504,15 +505,14 @@ impl AbsoluteUri {
         if uri.is_empty() {
             return Err("URI cannot be empty".into());
         }
-        
+
         use url::Url;
-        let parsed = Url::parse(uri)
-            .map_err(|e| format!("Invalid URI: {}", e))?;
-            
+        let parsed = Url::parse(uri).map_err(|e| format!("Invalid URI: {}", e))?;
+
         if !parsed.scheme().is_empty() && parsed.cannot_be_a_base() {
             return Err("URI must be absolute".into());
         }
-        
+
         Ok(())
     }
 }
@@ -532,15 +532,15 @@ impl Blake3Hash {
         if hash.is_empty() {
             return Err("BLAKE3 hash cannot be empty".into());
         }
-        
+
         if hash.len() != 64 {
             return Err("BLAKE3 hash must be exactly 64 characters".into());
         }
-        
+
         if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err("BLAKE3 hash must contain only hexadecimal characters".into());
         }
-        
+
         Ok(())
     }
 }
@@ -560,15 +560,15 @@ impl Sha256Hash {
         if hash.is_empty() {
             return Err("SHA256 hash cannot be empty".into());
         }
-        
+
         if hash.len() != 64 {
             return Err("SHA256 hash must be exactly 64 characters".into());
         }
-        
+
         if !hash.chars().all(|c| c.is_ascii_hexdigit()) {
             return Err("SHA256 hash must contain only hexadecimal characters".into());
         }
-        
+
         Ok(())
     }
 }
@@ -586,22 +586,22 @@ impl AnnexKey {
     /// Parse git-annex key format: BACKEND-sNNN-mEEE--KEYNAME
     pub fn parse_components(&self) -> Option<(String, Option<u64>, Option<u64>, String)> {
         let key_str = self.as_str();
-        
+
         // Find the double dash separator
         let double_dash_pos = key_str.rfind("--")?;
         let (prefix, key_name) = key_str.split_at(double_dash_pos);
         let key_name = &key_name[2..]; // Remove the "--"
-        
+
         // Parse the prefix: BACKEND-sNNN-mEEE
         let parts: Vec<&str> = prefix.split('-').collect();
         if parts.is_empty() {
             return None;
         }
-        
+
         let backend = parts[0].to_string();
         let mut size = None;
         let mut mtime = None;
-        
+
         // Parse optional size and mtime components
         for part in &parts[1..] {
             if let Some(size_str) = part.strip_prefix('s') {
@@ -614,30 +614,30 @@ impl AnnexKey {
                 }
             }
         }
-        
+
         Some((backend, size, mtime, key_name.to_string()))
     }
-    
+
     /// Validate git-annex key format
     pub fn validate(key: &str) -> Result<(), String> {
         if key.is_empty() {
             return Err("Annex key cannot be empty".into());
         }
-        
+
         if !key.contains("--") {
             return Err("Annex key must contain double dash separator".into());
         }
-        
+
         // Basic structure validation - more detailed parsing available via parse_components
         let parts: Vec<&str> = key.split("--").collect();
         if parts.len() != 2 {
             return Err("Annex key must have exactly one double dash separator".into());
         }
-        
+
         if parts[0].is_empty() || parts[1].is_empty() {
             return Err("Annex key prefix and suffix cannot be empty".into());
         }
-        
+
         Ok(())
     }
 }
@@ -657,22 +657,28 @@ impl NatsSubject {
         if subject.is_empty() {
             return Err("NATS subject cannot be empty".into());
         }
-        
+
         // NATS subjects can contain letters, digits, and dots
         // They cannot start or end with dots, and cannot have consecutive dots
         if subject.starts_with('.') || subject.ends_with('.') {
             return Err("NATS subject cannot start or end with a dot".into());
         }
-        
+
         if subject.contains("..") {
             return Err("NATS subject cannot contain consecutive dots".into());
         }
-        
+
         // Check for valid characters
-        if !subject.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_') {
-            return Err("NATS subject can only contain letters, digits, dots, hyphens, and underscores".into());
+        if !subject
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_')
+        {
+            return Err(
+                "NATS subject can only contain letters, digits, dots, hyphens, and underscores"
+                    .into(),
+            );
         }
-        
+
         Ok(())
     }
 }
@@ -810,7 +816,7 @@ mod tests {
         // Valid paths should work (in test environment, assuming /tmp exists)
         // Note: In real environments this would do actual path canonicalization
         // assert!(SanitizedPath::from_str("/tmp").is_ok());
-        
+
         // Invalid paths
         assert!(SanitizedPath::from_str("").is_err());
         assert!(SanitizedPath::from_str("../etc/passwd").is_err());
@@ -853,9 +859,15 @@ mod tests {
         // Invalid BLAKE3 hashes
         assert!(Blake3Hash::from_str("").is_err());
         assert!(Blake3Hash::from_str("too_short").is_err());
-        assert!(Blake3Hash::from_str("a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3X").is_err()); // 65 chars
-        assert!(Blake3Hash::from_str("g665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3").is_err()); // invalid hex char
-        
+        assert!(Blake3Hash::from_str(
+            "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3X"
+        )
+        .is_err()); // 65 chars
+        assert!(Blake3Hash::from_str(
+            "g665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3"
+        )
+        .is_err()); // invalid hex char
+
         // Verify normalization to lowercase
         let hash = Blake3Hash::from_str(&valid_hash.to_uppercase()).unwrap();
         assert_eq!(hash.as_str(), valid_hash);
@@ -871,9 +883,15 @@ mod tests {
         // Invalid SHA256 hashes
         assert!(Sha256Hash::from_str("").is_err());
         assert!(Sha256Hash::from_str("too_short").is_err());
-        assert!(Sha256Hash::from_str("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855X").is_err()); // 65 chars
-        assert!(Sha256Hash::from_str("g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855").is_err()); // invalid hex char
-        
+        assert!(Sha256Hash::from_str(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855X"
+        )
+        .is_err()); // 65 chars
+        assert!(Sha256Hash::from_str(
+            "g3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        )
+        .is_err()); // invalid hex char
+
         // Verify normalization to lowercase
         let hash = Sha256Hash::from_str(&valid_hash.to_uppercase()).unwrap();
         assert_eq!(hash.as_str(), valid_hash);
@@ -898,7 +916,7 @@ mod tests {
     fn test_annex_key_parsing() {
         let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt").unwrap();
         let (backend, size, mtime, filename) = key.parse_components().unwrap();
-        
+
         assert_eq!(backend, "SHA256E");
         assert_eq!(size, Some(12345));
         assert_eq!(mtime, Some(1234567890));
@@ -907,7 +925,7 @@ mod tests {
         // Test key without optional components
         let simple_key = AnnexKey::from_str("BLAKE2B--document.pdf").unwrap();
         let (backend, size, mtime, filename) = simple_key.parse_components().unwrap();
-        
+
         assert_eq!(backend, "BLAKE2B");
         assert_eq!(size, None);
         assert_eq!(mtime, None);

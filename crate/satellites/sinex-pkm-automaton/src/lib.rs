@@ -46,7 +46,11 @@ impl PKMProcessor {
 impl StatefulStreamProcessor for PKMProcessor {
     type Config = PKMProcessorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing PKM processor");
         self.context = Some(ctx);
         Ok(())

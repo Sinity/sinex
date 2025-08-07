@@ -210,10 +210,14 @@ impl EventEnvelope {
             EventEnvelope::ClipboardSelected(_) => ClipboardSelectedPayload::SOURCE.to_string(),
 
             // Desktop events
-            EventEnvelope::DesktopMonitoringStarted(_) => DesktopMonitoringStartedPayload::SOURCE.to_string(),
+            EventEnvelope::DesktopMonitoringStarted(_) => {
+                DesktopMonitoringStartedPayload::SOURCE.to_string()
+            }
             EventEnvelope::DesktopSnapshot(_) => DesktopSnapshotPayload::SOURCE.to_string(),
             EventEnvelope::ClipboardHistorical(_) => ClipboardHistoricalPayload::SOURCE.to_string(),
-            EventEnvelope::WindowManagerHistorical(_) => WindowManagerHistoricalPayload::SOURCE.to_string(),
+            EventEnvelope::WindowManagerHistorical(_) => {
+                WindowManagerHistoricalPayload::SOURCE.to_string()
+            }
 
             // Document events
             EventEnvelope::DocumentIngested(_) => DocumentIngestedPayload::SOURCE.to_string(),
@@ -241,86 +245,156 @@ impl EventEnvelope {
             EventEnvelope::RpcPkmResponse(_) => RpcPkmResponsePayload::SOURCE.to_string(),
 
             // Shell events
-            EventEnvelope::KittyCommandExecuted(_) => KittyCommandExecutedPayload::SOURCE.to_string(),
-            EventEnvelope::KittyCommandCompleted(_) => KittyCommandCompletedPayload::SOURCE.to_string(),
+            EventEnvelope::KittyCommandExecuted(_) => {
+                KittyCommandExecutedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::KittyCommandCompleted(_) => {
+                KittyCommandCompletedPayload::SOURCE.to_string()
+            }
             EventEnvelope::KittySessionStarted(_) => KittySessionStartedPayload::SOURCE.to_string(),
             EventEnvelope::KittySessionEnded(_) => KittySessionEndedPayload::SOURCE.to_string(),
-            EventEnvelope::AtuinCommandExecuted(_) => AtuinCommandExecutedPayload::SOURCE.to_string(),
-            EventEnvelope::AtuinCommandCompleted(_) => AtuinCommandCompletedPayload::SOURCE.to_string(),
-            EventEnvelope::HistoryCommandImported(_) => HistoryCommandImportedPayload::SOURCE.to_string(),
+            EventEnvelope::AtuinCommandExecuted(_) => {
+                AtuinCommandExecutedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::AtuinCommandCompleted(_) => {
+                AtuinCommandCompletedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::HistoryCommandImported(_) => {
+                HistoryCommandImportedPayload::SOURCE.to_string()
+            }
             EventEnvelope::AtuinEntry(_) => AtuinEntryPayload::SOURCE.to_string(),
             EventEnvelope::CommandImported(_) => CommandImportedPayload::SOURCE.to_string(),
             EventEnvelope::BashHistoryEntry(_) => BashHistoryEntryPayload::SOURCE.to_string(),
-            EventEnvelope::BashHistoricalCommand(_) => BashHistoricalCommandPayload::SOURCE.to_string(),
-            EventEnvelope::ZshHistoricalCommand(_) => ZshHistoricalCommandPayload::SOURCE.to_string(),
-            EventEnvelope::FishHistoricalCommand(_) => FishHistoricalCommandPayload::SOURCE.to_string(),
-            EventEnvelope::TerminalMonitoringStarted(_) => TerminalMonitoringStartedPayload::SOURCE.to_string(),
-            EventEnvelope::TerminalCommandHistorical(_) => TerminalCommandHistoricalPayload::SOURCE.to_string(),
-            EventEnvelope::TerminalHistoryHistorical(_) => TerminalHistoryHistoricalPayload::SOURCE.to_string(),
+            EventEnvelope::BashHistoricalCommand(_) => {
+                BashHistoricalCommandPayload::SOURCE.to_string()
+            }
+            EventEnvelope::ZshHistoricalCommand(_) => {
+                ZshHistoricalCommandPayload::SOURCE.to_string()
+            }
+            EventEnvelope::FishHistoricalCommand(_) => {
+                FishHistoricalCommandPayload::SOURCE.to_string()
+            }
+            EventEnvelope::TerminalMonitoringStarted(_) => {
+                TerminalMonitoringStartedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::TerminalCommandHistorical(_) => {
+                TerminalCommandHistoricalPayload::SOURCE.to_string()
+            }
+            EventEnvelope::TerminalHistoryHistorical(_) => {
+                TerminalHistoryHistoricalPayload::SOURCE.to_string()
+            }
             EventEnvelope::TerminalSnapshot(_) => TerminalSnapshotPayload::SOURCE.to_string(),
             EventEnvelope::KittyProcessChanged(_) => KittyProcessChangedPayload::SOURCE.to_string(),
             EventEnvelope::KittyTabFocused(_) => KittyTabFocusedPayload::SOURCE.to_string(),
-            EventEnvelope::KittyContentStreamed(_) => KittyContentStreamedPayload::SOURCE.to_string(),
+            EventEnvelope::KittyContentStreamed(_) => {
+                KittyContentStreamedPayload::SOURCE.to_string()
+            }
             EventEnvelope::CanonicalCommand(_) => CanonicalCommandPayload::SOURCE.to_string(),
             EventEnvelope::ShellOutputCaptured(_) => ShellOutputCapturedPayload::SOURCE.to_string(),
-            EventEnvelope::AsciinemaSessionStarted(_) => AsciinemaSessionStartedPayload::SOURCE.to_string(),
-            EventEnvelope::AsciinemaSessionEnded(_) => AsciinemaSessionEndedPayload::SOURCE.to_string(),
+            EventEnvelope::AsciinemaSessionStarted(_) => {
+                AsciinemaSessionStartedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::AsciinemaSessionEnded(_) => {
+                AsciinemaSessionEndedPayload::SOURCE.to_string()
+            }
 
             // System events
             EventEnvelope::ScanStarted(_) => ScanStartedPayload::SOURCE.to_string(),
             EventEnvelope::ScanCompleted(_) => ScanCompletedPayload::SOURCE.to_string(),
             EventEnvelope::JournalEntry(_) => JournalEntryPayload::SOURCE.to_string(),
-            EventEnvelope::JournalSyncCompleted(_) => JournalSyncCompletedPayload::SOURCE.to_string(),
+            EventEnvelope::JournalSyncCompleted(_) => {
+                JournalSyncCompletedPayload::SOURCE.to_string()
+            }
             EventEnvelope::JournalEntryWritten(_) => JournalEntryWrittenPayload::SOURCE.to_string(),
             EventEnvelope::DbusSignal(_) => DbusSignalPayload::SOURCE.to_string(),
             EventEnvelope::DbusMethodCalled(_) => DbusMethodCalledPayload::SOURCE.to_string(),
-            EventEnvelope::DbusNotificationSent(_) => DbusNotificationSentPayload::SOURCE.to_string(),
-            EventEnvelope::DbusMediaStateChanged(_) => DbusMediaStateChangedPayload::SOURCE.to_string(),
-            EventEnvelope::DbusPowerStateChanged(_) => DbusPowerStateChangedPayload::SOURCE.to_string(),
+            EventEnvelope::DbusNotificationSent(_) => {
+                DbusNotificationSentPayload::SOURCE.to_string()
+            }
+            EventEnvelope::DbusMediaStateChanged(_) => {
+                DbusMediaStateChangedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::DbusPowerStateChanged(_) => {
+                DbusPowerStateChangedPayload::SOURCE.to_string()
+            }
             EventEnvelope::DbusDeviceConnected(_) => DbusDeviceConnectedPayload::SOURCE.to_string(),
-            EventEnvelope::DbusBluetoothDeviceChanged(_) => DbusBluetoothDeviceChangedPayload::SOURCE.to_string(),
-            EventEnvelope::DbusNetworkStateChanged(_) => DbusNetworkStateChangedPayload::SOURCE.to_string(),
+            EventEnvelope::DbusBluetoothDeviceChanged(_) => {
+                DbusBluetoothDeviceChangedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::DbusNetworkStateChanged(_) => {
+                DbusNetworkStateChangedPayload::SOURCE.to_string()
+            }
             EventEnvelope::DbusMountEvent(_) => DbusMountEventPayload::SOURCE.to_string(),
             EventEnvelope::SystemdUnitStarted(_) => SystemdUnitStartedPayload::SOURCE.to_string(),
             EventEnvelope::SystemdUnitStopped(_) => SystemdUnitStoppedPayload::SOURCE.to_string(),
             EventEnvelope::SystemdUnitStatus(_) => SystemdUnitStatusPayload::SOURCE.to_string(),
             EventEnvelope::SystemdUnitFailed(_) => SystemdUnitFailedPayload::SOURCE.to_string(),
             EventEnvelope::SystemdUnitReloaded(_) => SystemdUnitReloadedPayload::SOURCE.to_string(),
-            EventEnvelope::SystemdTimerTriggered(_) => SystemdTimerTriggeredPayload::SOURCE.to_string(),
+            EventEnvelope::SystemdTimerTriggered(_) => {
+                SystemdTimerTriggeredPayload::SOURCE.to_string()
+            }
             EventEnvelope::SystemdUnitStarting(_) => SystemdUnitStartingPayload::SOURCE.to_string(),
             EventEnvelope::SystemdUnitStopping(_) => SystemdUnitStoppingPayload::SOURCE.to_string(),
-            EventEnvelope::SystemdUnitStateChanged(_) => SystemdUnitStateChangedPayload::SOURCE.to_string(),
+            EventEnvelope::SystemdUnitStateChanged(_) => {
+                SystemdUnitStateChangedPayload::SOURCE.to_string()
+            }
             EventEnvelope::UdevDeviceAdded(_) => UdevDeviceAddedPayload::SOURCE.to_string(),
             EventEnvelope::UdevDeviceRemoved(_) => UdevDeviceRemovedPayload::SOURCE.to_string(),
             EventEnvelope::UdevDeviceConnected(_) => UdevDeviceConnectedPayload::SOURCE.to_string(),
-            EventEnvelope::UdevDeviceDisconnected(_) => UdevDeviceDisconnectedPayload::SOURCE.to_string(),
+            EventEnvelope::UdevDeviceDisconnected(_) => {
+                UdevDeviceDisconnectedPayload::SOURCE.to_string()
+            }
             EventEnvelope::UdevDeviceChanged(_) => UdevDeviceChangedPayload::SOURCE.to_string(),
-            EventEnvelope::UdevDeviceDriverChanged(_) => UdevDeviceDriverChangedPayload::SOURCE.to_string(),
+            EventEnvelope::UdevDeviceDriverChanged(_) => {
+                UdevDeviceDriverChangedPayload::SOURCE.to_string()
+            }
             EventEnvelope::UdevDeviceOther(_) => UdevDeviceOtherPayload::SOURCE.to_string(),
             EventEnvelope::LogLine(_) => LogLinePayload::SOURCE.to_string(),
             EventEnvelope::SystemHealthSummary(_) => SystemHealthSummaryPayload::SOURCE.to_string(),
             EventEnvelope::SatelliteHeartbeat(_) => SatelliteHeartbeatPayload::SOURCE.to_string(),
-            EventEnvelope::SystemMonitoringStarted(_) => SystemMonitoringStartedPayload::SOURCE.to_string(),
+            EventEnvelope::SystemMonitoringStarted(_) => {
+                SystemMonitoringStartedPayload::SOURCE.to_string()
+            }
             EventEnvelope::SystemSnapshot(_) => SystemSnapshotPayload::SOURCE.to_string(),
             EventEnvelope::JournaldHistorical(_) => JournaldHistoricalPayload::SOURCE.to_string(),
-            EventEnvelope::SystemdUnitsHistorical(_) => SystemdUnitsHistoricalPayload::SOURCE.to_string(),
-            EventEnvelope::UdevDeviceHistorical(_) => UdevDeviceHistoricalPayload::SOURCE.to_string(),
+            EventEnvelope::SystemdUnitsHistorical(_) => {
+                SystemdUnitsHistoricalPayload::SOURCE.to_string()
+            }
+            EventEnvelope::UdevDeviceHistorical(_) => {
+                UdevDeviceHistoricalPayload::SOURCE.to_string()
+            }
 
             // Telemetry events
             EventEnvelope::EventsProcessed(_) => EventsProcessedPayload::SOURCE.to_string(),
             EventEnvelope::ErrorsSummary(_) => ErrorsSummaryPayload::SOURCE.to_string(),
             EventEnvelope::SystemResources(_) => SystemResourcesPayload::SOURCE.to_string(),
-            EventEnvelope::OperationPerformance(_) => OperationPerformancePayload::SOURCE.to_string(),
-            EventEnvelope::ComponentResourceUsage(_) => ComponentResourceUsagePayload::SOURCE.to_string(),
+            EventEnvelope::OperationPerformance(_) => {
+                OperationPerformancePayload::SOURCE.to_string()
+            }
+            EventEnvelope::ComponentResourceUsage(_) => {
+                ComponentResourceUsagePayload::SOURCE.to_string()
+            }
 
             // Window events
-            EventEnvelope::HyprlandWindowOpened(_) => HyprlandWindowOpenedPayload::SOURCE.to_string(),
-            EventEnvelope::HyprlandWindowClosed(_) => HyprlandWindowClosedPayload::SOURCE.to_string(),
-            EventEnvelope::HyprlandWindowFocused(_) => HyprlandWindowFocusedPayload::SOURCE.to_string(),
-            EventEnvelope::HyprlandWorkspaceSwitched(_) => HyprlandWorkspaceSwitchedPayload::SOURCE.to_string(),
+            EventEnvelope::HyprlandWindowOpened(_) => {
+                HyprlandWindowOpenedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::HyprlandWindowClosed(_) => {
+                HyprlandWindowClosedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::HyprlandWindowFocused(_) => {
+                HyprlandWindowFocusedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::HyprlandWorkspaceSwitched(_) => {
+                HyprlandWorkspaceSwitchedPayload::SOURCE.to_string()
+            }
             EventEnvelope::HyprlandWindowMoved(_) => HyprlandWindowMovedPayload::SOURCE.to_string(),
-            EventEnvelope::HyprlandMonitorFocused(_) => HyprlandMonitorFocusedPayload::SOURCE.to_string(),
-            EventEnvelope::HyprlandStateCaptured(_) => HyprlandStateCapturedPayload::SOURCE.to_string(),
+            EventEnvelope::HyprlandMonitorFocused(_) => {
+                HyprlandMonitorFocusedPayload::SOURCE.to_string()
+            }
+            EventEnvelope::HyprlandStateCaptured(_) => {
+                HyprlandStateCapturedPayload::SOURCE.to_string()
+            }
 
             EventEnvelope::Unknown(unknown) => unknown.source.clone(),
         }
@@ -342,10 +416,16 @@ impl EventEnvelope {
             EventEnvelope::ClipboardSelected(_) => ClipboardSelectedPayload::EVENT_TYPE.to_string(),
 
             // Desktop events
-            EventEnvelope::DesktopMonitoringStarted(_) => DesktopMonitoringStartedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::DesktopMonitoringStarted(_) => {
+                DesktopMonitoringStartedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::DesktopSnapshot(_) => DesktopSnapshotPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::ClipboardHistorical(_) => ClipboardHistoricalPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::WindowManagerHistorical(_) => WindowManagerHistoricalPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::ClipboardHistorical(_) => {
+                ClipboardHistoricalPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::WindowManagerHistorical(_) => {
+                WindowManagerHistoricalPayload::EVENT_TYPE.to_string()
+            }
 
             // Document events
             EventEnvelope::DocumentIngested(_) => DocumentIngestedPayload::EVENT_TYPE.to_string(),
@@ -369,90 +449,192 @@ impl EventEnvelope {
             EventEnvelope::SensorDeactivated(_) => SensorDeactivatedPayload::EVENT_TYPE.to_string(),
 
             // RPC events
-            EventEnvelope::RpcContentResponse(_) => RpcContentResponsePayload::EVENT_TYPE.to_string(),
+            EventEnvelope::RpcContentResponse(_) => {
+                RpcContentResponsePayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::RpcPkmResponse(_) => RpcPkmResponsePayload::EVENT_TYPE.to_string(),
 
             // Shell events
-            EventEnvelope::KittyCommandExecuted(_) => KittyCommandExecutedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::KittyCommandCompleted(_) => KittyCommandCompletedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::KittySessionStarted(_) => KittySessionStartedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::KittyCommandExecuted(_) => {
+                KittyCommandExecutedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::KittyCommandCompleted(_) => {
+                KittyCommandCompletedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::KittySessionStarted(_) => {
+                KittySessionStartedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::KittySessionEnded(_) => KittySessionEndedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::AtuinCommandExecuted(_) => AtuinCommandExecutedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::AtuinCommandCompleted(_) => AtuinCommandCompletedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HistoryCommandImported(_) => HistoryCommandImportedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::AtuinCommandExecuted(_) => {
+                AtuinCommandExecutedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::AtuinCommandCompleted(_) => {
+                AtuinCommandCompletedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HistoryCommandImported(_) => {
+                HistoryCommandImportedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::AtuinEntry(_) => AtuinEntryPayload::EVENT_TYPE.to_string(),
             EventEnvelope::CommandImported(_) => CommandImportedPayload::EVENT_TYPE.to_string(),
             EventEnvelope::BashHistoryEntry(_) => BashHistoryEntryPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::BashHistoricalCommand(_) => BashHistoricalCommandPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::ZshHistoricalCommand(_) => ZshHistoricalCommandPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::FishHistoricalCommand(_) => FishHistoricalCommandPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::TerminalMonitoringStarted(_) => TerminalMonitoringStartedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::TerminalCommandHistorical(_) => TerminalCommandHistoricalPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::TerminalHistoryHistorical(_) => TerminalHistoryHistoricalPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::BashHistoricalCommand(_) => {
+                BashHistoricalCommandPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::ZshHistoricalCommand(_) => {
+                ZshHistoricalCommandPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::FishHistoricalCommand(_) => {
+                FishHistoricalCommandPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::TerminalMonitoringStarted(_) => {
+                TerminalMonitoringStartedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::TerminalCommandHistorical(_) => {
+                TerminalCommandHistoricalPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::TerminalHistoryHistorical(_) => {
+                TerminalHistoryHistoricalPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::TerminalSnapshot(_) => TerminalSnapshotPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::KittyProcessChanged(_) => KittyProcessChangedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::KittyProcessChanged(_) => {
+                KittyProcessChangedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::KittyTabFocused(_) => KittyTabFocusedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::KittyContentStreamed(_) => KittyContentStreamedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::KittyContentStreamed(_) => {
+                KittyContentStreamedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::CanonicalCommand(_) => CanonicalCommandPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::ShellOutputCaptured(_) => ShellOutputCapturedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::AsciinemaSessionStarted(_) => AsciinemaSessionStartedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::AsciinemaSessionEnded(_) => AsciinemaSessionEndedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::ShellOutputCaptured(_) => {
+                ShellOutputCapturedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::AsciinemaSessionStarted(_) => {
+                AsciinemaSessionStartedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::AsciinemaSessionEnded(_) => {
+                AsciinemaSessionEndedPayload::EVENT_TYPE.to_string()
+            }
 
             // System events
             EventEnvelope::ScanStarted(_) => ScanStartedPayload::EVENT_TYPE.to_string(),
             EventEnvelope::ScanCompleted(_) => ScanCompletedPayload::EVENT_TYPE.to_string(),
             EventEnvelope::JournalEntry(_) => JournalEntryPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::JournalSyncCompleted(_) => JournalSyncCompletedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::JournalEntryWritten(_) => JournalEntryWrittenPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::JournalSyncCompleted(_) => {
+                JournalSyncCompletedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::JournalEntryWritten(_) => {
+                JournalEntryWrittenPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::DbusSignal(_) => DbusSignalPayload::EVENT_TYPE.to_string(),
             EventEnvelope::DbusMethodCalled(_) => DbusMethodCalledPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::DbusNotificationSent(_) => DbusNotificationSentPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::DbusMediaStateChanged(_) => DbusMediaStateChangedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::DbusPowerStateChanged(_) => DbusPowerStateChangedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::DbusDeviceConnected(_) => DbusDeviceConnectedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::DbusBluetoothDeviceChanged(_) => DbusBluetoothDeviceChangedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::DbusNetworkStateChanged(_) => DbusNetworkStateChangedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::DbusNotificationSent(_) => {
+                DbusNotificationSentPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::DbusMediaStateChanged(_) => {
+                DbusMediaStateChangedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::DbusPowerStateChanged(_) => {
+                DbusPowerStateChangedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::DbusDeviceConnected(_) => {
+                DbusDeviceConnectedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::DbusBluetoothDeviceChanged(_) => {
+                DbusBluetoothDeviceChangedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::DbusNetworkStateChanged(_) => {
+                DbusNetworkStateChangedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::DbusMountEvent(_) => DbusMountEventPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitStarted(_) => SystemdUnitStartedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitStopped(_) => SystemdUnitStoppedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::SystemdUnitStarted(_) => {
+                SystemdUnitStartedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemdUnitStopped(_) => {
+                SystemdUnitStoppedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::SystemdUnitStatus(_) => SystemdUnitStatusPayload::EVENT_TYPE.to_string(),
             EventEnvelope::SystemdUnitFailed(_) => SystemdUnitFailedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitReloaded(_) => SystemdUnitReloadedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdTimerTriggered(_) => SystemdTimerTriggeredPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitStarting(_) => SystemdUnitStartingPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitStopping(_) => SystemdUnitStoppingPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitStateChanged(_) => SystemdUnitStateChangedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::SystemdUnitReloaded(_) => {
+                SystemdUnitReloadedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemdTimerTriggered(_) => {
+                SystemdTimerTriggeredPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemdUnitStarting(_) => {
+                SystemdUnitStartingPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemdUnitStopping(_) => {
+                SystemdUnitStoppingPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemdUnitStateChanged(_) => {
+                SystemdUnitStateChangedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::UdevDeviceAdded(_) => UdevDeviceAddedPayload::EVENT_TYPE.to_string(),
             EventEnvelope::UdevDeviceRemoved(_) => UdevDeviceRemovedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::UdevDeviceConnected(_) => UdevDeviceConnectedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::UdevDeviceDisconnected(_) => UdevDeviceDisconnectedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::UdevDeviceConnected(_) => {
+                UdevDeviceConnectedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::UdevDeviceDisconnected(_) => {
+                UdevDeviceDisconnectedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::UdevDeviceChanged(_) => UdevDeviceChangedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::UdevDeviceDriverChanged(_) => UdevDeviceDriverChangedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::UdevDeviceDriverChanged(_) => {
+                UdevDeviceDriverChangedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::UdevDeviceOther(_) => UdevDeviceOtherPayload::EVENT_TYPE.to_string(),
             EventEnvelope::LogLine(_) => LogLinePayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemHealthSummary(_) => SystemHealthSummaryPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SatelliteHeartbeat(_) => SatelliteHeartbeatPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemMonitoringStarted(_) => SystemMonitoringStartedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::SystemHealthSummary(_) => {
+                SystemHealthSummaryPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SatelliteHeartbeat(_) => {
+                SatelliteHeartbeatPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemMonitoringStarted(_) => {
+                SystemMonitoringStartedPayload::EVENT_TYPE.to_string()
+            }
             EventEnvelope::SystemSnapshot(_) => SystemSnapshotPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::JournaldHistorical(_) => JournaldHistoricalPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::SystemdUnitsHistorical(_) => SystemdUnitsHistoricalPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::UdevDeviceHistorical(_) => UdevDeviceHistoricalPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::JournaldHistorical(_) => {
+                JournaldHistoricalPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::SystemdUnitsHistorical(_) => {
+                SystemdUnitsHistoricalPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::UdevDeviceHistorical(_) => {
+                UdevDeviceHistoricalPayload::EVENT_TYPE.to_string()
+            }
 
             // Telemetry events
             EventEnvelope::EventsProcessed(_) => EventsProcessedPayload::EVENT_TYPE.to_string(),
             EventEnvelope::ErrorsSummary(_) => ErrorsSummaryPayload::EVENT_TYPE.to_string(),
             EventEnvelope::SystemResources(_) => SystemResourcesPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::OperationPerformance(_) => OperationPerformancePayload::EVENT_TYPE.to_string(),
-            EventEnvelope::ComponentResourceUsage(_) => ComponentResourceUsagePayload::EVENT_TYPE.to_string(),
+            EventEnvelope::OperationPerformance(_) => {
+                OperationPerformancePayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::ComponentResourceUsage(_) => {
+                ComponentResourceUsagePayload::EVENT_TYPE.to_string()
+            }
 
             // Window events
-            EventEnvelope::HyprlandWindowOpened(_) => HyprlandWindowOpenedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HyprlandWindowClosed(_) => HyprlandWindowClosedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HyprlandWindowFocused(_) => HyprlandWindowFocusedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HyprlandWorkspaceSwitched(_) => HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HyprlandWindowMoved(_) => HyprlandWindowMovedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HyprlandMonitorFocused(_) => HyprlandMonitorFocusedPayload::EVENT_TYPE.to_string(),
-            EventEnvelope::HyprlandStateCaptured(_) => HyprlandStateCapturedPayload::EVENT_TYPE.to_string(),
+            EventEnvelope::HyprlandWindowOpened(_) => {
+                HyprlandWindowOpenedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HyprlandWindowClosed(_) => {
+                HyprlandWindowClosedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HyprlandWindowFocused(_) => {
+                HyprlandWindowFocusedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HyprlandWorkspaceSwitched(_) => {
+                HyprlandWorkspaceSwitchedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HyprlandWindowMoved(_) => {
+                HyprlandWindowMovedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HyprlandMonitorFocused(_) => {
+                HyprlandMonitorFocusedPayload::EVENT_TYPE.to_string()
+            }
+            EventEnvelope::HyprlandStateCaptured(_) => {
+                HyprlandStateCapturedPayload::EVENT_TYPE.to_string()
+            }
 
             EventEnvelope::Unknown(unknown) => unknown.event_type.clone(),
         }
@@ -464,11 +646,7 @@ impl EventEnvelope {
     /// strongly-typed payload based on the source and event_type combination.
     /// If deserialization fails or the event type is unknown, returns the
     /// Unknown variant.
-    pub fn from_parts(
-        source: &str,
-        event_type: &str,
-        payload: serde_json::Value,
-    ) -> Self {
+    pub fn from_parts(source: &str, event_type: &str, payload: serde_json::Value) -> Self {
         // Macro to attempt deserialization and return the appropriate variant
         macro_rules! try_deserialize {
             ($payload_type:ty, $variant:ident) => {
@@ -483,24 +661,42 @@ impl EventEnvelope {
         match (source, event_type) {
             // Blob events
             ("sinex-blob", "blob.stored") => try_deserialize!(BlobStoredPayload, BlobStored),
-            ("sinex-blob", "blob.retrieved") => try_deserialize!(BlobRetrievedPayload, BlobRetrieved),
+            ("sinex-blob", "blob.retrieved") => {
+                try_deserialize!(BlobRetrievedPayload, BlobRetrieved)
+            }
             ("sinex-blob", "blob.deleted") => try_deserialize!(BlobDeletedPayload, BlobDeleted),
             ("sinex-blob", "blob.ingested") => try_deserialize!(BlobIngestedPayload, BlobIngested),
             ("sinex-blob", "blob.verified") => try_deserialize!(BlobVerifiedPayload, BlobVerified),
-            ("sinex-blob", "storage.statistics") => try_deserialize!(StorageStatisticsPayload, StorageStatistics),
+            ("sinex-blob", "storage.statistics") => {
+                try_deserialize!(StorageStatisticsPayload, StorageStatistics)
+            }
 
-            // Clipboard events  
-            ("clipboard", "clipboard.copied") => try_deserialize!(ClipboardCopiedPayload, ClipboardCopied),
-            ("clipboard", "clipboard.selected") => try_deserialize!(ClipboardSelectedPayload, ClipboardSelected),
+            // Clipboard events
+            ("clipboard", "clipboard.copied") => {
+                try_deserialize!(ClipboardCopiedPayload, ClipboardCopied)
+            }
+            ("clipboard", "clipboard.selected") => {
+                try_deserialize!(ClipboardSelectedPayload, ClipboardSelected)
+            }
 
             // Desktop events
-            ("desktop", "desktop.monitoring_started") => try_deserialize!(DesktopMonitoringStartedPayload, DesktopMonitoringStarted),
-            ("desktop", "desktop.snapshot") => try_deserialize!(DesktopSnapshotPayload, DesktopSnapshot),
-            ("desktop", "clipboard.historical") => try_deserialize!(ClipboardHistoricalPayload, ClipboardHistorical),
-            ("desktop", "window_manager.historical") => try_deserialize!(WindowManagerHistoricalPayload, WindowManagerHistorical),
+            ("desktop", "desktop.monitoring_started") => {
+                try_deserialize!(DesktopMonitoringStartedPayload, DesktopMonitoringStarted)
+            }
+            ("desktop", "desktop.snapshot") => {
+                try_deserialize!(DesktopSnapshotPayload, DesktopSnapshot)
+            }
+            ("desktop", "clipboard.historical") => {
+                try_deserialize!(ClipboardHistoricalPayload, ClipboardHistorical)
+            }
+            ("desktop", "window_manager.historical") => {
+                try_deserialize!(WindowManagerHistoricalPayload, WindowManagerHistorical)
+            }
 
             // Document events
-            ("document-ingestor", "document.ingested") => try_deserialize!(DocumentIngestedPayload, DocumentIngested),
+            ("document-ingestor", "document.ingested") => {
+                try_deserialize!(DocumentIngestedPayload, DocumentIngested)
+            }
 
             // Filesystem events
             ("fs-watcher", "file.created") => try_deserialize!(FileCreatedPayload, FileCreated),
@@ -509,118 +705,265 @@ impl EventEnvelope {
             ("fs-watcher", "file.moved") => try_deserialize!(FileMovedPayload, FileMoved),
             ("fs-watcher", "dir.created") => try_deserialize!(DirCreatedPayload, DirCreated),
             ("fs-watcher", "dir.deleted") => try_deserialize!(DirDeletedPayload, DirDeleted),
-            ("fs-watcher", "file.discovered") => try_deserialize!(FileDiscoveredPayload, FileDiscovered),
-            ("fs-watcher", "dir.discovered") => try_deserialize!(DirDiscoveredPayload, DirDiscovered),
+            ("fs-watcher", "file.discovered") => {
+                try_deserialize!(FileDiscoveredPayload, FileDiscovered)
+            }
+            ("fs-watcher", "dir.discovered") => {
+                try_deserialize!(DirDiscoveredPayload, DirDiscovered)
+            }
 
             // Process events
             ("sinex", "process.started") => try_deserialize!(ProcessStartedPayload, ProcessStarted),
-            ("sinex", "process.heartbeat") => try_deserialize!(ProcessHeartbeatPayload, ProcessHeartbeat),
-            ("sinex", "process.shutdown") => try_deserialize!(ProcessShutdownPayload, ProcessShutdown),
+            ("sinex", "process.heartbeat") => {
+                try_deserialize!(ProcessHeartbeatPayload, ProcessHeartbeat)
+            }
+            ("sinex", "process.shutdown") => {
+                try_deserialize!(ProcessShutdownPayload, ProcessShutdown)
+            }
             ("sinex", "automaton.error") => try_deserialize!(AutomatonErrorPayload, AutomatonError),
-            ("sinex", "sensor.activated") => try_deserialize!(SensorActivatedPayload, SensorActivated),
-            ("sinex", "sensor.deactivated") => try_deserialize!(SensorDeactivatedPayload, SensorDeactivated),
+            ("sinex", "sensor.activated") => {
+                try_deserialize!(SensorActivatedPayload, SensorActivated)
+            }
+            ("sinex", "sensor.deactivated") => {
+                try_deserialize!(SensorDeactivatedPayload, SensorDeactivated)
+            }
 
             // RPC events
-            ("rpc", "content.response") => try_deserialize!(RpcContentResponsePayload, RpcContentResponse),
+            ("rpc", "content.response") => {
+                try_deserialize!(RpcContentResponsePayload, RpcContentResponse)
+            }
             ("rpc", "pkm.response") => try_deserialize!(RpcPkmResponsePayload, RpcPkmResponse),
 
             // Shell events - Kitty
-            ("shell.kitty", "command.executed") => try_deserialize!(KittyCommandExecutedPayload, KittyCommandExecuted),
-            ("shell.kitty", "command.completed") => try_deserialize!(KittyCommandCompletedPayload, KittyCommandCompleted),
-            ("terminal.kitty", "session.started") => try_deserialize!(KittySessionStartedPayload, KittySessionStarted),
-            ("terminal.kitty", "session.ended") => try_deserialize!(KittySessionEndedPayload, KittySessionEnded),
-            ("terminal.kitty", "process.changed") => try_deserialize!(KittyProcessChangedPayload, KittyProcessChanged),
-            ("terminal.kitty", "tab.focused") => try_deserialize!(KittyTabFocusedPayload, KittyTabFocused),
-            ("terminal.kitty", "content.streamed") => try_deserialize!(KittyContentStreamedPayload, KittyContentStreamed),
+            ("shell.kitty", "command.executed") => {
+                try_deserialize!(KittyCommandExecutedPayload, KittyCommandExecuted)
+            }
+            ("shell.kitty", "command.completed") => {
+                try_deserialize!(KittyCommandCompletedPayload, KittyCommandCompleted)
+            }
+            ("terminal.kitty", "session.started") => {
+                try_deserialize!(KittySessionStartedPayload, KittySessionStarted)
+            }
+            ("terminal.kitty", "session.ended") => {
+                try_deserialize!(KittySessionEndedPayload, KittySessionEnded)
+            }
+            ("terminal.kitty", "process.changed") => {
+                try_deserialize!(KittyProcessChangedPayload, KittyProcessChanged)
+            }
+            ("terminal.kitty", "tab.focused") => {
+                try_deserialize!(KittyTabFocusedPayload, KittyTabFocused)
+            }
+            ("terminal.kitty", "content.streamed") => {
+                try_deserialize!(KittyContentStreamedPayload, KittyContentStreamed)
+            }
 
             // Shell events - Atuin
-            ("shell.atuin", "command.executed") => try_deserialize!(AtuinCommandExecutedPayload, AtuinCommandExecuted),
-            ("shell.atuin", "command.completed") => try_deserialize!(AtuinCommandCompletedPayload, AtuinCommandCompleted),
+            ("shell.atuin", "command.executed") => {
+                try_deserialize!(AtuinCommandExecutedPayload, AtuinCommandExecuted)
+            }
+            ("shell.atuin", "command.completed") => {
+                try_deserialize!(AtuinCommandCompletedPayload, AtuinCommandCompleted)
+            }
             ("shell.atuin", "entry") => try_deserialize!(AtuinEntryPayload, AtuinEntry),
 
             // Shell events - History/Terminal
-            ("shell", "history.command_imported") => try_deserialize!(HistoryCommandImportedPayload, HistoryCommandImported),
-            ("shell", "command.imported") => try_deserialize!(CommandImportedPayload, CommandImported),
-            ("shell.bash", "history.entry") => try_deserialize!(BashHistoryEntryPayload, BashHistoryEntry),
-            ("shell.bash", "command.historical") => try_deserialize!(BashHistoricalCommandPayload, BashHistoricalCommand),
-            ("shell.zsh", "command.historical") => try_deserialize!(ZshHistoricalCommandPayload, ZshHistoricalCommand),
-            ("shell.fish", "command.historical") => try_deserialize!(FishHistoricalCommandPayload, FishHistoricalCommand),
-            ("terminal", "monitoring_started") => try_deserialize!(TerminalMonitoringStartedPayload, TerminalMonitoringStarted),
-            ("terminal", "command.historical") => try_deserialize!(TerminalCommandHistoricalPayload, TerminalCommandHistorical),
-            ("terminal", "history.historical") => try_deserialize!(TerminalHistoryHistoricalPayload, TerminalHistoryHistorical),
+            ("shell", "history.command_imported") => {
+                try_deserialize!(HistoryCommandImportedPayload, HistoryCommandImported)
+            }
+            ("shell", "command.imported") => {
+                try_deserialize!(CommandImportedPayload, CommandImported)
+            }
+            ("shell.bash", "history.entry") => {
+                try_deserialize!(BashHistoryEntryPayload, BashHistoryEntry)
+            }
+            ("shell.bash", "command.historical") => {
+                try_deserialize!(BashHistoricalCommandPayload, BashHistoricalCommand)
+            }
+            ("shell.zsh", "command.historical") => {
+                try_deserialize!(ZshHistoricalCommandPayload, ZshHistoricalCommand)
+            }
+            ("shell.fish", "command.historical") => {
+                try_deserialize!(FishHistoricalCommandPayload, FishHistoricalCommand)
+            }
+            ("terminal", "monitoring_started") => {
+                try_deserialize!(TerminalMonitoringStartedPayload, TerminalMonitoringStarted)
+            }
+            ("terminal", "command.historical") => {
+                try_deserialize!(TerminalCommandHistoricalPayload, TerminalCommandHistorical)
+            }
+            ("terminal", "history.historical") => {
+                try_deserialize!(TerminalHistoryHistoricalPayload, TerminalHistoryHistorical)
+            }
             ("terminal", "snapshot") => try_deserialize!(TerminalSnapshotPayload, TerminalSnapshot),
-            ("terminal", "canonical.command") => try_deserialize!(CanonicalCommandPayload, CanonicalCommand),
-            ("terminal", "shell.output_captured") => try_deserialize!(ShellOutputCapturedPayload, ShellOutputCaptured),
+            ("terminal", "canonical.command") => {
+                try_deserialize!(CanonicalCommandPayload, CanonicalCommand)
+            }
+            ("terminal", "shell.output_captured") => {
+                try_deserialize!(ShellOutputCapturedPayload, ShellOutputCaptured)
+            }
 
             // Asciinema events
-            ("asciinema", "session.started") => try_deserialize!(AsciinemaSessionStartedPayload, AsciinemaSessionStarted),
-            ("asciinema", "session.ended") => try_deserialize!(AsciinemaSessionEndedPayload, AsciinemaSessionEnded),
+            ("asciinema", "session.started") => {
+                try_deserialize!(AsciinemaSessionStartedPayload, AsciinemaSessionStarted)
+            }
+            ("asciinema", "session.ended") => {
+                try_deserialize!(AsciinemaSessionEndedPayload, AsciinemaSessionEnded)
+            }
 
             // System events - Scanning
             ("system", "scan.started") => try_deserialize!(ScanStartedPayload, ScanStarted),
             ("system", "scan.completed") => try_deserialize!(ScanCompletedPayload, ScanCompleted),
-            ("system", "monitoring_started") => try_deserialize!(SystemMonitoringStartedPayload, SystemMonitoringStarted),
+            ("system", "monitoring_started") => {
+                try_deserialize!(SystemMonitoringStartedPayload, SystemMonitoringStarted)
+            }
             ("system", "snapshot") => try_deserialize!(SystemSnapshotPayload, SystemSnapshot),
 
             // System events - Journal
             ("system.journald", "entry") => try_deserialize!(JournalEntryPayload, JournalEntry),
-            ("system.journald", "sync.completed") => try_deserialize!(JournalSyncCompletedPayload, JournalSyncCompleted),
-            ("system.journald", "entry.written") => try_deserialize!(JournalEntryWrittenPayload, JournalEntryWritten),
-            ("system.journald", "historical") => try_deserialize!(JournaldHistoricalPayload, JournaldHistorical),
+            ("system.journald", "sync.completed") => {
+                try_deserialize!(JournalSyncCompletedPayload, JournalSyncCompleted)
+            }
+            ("system.journald", "entry.written") => {
+                try_deserialize!(JournalEntryWrittenPayload, JournalEntryWritten)
+            }
+            ("system.journald", "historical") => {
+                try_deserialize!(JournaldHistoricalPayload, JournaldHistorical)
+            }
 
             // System events - D-Bus
             ("system.dbus", "signal") => try_deserialize!(DbusSignalPayload, DbusSignal),
-            ("system.dbus", "method.called") => try_deserialize!(DbusMethodCalledPayload, DbusMethodCalled),
-            ("system.dbus", "notification.sent") => try_deserialize!(DbusNotificationSentPayload, DbusNotificationSent),
-            ("system.dbus", "media.state_changed") => try_deserialize!(DbusMediaStateChangedPayload, DbusMediaStateChanged),
-            ("system.dbus", "power.state_changed") => try_deserialize!(DbusPowerStateChangedPayload, DbusPowerStateChanged),
-            ("system.dbus", "device.connected") => try_deserialize!(DbusDeviceConnectedPayload, DbusDeviceConnected),
-            ("system.dbus", "bluetooth.device_changed") => try_deserialize!(DbusBluetoothDeviceChangedPayload, DbusBluetoothDeviceChanged),
-            ("system.dbus", "network.state_changed") => try_deserialize!(DbusNetworkStateChangedPayload, DbusNetworkStateChanged),
-            ("system.dbus", "mount.event") => try_deserialize!(DbusMountEventPayload, DbusMountEvent),
+            ("system.dbus", "method.called") => {
+                try_deserialize!(DbusMethodCalledPayload, DbusMethodCalled)
+            }
+            ("system.dbus", "notification.sent") => {
+                try_deserialize!(DbusNotificationSentPayload, DbusNotificationSent)
+            }
+            ("system.dbus", "media.state_changed") => {
+                try_deserialize!(DbusMediaStateChangedPayload, DbusMediaStateChanged)
+            }
+            ("system.dbus", "power.state_changed") => {
+                try_deserialize!(DbusPowerStateChangedPayload, DbusPowerStateChanged)
+            }
+            ("system.dbus", "device.connected") => {
+                try_deserialize!(DbusDeviceConnectedPayload, DbusDeviceConnected)
+            }
+            ("system.dbus", "bluetooth.device_changed") => try_deserialize!(
+                DbusBluetoothDeviceChangedPayload,
+                DbusBluetoothDeviceChanged
+            ),
+            ("system.dbus", "network.state_changed") => {
+                try_deserialize!(DbusNetworkStateChangedPayload, DbusNetworkStateChanged)
+            }
+            ("system.dbus", "mount.event") => {
+                try_deserialize!(DbusMountEventPayload, DbusMountEvent)
+            }
 
             // System events - systemd
-            ("system.systemd", "unit.started") => try_deserialize!(SystemdUnitStartedPayload, SystemdUnitStarted),
-            ("system.systemd", "unit.stopped") => try_deserialize!(SystemdUnitStoppedPayload, SystemdUnitStopped),
-            ("system.systemd", "unit.status") => try_deserialize!(SystemdUnitStatusPayload, SystemdUnitStatus),
-            ("system.systemd", "unit.failed") => try_deserialize!(SystemdUnitFailedPayload, SystemdUnitFailed),
-            ("system.systemd", "unit.reloaded") => try_deserialize!(SystemdUnitReloadedPayload, SystemdUnitReloaded),
-            ("system.systemd", "timer.triggered") => try_deserialize!(SystemdTimerTriggeredPayload, SystemdTimerTriggered),
-            ("system.systemd", "unit.starting") => try_deserialize!(SystemdUnitStartingPayload, SystemdUnitStarting),
-            ("system.systemd", "unit.stopping") => try_deserialize!(SystemdUnitStoppingPayload, SystemdUnitStopping),
-            ("system.systemd", "unit.state_changed") => try_deserialize!(SystemdUnitStateChangedPayload, SystemdUnitStateChanged),
-            ("system.systemd", "units.historical") => try_deserialize!(SystemdUnitsHistoricalPayload, SystemdUnitsHistorical),
+            ("system.systemd", "unit.started") => {
+                try_deserialize!(SystemdUnitStartedPayload, SystemdUnitStarted)
+            }
+            ("system.systemd", "unit.stopped") => {
+                try_deserialize!(SystemdUnitStoppedPayload, SystemdUnitStopped)
+            }
+            ("system.systemd", "unit.status") => {
+                try_deserialize!(SystemdUnitStatusPayload, SystemdUnitStatus)
+            }
+            ("system.systemd", "unit.failed") => {
+                try_deserialize!(SystemdUnitFailedPayload, SystemdUnitFailed)
+            }
+            ("system.systemd", "unit.reloaded") => {
+                try_deserialize!(SystemdUnitReloadedPayload, SystemdUnitReloaded)
+            }
+            ("system.systemd", "timer.triggered") => {
+                try_deserialize!(SystemdTimerTriggeredPayload, SystemdTimerTriggered)
+            }
+            ("system.systemd", "unit.starting") => {
+                try_deserialize!(SystemdUnitStartingPayload, SystemdUnitStarting)
+            }
+            ("system.systemd", "unit.stopping") => {
+                try_deserialize!(SystemdUnitStoppingPayload, SystemdUnitStopping)
+            }
+            ("system.systemd", "unit.state_changed") => {
+                try_deserialize!(SystemdUnitStateChangedPayload, SystemdUnitStateChanged)
+            }
+            ("system.systemd", "units.historical") => {
+                try_deserialize!(SystemdUnitsHistoricalPayload, SystemdUnitsHistorical)
+            }
 
             // System events - udev
-            ("system.udev", "device.added") => try_deserialize!(UdevDeviceAddedPayload, UdevDeviceAdded),
-            ("system.udev", "device.removed") => try_deserialize!(UdevDeviceRemovedPayload, UdevDeviceRemoved),
-            ("system.udev", "device.connected") => try_deserialize!(UdevDeviceConnectedPayload, UdevDeviceConnected),
-            ("system.udev", "device.disconnected") => try_deserialize!(UdevDeviceDisconnectedPayload, UdevDeviceDisconnected),
-            ("system.udev", "device.changed") => try_deserialize!(UdevDeviceChangedPayload, UdevDeviceChanged),
-            ("system.udev", "device.driver_changed") => try_deserialize!(UdevDeviceDriverChangedPayload, UdevDeviceDriverChanged),
-            ("system.udev", "device.other") => try_deserialize!(UdevDeviceOtherPayload, UdevDeviceOther),
-            ("system.udev", "device.historical") => try_deserialize!(UdevDeviceHistoricalPayload, UdevDeviceHistorical),
+            ("system.udev", "device.added") => {
+                try_deserialize!(UdevDeviceAddedPayload, UdevDeviceAdded)
+            }
+            ("system.udev", "device.removed") => {
+                try_deserialize!(UdevDeviceRemovedPayload, UdevDeviceRemoved)
+            }
+            ("system.udev", "device.connected") => {
+                try_deserialize!(UdevDeviceConnectedPayload, UdevDeviceConnected)
+            }
+            ("system.udev", "device.disconnected") => {
+                try_deserialize!(UdevDeviceDisconnectedPayload, UdevDeviceDisconnected)
+            }
+            ("system.udev", "device.changed") => {
+                try_deserialize!(UdevDeviceChangedPayload, UdevDeviceChanged)
+            }
+            ("system.udev", "device.driver_changed") => {
+                try_deserialize!(UdevDeviceDriverChangedPayload, UdevDeviceDriverChanged)
+            }
+            ("system.udev", "device.other") => {
+                try_deserialize!(UdevDeviceOtherPayload, UdevDeviceOther)
+            }
+            ("system.udev", "device.historical") => {
+                try_deserialize!(UdevDeviceHistoricalPayload, UdevDeviceHistorical)
+            }
 
             // System events - Logs
             ("system.logs", "line") => try_deserialize!(LogLinePayload, LogLine),
-            ("system", "health.summary") => try_deserialize!(SystemHealthSummaryPayload, SystemHealthSummary),
-            ("system", "satellite.heartbeat") => try_deserialize!(SatelliteHeartbeatPayload, SatelliteHeartbeat),
+            ("system", "health.summary") => {
+                try_deserialize!(SystemHealthSummaryPayload, SystemHealthSummary)
+            }
+            ("system", "satellite.heartbeat") => {
+                try_deserialize!(SatelliteHeartbeatPayload, SatelliteHeartbeat)
+            }
 
             // Telemetry events
-            ("telemetry", "events.processed") => try_deserialize!(EventsProcessedPayload, EventsProcessed),
-            ("telemetry", "errors.summary") => try_deserialize!(ErrorsSummaryPayload, ErrorsSummary),
-            ("telemetry", "system.resources") => try_deserialize!(SystemResourcesPayload, SystemResources),
-            ("telemetry", "operation.performance") => try_deserialize!(OperationPerformancePayload, OperationPerformance),
-            ("telemetry", "component.resource_usage") => try_deserialize!(ComponentResourceUsagePayload, ComponentResourceUsage),
+            ("telemetry", "events.processed") => {
+                try_deserialize!(EventsProcessedPayload, EventsProcessed)
+            }
+            ("telemetry", "errors.summary") => {
+                try_deserialize!(ErrorsSummaryPayload, ErrorsSummary)
+            }
+            ("telemetry", "system.resources") => {
+                try_deserialize!(SystemResourcesPayload, SystemResources)
+            }
+            ("telemetry", "operation.performance") => {
+                try_deserialize!(OperationPerformancePayload, OperationPerformance)
+            }
+            ("telemetry", "component.resource_usage") => {
+                try_deserialize!(ComponentResourceUsagePayload, ComponentResourceUsage)
+            }
 
             // Window events (Hyprland)
-            ("hyprland", "window.opened") => try_deserialize!(HyprlandWindowOpenedPayload, HyprlandWindowOpened),
-            ("hyprland", "window.closed") => try_deserialize!(HyprlandWindowClosedPayload, HyprlandWindowClosed),
-            ("hyprland", "window.focused") => try_deserialize!(HyprlandWindowFocusedPayload, HyprlandWindowFocused),
-            ("hyprland", "workspace.switched") => try_deserialize!(HyprlandWorkspaceSwitchedPayload, HyprlandWorkspaceSwitched),
-            ("hyprland", "window.moved") => try_deserialize!(HyprlandWindowMovedPayload, HyprlandWindowMoved),
-            ("hyprland", "monitor.focused") => try_deserialize!(HyprlandMonitorFocusedPayload, HyprlandMonitorFocused),
-            ("hyprland", "state.captured") => try_deserialize!(HyprlandStateCapturedPayload, HyprlandStateCaptured),
+            ("hyprland", "window.opened") => {
+                try_deserialize!(HyprlandWindowOpenedPayload, HyprlandWindowOpened)
+            }
+            ("hyprland", "window.closed") => {
+                try_deserialize!(HyprlandWindowClosedPayload, HyprlandWindowClosed)
+            }
+            ("hyprland", "window.focused") => {
+                try_deserialize!(HyprlandWindowFocusedPayload, HyprlandWindowFocused)
+            }
+            ("hyprland", "workspace.switched") => {
+                try_deserialize!(HyprlandWorkspaceSwitchedPayload, HyprlandWorkspaceSwitched)
+            }
+            ("hyprland", "window.moved") => {
+                try_deserialize!(HyprlandWindowMovedPayload, HyprlandWindowMoved)
+            }
+            ("hyprland", "monitor.focused") => {
+                try_deserialize!(HyprlandMonitorFocusedPayload, HyprlandMonitorFocused)
+            }
+            ("hyprland", "state.captured") => {
+                try_deserialize!(HyprlandStateCapturedPayload, HyprlandStateCaptured)
+            }
 
             // Unknown event type - return Unknown variant
             _ => {}
@@ -649,8 +992,9 @@ impl EventEnvelope {
     pub fn to_json_value(&self) -> Result<serde_json::Value, SinexError> {
         match self {
             EventEnvelope::Unknown(unknown) => Ok(unknown.payload.clone()),
-            _ => serde_json::to_value(self)
-                .map_err(|e| SinexError::serialization(format!("Failed to serialize envelope: {}", e))),
+            _ => serde_json::to_value(self).map_err(|e| {
+                SinexError::serialization(format!("Failed to serialize envelope: {}", e))
+            }),
         }
     }
 }

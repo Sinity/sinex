@@ -50,7 +50,11 @@ impl HealthAggregator {
 impl StatefulStreamProcessor for HealthAggregator {
     type Config = HealthAggregatorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
         self.context = Some(ctx);
         Ok(())

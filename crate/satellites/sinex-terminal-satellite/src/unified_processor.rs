@@ -490,7 +490,11 @@ impl Default for TerminalProcessor {
 impl StatefulStreamProcessor for TerminalProcessor {
     type Config = TerminalConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
