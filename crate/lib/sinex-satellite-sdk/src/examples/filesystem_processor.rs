@@ -24,6 +24,30 @@ use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
 
+/// Configuration for the filesystem processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct FilesystemProcessorConfig {
+    /// Maximum number of files to process in one scan
+    pub max_files: Option<usize>,
+    /// File extensions to include (empty means all)
+    pub include_extensions: Vec<String>,
+    /// File extensions to exclude
+    pub exclude_extensions: Vec<String>,
+    /// Follow symbolic links
+    pub follow_symlinks: bool,
+}
+
+impl Default for FilesystemProcessorConfig {
+    fn default() -> Self {
+        Self {
+            max_files: None,
+            include_extensions: Vec::new(),
+            exclude_extensions: Vec::new(),
+            follow_symlinks: false,
+        }
+    }
+}
+
 /// Example filesystem processor implementing unified stream processor interface
 #[derive(Debug)]
 pub struct FilesystemProcessor {
@@ -196,7 +220,9 @@ impl FilesystemProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for FilesystemProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = FilesystemProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             watch_paths = ?self.watch_paths,

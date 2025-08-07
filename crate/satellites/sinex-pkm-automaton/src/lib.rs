@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -14,6 +15,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for PKM Processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct PKMProcessorConfig {
+    /// PKM system settings
+    pub pkm_settings: HashMap<String, serde_json::Value>,
+}
+
+impl Default for PKMProcessorConfig {
+    fn default() -> Self {
+        Self {
+            pkm_settings: HashMap::new(),
+        }
+    }
+}
 
 /// PKM Service Processor using unified StatefulStreamProcessor architecture
 pub struct PKMProcessor {
@@ -28,7 +44,9 @@ impl PKMProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for PKMProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = PKMProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing PKM processor");
         self.context = Some(ctx);
         Ok(())

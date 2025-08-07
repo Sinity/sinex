@@ -278,7 +278,9 @@ impl Default for DesktopProcessor {
 #[sinex_satellite_sdk::auto_satellite_metrics(processor_type = "ingestor", labels = ["source=desktop"])]
 #[async_trait]
 impl StatefulStreamProcessor for DesktopProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = DesktopConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,

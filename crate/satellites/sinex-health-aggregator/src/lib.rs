@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     nats_stream_consumer::{
         BatchProcessingResult as NatsBatchProcessingResult,
@@ -19,6 +20,21 @@ use sinex_satellite_sdk::{
 use std::collections::HashMap;
 use tracing::info;
 
+/// Configuration for Health Aggregator processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct HealthAggregatorConfig {
+    /// Health check intervals in seconds
+    pub check_intervals: HashMap<String, u64>,
+}
+
+impl Default for HealthAggregatorConfig {
+    fn default() -> Self {
+        Self {
+            check_intervals: HashMap::new(),
+        }
+    }
+}
+
 /// Health Aggregator using unified StatefulStreamProcessor architecture
 pub struct HealthAggregator {
     context: Option<StreamProcessorContext>,
@@ -32,7 +48,9 @@ impl HealthAggregator {
 
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = HealthAggregatorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
         self.context = Some(ctx);
         Ok(())

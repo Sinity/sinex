@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -14,6 +15,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for Terminal Command Canonicalizer processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct TerminalCommandCanonicalizerConfig {
+    /// Command canonicalization rules
+    pub canonicalization_rules: HashMap<String, String>,
+}
+
+impl Default for TerminalCommandCanonicalizerConfig {
+    fn default() -> Self {
+        Self {
+            canonicalization_rules: HashMap::new(),
+        }
+    }
+}
 
 /// Terminal Command Canonicalizer using unified StatefulStreamProcessor architecture
 pub struct TerminalCommandCanonicalizer {
@@ -28,7 +44,9 @@ impl TerminalCommandCanonicalizer {
 
 #[async_trait]
 impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = TerminalCommandCanonicalizerConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing terminal command canonicalizer");
         self.context = Some(ctx);
         Ok(())

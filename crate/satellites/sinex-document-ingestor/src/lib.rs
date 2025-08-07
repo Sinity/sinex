@@ -9,6 +9,7 @@ use async_trait::async_trait;
 use camino::Utf8Path;
 use chrono::Utc;
 use color_eyre::eyre::eyre;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_db::models::Event;
 use sinex_satellite_sdk::{
@@ -26,6 +27,29 @@ use sinex_types::events::DocumentIngestedPayload;
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
+
+/// Configuration for Document Processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DocumentProcessorConfig {
+    /// Supported document formats
+    pub supported_formats: Vec<String>,
+    /// Maximum document size in bytes
+    pub max_document_size: u64,
+}
+
+impl Default for DocumentProcessorConfig {
+    fn default() -> Self {
+        Self {
+            supported_formats: vec![
+                "pdf".to_string(),
+                "txt".to_string(),
+                "md".to_string(),
+                "docx".to_string(),
+            ],
+            max_document_size: 100 * 1024 * 1024, // 100MB
+        }
+    }
+}
 
 /// Unified document processor that treats all documents as source material
 pub struct DocumentProcessor {
@@ -142,7 +166,9 @@ fn determine_material_type(mime_type: &str) -> String {
 
 #[async_trait]
 impl StatefulStreamProcessor for DocumentProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = DocumentProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing document processor");
 
         // Initialize stage-as-you-go context for real-time provenance

@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -14,6 +15,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for Search Processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SearchProcessorConfig {
+    /// Search index configuration
+    pub index_settings: HashMap<String, serde_json::Value>,
+}
+
+impl Default for SearchProcessorConfig {
+    fn default() -> Self {
+        Self {
+            index_settings: HashMap::new(),
+        }
+    }
+}
 
 /// Search Processor using unified StatefulStreamProcessor architecture
 pub struct SearchProcessor {
@@ -28,7 +44,9 @@ impl SearchProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for SearchProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = SearchProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing search processor");
         self.context = Some(ctx);
         Ok(())

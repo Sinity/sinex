@@ -26,5 +26,9 @@ pub use test_helpers::*;
 // All payload types
 pub mod payloads;
 
+// Event envelope for type-safe pattern matching
+pub mod event_envelope;
+pub use event_envelope::*;
+
 // Re-export commonly used types at module level
 pub use payloads::*;

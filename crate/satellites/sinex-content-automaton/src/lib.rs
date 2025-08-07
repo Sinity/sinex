@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -14,6 +15,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for Content Processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ContentProcessorConfig {
+    /// Content analysis settings
+    pub analysis_settings: HashMap<String, serde_json::Value>,
+}
+
+impl Default for ContentProcessorConfig {
+    fn default() -> Self {
+        Self {
+            analysis_settings: HashMap::new(),
+        }
+    }
+}
 
 /// Content Processor using unified StatefulStreamProcessor architecture
 pub struct ContentProcessor {
@@ -28,7 +44,9 @@ impl ContentProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for ContentProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = ContentProcessorConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing content processor");
         self.context = Some(ctx);
         Ok(())

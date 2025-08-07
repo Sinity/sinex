@@ -3,6 +3,7 @@
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::Utc;
+use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
@@ -13,6 +14,21 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::info;
+
+/// Configuration for RPC Dispatcher processor
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct RpcDispatcherConfig {
+    /// RPC server configuration
+    pub server_config: HashMap<String, serde_json::Value>,
+}
+
+impl Default for RpcDispatcherConfig {
+    fn default() -> Self {
+        Self {
+            server_config: HashMap::new(),
+        }
+    }
+}
 
 /// RPC Dispatcher Processor using unified StatefulStreamProcessor architecture
 pub struct RpcDispatcherProcessor {
@@ -27,7 +43,9 @@ impl RpcDispatcherProcessor {
 
 #[async_trait]
 impl StatefulStreamProcessor for RpcDispatcherProcessor {
-    async fn initialize(&mut self, ctx: StreamProcessorContext) -> SatelliteResult<()> {
+    type Config = RpcDispatcherConfig;
+
+    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
         info!("Initializing RPC dispatcher processor");
         self.context = Some(ctx);
         Ok(())
