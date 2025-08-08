@@ -29,7 +29,8 @@ macro_rules! create_udev_event {
             serial: $serial,
             properties: $properties,
             timestamp: $timestamp,
-        }).into())
+        })
+        .into())
     };
 }
 

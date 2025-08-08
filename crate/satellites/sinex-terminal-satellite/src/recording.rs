@@ -414,7 +414,8 @@ end
                         chrono::Utc::now().to_rfc3339()
                     },
                     recording_file: path.to_string(),
-                }).into();
+                })
+                .into();
 
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
@@ -445,18 +446,20 @@ end
                         // Emit session ended event
                         let duration = chrono::Utc::now().signed_duration_since(start_time);
 
-                        let event: RawEvent = RawEvent::from_payload(AsciinemaSessionEndedPayload {
-                            session_id: session_id.clone(),
-                            terminal_type: "asciinema".to_string(),
-                            terminal_id: path.to_string(),
-                            end_time: chrono::Utc::now().to_rfc3339(),
-                            duration_seconds: duration.num_milliseconds() as f64 / 1000.0,
-                            event_count: 0, // Would need to count from recording
-                            recording_file: path.to_string(),
-                            file_size_bytes: Some(file_size),
-                            git_annex_path: None,
-                            git_annex_key: None,
-                        }).into();
+                        let event: RawEvent =
+                            RawEvent::from_payload(AsciinemaSessionEndedPayload {
+                                session_id: session_id.clone(),
+                                terminal_type: "asciinema".to_string(),
+                                terminal_id: path.to_string(),
+                                end_time: chrono::Utc::now().to_rfc3339(),
+                                duration_seconds: duration.num_milliseconds() as f64 / 1000.0,
+                                event_count: 0, // Would need to count from recording
+                                recording_file: path.to_string(),
+                                file_size_bytes: Some(file_size),
+                                git_annex_path: None,
+                                git_annex_key: None,
+                            })
+                            .into();
 
                         if tx.send(event).is_err() {
                             warn!("Event channel closed");

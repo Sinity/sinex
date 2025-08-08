@@ -426,7 +426,8 @@ impl ScrollbackWatcher {
             includes_screen: true,
             has_ansi_codes: scrollback.has_ansi_codes,
             timestamp: chrono::Utc::now().to_rfc3339(),
-        }).into();
+        })
+        .into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");

@@ -150,7 +150,8 @@ impl DesktopProcessor {
                 monitoring_active: self.clipboard_watcher.is_some(),
                 last_clipboard_change: None,  // Would need to track this
                 clipboard_content_hash: None, // Would need to hash current clipboard
-            }).into();
+            })
+            .into();
         }
 
         if self.config.window_manager_enabled {
@@ -163,7 +164,8 @@ impl DesktopProcessor {
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
                 total_windows: 0,        // Would need to query WM
-            }).into();
+            })
+            .into();
         }
 
         let state = DesktopState {
@@ -218,7 +220,8 @@ impl DesktopProcessor {
                 clipboard_enabled: self.config.clipboard_enabled,
                 window_manager_enabled: self.config.window_manager_enabled,
                 start_time: Utc::now(),
-            }).into();
+            })
+            .into();
 
             context.emit_event(sample_event).await?;
         }
@@ -246,7 +249,8 @@ impl DesktopProcessor {
                     source: "clipboard".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for desktop events".to_string(),
-                }).into();
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -258,7 +262,8 @@ impl DesktopProcessor {
                     wm_type: self.config.window_manager_type.clone(),
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for window manager events".to_string(),
-                }).into();
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -389,12 +394,14 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent = RawEvent::from_payload(DesktopSnapshotPayload {
-                            active_watchers,
-                            clipboard_enabled: self.config.clipboard_enabled,
-                            window_manager_enabled: self.config.window_manager_enabled,
-                            snapshot_time: Utc::now(),
-                        }).into();
+                        let snapshot_event: RawEvent =
+                            RawEvent::from_payload(DesktopSnapshotPayload {
+                                active_watchers,
+                                clipboard_enabled: self.config.clipboard_enabled,
+                                window_manager_enabled: self.config.window_manager_enabled,
+                                snapshot_time: Utc::now(),
+                            })
+                            .into();
 
                         context.emit_event(snapshot_event).await?;
                     }
@@ -610,11 +617,13 @@ impl ExplorationProvider for DesktopProcessor {
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         // In a real implementation, this would compare desktop state with Sinex events
-        let (start_time, end_time) = time_range.unwrap_or_else(|| {
-            let now = Utc::now();
-            let hour_ago = now - chrono::Duration::hours(1);
-            (hour_ago, now)
-        }).into();
+        let (start_time, end_time) = time_range
+            .unwrap_or_else(|| {
+                let now = Utc::now();
+                let hour_ago = now - chrono::Duration::hours(1);
+                (hour_ago, now)
+            })
+            .into();
 
         let source_total = [
             self.config.clipboard_enabled,
@@ -677,7 +686,8 @@ impl ExplorationProvider for DesktopProcessor {
                 "window_manager_enabled": self.config.window_manager_enabled,
                 "window_manager_type": self.config.window_manager_type,
                 "clipboard_poll_interval_secs": self.config.clipboard_poll_interval_secs
-            }).into();
+            })
+            .into();
 
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(&config_data)?,

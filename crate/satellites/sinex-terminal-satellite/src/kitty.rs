@@ -345,7 +345,8 @@ impl KittyWatcher {
                             .unwrap(),
                         change_timestamp: chrono::Utc::now().to_rfc3339(),
                         working_directory: window.cwd.clone(),
-                    }).into();
+                    })
+                    .into();
 
                 if tx.send(process_event).is_err() {
                     warn!("Event channel closed");
@@ -389,7 +390,8 @@ impl KittyWatcher {
                             kitty_tab_id: window_state.tab_id.clone(),
                             output_lines: Some(last_output.lines().count() as u32),
                             error_output: None, // TODO: Separate stderr capture
-                        }).into();
+                        })
+                        .into();
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
@@ -451,7 +453,8 @@ impl KittyWatcher {
                         tab_index: *index as usize,
                         previous_tab_id: previous_tab_id,
                         focus_timestamp: timestamp,
-                    }).into();
+                    })
+                    .into();
 
                 if tx.send(tab_focused_event).is_err() {
                     warn!("Event channel closed");
@@ -501,7 +504,8 @@ impl KittyWatcher {
                     new_lines: new_lines,
                     line_start_offset: previous_line_count as usize,
                     capture_timestamp: chrono::Utc::now().to_rfc3339(),
-                }).into();
+                })
+                .into();
 
             if tx.send(scrollback_event).is_err() {
                 warn!("Event channel closed");

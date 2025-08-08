@@ -292,7 +292,8 @@ impl DbusWatcher {
                     "path": path,
                 }),
                 timestamp: timestamp.clone(),
-            }).into();
+            })
+            .into();
             Self::send_event(tx, event, "dbus_power_event").await?;
         }
 
@@ -316,7 +317,8 @@ impl DbusWatcher {
                 serial: None,
                 properties: HashMap::new(),
                 timestamp: timestamp.clone(),
-            }).into();
+            })
+            .into();
             Self::send_event(tx, event, "dbus_hardware_event").await?;
         }
 
@@ -331,7 +333,8 @@ impl DbusWatcher {
                 paired: false,
                 trusted: false,
                 timestamp: timestamp.clone(),
-            }).into();
+            })
+            .into();
             Self::send_event(tx, event, "dbus_bluetooth_event").await?;
         }
 
@@ -344,7 +347,8 @@ impl DbusWatcher {
                 ip_address: None,
                 state: "unknown".to_string(),
                 timestamp: timestamp.clone(),
-            }).into();
+            })
+            .into();
             Self::send_event(tx, event, "dbus_network_event").await?;
         }
 
@@ -360,7 +364,8 @@ impl DbusWatcher {
                 uuid: None,
                 size_bytes: None,
                 timestamp: timestamp.clone(),
-            }).into();
+            })
+            .into();
             Self::send_event(tx, event, "dbus_mount_event").await?;
         }
 
@@ -373,7 +378,8 @@ impl DbusWatcher {
             signal: member.to_string(),
             args: args.clone(),
             timestamp,
-        }).into();
+        })
+        .into();
         Self::send_event(tx, event, "dbus_generic_signal").await?;
 
         Ok(())
@@ -402,7 +408,8 @@ impl DbusWatcher {
             method: member.to_string(),
             args: args.clone(),
             timestamp,
-        }).into();
+        })
+        .into();
         Self::send_event(tx, event, "dbus_generic_method_call").await?;
 
         Ok(())

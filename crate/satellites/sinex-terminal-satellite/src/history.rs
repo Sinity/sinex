@@ -167,17 +167,20 @@ impl HistoryWatcher {
             RawEvent::from_payload(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
-            }).into()
+            })
+            .into()
         } else if source_file_str.contains("zsh") {
             RawEvent::from_payload(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
-            }).into()
+            })
+            .into()
         } else {
             RawEvent::from_payload(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
-            }).into()
+            })
+            .into()
         };
 
         Ok(event.with_ts_orig(Some(chrono::Utc::now())))

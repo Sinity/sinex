@@ -370,13 +370,15 @@ impl ClipboardWatcher {
             entry.copy_count += 1;
         } else {
             // Add new entry
-            self.clipboard_history.push_back(ClipboardHistoryEntry {
-                content_hash,
-                _first_seen: now,
-                last_seen: now,
-                _content_type: content_type,
-                copy_count: 1,
-            }).into();
+            self.clipboard_history
+                .push_back(ClipboardHistoryEntry {
+                    content_hash,
+                    _first_seen: now,
+                    last_seen: now,
+                    _content_type: content_type,
+                    copy_count: 1,
+                })
+                .into();
 
             // Trim history if needed
             if self.clipboard_history.len() > self.max_history_entries {
@@ -645,18 +647,19 @@ impl ClipboardWatcher {
             (content.text_preview.clone(), None, None)
         };
 
-        let event: RawEvent = RawEvent::from_payload(sinex_types::events::ClipboardSelectedPayload {
-            selection_type: "primary".to_string(),
-            content_type: content.content_type.clone(),
-            content_size: content.size_bytes,
-            text_preview,
-            source_app: content.source_app.clone(),
-            content_hash: content.hash.clone(),
-            original_hash,
-            annex_key,
-            blob_id,
-        })
-        .with_ts_orig(Some(content.timestamp));
+        let event: RawEvent =
+            RawEvent::from_payload(sinex_types::events::ClipboardSelectedPayload {
+                selection_type: "primary".to_string(),
+                content_type: content.content_type.clone(),
+                content_size: content.size_bytes,
+                text_preview,
+                source_app: content.source_app.clone(),
+                content_hash: content.hash.clone(),
+                original_hash,
+                annex_key,
+                blob_id,
+            })
+            .with_ts_orig(Some(content.timestamp));
 
         Ok(event)
     }

@@ -227,7 +227,8 @@ impl JournalWatcher {
                 time_start: sync_payload.time_start,
                 time_end: sync_payload.time_end,
                 duration_ms: sync_payload.duration_ms,
-            }).into();
+            })
+            .into();
             Self::send_event(tx, sync_event, "journal_sync_event").await?;
         }
 
@@ -530,7 +531,8 @@ impl JournalWatcher {
             facility: payload.facility,
             message: payload.message,
             fields: payload.fields,
-        }).into();
+        })
+        .into();
 
         Ok(Some(event))
     }

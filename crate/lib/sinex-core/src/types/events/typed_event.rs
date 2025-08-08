@@ -5,9 +5,8 @@
 //! event processing while maintaining compatibility with `RawEvent` for
 //! heterogeneous processing scenarios.
 
-use crate::db::models::{
-    JsonValue, OptionalTimestamp, Provenance, RawEvent, SourceMaterial, Timestamp,
-};
+use crate::db::models::event::{JsonValue, OptionalTimestamp, Timestamp};
+use crate::db::models::{Provenance, RawEvent};
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::events::EventPayload;
 use crate::types::{Id, Ulid};
@@ -159,7 +158,7 @@ impl<T: EventPayload> From<Event<T>> for RawEvent {
 
         RawEvent {
             // Convert the ID type - this is safe because the underlying Ulid is the same
-            id: typed.id.map(|id| Id::from(id.into_inner())),
+            id: typed.id.map(|id| Id::from_ulid(*id.as_ulid())),
             source: typed.source,
             event_type: typed.event_type,
             payload: payload_json,
@@ -210,7 +209,7 @@ where
 
         Ok(Event {
             // Convert the ID type - this is safe because the underlying Ulid is the same
-            id: raw.id.map(|id| Id::from(id.into_inner())),
+            id: raw.id.map(|id| Id::from_ulid(*id.as_ulid())),
             source: raw.source,
             event_type: raw.event_type,
             payload,

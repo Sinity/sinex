@@ -255,7 +255,8 @@ impl SystemProcessor {
                 udev_enabled: self.config.udev_enabled,
                 systemd_enabled: self.config.systemd_enabled,
                 start_time: Utc::now(),
-            }).into();
+            })
+            .into();
 
             context.emit_event(sample_event).await?;
         }
@@ -282,7 +283,8 @@ impl SystemProcessor {
                     source: "journal".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Journal can provide historical entries".to_string(),
-                }).into();
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -294,7 +296,8 @@ impl SystemProcessor {
                     source: "systemd".to_string(),
                     scan_type: "historical".to_string(),
                     note: "systemd can provide unit state history".to_string(),
-                }).into();
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -453,14 +456,16 @@ impl StatefulStreamProcessor for SystemProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent = RawEvent::from_payload(SystemSnapshotPayload {
-                            active_watchers,
-                            dbus_enabled: self.config.dbus_enabled,
-                            journal_enabled: self.config.journal_enabled,
-                            udev_enabled: self.config.udev_enabled,
-                            systemd_enabled: self.config.systemd_enabled,
-                            snapshot_time: Utc::now(),
-                        }).into();
+                        let snapshot_event: RawEvent =
+                            RawEvent::from_payload(SystemSnapshotPayload {
+                                active_watchers,
+                                dbus_enabled: self.config.dbus_enabled,
+                                journal_enabled: self.config.journal_enabled,
+                                udev_enabled: self.config.udev_enabled,
+                                systemd_enabled: self.config.systemd_enabled,
+                                snapshot_time: Utc::now(),
+                            })
+                            .into();
 
                         context.emit_event(snapshot_event).await?;
                     }

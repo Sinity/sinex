@@ -99,7 +99,8 @@ impl DocumentProcessor {
                 "mime_type": mime_type,
                 "source_uri": source_uri,
                 "processed_by": "document-ingestor",
-            }).into();
+            })
+            .into();
 
             let source_material_id = stage_context
                 .register_in_flight(&material_type, Some(&source_uri), initial_metadata)
@@ -112,7 +113,8 @@ impl DocumentProcessor {
                 size_bytes: content.len() as u64,
                 mime_type: Some(mime_type.clone()),
                 encoding: None, // TODO: Detect encoding
-            }).into();
+            })
+            .into();
 
             stage_context
                 .emit_event_with_provenance(
