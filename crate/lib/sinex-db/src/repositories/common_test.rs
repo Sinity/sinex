@@ -6,7 +6,7 @@ mod tests {
     use crate::schema::*;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
     use sinex_test_utils::prelude::*;
-    use sinex_types::ulid::Ulid;
+    use sinex_core::types::ulid::Ulid;
 
     #[sinex_test]
     async fn test_enhanced_repository_count_all(ctx: TestContext) -> Result<()> {

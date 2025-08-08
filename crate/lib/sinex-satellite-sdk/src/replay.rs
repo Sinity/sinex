@@ -3,9 +3,9 @@
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
-use sinex_db::{repositories::DbPoolExt, DbPool as PgPool};
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::db::models::Event;
+use sinex_core::db::{repositories::DbPoolExt, DbPool as PgPool};
+use sinex_core::types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -190,7 +190,7 @@ impl ReplayManager {
 
                     // TODO: Add time range query to repository
                     // For now, use search with filters
-                    use sinex_db::repositories::{DbPoolExt, EventSearchFilters};
+                    use sinex_core::db::repositories::{DbPoolExt, EventSearchFilters};
                     self.pool
                         .events()
                         .search(EventSearchFilters {
@@ -225,7 +225,7 @@ impl ReplayManager {
 
                         // TODO: Add time range query with source filter to repository
                         // For now, use search with filters
-                        use sinex_db::repositories::EventSearchFilters;
+                        use sinex_core::db::repositories::EventSearchFilters;
                         self.pool
                             .events()
                             .search(EventSearchFilters {
@@ -258,7 +258,7 @@ impl ReplayManager {
                         // For complex queries, use get_recent and filter
 
                         // get_recent doesn't support offset, use search instead
-                        use sinex_db::repositories::EventSearchFilters;
+                        use sinex_core::db::repositories::EventSearchFilters;
                         self.pool
                             .events()
                             .search(EventSearchFilters {
@@ -284,7 +284,7 @@ impl ReplayManager {
                     // Use get_recent as base query and apply filters
 
                     // get_recent doesn't support offset, use search instead
-                    use sinex_db::repositories::EventSearchFilters;
+                    use sinex_core::db::repositories::EventSearchFilters;
                     self.pool
                         .events()
                         .search(EventSearchFilters {

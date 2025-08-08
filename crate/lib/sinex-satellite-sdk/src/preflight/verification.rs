@@ -11,10 +11,10 @@
 use chrono::Utc;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
-use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
-use sinex_types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
-use sinex_types::Id;
+use sinex_core::db::models::Event;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
+use sinex_core::types::Id;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;

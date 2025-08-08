@@ -5,9 +5,9 @@
 //! and resource coordination across multiple processes/instances.
 
 use crate::DbPool;
-use sinex_types::error::SinexError;
-use sinex_types::utils::ResourceGuard;
-use sinex_types::Result as CoreResult;
+use sinex_core::types::error::SinexError;
+use sinex_core::types::utils::ResourceGuard;
+use sinex_core::types::Result as CoreResult;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;

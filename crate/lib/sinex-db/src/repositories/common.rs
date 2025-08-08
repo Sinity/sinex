@@ -1,9 +1,9 @@
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use serde_json::Value as JsonValue;
-use sinex_types::domain::{EventSource, EventType, HostName};
-use sinex_types::error::{Result as SinexResult, SinexError};
-use sinex_types::ulid::Ulid;
+use sinex_core::types::domain::{EventSource, EventType, HostName};
+use sinex_core::types::error::{Result as SinexResult, SinexError};
+use sinex_core::types::ulid::Ulid;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use uuid::Uuid;
 

@@ -3,7 +3,7 @@
 
 use crate::Result;
 
-use sinex_db::DbPool;
+use sinex_core::db::DbPool;
 use tokio::process::Child;
 
 // Re-export StreamMessage for convenience

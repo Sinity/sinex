@@ -97,7 +97,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -111,8 +111,8 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use sinex_types::error::with_context;
-use sinex_types::validate_path;
+use sinex_core::types::error::with_context;
+use sinex_core::types::validate_path;
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -120,7 +120,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
-// use sinex_types::events::constants::{sources}; // already imported above
+// use sinex_core::types::events::constants::{sources}; // already imported above
 
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

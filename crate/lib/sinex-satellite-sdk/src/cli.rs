@@ -328,7 +328,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
         use crate::grpc_client::IngestClient;
         use crate::nats::config::NatsConfig;
         use crate::stream_processor::{ScanArgs, StreamProcessorRunner};
-        use sinex_db::SqlxPgPool;
+        use sinex_core::db::SqlxPgPool;
 
         // Initialize logging based on verbosity
         let log_level = match args.verbose {

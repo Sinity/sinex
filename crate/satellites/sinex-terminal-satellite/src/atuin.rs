@@ -8,7 +8,7 @@ use chrono::DateTime;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rusqlite::{Connection, Row};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;

@@ -69,7 +69,7 @@
 //! ### Basic Usage
 //!
 //! ```rust
-//! use sinex_types::ulid::Ulid;
+//! use sinex_core::types::ulid::Ulid;
 //!
 //! // Generate new ULID
 //! let id = Ulid::new();
@@ -93,7 +93,7 @@
 //! ```
 //!
 //! ```rust
-//! # use sinex_types::ulid::Ulid;
+//! # use sinex_core::types::ulid::Ulid;
 //! # use sqlx::PgPool;
 //! // Rust side with SQLx
 //! let id = Ulid::new();
@@ -114,7 +114,7 @@
 //! ID generation within the same millisecond:
 //!
 //! ```rust
-//! # use sinex_types::ulid::Ulid;
+//! # use sinex_core::types::ulid::Ulid;
 //! let id1 = Ulid::new();
 //! let id2 = Ulid::new();
 //! let id3 = Ulid::new();

@@ -8,11 +8,11 @@ use crate::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::models::*;
-use sinex_db::DbPool;
+use sinex_core::db::models::*;
+use sinex_core::db::DbPool;
 
 use camino::Utf8Path;
-use sinex_types::error::SinexError;
+use sinex_core::types::error::SinexError;
 use std::collections::HashMap;
 use std::fs;
 
@@ -140,7 +140,7 @@ impl FixtureGenerator {
 
     /// Generate source names
     fn generate_sources(&self) -> Vec<String> {
-        use sinex_types::*;
+        use sinex_core::types::*;
         let base_sources = vec![
             FileCreatedPayload::SOURCE.to_string(),
             KittyCommandExecutedPayload::SOURCE.to_string(),
@@ -163,7 +163,7 @@ impl FixtureGenerator {
 
     /// Generate event types
     fn generate_event_types(&self) -> Vec<String> {
-        use sinex_types::*;
+        use sinex_core::types::*;
         let base_types = vec![
             FileCreatedPayload::EVENT_TYPE.to_string(),
             KittyCommandExecutedPayload::EVENT_TYPE.to_string(),
@@ -203,7 +203,7 @@ impl FixtureGenerator {
         timestamp: DateTime<Utc>,
         index: usize,
     ) -> Event {
-        use sinex_types::*;
+        use sinex_core::types::*;
         let mut payload = HashMap::new();
 
         // Add standard fields
@@ -243,7 +243,7 @@ impl FixtureGenerator {
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        use sinex_types::domain::*;
+        use sinex_core::types::domain::*;
 
         Event::builder()
             .source(EventSource::new(source))
@@ -434,7 +434,7 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
     let metadata: DatasetMetadata = serde_json::from_str(&fs::read_to_string(metadata_path)?)?;
 
     // Check event count
-    use sinex_db::repositories::*;
+    use sinex_core::db::repositories::*;
     let event_count = pool.events().count_all().await?;
 
     if event_count != metadata.event_count as i64 {

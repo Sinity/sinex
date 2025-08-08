@@ -6,7 +6,7 @@
 use crate::{
     grpc_client::IngestClient, nats::publisher::NatsPublisher, SatelliteError, SatelliteResult,
 };
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;

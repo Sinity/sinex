@@ -4,9 +4,9 @@
 
 use camino::Utf8PathBuf;
 use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{
+use sinex_core::types::events::{
     BashHistoricalCommandPayload, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
 };
 use std::collections::HashMap;

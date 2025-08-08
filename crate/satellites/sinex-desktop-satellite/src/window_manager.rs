@@ -90,7 +90,7 @@
 
 use chrono::Utc;
 use serde_json::Value;
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};

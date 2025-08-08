@@ -39,9 +39,9 @@
 
 use crate::{stream_processor::Checkpoint, SatelliteError, SatelliteResult};
 use serde::{Deserialize, Serialize};
-use sinex_db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
-use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-use sinex_types::ulid::Ulid;
+use sinex_core::db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
+use sinex_core::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_core::types::ulid::Ulid;
 use tracing::{debug, info, warn};
 
 // Database record structures for query results

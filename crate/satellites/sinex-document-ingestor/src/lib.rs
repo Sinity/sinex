@@ -11,7 +11,7 @@ use chrono::Utc;
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -23,7 +23,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use sinex_types::events::DocumentIngestedPayload;
+use sinex_core::types::events::DocumentIngestedPayload;
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};

@@ -120,7 +120,7 @@ pub use repositories::{
 
 /// Prelude module for commonly used database types and functions
 pub mod prelude {
-    pub use crate::models::Event;
+    pub use crate::models::RawEvent;
     pub use crate::query_helpers::{
         db_error, from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db,
         ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbUuidCollectionExt,
@@ -134,7 +134,7 @@ pub mod prelude {
         NewSchema, Repository,
     };
     pub use color_eyre::eyre::{eyre, Result};
-    pub use sinex_types::ulid::Ulid;
+    pub use sinex_core::types::ulid::Ulid;
     pub use sqlx::{FromRow, Postgres, Transaction};
 }
 
@@ -155,7 +155,7 @@ pub type DbPoolRef<'a> = &'a PgPool;
 pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from sinex-ulid and add our own
-pub use sinex_types::ulid::Timestamp;
+pub use sinex_core::types::ulid::Timestamp;
 pub type OptionalTimestamp = Option<Timestamp>;
 pub type JsonValue = serde_json::Value;
 
@@ -358,15 +358,15 @@ pub async fn run_migrations(_pool: DbPoolRef<'_>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Event;
+    use crate::models::RawEvent;
     use chrono::Utc;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use sinex_types::ulid::Ulid;
+    use sinex_core::types::ulid::Ulid;
 
     #[sinex_test]
     async fn test_event_creation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        use sinex_types::domain::{EventSource, EventType, HostName};
+        use sinex_core::types::domain::{EventSource, EventType, HostName};
 
         let event = Event::builder()
             .source(EventSource::new("test.source"))
@@ -409,7 +409,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_event_payload_json_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        use sinex_types::domain::{EventSource, EventType, HostName};
+        use sinex_core::types::domain::{EventSource, EventType, HostName};
 
         // Test simple JSON payload
         let simple_payload = json!({"key": "value", "number": 42});
@@ -450,7 +450,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        use sinex_types::domain::{EventSource, EventType, HostName};
+        use sinex_core::types::domain::{EventSource, EventType, HostName};
 
         let now = Utc::now();
         let past = now - chrono::Duration::seconds(3600); // 1 hour ago

@@ -6,13 +6,13 @@
 
 use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
-use crate::models::Event;
+use crate::models::RawEvent;
 use crate::schema::OperationsLog;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-use sinex_types::Id;
+use sinex_core::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_core::types::Id;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 

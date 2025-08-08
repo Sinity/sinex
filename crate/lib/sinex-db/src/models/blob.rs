@@ -5,7 +5,7 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_types::{ulid::Ulid, Id};
+use sinex_core::types::{ulid::Ulid, Id};
 
 /// Blob metadata stored in core.blobs table
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]

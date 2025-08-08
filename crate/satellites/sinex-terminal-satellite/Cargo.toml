@@ -53,8 +53,7 @@ regex = "1.10"
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
-sinex-types = { path = "../../lib/sinex-types", features = ["macros"] }
-sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = ["macros", "telemetry"] }
 
 [features]
 default = []

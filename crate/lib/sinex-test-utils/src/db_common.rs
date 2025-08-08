@@ -47,8 +47,8 @@ use crate::Result;
 
 use camino::Utf8PathBuf;
 use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
-use sinex_db::DbPool;
-use sinex_types::error::SinexError;
+use sinex_core::db::DbPool;
+use sinex_core::types::error::SinexError;
 use std::collections::HashMap;
 
 /// Reset database to clean state by truncating all tables
@@ -421,9 +421,9 @@ mod tests {
         let pool = db.pool();
 
         // Insert some test data
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let new_event = Event::builder()
             .source(EventSource::new("test"))
@@ -455,9 +455,9 @@ mod tests {
         verify_clean_state(pool).await?;
 
         // Add data
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let new_event = Event::builder()
             .source(EventSource::new("test"))
@@ -533,7 +533,7 @@ mod benches {
     // #[sinex_bench]
     // fn bench_reset_populated_database() -> color_eyre::eyre::Result<()> {
     //     // Setup: Insert some data
-    //     use sinex_types::*;
+    //     use sinex_core::types::*;
     //     for i in 0..10 {
     //         let event = EventQueries::insert_event(
     //             "bench".to_string(),
@@ -580,7 +580,7 @@ mod benches {
     //     reset_database(ctx.pool()).await?;
 
     //     // Insert some events
-    //     use sinex_types::*;
+    //     use sinex_core::types::*;
     //     for i in 0..50 {
     //         EventQueries::insert_event(
     //             format!("source_{}", i % 5),

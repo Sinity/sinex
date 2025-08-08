@@ -5,9 +5,9 @@
 
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
 use crate::Result;
-use sinex_db::models::*;
+use sinex_core::db::models::*;
 
-use sinex_types::error::SinexError;
+use sinex_core::types::error::SinexError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -224,7 +224,7 @@ pub struct DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_db::models::*;
+    use sinex_core::db::models::*;
 
     #[tokio::test]
     async fn test_enhanced_event_sender() {

@@ -1,10 +1,10 @@
-use crate::models::Event;
+use crate::models::RawEvent;
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::schema::ProcessorCheckpoints;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sinex_types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
-use sinex_types::Id;
+use sinex_core::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use sinex_core::types::Id;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 /// Checkpoint repository for database operations

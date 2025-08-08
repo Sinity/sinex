@@ -3,7 +3,7 @@
 //! This module implements the system satellite processor supporting snapshot, historical, and
 //! continuous scanning modes for system events.
 
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
@@ -21,7 +21,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteResult,
 };
-use sinex_types::events::{
+use sinex_core::types::events::{
     JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };

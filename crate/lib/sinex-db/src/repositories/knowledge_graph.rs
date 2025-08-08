@@ -2,7 +2,7 @@ use crate::repositories::{common::*, Repository};
 use crate::schema::Entities;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_types::Id;
+use sinex_core::types::Id;
 use sqlx::PgPool;
 
 use crate::models::{Entity, EntityRelation, Event};

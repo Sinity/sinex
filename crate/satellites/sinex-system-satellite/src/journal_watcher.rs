@@ -3,11 +3,11 @@
 //! This module provides systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 
 use crate::payloads::*;
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{
+use sinex_core::types::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload,
 };

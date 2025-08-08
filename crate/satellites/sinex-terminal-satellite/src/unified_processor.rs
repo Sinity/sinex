@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -20,8 +20,8 @@ use sinex_satellite_sdk::{
     },
     SatelliteResult,
 };
-use sinex_types::error::with_context;
-use sinex_types::events::{
+use sinex_core::types::error::with_context;
+use sinex_core::types::events::{
     TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
     TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
 };
@@ -30,7 +30,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
-// use sinex_types::events::constants::{event_types, services}; // already imported above
+// use sinex_core::types::events::constants::{event_types, services}; // already imported above
 
 /// Terminal monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]

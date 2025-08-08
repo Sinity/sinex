@@ -5,8 +5,8 @@
 
 use crate::prelude::*;
 use serde_json::Value;
-use sinex_db::models::*;
-use sinex_types::error::SinexError;
+use sinex_core::db::models::*;
+use sinex_core::types::error::SinexError;
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext
@@ -170,7 +170,7 @@ impl<'ctx> ValidationTester<'ctx> {
         payload: Value,
         expected_error: &str,
     ) -> crate::Result<()> {
-        use sinex_types::domain::*;
+        use sinex_core::types::domain::*;
         let result = self
             .ctx
             .create_test_event(source, event_type, payload)
@@ -187,7 +187,7 @@ impl<'ctx> ValidationTester<'ctx> {
         event_type: &str,
         payload: Value,
     ) -> std::result::Result<Event, SinexError> {
-        use sinex_types::domain::*;
+        use sinex_core::types::domain::*;
         self.ctx
             .create_test_event(source, event_type, payload)
             .await

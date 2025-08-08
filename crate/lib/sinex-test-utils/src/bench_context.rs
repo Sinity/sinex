@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "bench")]
 use crate::bench_results::BenchmarkResult;
-use sinex_db::DbPool;
+use sinex_core::db::DbPool;
 
 /// Global benchmark context for all benchmarks
 #[cfg(feature = "bench")]

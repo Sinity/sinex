@@ -43,20 +43,20 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use color_eyre::eyre::{bail, eyre, Context, Result};
-use sinex_db::models::{Blob, Event};
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::DbPool;
-use sinex_types::events::{
+use sinex_core::db::models::{Blob, Event};
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::DbPool;
+use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
 };
-use sinex_types::{ulid::Ulid, Id};
+use sinex_core::types::{ulid::Ulid, Id};
 use std::time::Instant;
 use tracing::{debug, info};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
 
 // Re-export Blob type for compatibility
-pub use sinex_db::models::Blob as BlobMetadata;
+pub use sinex_core::db::models::Blob as BlobMetadata;
 
 #[derive(Debug)]
 pub struct BlobManager {

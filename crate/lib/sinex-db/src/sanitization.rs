@@ -1,8 +1,8 @@
-use crate::models::Event;
+use crate::models::RawEvent;
 use crate::security::{SecurityError, SecurityValidator};
 use color_eyre::eyre::Result;
 use serde_json::Value;
-use sinex_types::domain::EventSource;
+use sinex_core::types::domain::EventSource;
 use std::borrow::Cow;
 
 /// Event sanitization service that modifies events before storage
@@ -11,7 +11,7 @@ pub struct EventSanitizer;
 impl EventSanitizer {
     /// Sanitize an event before storage, modifying content to prevent security issues
     /// while preserving the original attack data for security analysis
-    pub fn sanitize_event(event: &mut Event) -> Result<bool> {
+    pub fn sanitize_event(event: &mut RawEvent) -> Result<bool> {
         let mut was_modified = false;
 
         // Sanitize the source field (where attacks come through in tests)
@@ -139,10 +139,10 @@ impl EventSanitizer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::Event;
+    use crate::models::RawEvent;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use sinex_types::domain::EventType;
+    use sinex_core::types::domain::EventType;
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {

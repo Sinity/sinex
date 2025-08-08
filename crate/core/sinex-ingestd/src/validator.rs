@@ -2,9 +2,9 @@
 
 use crate::IngestdResult;
 use ahash::AHashMap;
-use sinex_db::models::Event;
-use sinex_db::SqlxPgPool as PgPool;
-use sinex_types::ulid::Ulid;
+use sinex_core::db::models::Event;
+use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::types::ulid::Ulid;
 use sqlx::FromRow;
 use std::sync::Arc;
 use tracing::{debug, info, warn};

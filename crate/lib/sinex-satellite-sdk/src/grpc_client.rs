@@ -5,7 +5,7 @@ use crate::proto::{
     RawEvent as ProtoRawEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tracing::{debug, error, warn};
 

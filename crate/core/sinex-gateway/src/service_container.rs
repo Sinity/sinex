@@ -2,8 +2,8 @@
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::{Context, ContextCompat, Result};
-use sinex_db::create_pool;
-use sinex_db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
+use sinex_core::db::create_pool;
+use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_satellite_sdk::grpc_client::IngestClient;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};

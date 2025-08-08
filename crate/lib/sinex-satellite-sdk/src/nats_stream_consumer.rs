@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use std::collections::HashMap;
 use tokio::time::Duration;
 use tracing::{debug, error, info};

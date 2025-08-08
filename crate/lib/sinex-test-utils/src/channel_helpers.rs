@@ -10,7 +10,7 @@
 
 use crate::Result;
 use async_trait::async_trait;
-use sinex_types::error::SinexError;
+use sinex_core::types::error::SinexError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;

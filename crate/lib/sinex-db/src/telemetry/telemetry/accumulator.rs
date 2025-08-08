@@ -203,12 +203,12 @@
 //! - **Error summaries**: On occurrence or 5 minutes if errors present
 //! - **Daily rollups**: For long-term trending
 
-use crate::models::Event;
+use crate::models::RawEvent;
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use parking_lot::RwLock;
 use serde_json::{json, Value as JsonValue};
-use sinex_types::events::{
+use sinex_core::types::events::{
     ComponentResourceUsagePayload, ErrorsSummaryPayload, EventsProcessedPayload,
     OperationPerformancePayload, SystemResourcesPayload,
 };
@@ -711,7 +711,7 @@ mod tests {
     use color_eyre::eyre::eyre;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use sinex_types::domain::EventType;
+    use sinex_core::types::domain::EventType;
     use std::time::Duration;
     use tokio::sync::mpsc;
 

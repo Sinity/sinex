@@ -47,10 +47,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
-use sinex_db::telemetry::telemetry::TelemetryAccumulator;
-use sinex_db::SqlxPgPool as PgPool;
-use sinex_types::ulid::Ulid;
+use sinex_core::db::models::Event;
+use sinex_core::db::telemetry::telemetry::TelemetryAccumulator;
+use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -132,7 +132,7 @@ impl TimeHorizon {
 /// # Examples
 /// ```
 /// use sinex_satellite_sdk::Checkpoint;
-/// use sinex_types::ulid::Ulid;
+/// use sinex_core::types::ulid::Ulid;
 /// use chrono::Utc;
 ///
 /// // External checkpoint for file position

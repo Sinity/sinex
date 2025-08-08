@@ -6,8 +6,7 @@ authors.workspace = true
 
 [dependencies]
 # Core dependencies
-sinex-types = { path = "../sinex-types" }
-sinex-db = { path = "../sinex-db" }
+sinex-core = { path = "../sinex-core" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 
 # Async runtime

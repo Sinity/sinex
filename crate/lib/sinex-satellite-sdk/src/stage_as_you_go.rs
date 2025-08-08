@@ -55,10 +55,10 @@
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
 use color_eyre::eyre::eyre;
-use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::SqlxPgPool as PgPool;
-use sinex_types::{ulid::Ulid, Id};
+use sinex_core::db::models::Event;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::types::{ulid::Ulid, Id};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
@@ -279,7 +279,7 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
             let offset_end = offset_start + line.len() as i64;
 
             // Create event for this log line
-            use sinex_types::events::LogLinePayload;
+            use sinex_core::types::events::LogLinePayload;
             let event = Event::from_payload(LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,

@@ -23,7 +23,7 @@
 
 use camino::Utf8Path;
 use regex::Regex;
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};

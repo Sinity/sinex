@@ -71,8 +71,8 @@
 use crate::Result;
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
-use sinex_db::DbPool;
-use sinex_types::error::SinexError;
+use sinex_core::db::DbPool;
+use sinex_core::types::error::SinexError;
 
 use sqlx::postgres::PgConnection;
 use sqlx::Connection;
@@ -1057,7 +1057,7 @@ mod tests {
                     let db = acquire_test_database().await?;
 
                     // Each should have clean database
-                    use sinex_db::repositories::*;
+                    use sinex_core::db::repositories::*;
                     let count = db.pool().events().count_all().await?;
                     assert_eq!(count, 0, "Database {} should be clean", i);
 
@@ -1095,9 +1095,9 @@ mod tests {
 
     #[sinex_test]
     async fn test_database_cleanup_on_drop() -> Result<()> {
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let db_name;
 
@@ -1193,9 +1193,9 @@ mod tests {
         let db = acquire_test_database().await?;
 
         // Insert data with foreign key relationships
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let repo = db.pool.events();
         let event_to_insert = Event::builder()
@@ -1254,9 +1254,9 @@ mod tests {
                 let db = acquire_test_database().await?;
 
                 // Do some work
-                use sinex_db::models::*;
-                use sinex_db::repositories::*;
-                use sinex_types::domain::*;
+                use sinex_core::db::models::*;
+                use sinex_core::db::repositories::*;
+                use sinex_core::types::domain::*;
 
                 let repo = db.pool.events();
                 for _j in 0..5 {
@@ -1430,9 +1430,9 @@ mod benches {
         let pool = db.pool();
 
         // Insert test data
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let repo = pool.events();
         for i in 0..100 {
@@ -1477,9 +1477,9 @@ mod benches {
 
         // Insert some varied data
         let pool = db.pool();
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let repo = pool.events();
         for i in 0..50 {

@@ -1,7 +1,7 @@
 //! Content service for managing event content and source material
 
 use crate::error::{ServiceError, ServiceResult};
-use sinex_db::DbPool;
+use sinex_core::db::DbPool;
 use sinex_satellite_sdk::annex::BlobManager;
 use std::sync::Arc;
 

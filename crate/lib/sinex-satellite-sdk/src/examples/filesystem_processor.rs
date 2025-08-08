@@ -19,7 +19,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};

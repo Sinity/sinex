@@ -1,7 +1,7 @@
 //! Analytics service for event analysis and insights
 
 use crate::error::ServiceResult;
-use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
 use std::collections::HashMap;

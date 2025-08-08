@@ -342,7 +342,7 @@ pub use sinex_test_utils_macros::sinex_test;
 pub use color_eyre::eyre::{anyhow, bail, ensure, Context};
 
 // Re-export SinexError
-pub use sinex_types::error::SinexError;
+pub use sinex_core::types::error::SinexError;
 
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
@@ -404,11 +404,11 @@ pub mod prelude {
 
     // Common imports that tests need
     pub use crate::builders::*;
-    pub use sinex_db::models::*;
-    pub use sinex_types::domain::*;
-    pub use sinex_types::error::*;
-    pub use sinex_types::events::*;
-    pub use sinex_types::{Id, Ulid};
+    pub use sinex_core::db::models::*;
+    pub use sinex_core::types::domain::*;
+    pub use sinex_core::types::error::*;
+    pub use sinex_core::types::events::*;
+    pub use sinex_core::types::{Id, Ulid};
     pub use std::time::Duration;
 
     // Path handling
@@ -507,12 +507,12 @@ pub use test_context::TestContext;
 mod tests {
     use super::prelude::*;
     use serde_json::json;
-    use sinex_db::models::*;
-    use sinex_db::repositories::DbPoolExt;
-    use sinex_types::domain::*;
-    use sinex_types::error::*;
-    use sinex_types::events::*;
-    use sinex_types::{Id, Ulid};
+    use sinex_core::db::models::*;
+    use sinex_core::db::repositories::DbPoolExt;
+    use sinex_core::types::domain::*;
+    use sinex_core::types::error::*;
+    use sinex_core::types::events::*;
+    use sinex_core::types::{Id, Ulid};
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
     //

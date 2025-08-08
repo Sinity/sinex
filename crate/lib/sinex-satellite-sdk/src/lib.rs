@@ -241,9 +241,9 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_db::models::Event;
-pub use sinex_types::error::SinexError;
-pub use sinex_types::ulid::Ulid;
+pub use sinex_core::db::models::Event;
+pub use sinex_core::types::error::SinexError;
+pub use sinex_core::types::ulid::Ulid;
 
 /// Result type for satellite operations
 pub type SatelliteResult<T> = std::result::Result<T, SatelliteError>;

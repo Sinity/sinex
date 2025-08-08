@@ -29,9 +29,9 @@ use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
-use sinex_db::models::*;
+use sinex_core::db::models::*;
 
-use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -625,7 +625,7 @@ async fn create_performance_dataset_fixture(
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     // Use source constants from payload types
-    use sinex_types::*;
+    use sinex_core::types::*;
 
     let sources = vec![
         FileCreatedPayload::SOURCE,
@@ -784,7 +784,7 @@ pub(crate) async fn pre_warmed_database(
 }
 
 async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
-    use sinex_types::domain::*;
+    use sinex_core::types::domain::*;
 
     let event_count = 5000;
     let checkpoint_count = 10;

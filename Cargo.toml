@@ -1,9 +1,8 @@
 [workspace]
 members = [
-  # Library crates
-  "crate/lib/sinex-db",
-  "crate/lib/sinex-db/migration",
-  "crate/lib/sinex-types",
+  # Library crates  
+  "crate/lib/sinex-core",
+  "crate/lib/sinex-migrations",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-satellite-sdk",
   "crate/lib/sinex-services",
@@ -188,8 +187,7 @@ publish = false
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests
 sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
-sinex-db = { path = "crate/lib/sinex-db" }
-sinex-types = { path = "crate/lib/sinex-types" }
+sinex-core = { path = "crate/lib/sinex-core" }
 sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Needed for checkpoint property tests
 
 # Core dependencies for tests

@@ -9,8 +9,8 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use serde_json::{json, Value};
-use sinex_db::repositories::DbPoolExt;
-use sinex_types::error::SinexError;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::error::SinexError;
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;

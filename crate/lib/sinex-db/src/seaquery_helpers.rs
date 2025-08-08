@@ -5,7 +5,7 @@
 
 use crate::query_helpers::ulid_to_uuid;
 use sea_query::{Expr, SimpleExpr};
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use sqlx::types::Uuid as SqlxUuid;
 
 /// Extension trait for SeaQuery expressions to work seamlessly with ULIDs

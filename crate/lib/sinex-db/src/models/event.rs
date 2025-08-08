@@ -5,8 +5,8 @@
 //! to be inserted, while an Event with id: Some(...) is a persisted event.
 
 use serde::{Deserialize, Serialize};
-use sinex_types::domain::{EventSource, EventType, HostName};
-use sinex_types::{Id, Ulid};
+use sinex_core::types::domain::{EventSource, EventType, HostName};
+use sinex_core::types::{Id, Ulid};
 
 // Type aliases for timestamp and JSON handling
 pub type Timestamp = chrono::DateTime<chrono::Utc>;

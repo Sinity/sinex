@@ -6,8 +6,8 @@ use crate::repositories::common::{
 use crate::schema::Events;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sinex_types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
-use sinex_types::Id;
+use sinex_core::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
+use sinex_core::types::Id;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 /// Event repository for database operations
@@ -2031,7 +2031,7 @@ mod tests {
     use crate::prelude::*;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use sinex_types::domain::{EventSource, EventType, HostName};
+    use sinex_core::types::domain::{EventSource, EventType, HostName};
 
     #[sinex_test]
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {

@@ -21,7 +21,7 @@
 //! ### Basic Usage
 //!
 //! ```rust
-//! use sinex_types::error::{SinexError, Result};
+//! use sinex_core::types::error::{SinexError, Result};
 //!
 //! fn validate_email(email: &str) -> Result<()> {
 //!     if !email.contains('@') {
@@ -36,7 +36,7 @@
 //! ### With Source Chain
 //!
 //! ```rust
-//! use sinex_types::error::SinexError;
+//! use sinex_core::types::error::SinexError;
 //!
 //! let error = SinexError::service("Request processing failed")
 //!     .with_source("Database connection lost")
@@ -51,7 +51,7 @@
 //! ### Error Categorization
 //!
 //! ```rust
-//! use sinex_types::error::SinexError;
+//! use sinex_core::types::error::SinexError;
 //!
 //! let network_error = SinexError::network("Connection refused");
 //! assert!(network_error.is_retryable());
@@ -65,7 +65,7 @@
 //! ### Integration with anyhow
 //!
 //! ```rust
-//! use sinex_types::error::SinexError;
+//! use sinex_core::types::error::SinexError;
 //! use color_eyre::eyre::Result;
 //!
 //! fn process_data() -> Result<String> {
@@ -99,7 +99,7 @@ use thiserror::Error;
 /// # Examples
 ///
 /// ```rust
-/// use sinex_types::error::SinexError;
+/// use sinex_core::types::error::SinexError;
 ///
 /// // Simple error
 /// let err = SinexError::database("Connection failed");
@@ -206,7 +206,7 @@ impl ErrorDetails {
     /// # Examples
     ///
     /// ```rust
-    /// # use sinex_types::error::ErrorDetails;
+    /// # use sinex_core::types::error::ErrorDetails;
     /// let details = ErrorDetails::new("Connection failed");
     /// ```
     pub fn new(message: impl Into<String>) -> Self {
@@ -225,7 +225,7 @@ impl ErrorDetails {
     /// # Examples
     ///
     /// ```rust
-    /// # use sinex_types::error::ErrorDetails;
+    /// # use sinex_core::types::error::ErrorDetails;
     /// let details = ErrorDetails::new("Query failed")
     ///     .wrap_err_with("table", "users")
     ///     .wrap_err_with("rows_affected", 0);
@@ -244,7 +244,7 @@ impl ErrorDetails {
     /// # Examples
     ///
     /// ```rust
-    /// # use sinex_types::error::ErrorDetails;
+    /// # use sinex_core::types::error::ErrorDetails;
     /// let details = ErrorDetails::new("Service unavailable")
     ///     .with_source("Database connection failed")
     ///     .with_source("Network timeout");
@@ -292,7 +292,7 @@ impl SinexError {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_types::error::SinexError;
+    /// use sinex_core::types::error::SinexError;
     ///
     /// let err = SinexError::database("Connection pool exhausted");
     /// let err = SinexError::database("Query timeout after 30s")
@@ -311,7 +311,7 @@ impl SinexError {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_types::error::SinexError;
+    /// use sinex_core::types::error::SinexError;
     ///
     /// let err = SinexError::validation("Email format invalid")
     ///     .wrap_err_with("field", "email")
@@ -476,7 +476,7 @@ impl SinexError {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_types::error::SinexError;
+    /// use sinex_core::types::error::SinexError;
     ///
     /// assert!(SinexError::timeout("Request timed out").is_retryable());
     /// assert!(SinexError::network("Connection refused").is_retryable());
@@ -501,7 +501,7 @@ impl SinexError {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_types::error::SinexError;
+    /// use sinex_core::types::error::SinexError;
     ///
     /// assert!(SinexError::validation("Invalid email").is_client_error());
     /// assert!(SinexError::not_found("User not found").is_client_error());
@@ -527,7 +527,7 @@ impl SinexError {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_types::error::SinexError;
+    /// use sinex_core::types::error::SinexError;
     ///
     /// assert!(SinexError::permission_denied("Access denied").is_permanent());
     /// assert!(SinexError::configuration("Invalid config").is_permanent());
@@ -557,7 +557,7 @@ impl SinexError {
     /// # Examples
     ///
     /// ```rust
-    /// use sinex_types::error::SinexError;
+    /// use sinex_core::types::error::SinexError;
     ///
     /// assert_eq!(SinexError::validation("Bad input").status_code(), 400);
     /// assert_eq!(SinexError::not_found("Missing").status_code(), 404);
@@ -747,7 +747,7 @@ pub fn deserialize_with_path<T: serde::de::DeserializeOwned>(json_str: &str) -> 
 /// # Examples
 ///
 /// ```rust
-/// use sinex_types::error::{Result, ResultExt, SinexError};
+/// use sinex_core::types::error::{Result, ResultExt, SinexError};
 /// use std::fs;
 ///
 /// fn read_config() -> Result<String> {

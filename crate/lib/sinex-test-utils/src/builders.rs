@@ -8,7 +8,7 @@ use crate::prelude::*;
 use bon::Builder;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_db::{self, repositories::DbPoolExt, DbPool};
+use sinex_core::db::{self, repositories::DbPoolExt, DbPool};
 
 // Test data builders using bon derive macros
 
@@ -60,8 +60,8 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let processor_name = ProcessorName::new(&self.processor_name);
         let group = ConsumerGroup::new(

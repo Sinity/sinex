@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -20,7 +20,7 @@ use sinex_satellite_sdk::{
     },
     SatelliteResult,
 };
-use sinex_types::events::{
+use sinex_core::types::events::{
     ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
     WindowManagerHistoricalPayload,
 };

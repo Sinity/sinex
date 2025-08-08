@@ -21,7 +21,7 @@
 //!
 //! ```rust,no_run
 //! use crate::prelude::*;
-//! use sinex_db::models::Event;
+//! use sinex_core::db::models::Event;
 //!
 //! # async fn example(pool: &DbPool) -> SinexResult<()> {
 //! // Simple query with automatic error context
@@ -81,9 +81,9 @@
 
 use crate::{DbPool, DbPoolRef};
 use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
-use sinex_types::error::{Result as SinexResult, SinexError};
-use sinex_types::ulid::Ulid;
-use sinex_types::{retry, timeouts};
+use sinex_core::types::error::{Result as SinexResult, SinexError};
+use sinex_core::types::ulid::Ulid;
+use sinex_core::types::{retry, timeouts};
 use sqlx::{Error as SqlxError, Postgres, Transaction};
 use std::future::Future;
 use std::time::Duration;

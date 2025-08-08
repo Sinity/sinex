@@ -19,8 +19,7 @@ tracing = "0.1"
 
 # Sinex dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
-sinex-types = { path = "../../lib/sinex-types" }
-sinex-db = { path = "../../lib/sinex-db" }
+sinex-core = { path = "../../lib/sinex-core" }
 
 # File processing
 mime_guess = "2.0"

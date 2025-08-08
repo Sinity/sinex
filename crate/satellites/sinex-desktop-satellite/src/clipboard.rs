@@ -30,10 +30,10 @@
 use camino::Utf8PathBuf;
 use chrono::Utc;
 use copypasta::{ClipboardContext, ClipboardProvider};
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::Timestamp;
+use sinex_core::types::Timestamp;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::process::Command;

@@ -4,8 +4,8 @@
 //! with the database schema registry.
 
 use crate::IngestdResult;
-use sinex_types::events::schema_registry::{generate_all_schemas, get_all_payloads};
-use sinex_types::ulid::Ulid;
+use sinex_core::types::events::schema_registry::{generate_all_schemas, get_all_payloads};
+use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, info};

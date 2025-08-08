@@ -24,7 +24,7 @@ pub use systemd_watcher::{SystemdConfig, SystemdWatcher};
 pub use udev_watcher::UdevWatcher;
 
 // Re-export for convenience
-pub use sinex_db::models::Event;
+pub use sinex_core::db::models::Event;
 
 // Re-export the new unified processor as the primary interface
 pub use unified_processor::{

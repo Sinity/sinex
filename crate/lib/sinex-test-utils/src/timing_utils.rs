@@ -7,9 +7,9 @@
 
 use crate::prelude::*;
 use crate::Result;
-use sinex_db::repositories::*;
-use sinex_types::error::SinexError;
-use sinex_types::*; // Use production primitives from sinex-types
+use sinex_core::db::repositories::*;
+use sinex_core::types::error::SinexError;
+use sinex_core::types::*; // Use production primitives from sinex-types
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;

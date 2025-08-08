@@ -6,7 +6,7 @@
 use chrono::Utc;
 use color_eyre::eyre::{Context, Result};
 use num_traits::ToPrimitive;
-use sinex_types::{ulid::Ulid, Id};
+use sinex_core::types::{ulid::Ulid, Id};
 use sqlx::PgPool;
 use tracing::instrument;
 

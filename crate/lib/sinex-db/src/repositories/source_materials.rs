@@ -8,7 +8,7 @@ use crate::schema::SourceMaterials;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_types::Id;
+use sinex_core::types::Id;
 use sqlx::PgPool;
 
 /// Source material record matching raw.source_material_registry

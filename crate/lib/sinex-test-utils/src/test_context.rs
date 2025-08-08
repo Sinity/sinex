@@ -42,9 +42,9 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_db::models::Event;
-use sinex_db::repositories::{DbPoolExt, EnhancedRepository, Repository};
-use sinex_types::{DbPool, Ulid};
+use sinex_core::db::models::Event;
+use sinex_core::db::repositories::{DbPoolExt, EnhancedRepository, Repository};
+use sinex_core::types::{DbPool, Ulid};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

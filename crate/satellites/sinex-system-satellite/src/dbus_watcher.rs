@@ -8,9 +8,9 @@ use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_db::models::Event;
+use sinex_core::db::models::Event;
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{
+use sinex_core::types::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
