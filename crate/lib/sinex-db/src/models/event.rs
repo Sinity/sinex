@@ -269,20 +269,6 @@ impl Event {
             .payload(serde_json::to_value(&payload).expect("EventPayload must serialize"))
             .build()
     }
-
-    /// Convert this Event to a typed EventEnvelope
-    ///
-    /// This method attempts to deserialize the event's payload into the appropriate
-    /// strongly-typed payload based on the source and event_type combination.
-    /// If deserialization fails or the event type is unknown, returns the
-    /// Unknown variant with the original event data.
-    pub fn to_envelope(&self) -> sinex_types::events::EventEnvelope {
-        sinex_types::events::EventEnvelope::from_parts(
-            self.source.as_str(),
-            self.event_type.as_str(),
-            self.payload.clone(),
-        )
-    }
 }
 
 // Helper function to get hostname
@@ -338,57 +324,5 @@ mod tests {
         assert!(event.is_synthesis_event());
         assert!(!event.is_raw_event());
         assert_eq!(event.get_source_event_ids().unwrap(), &source_ids);
-    }
-
-    #[sinex_test]
-    fn test_to_envelope() {
-        use serde_json::json;
-        use sinex_types::events::{EventEnvelope, FileCreatedPayload};
-
-        // Create an event with a known payload type
-        let event = Event::simple(
-            sinex_types::events::payloads::filesystem::FileCreatedPayload::SOURCE,
-            sinex_types::domain::EventType::new("file.created"),
-            json!({
-                "path": "/test/file.txt",
-                "size": 1024,
-                "created_at": "2024-01-01T00:00:00Z",
-                "permissions": 644
-            }),
-        );
-
-        let envelope = event.to_envelope();
-
-        match envelope {
-            EventEnvelope::FileCreated(payload) => {
-                assert_eq!(payload.path, "/test/file.txt");
-                assert_eq!(payload.size, 1024);
-            }
-            _ => panic!("Expected FileCreated envelope variant"),
-        }
-    }
-
-    #[sinex_test]
-    fn test_to_envelope_unknown() {
-        use serde_json::json;
-        use sinex_types::events::EventEnvelope;
-
-        // Create an event with an unknown payload type
-        let event = Event::simple(
-            sinex_types::domain::EventSource::new("unknown-source"),
-            sinex_types::domain::EventType::new("unknown.type"),
-            json!({"unknown": "data"}),
-        );
-
-        let envelope = event.to_envelope();
-
-        match envelope {
-            EventEnvelope::Unknown(unknown) => {
-                assert_eq!(unknown.source, "unknown-source");
-                assert_eq!(unknown.event_type, "unknown.type");
-                assert_eq!(unknown.payload["unknown"], "data");
-            }
-            _ => panic!("Expected Unknown envelope variant"),
-        }
     }
 }
