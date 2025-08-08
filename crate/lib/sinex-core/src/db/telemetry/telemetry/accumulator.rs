@@ -728,8 +728,8 @@ mod tests {
     use std::time::Duration;
     use tokio::sync::mpsc;
 
-    #[sinex_test]
-    async fn test_telemetry_accumulator_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_telemetry_accumulator_basic() -> color_eyre::eyre::Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("test-component")
             .with_event_sender(tx.clone())
@@ -853,8 +853,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_telemetry_state_reset(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_telemetry_state_reset() -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("reset-test").with_event_sender(tx);
 
@@ -914,7 +914,7 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
+    #[tokio::test]
     #[case("empty", vec![])]
     #[case("single", vec![100.0])]
     #[case("two", vec![50.0, 150.0])]
@@ -973,8 +973,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_telemetry_background_emitter(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_telemetry_background_emitter() -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("background-test")
             .with_event_sender(tx)
@@ -1008,8 +1008,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_system_telemetry_emitter(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_system_telemetry_emitter() -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let emitter = SystemTelemetryEmitter::new(tx).with_interval(Duration::from_millis(100));
 
@@ -1038,8 +1038,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_global_telemetry_integration(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_global_telemetry_integration() -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("global-test").with_event_sender(tx);
 
@@ -1078,8 +1078,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_telemetry_no_data_emission(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_telemetry_no_data_emission() -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("no-data-test").with_event_sender(tx);
 
@@ -1099,8 +1099,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_telemetry_concurrent_recording(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_telemetry_concurrent_recording() -> Result<()> {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let accumulator = TelemetryAccumulator::new("concurrent-test").with_event_sender(tx);
 

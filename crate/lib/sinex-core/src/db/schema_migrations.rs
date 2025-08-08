@@ -110,8 +110,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[sinex_test]
-    async fn test_create_schemas(_ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_create_schemas() -> Result<()> {
         let schemas = create_schemas();
         assert_eq!(schemas.len(), 4);
         assert!(schemas[0].contains("core"));
@@ -121,8 +121,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_create_all_tables(_ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_create_all_tables() -> Result<()> {
         let tables = create_all_tables();
         assert_eq!(tables.len(), 8);
 
@@ -148,8 +148,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_generate_complete_migration(_ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_generate_complete_migration() -> Result<()> {
         let migration = generate_complete_migration();
 
         // Check that migration contains all major components
@@ -164,8 +164,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_existence_queries(_ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_existence_queries() -> Result<()> {
         let table_query = table_exists_query("core", "events");
         assert!(table_query.contains("information_schema.tables"));
         assert!(table_query.contains("table_schema = 'core'"));

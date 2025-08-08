@@ -2033,8 +2033,8 @@ mod tests {
     use serde_json::json;
     use sinex_test_utils::prelude::*;
 
-    #[sinex_test]
-    async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_event_record_insert() -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
         // Create an event
@@ -2060,8 +2060,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_event_record_with_provenance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_event_record_with_provenance() -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
         // Create a source event first

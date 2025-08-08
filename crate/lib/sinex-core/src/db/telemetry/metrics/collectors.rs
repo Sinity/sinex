@@ -475,8 +475,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[sinex_test]
-    async fn test_system_metrics_collector(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_system_metrics_collector() -> color_eyre::eyre::Result<()> {
         let collector =
             SystemMetricsCollector::new("test_system".to_string(), Duration::from_secs(10));
 
@@ -513,8 +513,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_process_metrics_collector(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_process_metrics_collector() -> color_eyre::eyre::Result<()> {
         let collector = ProcessMetricsCollector::new("test_process".to_string());
 
         let metrics = collector.collect();
@@ -549,8 +549,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_metrics_storage(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_metrics_storage() -> color_eyre::eyre::Result<()> {
         // Clear any existing metrics
         METRICS_STORAGE.write().clear();
 
@@ -594,8 +594,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_metric_value_types(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_metric_value_types() -> color_eyre::eyre::Result<()> {
         // Test Summary value
         let summary = SummaryValue {
             count: 100,
@@ -633,8 +633,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_global_collectors_registry(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_global_collectors_registry() -> color_eyre::eyre::Result<()> {
         // Clear any existing collectors
         METRICS_COLLECTORS.write().clear();
 
@@ -673,7 +673,7 @@ mod tests {
     }
 
     #[sinex_test(timeout = 1)]
-    async fn test_background_collector(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    async fn test_background_collector() -> color_eyre::eyre::Result<()> {
         // Clear storage
         METRICS_STORAGE.write().clear();
 
@@ -717,8 +717,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_concurrent_metric_storage(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_concurrent_metric_storage() -> color_eyre::eyre::Result<()> {
         use tokio::task::JoinSet;
 
         // Clear storage

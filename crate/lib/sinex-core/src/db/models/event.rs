@@ -226,8 +226,8 @@ mod tests {
     use super::*;
     use serde_json::json;
 
-    #[sinex_test]
-    fn test_schemaless_event_builder() {
+    #[tokio::test]
+    async fn test_schemaless_event_builder() -> Result<(), Box<dyn std::error::Error>> {
         let event = RawEvent::schemaless()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test.created"))
@@ -240,10 +240,11 @@ mod tests {
         assert!(event.id.is_none());
         assert!(event.is_raw_event());
         assert!(!event.is_persisted());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_simple_constructor() {
+    #[tokio::test]
+    async fn test_simple_constructor() -> Result<(), Box<dyn std::error::Error>> {
         let event = RawEvent::simple(
             EventSource::new("test"),
             EventType::new("test.created"),
@@ -253,10 +254,11 @@ mod tests {
         assert_eq!(event.source.as_str(), "test");
         assert_eq!(event.event_type.as_str(), "test.created");
         assert!(event.id.is_none());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_synthesis_event() {
+    #[tokio::test]
+    async fn test_synthesis_event() -> Result<(), Box<dyn std::error::Error>> {
         let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
         let event = RawEvent::schemaless()
             .source(EventSource::new("processor"))
@@ -269,5 +271,6 @@ mod tests {
         assert!(event.is_synthesis_event());
         assert!(!event.is_raw_event());
         assert_eq!(event.get_source_event_ids().unwrap(), &source_ids);
+        Ok(())
     }
 }

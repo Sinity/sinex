@@ -251,8 +251,8 @@ mod tests {
     use sinex_test_utils::prelude::*;
     use std::time::Duration;
 
-    #[sinex_test]
-    async fn test_advisory_lock_try_acquire(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_advisory_lock_try_acquire() -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
         // First acquisition should succeed
@@ -272,8 +272,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_leadership_pattern(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_leadership_pattern() -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;
 
         // Test basic advisory lock functionality

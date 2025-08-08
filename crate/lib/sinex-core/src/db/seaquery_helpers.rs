@@ -84,8 +84,8 @@ mod tests {
     use super::*;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
-    #[sinex_test]
-    fn test_eq_ulid() {
+    #[tokio::test]
+    async fn test_eq_ulid() -> Result<(), Box<dyn std::error::Error>> {
         let ulid = Ulid::new();
         let query = Query::select()
             .from(Alias::new("events"))
@@ -94,10 +94,11 @@ mod tests {
 
         let (sql, _) = query.build(PostgresQueryBuilder);
         assert!(sql.contains("WHERE"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_in_ulids() {
+    #[tokio::test]
+    async fn test_in_ulids() -> Result<(), Box<dyn std::error::Error>> {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let query = Query::select()
             .from(Alias::new("events"))
@@ -106,5 +107,6 @@ mod tests {
 
         let (sql, _) = query.build(PostgresQueryBuilder);
         assert!(sql.contains("IN"));
+        Ok(())
     }
 }

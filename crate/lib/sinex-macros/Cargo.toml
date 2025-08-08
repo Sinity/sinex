@@ -20,3 +20,6 @@ thiserror = "1.0"
 toml = "0.8"
 tokio = { version = "1.0", features = ["full"] }
 rand = "0.8"
+
+[dev-dependencies]
+sinex-test-utils = { path = "../sinex-test-utils" }

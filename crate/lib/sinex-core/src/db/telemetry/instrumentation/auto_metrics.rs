@@ -308,8 +308,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[sinex_test]
-    async fn test_function_metrics(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_function_metrics() -> color_eyre::eyre::Result<()> {
         // Clear any existing metrics
         FUNCTION_METRICS.write().clear();
 
@@ -341,8 +341,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_function_error_tracking(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_function_error_tracking() -> color_eyre::eyre::Result<()> {
         let metrics = get_function_metrics("error_function", "test_module", HashMap::new());
 
         let initial_errors = metrics.errors.get();
@@ -361,8 +361,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_function_metrics_with_labels(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_function_metrics_with_labels() -> color_eyre::eyre::Result<()> {
         let mut labels = HashMap::new();
         labels.insert("environment".to_string(), "test".to_string());
         labels.insert("version".to_string(), "1.0".to_string());
@@ -383,8 +383,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_memory_usage_tracking(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_memory_usage_tracking() -> color_eyre::eyre::Result<()> {
         let metrics = get_function_metrics("memory_function", "test_module", HashMap::new());
 
         // Record memory usage
@@ -397,8 +397,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_concurrent_function_calls(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_concurrent_function_calls() -> color_eyre::eyre::Result<()> {
         use tokio::task::JoinSet;
 
         let metrics = get_function_metrics("concurrent_function", "test_module", HashMap::new());
@@ -428,8 +428,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_function_metrics_caching(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_function_metrics_caching() -> color_eyre::eyre::Result<()> {
         // First call creates metrics
         let metrics1 = get_function_metrics("cached_function", "test_module", HashMap::new());
 
@@ -446,8 +446,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_drop_behavior(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_drop_behavior() -> color_eyre::eyre::Result<()> {
         let metrics = get_function_metrics("drop_test", "test_module", HashMap::new());
 
         // Test normal drop
@@ -471,13 +471,14 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_track_function_helper() {
+    #[tokio::test]
+    async fn test_track_function_helper() -> Result<(), Box<dyn std::error::Error>> {
         let guard = track_function_call("helper_test", "test_module");
 
         // Guard should be created
         assert_eq!(guard.metrics.name, "helper_test");
         assert_eq!(guard.metrics.module, "test_module");
+        Ok(())
     }
 }
 

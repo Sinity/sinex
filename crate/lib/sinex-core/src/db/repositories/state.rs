@@ -1169,8 +1169,8 @@ mod tests {
 
     use sinex_test_utils::prelude::*;
 
-    #[sinex_test]
-    async fn test_checkpoint_operations(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_checkpoint_operations() -> Result<()> {
         let repo = &ctx.pool.state();
 
         // Create a checkpoint
@@ -1216,8 +1216,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_operation_logging(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_operation_logging() -> Result<()> {
         let repo = &ctx.pool.state();
 
         // Log a successful operation
@@ -1275,8 +1275,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_operation_statistics(ctx: TestContext) -> Result<()> {
+    #[tokio::test]
+    async fn test_operation_statistics() -> Result<()> {
         let repo = &ctx.pool.state();
 
         // Log various operations

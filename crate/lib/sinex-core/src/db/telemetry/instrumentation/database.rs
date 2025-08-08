@@ -261,8 +261,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[sinex_test]
-    async fn test_database_metrics(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_database_metrics() -> color_eyre::eyre::Result<()> {
         // Clear any existing metrics
         DATABASE_METRICS.write().clear();
 
@@ -285,8 +285,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_database_error_tracking(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_database_error_tracking() -> color_eyre::eyre::Result<()> {
         let metrics = get_database_metrics("INSERT", HashMap::new());
 
         let initial_errors = metrics.query_errors.get();
@@ -301,8 +301,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_database_metrics_with_labels(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_database_metrics_with_labels() -> color_eyre::eyre::Result<()> {
         let mut labels = HashMap::new();
         labels.insert("table".to_string(), "events".to_string());
         labels.insert("operation_type".to_string(), "bulk_insert".to_string());
@@ -321,8 +321,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_rows_affected_tracking(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_rows_affected_tracking() -> color_eyre::eyre::Result<()> {
         let metrics = get_database_metrics("UPDATE", HashMap::new());
 
         // Record various row counts
@@ -336,8 +336,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_connection_pool_stats(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_connection_pool_stats() -> color_eyre::eyre::Result<()> {
         let metrics = get_database_metrics("CONNECTION_POOL", HashMap::new());
 
         // Update pool stats
@@ -353,8 +353,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_transaction_metrics(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_transaction_metrics() -> color_eyre::eyre::Result<()> {
         let metrics = get_database_metrics("TRANSACTION", HashMap::new());
 
         // Track successful transaction
@@ -371,8 +371,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_concurrent_database_operations(ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_concurrent_database_operations() -> color_eyre::eyre::Result<()> {
         use tokio::task::JoinSet;
 
         let metrics = get_database_metrics("CONCURRENT_OPS", HashMap::new());
@@ -402,8 +402,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_database_metrics_caching(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_database_metrics_caching() -> color_eyre::eyre::Result<()> {
         // First call creates metrics
         let metrics1 = get_database_metrics("CACHED_OP", HashMap::new());
 
@@ -416,8 +416,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    async fn test_drop_behavior(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
+    #[tokio::test]
+    async fn test_drop_behavior() -> color_eyre::eyre::Result<()> {
         let metrics = get_database_metrics("DROP_TEST", HashMap::new());
 
         // Test automatic completion on drop
@@ -432,12 +432,13 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_track_database_query_helper() {
+    #[tokio::test]
+    async fn test_track_database_query_helper() -> Result<(), Box<dyn std::error::Error>> {
         let guard = track_database_query("TEST_QUERY");
 
         // Guard should be created with proper metrics
         assert_eq!(guard.metrics.operation, "TEST_QUERY");
+        Ok(())
     }
 }
 
