@@ -9,7 +9,7 @@ use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::EventSource;
 use std::collections::HashMap;
@@ -404,13 +404,14 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         "custom_metrics": serde_json::to_value(report)?
     });
 
-    let new_event = Event::from_payload(sinex_types::events::ProcessHeartbeatPayload {
+    let new_event: RawEvent = RawEvent::from_payload(sinex_core::events::ProcessHeartbeatPayload {
         source: "sinex-preflight".to_string(),
         sequence: 1, // Single heartbeat for verification result
         status: status_str.to_string(),
         metrics: Some(metrics),
     })
-    .with_ts_orig(Some(chrono::Utc::now()));
+    .with_ts_orig(Some(chrono::Utc::now()))
+    .into();
     pool.events()
         .insert(new_event)
         .await
@@ -512,7 +513,7 @@ async fn generate_verification_report(
     let end_time = chrono::Utc::now();
     let start_time = end_time - chrono::Duration::hours(24);
 
-    let recent_verifications: Vec<Event> = pool
+    let recent_verifications: Vec<RawEvent> = pool
         .events()
         .get_process_heartbeats(&EventSource::new("sinex-preflight"), start_time, end_time)
         .await

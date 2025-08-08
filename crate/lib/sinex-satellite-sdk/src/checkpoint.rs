@@ -361,7 +361,7 @@ impl CheckpointManager {
 
         let last_processed_id = match &state.checkpoint {
             Checkpoint::Stream { message_id, .. } => {
-                message_id.parse::<sinex_types::ulid::Ulid>().ok()
+                message_id.parse::<sinex_core::ulid::Ulid>().ok()
             }
             _ => None,
         };
@@ -377,7 +377,7 @@ impl CheckpointManager {
                 &consumer_group,
                 &consumer_name,
                 last_processed_id
-                    .map(|id| sinex_types::Id::<sinex_db::models::Event>::from_ulid(id)),
+                    .map(|id| sinex_core::Id::<sinex_core::db::models::RawEvent>::from_ulid(id)),
                 Some(state.last_activity),
                 Some(checkpoint_data),
                 state.data.clone(),

@@ -228,10 +228,9 @@ where
 /// Helper function to get the hostname
 fn get_hostname() -> HostName {
     HostName::new(
-        hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .unwrap_or_else(|| "unknown".to_string()),
+        gethostname::gethostname()
+            .into_string()
+            .unwrap_or_else(|_| "unknown".to_string()),
     )
 }
 

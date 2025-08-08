@@ -6,7 +6,7 @@
 use crate::{
     grpc_client::IngestClient, nats::publisher::NatsPublisher, SatelliteError, SatelliteResult,
 };
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
@@ -49,7 +49,7 @@ impl Default for EventProcessorConfig {
 pub struct EventProcessor {
     transport: EventTransport,
     config: EventProcessorConfig,
-    event_receiver: mpsc::UnboundedReceiver<Event>,
+    event_receiver: mpsc::UnboundedReceiver<RawEvent>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
 }
 
@@ -58,7 +58,7 @@ impl EventProcessor {
     pub fn new(
         transport: EventTransport,
         config: EventProcessorConfig,
-        event_receiver: mpsc::UnboundedReceiver<Event>,
+        event_receiver: mpsc::UnboundedReceiver<RawEvent>,
         shutdown: tokio::sync::oneshot::Receiver<()>,
     ) -> Self {
         Self {
@@ -132,7 +132,7 @@ impl EventProcessor {
     }
 
     /// Send a batch of events
-    async fn send_batch(&mut self, batch: &mut Vec<Event>) {
+    async fn send_batch(&mut self, batch: &mut Vec<RawEvent>) {
         if batch.is_empty() {
             return;
         }
@@ -176,7 +176,7 @@ impl EventProcessor {
     }
 
     /// Send batch via NATS
-    async fn send_batch_nats(publisher: &NatsPublisher, events: &[Event]) -> bool {
+    async fn send_batch_nats(publisher: &NatsPublisher, events: &[RawEvent]) -> bool {
         let mut all_success = true;
 
         for event in events {
@@ -204,7 +204,7 @@ impl EventProcessor {
     }
 
     /// Send batch via gRPC
-    async fn send_batch_grpc(client: &mut IngestClient, events: &[Event]) -> bool {
+    async fn send_batch_grpc(client: &mut IngestClient, events: &[RawEvent]) -> bool {
         match client.ingest_batch(events).await {
             Ok(result) => {
                 if result.success {
@@ -236,7 +236,7 @@ impl EventProcessor {
 pub fn spawn_event_processor(
     transport: EventTransport,
     config: EventProcessorConfig,
-    event_receiver: mpsc::UnboundedReceiver<Event>,
+    event_receiver: mpsc::UnboundedReceiver<RawEvent>,
     shutdown: tokio::sync::oneshot::Receiver<()>,
 ) -> tokio::task::JoinHandle<SatelliteResult<()>> {
     tokio::spawn(async move {

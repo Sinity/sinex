@@ -8,7 +8,7 @@ use super::{
 use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
-use sinex_core::db::models::{Event, Provenance};
+use sinex_core::db::models::{Provenance, RawEvent};
 use sinex_core::types::ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -51,7 +51,7 @@ impl NatsPublisher {
     }
 
     /// Publish a raw event
-    pub async fn publish_event(&self, event: &Event) -> Result<PublishAck> {
+    pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
         let subject =
             StreamManager::event_subject(event.source.as_str(), event.event_type.as_str());
 

@@ -71,9 +71,10 @@ procfs = { version = "0.16", optional = true }
 parking_lot = { version = "0.12", optional = true }
 
 [features]
-default = ["migration", "macros"]
+default = ["migration", "macros", "sqlx"]
 migration = ["dep:sea-orm-migration"]
 macros = ["dep:sinex-macros"]
+sqlx = []
 arbitrary = ["dep:proptest"]
 schema-manager = ["dep:clap", "dep:tracing-subscriber", "dep:sha2"]
 json-schema = []

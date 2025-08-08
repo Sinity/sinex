@@ -241,7 +241,7 @@ pub mod proto {
 }
 
 // Re-export commonly used types from dependencies
-pub use sinex_core::db::models::Event;
+pub use sinex_core::db::models::RawEvent;
 pub use sinex_core::types::error::SinexError;
 pub use sinex_core::types::ulid::Ulid;
 
@@ -295,7 +295,7 @@ pub type SatelliteResult<T> = std::result::Result<T, SatelliteError>;
 /// use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 ///
 /// // Recoverable processing error
-/// fn process_event(event: &Event) -> SatelliteResult<()> {
+/// fn process_event(event: &RawEvent) -> SatelliteResult<()> {
 ///     if event.payload.is_null() {
 ///         return Err(SatelliteError::Processing(
 ///             "Event payload cannot be null".to_string()
@@ -354,48 +354,46 @@ pub enum SatelliteError {
     Lifecycle(String),
 }
 
-impl From<SatelliteError> for sinex_types::error::SinexError {
+impl From<SatelliteError> for sinex_core::error::SinexError {
     fn from(e: SatelliteError) -> Self {
         match e {
             SatelliteError::Config(_) => {
-                sinex_types::error::SinexError::configuration(e.to_string())
+                sinex_core::error::SinexError::configuration(e.to_string())
             }
             SatelliteError::Configuration(_) => {
-                sinex_types::error::SinexError::configuration(e.to_string())
+                sinex_core::error::SinexError::configuration(e.to_string())
             }
-            SatelliteError::Grpc(_) => sinex_types::error::SinexError::unknown(e.to_string()),
+            SatelliteError::Grpc(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::GrpcTransport(_) => {
-                sinex_types::error::SinexError::unknown(e.to_string())
+                sinex_core::error::SinexError::unknown(e.to_string())
             }
-            SatelliteError::Database(_) => sinex_types::error::SinexError::database(e.to_string()),
+            SatelliteError::Database(_) => sinex_core::error::SinexError::database(e.to_string()),
             SatelliteError::Serialization(_) => {
-                sinex_types::error::SinexError::serialization(e.to_string())
+                sinex_core::error::SinexError::serialization(e.to_string())
             }
-            SatelliteError::Io(_) => sinex_types::error::SinexError::io(e.to_string()),
-            SatelliteError::General(_) => sinex_types::error::SinexError::unknown(e.to_string()),
-            SatelliteError::Processing(_) => sinex_types::error::SinexError::unknown(e.to_string()),
-            SatelliteError::Automaton(_) => sinex_types::error::SinexError::unknown(e.to_string()),
-            SatelliteError::Checkpoint(_) => sinex_types::error::SinexError::unknown(e.to_string()),
-            SatelliteError::Lifecycle(_) => sinex_types::error::SinexError::unknown(e.to_string()),
+            SatelliteError::Io(_) => sinex_core::error::SinexError::io(e.to_string()),
+            SatelliteError::General(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::Processing(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::Automaton(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::Checkpoint(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::Lifecycle(_) => sinex_core::error::SinexError::unknown(e.to_string()),
         }
     }
 }
 
-impl From<sinex_types::error::SinexError> for SatelliteError {
-    fn from(e: sinex_types::error::SinexError) -> Self {
+impl From<sinex_core::error::SinexError> for SatelliteError {
+    fn from(e: sinex_core::error::SinexError) -> Self {
         match e {
-            sinex_types::error::SinexError::Configuration(_) => {
+            sinex_core::error::SinexError::Configuration(_) => {
                 SatelliteError::Processing(e.to_string())
             }
-            sinex_types::error::SinexError::Database(_) => {
+            sinex_core::error::SinexError::Database(_) => SatelliteError::Processing(e.to_string()),
+            sinex_core::error::SinexError::Serialization(_) => {
                 SatelliteError::Processing(e.to_string())
             }
-            sinex_types::error::SinexError::Serialization(_) => {
-                SatelliteError::Processing(e.to_string())
-            }
-            sinex_types::error::SinexError::Io(_) => SatelliteError::Processing(e.to_string()),
-            sinex_types::error::SinexError::Unknown(_) => SatelliteError::Processing(e.to_string()),
-            sinex_types::error::SinexError::Validation(_) => {
+            sinex_core::error::SinexError::Io(_) => SatelliteError::Processing(e.to_string()),
+            sinex_core::error::SinexError::Unknown(_) => SatelliteError::Processing(e.to_string()),
+            sinex_core::error::SinexError::Validation(_) => {
                 SatelliteError::Processing(e.to_string())
             }
             _ => SatelliteError::Processing(e.to_string()),

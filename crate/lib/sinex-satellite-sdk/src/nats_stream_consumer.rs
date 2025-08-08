@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use color_eyre::eyre::eyre;
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use std::collections::HashMap;
 use tokio::time::Duration;
 use tracing::{debug, error, info};
@@ -49,7 +49,7 @@ impl EventFilter {
     }
 
     /// Check if an event matches this filter
-    pub fn matches(&self, event: &Event) -> bool {
+    pub fn matches(&self, event: &RawEvent) -> bool {
         // If no filters specified, match everything
         if self.sources.is_empty() && self.event_types.is_empty() {
             return true;
@@ -183,8 +183,10 @@ impl Default for BatchProcessingResult {
 #[async_trait]
 pub trait EventBatchProcessor: Send + Sync {
     /// Process a batch of events
-    async fn process_batch(&mut self, events: Vec<Event>)
-        -> SatelliteResult<BatchProcessingResult>;
+    async fn process_batch(
+        &mut self,
+        events: Vec<RawEvent>,
+    ) -> SatelliteResult<BatchProcessingResult>;
 
     /// Get the event filters for this processor
     fn event_filters(&self) -> Vec<EventFilter> {
@@ -334,7 +336,7 @@ impl NatsStreamConsumer {
     async fn read_batch(
         &self,
         consumer: &async_nats::jetstream::consumer::PullConsumer,
-    ) -> SatelliteResult<Vec<Event>> {
+    ) -> SatelliteResult<Vec<RawEvent>> {
         let mut messages = consumer
             .batch()
             .max_messages(self.config.batch_size)
@@ -400,11 +402,11 @@ impl NatsStreamConsumer {
     fn parse_message(
         &self,
         message: &async_nats::jetstream::Message,
-    ) -> SatelliteResult<Option<Event>> {
+    ) -> SatelliteResult<Option<RawEvent>> {
         let payload = &message.payload;
 
         // Parse the event JSON directly from the message payload
-        match serde_json::from_slice::<Event>(payload) {
+        match serde_json::from_slice::<RawEvent>(payload) {
             Ok(event) => Ok(Some(event)),
             Err(e) => {
                 error!("Failed to deserialize event: {}", e);

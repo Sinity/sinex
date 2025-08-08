@@ -19,7 +19,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use std::collections::HashMap;
 use tokio::fs;
 use tracing::{debug, info, warn};
@@ -127,7 +127,7 @@ impl FilesystemProcessor {
             if emit_events {
                 use std::os::unix::fs::PermissionsExt;
 
-                let event = if metadata.is_file() {
+                let event: RawEvent = if metadata.is_file() {
                     let modified_time = metadata
                         .modified()
                         .ok()
@@ -137,13 +137,14 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::from_payload(sinex_types::events::FileDiscoveredPayload {
+                    RawEvent::from_payload(sinex_core::events::FileDiscoveredPayload {
                         path: entry_path.to_string_lossy().to_string(),
                         size: metadata.len(),
                         modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
                     })
                     .with_ts_orig(Some(chrono::Utc::now()))
+                    .into()
                 } else if metadata.is_dir() {
                     let modified_time = metadata
                         .modified()
@@ -154,11 +155,12 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::from_payload(sinex_types::events::DirDiscoveredPayload {
+                    RawEvent::from_payload(sinex_core::events::DirDiscoveredPayload {
                         path: entry_path.to_string_lossy().to_string(),
                         modified_at: modified_time,
                     })
                     .with_ts_orig(Some(chrono::Utc::now()))
+                    .into()
                 } else {
                     continue;
                 };

@@ -47,7 +47,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_core::db::telemetry::telemetry::TelemetryAccumulator;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
@@ -288,10 +288,10 @@ impl Checkpoint {
 }
 
 /// Stream of events produced by scanning operations
-pub type EventStream = mpsc::UnboundedReceiver<Event>;
+pub type EventStream = mpsc::UnboundedReceiver<RawEvent>;
 
 /// Sender for events during scanning operations
-pub type EventSender = mpsc::UnboundedSender<Event>;
+pub type EventSender = mpsc::UnboundedSender<RawEvent>;
 
 /// Scan operation arguments
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -407,11 +407,12 @@ impl std::fmt::Debug for StreamProcessorContext {
 
 impl StreamProcessorContext {
     /// Send an event through the event channel
-    #[cfg_attr(
-        feature = "macros",
-        sinex_macros::auto_event_metrics(event_type = "emit")
-    )]
-    pub async fn emit_event(&self, event: Event) -> SatelliteResult<()> {
+    // TODO: Fix macro to use sinex_core instead of sinex_db
+    // #[cfg_attr(
+    //     feature = "macros",
+    //     sinex_macros::auto_event_metrics(event_type = "emit")
+    // )]
+    pub async fn emit_event(&self, event: RawEvent) -> SatelliteResult<()> {
         let start = std::time::Instant::now();
         let event_type = event.event_type.clone();
 
@@ -443,7 +444,7 @@ impl StreamProcessorContext {
     }
 
     /// Send multiple events through the event channel
-    pub async fn emit_events(&self, events: Vec<Event>) -> SatelliteResult<()> {
+    pub async fn emit_events(&self, events: Vec<RawEvent>) -> SatelliteResult<()> {
         for event in events {
             self.emit_event(event).await?;
         }
@@ -742,7 +743,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -765,7 +766,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Event>();
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -782,7 +783,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
 
             // Set global telemetry
-            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
 
             // Spawn telemetry emitter
             accumulator.clone().spawn_emitter();
@@ -843,7 +844,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -866,7 +867,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Event>();
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -883,7 +884,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
 
             // Set global telemetry
-            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
 
             // Spawn telemetry emitter
             accumulator.clone().spawn_emitter();
@@ -944,7 +945,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -967,7 +968,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Event>();
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -984,7 +985,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
 
             // Set global telemetry
-            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
 
             // Spawn telemetry emitter
             accumulator.clone().spawn_emitter();
@@ -1062,7 +1063,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         dry_run: bool,
     ) -> SatelliteResult<()> {
         // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<Event>();
+        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
         let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
@@ -1085,7 +1086,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create telemetry accumulator
         let telemetry = if !dry_run {
             // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<Event>();
+            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -1102,7 +1103,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 .with_interval(std::time::Duration::from_secs(300)); // 5 minutes
 
             // Set global telemetry
-            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
 
             // Spawn telemetry emitter
             accumulator.clone().spawn_emitter();
