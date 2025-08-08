@@ -148,7 +148,7 @@ impl HealthAggregator {
         }
 
         // Create synthesis event
-        let event = RawEvent::from_payload(SystemHealthSummaryPayload {
+        let event: RawEvent = RawEvent::from_payload(SystemHealthSummaryPayload {
             overall_status: summary.overall_status,
             healthy_components: summary.healthy_components,
             degraded_components: summary.degraded_components,
@@ -157,7 +157,7 @@ impl HealthAggregator {
             total_components: summary.total_components,
             last_updated: summary.last_updated,
             components: summary.components,
-        });
+        }).into();
 
         info!(
             healthy = summary.healthy_components,

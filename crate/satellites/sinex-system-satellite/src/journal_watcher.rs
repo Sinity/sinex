@@ -219,7 +219,7 @@ impl JournalWatcher {
                 duration_ms: start_time.elapsed().as_millis() as u64,
             };
 
-            let sync_event = RawEvent::from_payload(EventJournalSyncCompletedPayload {
+            let sync_event: RawEvent = RawEvent::from_payload(EventJournalSyncCompletedPayload {
                 sync_type: sync_payload.sync_type,
                 start_cursor: sync_payload.start_cursor,
                 end_cursor: sync_payload.end_cursor,
@@ -227,7 +227,7 @@ impl JournalWatcher {
                 time_start: sync_payload.time_start,
                 time_end: sync_payload.time_end,
                 duration_ms: sync_payload.duration_ms,
-            });
+            }).into();
             Self::send_event(tx, sync_event, "journal_sync_event").await?;
         }
 
@@ -513,7 +513,7 @@ impl JournalWatcher {
             fields,
         };
 
-        let event = RawEvent::from_payload(EventJournalEntryWrittenPayload {
+        let event: RawEvent = RawEvent::from_payload(EventJournalEntryWrittenPayload {
             cursor: payload.cursor,
             timestamp_us: payload.timestamp_us,
             timestamp: payload.timestamp,
@@ -530,7 +530,7 @@ impl JournalWatcher {
             facility: payload.facility,
             message: payload.message,
             fields: payload.fields,
-        });
+        }).into();
 
         Ok(Some(event))
     }

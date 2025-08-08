@@ -405,7 +405,7 @@ impl ScrollbackWatcher {
         };
 
         // Create event
-        let event = RawEvent::from_payload(ShellOutputCapturedPayload {
+        let event: RawEvent = RawEvent::from_payload(ShellOutputCapturedPayload {
             window_id: window.id.to_string(),
             terminal_type: "kitty".to_string(),
             cwd: window.cwd.clone(),
@@ -426,7 +426,7 @@ impl ScrollbackWatcher {
             includes_screen: true,
             has_ansi_codes: scrollback.has_ansi_codes,
             timestamp: chrono::Utc::now().to_rfc3339(),
-        });
+        }).into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");

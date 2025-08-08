@@ -376,7 +376,7 @@ impl ClipboardWatcher {
                 last_seen: now,
                 _content_type: content_type,
                 copy_count: 1,
-            });
+            }).into();
 
             // Trim history if needed
             if self.clipboard_history.len() > self.max_history_entries {
@@ -584,7 +584,7 @@ impl ClipboardWatcher {
 
         let file_count = content.file_paths.as_ref().map(|paths| paths.len());
 
-        let event = RawEvent::from_payload(sinex_types::events::ClipboardCopiedPayload {
+        let event: RawEvent = RawEvent::from_payload(sinex_types::events::ClipboardCopiedPayload {
             operation: operation.to_string(),
             content_type: content.content_type.clone(),
             content_size: content.size_bytes,
@@ -645,7 +645,7 @@ impl ClipboardWatcher {
             (content.text_preview.clone(), None, None)
         };
 
-        let event = RawEvent::from_payload(sinex_types::events::ClipboardSelectedPayload {
+        let event: RawEvent = RawEvent::from_payload(sinex_types::events::ClipboardSelectedPayload {
             selection_type: "primary".to_string(),
             content_type: content.content_type.clone(),
             content_size: content.size_bytes,

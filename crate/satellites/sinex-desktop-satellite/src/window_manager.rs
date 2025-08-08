@@ -265,7 +265,7 @@ impl WindowManagerWatcher {
                     );
                 }
             }
-        });
+        }).into();
     }
 
     /// Discover Hyprland socket paths (both event and command)
@@ -391,7 +391,7 @@ impl WindowManagerWatcher {
             _window_address: window_address,
             _window_class: window_class,
             _window_title: window_title,
-        });
+        }).into();
 
         // Keep only last 100 entries
         if history.len() > 100 {
@@ -524,13 +524,13 @@ impl WindowManagerWatcher {
 
             // Create window focused event
 
-            let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowFocusedPayload {
+            let event: RawEvent = RawEvent::from_payload(sinex_types::events::HyprlandWindowFocusedPayload {
                 window_id: window_address.to_string(),
                 window_class: class.to_string(),
                 window_title: title.to_string(),
                 workspace_id: 0, // TODO: Get actual workspace ID
                 previous_window_id: self.current_focused_window.clone(),
-            });
+            }).into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -558,7 +558,7 @@ impl WindowManagerWatcher {
 
             // Create window opened event
 
-            let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowOpenedPayload {
+            let event: RawEvent = RawEvent::from_payload(sinex_types::events::HyprlandWindowOpenedPayload {
                 window_id: window_address.to_string(),
                 window_class: window_class.to_string(),
                 window_title: window_title.to_string(),
@@ -571,7 +571,7 @@ impl WindowManagerWatcher {
                     height: 0,
                 }, // TODO: Get actual geometry
                 floating: false, // TODO: Get actual floating state
-            });
+            }).into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -606,13 +606,13 @@ impl WindowManagerWatcher {
 
         // Create window closed event
 
-        let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowClosedPayload {
+        let event: RawEvent = RawEvent::from_payload(sinex_types::events::HyprlandWindowClosedPayload {
             window_id: window_address.to_string(),
             window_class: String::new(), // TODO: Get from cache
             window_title: String::new(), // TODO: Get from cache
             workspace_id: 0,             // TODO: Get from cache
             close_reason: None,
-        });
+        }).into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -634,11 +634,11 @@ impl WindowManagerWatcher {
         if let Some((address, workspace)) = data.split_once(',') {
             // Create window moved event
 
-            let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowMovedPayload {
+            let event: RawEvent = RawEvent::from_payload(sinex_types::events::HyprlandWindowMovedPayload {
                 window_address: address.to_string(),
                 new_workspace_id: workspace.parse().unwrap_or(0),
                 moved_at: chrono::Utc::now().to_rfc3339(),
-            });
+            }).into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -663,7 +663,7 @@ impl WindowManagerWatcher {
 
         // Create workspace switched event
 
-        let event = RawEvent::from_payload(sinex_types::events::HyprlandWorkspaceSwitchedPayload {
+        let event: RawEvent = RawEvent::from_payload(sinex_types::events::HyprlandWorkspaceSwitchedPayload {
             from_workspace_id: self
                 .current_workspace
                 .as_ref()
@@ -672,7 +672,7 @@ impl WindowManagerWatcher {
             to_workspace_id: workspace_id.parse().unwrap_or(0),
             monitor_id: 0,          // TODO: Get actual monitor ID
             active_window_id: None, // TODO: Get active window
-        });
+        }).into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -699,7 +699,7 @@ impl WindowManagerWatcher {
                     workspace_id: workspace.parse().unwrap_or(0),
                     previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
                     focused_at: chrono::Utc::now().to_rfc3339(),
-                });
+                }).into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -730,7 +730,7 @@ impl WindowManagerWatcher {
 
         // Create state captured event
 
-        let event = RawEvent::from_payload(sinex_types::events::HyprlandStateCapturedPayload {
+        let event: RawEvent = RawEvent::from_payload(sinex_types::events::HyprlandStateCapturedPayload {
             windows: self
                 .windows
                 .values()
@@ -757,7 +757,7 @@ impl WindowManagerWatcher {
                 .and_then(|m| m.parse().ok())
                 .unwrap_or(0),
             captured_at: chrono::Utc::now().to_rfc3339(),
-        });
+        }).into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");

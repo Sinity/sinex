@@ -170,7 +170,7 @@ impl HealthAggregatorAutomaton {
         };
 
         // Create synthesis event with typed payload
-        let mut synthesis_event = RawEvent::from_payload(SystemHealthSummaryPayload {
+        let mut synthesis_event: RawEvent = RawEvent::from_payload(SystemHealthSummaryPayload {
             overall_status,
             healthy_components: healthy_count,
             degraded_components: degraded_count,
@@ -179,7 +179,7 @@ impl HealthAggregatorAutomaton {
             total_components,
             last_updated: now,
             components: updated_components,
-        });
+        }).into();
         synthesis_event = synthesis_event.with_ts_orig(Some(now));
 
         info!(
@@ -226,11 +226,11 @@ impl HotlogAutomaton for HealthAggregatorAutomaton {
                     "timestamp": component_health.last_heartbeat,
                     "status": component_health.status
                 }
-            });
+            }).into();
 
             return Ok(ProcessingResult::Success {
                 checkpoint_data: Some(checkpoint_data),
-            });
+            }).into();
         }
 
         // For other event types, just skip

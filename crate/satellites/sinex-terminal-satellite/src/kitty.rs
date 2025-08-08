@@ -335,7 +335,7 @@ impl KittyWatcher {
             if process_changed {
                 let previous_process = self.process_states.get(&window_id).cloned();
 
-                let process_event =
+                let process_event: RawEvent =
                     RawEvent::from_payload(sinex_types::events::KittyProcessChangedPayload {
                         kitty_window_id: window_id.clone(),
                         kitty_tab_id: window.parent_tab_id.clone(),
@@ -345,7 +345,7 @@ impl KittyWatcher {
                             .unwrap(),
                         change_timestamp: chrono::Utc::now().to_rfc3339(),
                         working_directory: window.cwd.clone(),
-                    });
+                    }).into();
 
                 if tx.send(process_event).is_err() {
                     warn!("Event channel closed");
@@ -378,7 +378,7 @@ impl KittyWatcher {
                     // Create command completion event with both command and output
                     // Create command completion event
 
-                    let completion_event =
+                    let completion_event: RawEvent =
                         RawEvent::from_payload(sinex_types::events::KittyCommandCompletedPayload {
                             command: command_text.clone(),
                             working_directory: window.cwd.clone().unwrap_or_default(),
@@ -389,7 +389,7 @@ impl KittyWatcher {
                             kitty_tab_id: window_state.tab_id.clone(),
                             output_lines: Some(last_output.lines().count() as u32),
                             error_output: None, // TODO: Separate stderr capture
-                        });
+                        }).into();
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
@@ -443,7 +443,7 @@ impl KittyWatcher {
                 // Emit tab focused event
                 // Create tab focused event
 
-                let tab_focused_event =
+                let tab_focused_event: RawEvent =
                     RawEvent::from_payload(sinex_types::events::KittyTabFocusedPayload {
                         kitty_tab_id: focused_tab_id.clone(),
                         kitty_window_id: "unknown".to_string(),
@@ -451,7 +451,7 @@ impl KittyWatcher {
                         tab_index: *index as usize,
                         previous_tab_id: previous_tab_id,
                         focus_timestamp: timestamp,
-                    });
+                    }).into();
 
                 if tx.send(tab_focused_event).is_err() {
                     warn!("Event channel closed");
@@ -495,13 +495,13 @@ impl KittyWatcher {
 
             // Create content streamed event
 
-            let scrollback_event =
+            let scrollback_event: RawEvent =
                 RawEvent::from_payload(sinex_types::events::KittyContentStreamedPayload {
                     kitty_window_id: window_id.clone(),
                     new_lines: new_lines,
                     line_start_offset: previous_line_count as usize,
                     capture_timestamp: chrono::Utc::now().to_rfc3339(),
-                });
+                }).into();
 
             if tx.send(scrollback_event).is_err() {
                 warn!("Event channel closed");

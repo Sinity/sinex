@@ -99,20 +99,20 @@ impl DocumentProcessor {
                 "mime_type": mime_type,
                 "source_uri": source_uri,
                 "processed_by": "document-ingestor",
-            });
+            }).into();
 
             let source_material_id = stage_context
                 .register_in_flight(&material_type, Some(&source_uri), initial_metadata)
                 .await?;
 
             // Step 2: Create and emit document.ingested event with provenance
-            let event = RawEvent::from_payload(DocumentIngestedPayload {
+            let event: RawEvent = RawEvent::from_payload(DocumentIngestedPayload {
                 file_path: file_path.to_string(),
                 source_material_id: source_material_id.to_string(),
                 size_bytes: content.len() as u64,
                 mime_type: Some(mime_type.clone()),
                 encoding: None, // TODO: Detect encoding
-            });
+            }).into();
 
             stage_context
                 .emit_event_with_provenance(

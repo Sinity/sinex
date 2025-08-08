@@ -163,21 +163,21 @@ impl HistoryWatcher {
     ) -> SatelliteResult<Event> {
         let source_file_str = source_file.to_string();
 
-        let event = if source_file_str.contains("fish") {
+        let event: RawEvent = if source_file_str.contains("fish") {
             RawEvent::from_payload(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
-            })
+            }).into()
         } else if source_file_str.contains("zsh") {
             RawEvent::from_payload(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
-            })
+            }).into()
         } else {
             RawEvent::from_payload(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
-            })
+            }).into()
         };
 
         Ok(event.with_ts_orig(Some(chrono::Utc::now())))

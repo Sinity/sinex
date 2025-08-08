@@ -95,7 +95,7 @@ impl SystemdWatcher {
                     description: description.to_string(),
                     action: "status_check".to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
-                }));
+                }).into());
             }
         }
 
@@ -111,14 +111,14 @@ impl SystemdWatcher {
                     main_pid: None,
                     active_state: status.to_string(),
                     sub_state: status_part.to_string(),
-                })),
+                }).into()),
                 "inactive" => Some(RawEvent::from_payload(SystemdUnitStoppedPayload {
                     unit_name: "unknown".to_string(),
                     unit_type: "unknown".to_string(),
                     exit_code: None,
                     active_state: status.to_string(),
                     sub_state: status_part.to_string(),
-                })),
+                }).into()),
                 "failed" => Some(RawEvent::from_payload(SystemdUnitFailedPayload {
                     unit_name: "unknown".to_string(),
                     message: status_part.to_string(),
@@ -127,22 +127,22 @@ impl SystemdWatcher {
                     uid: None,
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     journal_timestamp: None,
-                })),
+                }).into()),
                 "activating" => Some(RawEvent::from_payload(SystemdUnitStartingPayload {
                     status: status.to_string(),
                     status_detail: status_part.to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
-                })),
+                }).into()),
                 "deactivating" => Some(RawEvent::from_payload(SystemdUnitStoppingPayload {
                     status: status.to_string(),
                     status_detail: status_part.to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
-                })),
+                }).into()),
                 _ => Some(RawEvent::from_payload(SystemdUnitStateChangedPayload {
                     status: status.to_string(),
                     status_detail: status_part.to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
-                })),
+                }).into()),
             };
         }
 
@@ -319,7 +319,7 @@ impl SystemdWatcher {
                         main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
                         active_state: "active".to_string(),
                         sub_state: "running".to_string(),
-                    }))
+                    }).into())
                 } else if message.contains("Stopped ") {
                     let unit_type = unit_name
                         .map(|n| {
@@ -341,7 +341,7 @@ impl SystemdWatcher {
                         exit_code: None,
                         active_state: "inactive".to_string(),
                         sub_state: "dead".to_string(),
-                    }))
+                    }).into())
                 } else if message.contains("Failed ") {
                     Some(RawEvent::from_payload(SystemdUnitFailedPayload {
                         unit_name: unit_name.unwrap_or("unknown").to_string(),
@@ -351,7 +351,7 @@ impl SystemdWatcher {
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: chrono::Utc::now().to_rfc3339(),
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
-                    }))
+                    }).into())
                 } else if message.contains("Reloaded ") {
                     Some(RawEvent::from_payload(SystemdUnitReloadedPayload {
                         unit_name: unit_name.map(String::from),
@@ -361,7 +361,7 @@ impl SystemdWatcher {
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: chrono::Utc::now().to_rfc3339(),
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
-                    }))
+                    }).into())
                 } else if message.contains("Triggered ") {
                     Some(RawEvent::from_payload(SystemdTimerTriggeredPayload {
                         unit_name: unit_name.map(String::from),
@@ -371,7 +371,7 @@ impl SystemdWatcher {
                         uid: entry["_UID"].as_str().map(String::from),
                         timestamp: chrono::Utc::now().to_rfc3339(),
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
-                    }))
+                    }).into())
                 } else {
                     None // Not a state change we care about
                 }

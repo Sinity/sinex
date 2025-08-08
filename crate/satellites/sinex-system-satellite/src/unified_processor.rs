@@ -249,13 +249,13 @@ impl SystemProcessor {
             info!("System monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event = RawEvent::from_payload(SystemMonitoringStartedPayload {
+            let sample_event: RawEvent = RawEvent::from_payload(SystemMonitoringStartedPayload {
                 dbus_enabled: self.config.dbus_enabled,
                 journal_enabled: self.config.journal_enabled,
                 udev_enabled: self.config.udev_enabled,
                 systemd_enabled: self.config.systemd_enabled,
                 start_time: Utc::now(),
-            });
+            }).into();
 
             context.emit_event(sample_event).await?;
         }
@@ -278,11 +278,11 @@ impl SystemProcessor {
         if let Some(ref context) = self.context {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
-                let event = RawEvent::from_payload(JournaldHistoricalPayload {
+                let event: RawEvent = RawEvent::from_payload(JournaldHistoricalPayload {
                     source: "journal".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Journal can provide historical entries".to_string(),
-                });
+                }).into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -290,11 +290,11 @@ impl SystemProcessor {
 
             // systemd can provide unit state history
             if self.config.systemd_enabled && emit_events {
-                let event = RawEvent::from_payload(SystemdUnitsHistoricalPayload {
+                let event: RawEvent = RawEvent::from_payload(SystemdUnitsHistoricalPayload {
                     source: "systemd".to_string(),
                     scan_type: "historical".to_string(),
                     note: "systemd can provide unit state history".to_string(),
-                });
+                }).into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -302,11 +302,11 @@ impl SystemProcessor {
 
             // D-Bus and udev are typically real-time only
             if (self.config.dbus_enabled || self.config.udev_enabled) && emit_events {
-                let event = RawEvent::from_payload(UdevDeviceHistoricalPayload {
+                let event: RawEvent = RawEvent::from_payload(UdevDeviceHistoricalPayload {
                     sources: vec!["dbus".to_string(), "udev".to_string()],
                     scan_type: "historical".to_string(),
                     note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
-                });
+                }).into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -453,14 +453,14 @@ impl StatefulStreamProcessor for SystemProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = RawEvent::from_payload(SystemSnapshotPayload {
+                        let snapshot_event: RawEvent = RawEvent::from_payload(SystemSnapshotPayload {
                             active_watchers,
                             dbus_enabled: self.config.dbus_enabled,
                             journal_enabled: self.config.journal_enabled,
                             udev_enabled: self.config.udev_enabled,
                             systemd_enabled: self.config.systemd_enabled,
                             snapshot_time: Utc::now(),
-                        });
+                        }).into();
 
                         context.emit_event(snapshot_event).await?;
                     }

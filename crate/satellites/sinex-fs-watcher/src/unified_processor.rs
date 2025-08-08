@@ -533,18 +533,18 @@ impl FilesystemProcessor {
         let mut events = Vec::new();
 
         if metadata.is_file() {
-            let event = RawEvent::from_payload(sinex_types::events::FileDiscoveredPayload {
+            let event: RawEvent = RawEvent::from_payload(sinex_types::events::FileDiscoveredPayload {
                 path: path_str.to_string(),
                 size: metadata.len(),
                 modified_at: Utc::now(),
                 permissions: Self::get_permissions(metadata),
-            });
+            }).into();
             events.push(event);
         } else if metadata.is_dir() {
-            let event = RawEvent::from_payload(sinex_types::events::DirDiscoveredPayload {
+            let event: RawEvent = RawEvent::from_payload(sinex_types::events::DirDiscoveredPayload {
                 path: path_str.to_string(),
                 modified_at: Utc::now(),
-            });
+            }).into();
             events.push(event);
         }
 
