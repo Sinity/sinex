@@ -693,12 +693,13 @@ impl WindowManagerWatcher {
         if let Some((monitor, workspace)) = data.split_once(',') {
             // Create monitor focused event
 
-            let event = RawEvent::from_payload(sinex_types::events::HyprlandMonitorFocusedPayload {
-                monitor_id: monitor.parse().unwrap_or(0),
-                workspace_id: workspace.parse().unwrap_or(0),
-                previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
-                focused_at: chrono::Utc::now().to_rfc3339(),
-            });
+            let event =
+                RawEvent::from_payload(sinex_types::events::HyprlandMonitorFocusedPayload {
+                    monitor_id: monitor.parse().unwrap_or(0),
+                    workspace_id: workspace.parse().unwrap_or(0),
+                    previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
+                    focused_at: chrono::Utc::now().to_rfc3339(),
+                });
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");

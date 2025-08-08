@@ -432,13 +432,16 @@ impl TelemetryAccumulator {
                 // The event_counts map has event types as keys
                 let events_per_type = state.event_counts.clone();
 
-                events.push(RawEvent::from_payload(EventsProcessedPayload {
-                    time_range_seconds: period_seconds,
-                    total_events,
-                    events_per_source,
-                    events_per_type,
-                    processing_rate,
-                }));
+                events.push(
+                    RawEvent::from_payload(EventsProcessedPayload {
+                        time_range_seconds: period_seconds,
+                        total_events,
+                        events_per_source,
+                        events_per_type,
+                        processing_rate,
+                    })
+                    .into(),
+                );
             }
 
             // Emit operation performance telemetry
@@ -455,14 +458,17 @@ impl TelemetryAccumulator {
                     metrics.insert("count".to_string(), json!(latencies.len()));
                     metrics.insert("duration_ms".to_string(), percentiles);
 
-                    events.push(RawEvent::from_payload(OperationPerformancePayload {
-                        operation_name: operation.clone(),
-                        duration_ms: avg_duration as u64,
-                        items_processed: latencies.len() as u64,
-                        success: true,
-                        error: None,
-                        metrics,
-                    }));
+                    events.push(
+                        RawEvent::from_payload(OperationPerformancePayload {
+                            operation_name: operation.clone(),
+                            duration_ms: avg_duration as u64,
+                            items_processed: latencies.len() as u64,
+                            success: true,
+                            error: None,
+                            metrics,
+                        })
+                        .into(),
+                    );
                 }
             }
 
@@ -479,12 +485,15 @@ impl TelemetryAccumulator {
                     "peak": state.cpu_samples.iter().fold(0.0_f64, |a, &b| a.max(b)),
                 });
 
-                events.push(RawEvent::from_payload(ComponentResourceUsagePayload {
-                    component: self.component.clone(),
-                    period_seconds,
-                    memory_mb,
-                    cpu_percent,
-                }));
+                events.push(
+                    RawEvent::from_payload(ComponentResourceUsagePayload {
+                        component: self.component.clone(),
+                        period_seconds,
+                        memory_mb,
+                        cpu_percent,
+                    })
+                    .into(),
+                );
             }
 
             // Emit error telemetry
@@ -504,13 +513,16 @@ impl TelemetryAccumulator {
                 let mut errors_by_component = HashMap::new();
                 errors_by_component.insert(self.component.clone(), total_errors);
 
-                events.push(RawEvent::from_payload(ErrorsSummaryPayload {
-                    time_range_seconds: period_seconds,
-                    total_errors,
-                    errors_by_severity,
-                    errors_by_component,
-                    error_rate,
-                }));
+                events.push(
+                    RawEvent::from_payload(ErrorsSummaryPayload {
+                        time_range_seconds: period_seconds,
+                        total_errors,
+                        errors_by_severity,
+                        errors_by_component,
+                        error_rate,
+                    })
+                    .into(),
+                );
             }
 
             // Reset state for next period
@@ -621,7 +633,7 @@ impl SystemTelemetryEmitter {
     pub async fn emit_system_resources(&self) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: Implement actual system resource collection using sysinfo crate
         // For now, emit placeholder data
-        let event = RawEvent::from_payload(SystemResourcesPayload {
+        let event: RawEvent = RawEvent::from_payload(SystemResourcesPayload {
             cpu_usage_percent: 0.0,
             memory_usage_bytes: 0,
             memory_total_bytes: 0,
@@ -630,7 +642,8 @@ impl SystemTelemetryEmitter {
             open_file_descriptors: 0,
             network_bytes_sent: 0,
             network_bytes_received: 0,
-        });
+        })
+        .into();
 
         self.event_sender.send(event)?;
         Ok(())

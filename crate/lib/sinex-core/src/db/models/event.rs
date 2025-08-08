@@ -262,12 +262,10 @@ impl RawEvent {
     /// 3. Restore schema_id lookup functionality
     /// 4. Restore ingestor_version tracking
     /// 5. Ensure ts_ingest is properly initialized
-    pub fn from_payload<P: crate::types::events::EventPayload>(payload: P) -> Self {
-        RawEvent::builder()
-            .source(P::SOURCE)
-            .event_type(P::EVENT_TYPE)
-            .payload(serde_json::to_value(&payload).expect("EventPayload must serialize"))
-            .build()
+    pub fn from_payload<P: crate::types::events::EventPayload>(
+        payload: P,
+    ) -> crate::types::events::Event<P> {
+        crate::types::events::Event::from_payload(payload)
     }
 }
 

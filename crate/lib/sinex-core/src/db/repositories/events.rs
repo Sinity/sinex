@@ -1,5 +1,5 @@
 use crate::db::schema::Events;
-use crate::models::{RawEvent, Provenance, SourceMaterial};
+use crate::models::{Provenance, RawEvent, SourceMaterial};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,

@@ -7,6 +7,10 @@
 mod event_payload;
 pub use event_payload::*;
 
+// Typed event representation
+mod typed_event;
+pub use typed_event::Event;
+
 // Blanket implementations
 mod blanket_impls;
 
