@@ -11,10 +11,7 @@ use std::str::FromStr;
 
 /// Macro to define a new string type with common implementations
 macro_rules! define_string_type {
-    (
-        $(#[$meta:meta])*
-        $name:ident
-    ) => {
+    ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
@@ -92,10 +89,7 @@ macro_rules! define_string_type {
 /// Macro to define a new string type that requires validation
 /// This version has a fallible FromStr implementation
 macro_rules! define_validated_string_type {
-    (
-        $(#[$meta:meta])*
-        $name:ident
-    ) => {
+    ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
         #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
         #[serde(transparent)]
@@ -208,148 +202,148 @@ macro_rules! impl_sqlx_for_string_type {
 }
 
 // Core event types
-define_string_type! {
-    /// The source of an event (e.g., "fs-watcher", "terminal", "desktop")
+define_string_type!(
+    #[doc = "The source of an event (e.g., `fs-watcher`, `terminal`, `desktop`)"]
     EventSource
-}
+);
 
-define_string_type! {
-    /// The type of an event (e.g., "file.created", "command.executed")
+define_string_type!(
+    #[doc = "The type of an event (e.g., `file.created`, `command.executed`)"]
     EventType
-}
+);
 
-define_string_type! {
-    /// The hostname where an event occurred
+define_string_type!(
+    #[doc = "The hostname where an event occurred"]
     HostName
-}
+);
 
-define_string_type! {
-    /// The name of an ingestor service
+define_string_type!(
+    #[doc = "The name of an ingestor service"]
     IngestorName
-}
+);
 
-define_string_type! {
-    /// The name of a processor/automaton
+define_string_type!(
+    #[doc = "The name of a processor/automaton"]
     ProcessorName
-}
+);
 
-define_string_type! {
-    /// A version string for a schema
+define_string_type!(
+    #[doc = "A version string for a schema"]
     SchemaVersion
-}
+);
 
-define_string_type! {
-    /// A schema name
+define_string_type!(
+    #[doc = "A schema name"]
     SchemaName
-}
+);
 
 // Command and shell types
-define_string_type! {
-    /// A command line text
+define_string_type!(
+    #[doc = "A command line text"]
     CommandText
-}
+);
 
-define_string_type! {
-    /// A shell name (e.g., "bash", "zsh", "fish")
+define_string_type!(
+    #[doc = "A shell name (e.g., `bash`, `zsh`, `fish`)"]
     ShellName
-}
+);
 
 // Network types
-define_string_type! {
-    /// A network hostname
+define_string_type!(
+    #[doc = "A network hostname"]
     Hostname
-}
+);
 
-define_string_type! {
-    /// An IP address string
+define_string_type!(
+    #[doc = "An IP address string"]
     IpAddress
-}
+);
 
 // Git types
-define_string_type! {
-    /// A git commit hash
+define_string_type!(
+    #[doc = "A git commit hash"]
     CommitHash
-}
+);
 
-define_string_type! {
-    /// A git branch name
+define_string_type!(
+    #[doc = "A git branch name"]
     BranchName
-}
+);
 
-define_string_type! {
-    /// A git remote name
+define_string_type!(
+    #[doc = "A git remote name"]
     RemoteName
-}
+);
 
 // Pattern types
-define_string_type! {
-    /// A glob pattern for file matching
+define_string_type!(
+    #[doc = "A glob pattern for file matching"]
     GlobPattern
-}
+);
 
-define_string_type! {
-    /// A regex pattern
+define_string_type!(
+    #[doc = "A regex pattern"]
     RegexPattern
-}
+);
 
 // Consumer group types for processors
-define_string_type! {
-    /// A consumer group name for distributed processing
+define_string_type!(
+    #[doc = "A consumer group name for distributed processing"]
     ConsumerGroup
-}
+);
 
-define_string_type! {
-    /// A consumer name within a group
+define_string_type!(
+    #[doc = "A consumer name within a group"]
     ConsumerName
-}
+);
 
 // Path and URI types
-define_validated_string_type! {
-    /// A path that has been validated and cleaned
+define_validated_string_type!(
+    #[doc = "A path that has been validated and cleaned"]
     SanitizedPath
-}
+);
 
-define_validated_string_type! {
-    /// A path known to be relative
+define_validated_string_type!(
+    #[doc = "A path known to be relative"]
     RelativePath
-}
+);
 
-define_validated_string_type! {
-    /// A URI that is guaranteed to be absolute
+define_validated_string_type!(
+    #[doc = "A URI that is guaranteed to be absolute"]
     AbsoluteUri
-}
+);
 
 // Hash types
-define_validated_string_type! {
-    /// BLAKE3 hash (64 hex characters)
+define_validated_string_type!(
+    #[doc = "BLAKE3 hash (64 hex characters)"]
     Blake3Hash
-}
+);
 
-define_validated_string_type! {
-    /// SHA256 hash (64 hex characters)
+define_validated_string_type!(
+    #[doc = "SHA256 hash (64 hex characters)"]
     Sha256Hash
-}
+);
 
 // Semantic identifiers
-define_string_type! {
-    /// Service identification
+define_string_type!(
+    #[doc = "Service identification"]
     ServiceName
-}
+);
 
-define_string_type! {
-    /// Background job identifiers
+define_string_type!(
+    #[doc = "Background job identifiers"]
     JobId
-}
+);
 
-define_validated_string_type! {
-    /// Git-annex keys
+define_validated_string_type!(
+    #[doc = "Git-annex keys"]
     AnnexKey
-}
+);
 
-define_validated_string_type! {
-    /// NATS subjects
+define_validated_string_type!(
+    #[doc = "NATS subjects"]
     NatsSubject
-}
+);
 
 // Validation for specific types
 impl EventType {
