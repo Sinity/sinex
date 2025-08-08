@@ -125,9 +125,33 @@ impl Provenance {
 }
 
 impl RawEvent {
-    /// Create a builder for schemaless/external events
-    pub fn schemaless() -> RawEventBuilder {
-        RawEvent::builder()
+    /// Create a schemaless/external event with minimal required fields
+    ///
+    /// This creates a RawEvent that can be chained with `with_*` methods:
+    /// ```ignore
+    /// let event = RawEvent::schemaless(source, event_type, payload)
+    ///     .with_ts_orig(Some(timestamp))
+    ///     .with_provenance(provenance);
+    /// ```
+    pub fn schemaless(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: JsonValue,
+    ) -> Self {
+        RawEvent {
+            id: None,
+            source: source.into(),
+            event_type: event_type.into(),
+            payload,
+            ts_ingest: chrono::Utc::now(),
+            ts_orig: None,
+            host: get_hostname(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            provenance: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        }
     }
 
     /// Fluent method to set timestamp origin
@@ -189,83 +213,6 @@ impl RawEvent {
             .event_type(event_type)
             .payload(payload)
             .build()
-    }
-
-    /// Create an event from a strongly-typed payload
-    ///
-    /// This is a convenience method to avoid the orphan rule issue.
-    /// Since Event is in sinex-db and EventPayload is in sinex-types,
-    /// we can't implement From<T> for Event where T: EventPayload.
-    ///
-    /// ## History and differences from the original Event::from
-    ///
-    /// When Event lived in sinex-events, we had:
-    /// ```ignore
-    /// impl RawEvent {
-    ///     pub fn from<P: EventPayload>(payload: P) -> Self {
-    ///         // Look up schema ID from cache
-    ///         let schema_id = crate::schema_registry::get_schema_id(
-    ///             P::SOURCE.as_str(),
-    ///             P::EVENT_TYPE.as_str()
-    ///         );
-    ///         
-    ///         Event {
-    ///             id: None,
-    ///             source: P::SOURCE,
-    ///             event_type: P::EVENT_TYPE,
-    ///             payload: serde_json::to_value(payload).expect("EventPayload must serialize"),
-    ///             ts_ingest: chrono::Utc::now(),
-    ///             ts_orig: None,
-    ///             host: get_hostname(),
-    ///             ingestor_version: Some(env!("CARGO_PKG_VERSION").to_string()),
-    ///             payload_schema_id: schema_id,
-    ///             provenance: None,
-    ///             anchor_byte: None,
-    ///             associated_blob_ids: None,
-    ///         }
-    ///     }
-    /// }
-    /// ```
-    ///
-    /// ### Current differences:
-    /// 1. **Method name**: `from` → `from_payload` (but could still be named `from`)
-    /// 2. **Return type**: `Self` → `Result<Self, SinexError>` (but could still return `Self`)
-    /// 3. **Schema ID**: Was looked up from registry → Now None (LOST FUNCTIONALITY)
-    /// 4. **Ingestor version**: Was set to CARGO_PKG_VERSION → Now None (LOST FUNCTIONALITY)
-    /// 5. **Timestamp**: Was explicitly set → Now relies on builder default (POTENTIAL BUG)
-    /// 6. **Error handling**: Used `.expect()` → Now returns Result
-    ///
-    /// ### Why not a From trait implementation?
-    ///
-    /// If we could implement the From trait (blocked by orphan rule):
-    /// ```ignore
-    /// impl<T: EventPayload> From<T> for Event { ... }
-    /// ```
-    ///
-    /// Then users could call it THREE ways:
-    /// - `Event::from(payload)` - method syntax
-    /// - `payload.into()` - Into trait (automatic)
-    /// - `Into::<Event>::into(payload)` - explicit Into
-    ///
-    /// With our regular method, only ONE way works:
-    /// - `Event::from_payload(payload)?` - just a method call
-    /// - `payload.into()` - ❌ DOESN'T WORK
-    ///
-    /// The method call looks identical to From trait, but we lose:
-    /// - `.into()` conversions
-    /// - Implicit conversions in function arguments expecting `impl Into<Event>`
-    /// - Integration with Rust's conversion trait ecosystem
-    ///
-    /// ### TODO when fixing:
-    /// 1. Consider renaming back to `from` for compatibility
-    /// 2. Consider returning `Self` with `.expect()` for same ergonomics
-    /// 3. Restore schema_id lookup functionality
-    /// 4. Restore ingestor_version tracking
-    /// 5. Ensure ts_ingest is properly initialized
-    pub fn from_payload<P: crate::types::events::EventPayload>(
-        payload: P,
-    ) -> crate::types::events::Event<P> {
-        crate::types::events::Event::from_payload(payload)
     }
 }
 
