@@ -50,7 +50,7 @@ pub struct IngestService {
     validator: Arc<Mutex<EventValidator>>,
     stats: Arc<IngestStats>,
     shutdown_flag: Arc<AtomicBool>,
-    event_buffer: Arc<Mutex<Vec<Event>>>,
+    event_buffer: Arc<Mutex<Vec<RawEvent>>>,
     last_flush: Arc<Mutex<SystemTime>>,
     telemetry: Option<Arc<TelemetryAccumulator>>,
     subject_cache: Arc<SubjectCache>,
@@ -371,7 +371,7 @@ impl IngestService {
 
     /// Flush events to database and NATS (static version for use in tasks)
     async fn flush_events_static(
-        event_buffer: &Arc<Mutex<Vec<Event>>>,
+        event_buffer: &Arc<Mutex<Vec<RawEvent>>>,
         last_flush: &Arc<Mutex<SystemTime>>,
         config: &IngestdConfig,
         db_pool: Option<&PgPool>,
@@ -432,7 +432,7 @@ impl IngestService {
     /// This implements the unified events table architecture:
     /// - All events go to core.events
     /// - Raw events have source_event_ids = NULL, synthesis events have source_event_ids populated
-    async fn batch_write_to_db(pool: &PgPool, events: &[Event]) -> IngestdResult<()> {
+    async fn batch_write_to_db(pool: &PgPool, events: &[RawEvent]) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
         }
@@ -455,7 +455,7 @@ impl IngestService {
     async fn batch_publish_to_nats(
         js: &jetstream::Context,
         _config: &IngestdConfig,
-        events: &[Event],
+        events: &[RawEvent],
         subject_cache: &Arc<SubjectCache>,
     ) -> IngestdResult<()> {
         if events.is_empty() {
@@ -510,7 +510,7 @@ impl IngestService {
     }
 
     /// Add event to buffer
-    async fn add_event_to_buffer(&self, event: Event) -> IngestdResult<()> {
+    async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
         let event_type = event.event_type.clone();
         let start = std::time::Instant::now();
 
@@ -610,7 +610,7 @@ impl IngestServiceTrait for IngestServiceImpl {
     ) -> Result<Response<IngestResponse>, Status> {
         let proto_event = request.into_inner();
 
-        // Convert proto event to Event
+        // Convert proto event to RawEvent
         let raw_event = match self.proto_to_event(proto_event).await {
             Ok(event) => event,
             Err(e) => {
@@ -773,8 +773,8 @@ impl IngestServiceTrait for IngestServiceImpl {
 }
 
 impl IngestServiceImpl {
-    /// Convert protobuf event to Event
-    async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<Event> {
+    /// Convert protobuf event to RawEvent
+    async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
         // Validate and parse JSON payload
         let payload = sinex_core::types::validate_json(&proto.payload)
             .map_err(|e| IngestdError::Validation(format!("Invalid JSON payload: {}", e)))?;
@@ -795,7 +795,7 @@ impl IngestServiceImpl {
                 .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
         };
 
-        let builder = Event::builder()
+        let builder = RawEvent::builder()
             .source(EventSource::new(proto.source))
             .event_type(EventType::new(proto.event_type))
             .host(HostName::new(proto.host))

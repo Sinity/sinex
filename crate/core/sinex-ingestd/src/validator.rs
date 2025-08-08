@@ -144,7 +144,7 @@ impl EventValidator {
     }
 
     /// Validate a raw event
-    pub fn validate_event(&self, event: &Event) -> IngestdResult<ValidationResult> {
+    pub fn validate_event(&self, event: &RawEvent) -> IngestdResult<ValidationResult> {
         if !self.validation_enabled {
             return Ok(ValidationResult::Skipped);
         }
@@ -206,7 +206,7 @@ impl EventValidator {
     }
 
     /// Validate a batch of events
-    pub fn validate_batch(&self, events: &[Event]) -> IngestdResult<Vec<ValidationResult>> {
+    pub fn validate_batch(&self, events: &[RawEvent]) -> IngestdResult<Vec<ValidationResult>> {
         events
             .iter()
             .map(|event| self.validate_event(event))
