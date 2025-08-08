@@ -9,7 +9,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::models::{Event, RawEvent, SystemHealthSummaryPayload};
+use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
     nats_stream_consumer::{
@@ -148,7 +148,7 @@ impl HealthAggregator {
         }
 
         // Create synthesis event
-        let event = Event::from_payload(SystemHealthSummaryPayload {
+        let event = RawEvent::from_payload(SystemHealthSummaryPayload {
             overall_status: summary.overall_status,
             healthy_components: summary.healthy_components,
             degraded_components: summary.degraded_components,

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::{Event, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
+use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,
@@ -170,7 +170,7 @@ impl HealthAggregatorAutomaton {
         };
 
         // Create synthesis event with typed payload
-        let mut synthesis_event = Event::from_payload(SystemHealthSummaryPayload {
+        let mut synthesis_event = RawEvent::from_payload(SystemHealthSummaryPayload {
             overall_status,
             healthy_components: healthy_count,
             degraded_components: degraded_count,

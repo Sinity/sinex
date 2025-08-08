@@ -8,8 +8,8 @@ use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_test_utils::prelude::*;
 use sinex_core::types::domain::{EventSource, EventType};
+use sinex_test_utils::prelude::*;
 
 // Example 1: Basic rstest integration with automatic TestContext
 #[sinex_test]

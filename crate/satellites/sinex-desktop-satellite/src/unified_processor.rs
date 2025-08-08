@@ -7,7 +7,11 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::{
+    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
+    WindowManagerHistoricalPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -19,10 +23,6 @@ use sinex_satellite_sdk::{
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
     },
     SatelliteResult,
-};
-use sinex_core::types::events::{
-    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
-    WindowManagerHistoricalPayload,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -214,7 +214,7 @@ impl DesktopProcessor {
             info!("Desktop monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event = Event::from_payload(DesktopMonitoringStartedPayload {
+            let sample_event = RawEvent::from_payload(DesktopMonitoringStartedPayload {
                 clipboard_enabled: self.config.clipboard_enabled,
                 window_manager_enabled: self.config.window_manager_enabled,
                 start_time: Utc::now(),
@@ -242,7 +242,7 @@ impl DesktopProcessor {
         if let Some(ref context) = self.context {
             // Example: emit historical desktop state events
             if self.config.clipboard_enabled && emit_events {
-                let event = Event::from_payload(ClipboardHistoricalPayload {
+                let event = RawEvent::from_payload(ClipboardHistoricalPayload {
                     source: "clipboard".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for desktop events".to_string(),
@@ -253,7 +253,7 @@ impl DesktopProcessor {
             }
 
             if self.config.window_manager_enabled && emit_events {
-                let event = Event::from_payload(WindowManagerHistoricalPayload {
+                let event = RawEvent::from_payload(WindowManagerHistoricalPayload {
                     source: "window_manager".to_string(),
                     wm_type: self.config.window_manager_type.clone(),
                     scan_type: "historical".to_string(),
@@ -389,7 +389,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = Event::from_payload(DesktopSnapshotPayload {
+                        let snapshot_event = RawEvent::from_payload(DesktopSnapshotPayload {
                             active_watchers,
                             clipboard_enabled: self.config.clipboard_enabled,
                             window_manager_enabled: self.config.window_manager_enabled,

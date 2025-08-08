@@ -97,7 +97,9 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::error::with_context;
+use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -111,8 +113,6 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use sinex_core::types::error::with_context;
-use sinex_core::types::validate_path;
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -533,7 +533,7 @@ impl FilesystemProcessor {
         let mut events = Vec::new();
 
         if metadata.is_file() {
-            let event = Event::from_payload(sinex_types::events::FileDiscoveredPayload {
+            let event = RawEvent::from_payload(sinex_types::events::FileDiscoveredPayload {
                 path: path_str.to_string(),
                 size: metadata.len(),
                 modified_at: Utc::now(),
@@ -541,7 +541,7 @@ impl FilesystemProcessor {
             });
             events.push(event);
         } else if metadata.is_dir() {
-            let event = Event::from_payload(sinex_types::events::DirDiscoveredPayload {
+            let event = RawEvent::from_payload(sinex_types::events::DirDiscoveredPayload {
                 path: path_str.to_string(),
                 modified_at: Utc::now(),
             });

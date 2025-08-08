@@ -4,11 +4,11 @@
 
 use camino::Utf8PathBuf;
 use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use sinex_core::db::models::Event;
-use sinex_satellite_sdk::SatelliteResult;
+use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::{
     BashHistoricalCommandPayload, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::fs;
 use tokio::sync::mpsc;
@@ -164,17 +164,17 @@ impl HistoryWatcher {
         let source_file_str = source_file.to_string();
 
         let event = if source_file_str.contains("fish") {
-            Event::from_payload(FishHistoricalCommandPayload {
+            RawEvent::from_payload(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
         } else if source_file_str.contains("zsh") {
-            Event::from_payload(ZshHistoricalCommandPayload {
+            RawEvent::from_payload(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
         } else {
-            Event::from_payload(BashHistoricalCommandPayload {
+            RawEvent::from_payload(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })

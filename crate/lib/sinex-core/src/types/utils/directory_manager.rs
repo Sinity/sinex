@@ -3,8 +3,8 @@
 //! This module provides utilities for managing directories with
 //! consistent error handling and permissions.
 
-use crate::error::{Result, SinexError};
 use super::super::filesystem;
+use crate::error::{Result, SinexError};
 use camino::{Utf8Path, Utf8PathBuf};
 use serde::{Deserialize, Serialize};
 use tokio::fs;

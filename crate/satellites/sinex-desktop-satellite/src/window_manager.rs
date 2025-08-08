@@ -90,7 +90,7 @@
 
 use chrono::Utc;
 use serde_json::Value;
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -524,7 +524,7 @@ impl WindowManagerWatcher {
 
             // Create window focused event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandWindowFocusedPayload {
+            let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowFocusedPayload {
                 window_id: window_address.to_string(),
                 window_class: class.to_string(),
                 window_title: title.to_string(),
@@ -558,7 +558,7 @@ impl WindowManagerWatcher {
 
             // Create window opened event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandWindowOpenedPayload {
+            let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowOpenedPayload {
                 window_id: window_address.to_string(),
                 window_class: window_class.to_string(),
                 window_title: window_title.to_string(),
@@ -606,7 +606,7 @@ impl WindowManagerWatcher {
 
         // Create window closed event
 
-        let event = Event::from_payload(sinex_types::events::HyprlandWindowClosedPayload {
+        let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowClosedPayload {
             window_id: window_address.to_string(),
             window_class: String::new(), // TODO: Get from cache
             window_title: String::new(), // TODO: Get from cache
@@ -634,7 +634,7 @@ impl WindowManagerWatcher {
         if let Some((address, workspace)) = data.split_once(',') {
             // Create window moved event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandWindowMovedPayload {
+            let event = RawEvent::from_payload(sinex_types::events::HyprlandWindowMovedPayload {
                 window_address: address.to_string(),
                 new_workspace_id: workspace.parse().unwrap_or(0),
                 moved_at: chrono::Utc::now().to_rfc3339(),
@@ -663,7 +663,7 @@ impl WindowManagerWatcher {
 
         // Create workspace switched event
 
-        let event = Event::from_payload(sinex_types::events::HyprlandWorkspaceSwitchedPayload {
+        let event = RawEvent::from_payload(sinex_types::events::HyprlandWorkspaceSwitchedPayload {
             from_workspace_id: self
                 .current_workspace
                 .as_ref()
@@ -693,7 +693,7 @@ impl WindowManagerWatcher {
         if let Some((monitor, workspace)) = data.split_once(',') {
             // Create monitor focused event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandMonitorFocusedPayload {
+            let event = RawEvent::from_payload(sinex_types::events::HyprlandMonitorFocusedPayload {
                 monitor_id: monitor.parse().unwrap_or(0),
                 workspace_id: workspace.parse().unwrap_or(0),
                 previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
@@ -729,7 +729,7 @@ impl WindowManagerWatcher {
 
         // Create state captured event
 
-        let event = Event::from_payload(sinex_types::events::HyprlandStateCapturedPayload {
+        let event = RawEvent::from_payload(sinex_types::events::HyprlandStateCapturedPayload {
             windows: self
                 .windows
                 .values()

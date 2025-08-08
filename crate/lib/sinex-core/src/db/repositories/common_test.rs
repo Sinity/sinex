@@ -2,11 +2,11 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
     use crate::db::schema::*;
+    use crate::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
+    use crate::types::ulid::Ulid;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
     use sinex_test_utils::prelude::*;
-    use crate::types::ulid::Ulid;
 
     #[sinex_test]
     async fn test_enhanced_repository_count_all(ctx: TestContext) -> Result<()> {

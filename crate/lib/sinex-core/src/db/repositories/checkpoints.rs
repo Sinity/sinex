@@ -1,10 +1,10 @@
+use crate::db::schema::ProcessorCheckpoints;
 use crate::models::RawEvent;
 use crate::repositories::common::{db_error, DbResult, EnhancedRepository, Repository};
-use crate::db::schema::ProcessorCheckpoints;
-use chrono::{DateTime, Utc};
-use serde_json::Value as JsonValue;
 use crate::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
 use crate::types::Id;
+use chrono::{DateTime, Utc};
+use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 /// Checkpoint repository for database operations
@@ -33,7 +33,7 @@ pub struct CheckpointRecord {
     pub processor_name: ProcessorName,
     pub consumer_group: ConsumerGroup,
     pub consumer_name: ConsumerName,
-    pub last_processed_id: Option<Id<Event>>,
+    pub last_processed_id: Option<Id<RawEvent>>,
     pub last_processed_ts: Option<DateTime<Utc>>,
     pub processed_count: i64,
     pub checkpoint_data: Option<JsonValue>,
@@ -50,7 +50,7 @@ pub struct Checkpoint {
     pub processor_name: ProcessorName,
     pub consumer_group: Option<ConsumerGroup>,
     pub consumer_name: Option<ConsumerName>,
-    pub last_processed_id: Option<Id<Event>>,
+    pub last_processed_id: Option<Id<RawEvent>>,
     pub last_processed_ts: Option<DateTime<Utc>>,
     pub checkpoint_data: Option<JsonValue>,
     pub state_data: Option<JsonValue>,
@@ -100,7 +100,7 @@ impl Checkpoint {
     }
 
     /// Fluent method to set last processed event ID
-    pub fn with_last_processed_id(mut self, id: Id<Event>) -> Self {
+    pub fn with_last_processed_id(mut self, id: Id<RawEvent>) -> Self {
         self.last_processed_id = Some(id);
         self
     }
@@ -148,7 +148,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event>",
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -184,7 +184,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event>",
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -219,7 +219,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event>",
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -247,7 +247,7 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_id: Option<Id<Event>>,
+        last_processed_id: Option<Id<RawEvent>>,
         last_processed_ts: Option<DateTime<Utc>>,
         checkpoint_data: Option<JsonValue>,
         state_data: Option<JsonValue>,
@@ -274,7 +274,7 @@ impl<'a> CheckpointRepository<'a> {
                     processor_name as "processor_name!: ProcessorName",
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
-                    last_processed_id as "last_processed_id: Id<Event>",
+                    last_processed_id as "last_processed_id: Id<RawEvent>",
                     last_processed_ts,
                     processed_count as "processed_count!",
                     checkpoint_data,
@@ -315,7 +315,7 @@ impl<'a> CheckpointRepository<'a> {
                     processor_name as "processor_name!: ProcessorName",
                     consumer_group as "consumer_group!: ConsumerGroup",
                     consumer_name as "consumer_name!: ConsumerName",
-                    last_processed_id as "last_processed_id: Id<Event>",
+                    last_processed_id as "last_processed_id: Id<RawEvent>",
                     last_processed_ts,
                     processed_count as "processed_count!",
                     checkpoint_data,
@@ -344,7 +344,7 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_id: Option<Id<Event>>,
+        last_processed_id: Option<Id<RawEvent>>,
         last_processed_ts: Option<DateTime<Utc>>,
         checkpoint_data: Option<JsonValue>,
         state_data: Option<JsonValue>,
@@ -374,7 +374,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event>",
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,
@@ -435,7 +435,7 @@ impl<'a> CheckpointRepository<'a> {
                         processor_name as "processor_name!: ProcessorName",
                         consumer_group as "consumer_group!: ConsumerGroup",
                         consumer_name as "consumer_name!: ConsumerName",
-                        last_processed_id as "last_processed_id: Id<Event>",
+                        last_processed_id as "last_processed_id: Id<RawEvent>",
                         last_processed_ts,
                         processed_count as "processed_count!",
                         checkpoint_data,
@@ -459,7 +459,7 @@ impl<'a> CheckpointRepository<'a> {
                         processor_name as "processor_name!: ProcessorName",
                         consumer_group as "consumer_group!: ConsumerGroup",
                         consumer_name as "consumer_name!: ConsumerName",
-                        last_processed_id as "last_processed_id: Id<Event>",
+                        last_processed_id as "last_processed_id: Id<RawEvent>",
                         last_processed_ts,
                         processed_count as "processed_count!",
                         checkpoint_data,
@@ -488,7 +488,7 @@ impl<'a> CheckpointRepository<'a> {
                         processor_name as "processor_name!: ProcessorName",
                         consumer_group as "consumer_group!: ConsumerGroup",
                         consumer_name as "consumer_name!: ConsumerName",
-                        last_processed_id as "last_processed_id: Id<Event>",
+                        last_processed_id as "last_processed_id: Id<RawEvent>",
                         last_processed_ts,
                         processed_count as "processed_count!",
                         checkpoint_data,
@@ -515,7 +515,7 @@ impl<'a> CheckpointRepository<'a> {
         processor_name: &ProcessorName,
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
-        last_processed_id: Option<Id<Event>>,
+        last_processed_id: Option<Id<RawEvent>>,
         last_processed_ts: Option<DateTime<Utc>>,
         checkpoint_data: Option<JsonValue>,
         state_data: Option<JsonValue>,
@@ -545,7 +545,7 @@ impl<'a> CheckpointRepository<'a> {
                 processor_name as "processor_name!: ProcessorName",
                 consumer_group as "consumer_group!: ConsumerGroup",
                 consumer_name as "consumer_name!: ConsumerName",
-                last_processed_id as "last_processed_id: Id<Event>",
+                last_processed_id as "last_processed_id: Id<RawEvent>",
                 last_processed_ts,
                 processed_count as "processed_count!",
                 checkpoint_data,

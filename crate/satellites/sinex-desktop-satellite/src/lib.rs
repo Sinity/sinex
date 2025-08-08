@@ -16,7 +16,7 @@ pub use clipboard::ClipboardWatcher;
 pub use window_manager::WindowManagerWatcher;
 
 // Re-export for convenience
-pub use sinex_core::db::models::Event;
+pub use sinex_core::db::models::RawEvent;
 
 // Re-export the new unified processor as the primary interface
 pub use unified_processor::{ClipboardStatus, DesktopProcessor, DesktopState, WindowManagerStatus};

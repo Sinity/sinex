@@ -4,9 +4,9 @@
 //! RawEvent/NewEvent dichotomy. A RawEvent with id: None is a new event
 //! to be inserted, while a RawEvent with id: Some(...) is a persisted event.
 
-use serde::{Deserialize, Serialize};
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::{Id, Ulid};
+use serde::{Deserialize, Serialize};
 
 // Type aliases for timestamp and JSON handling
 pub type Timestamp = chrono::DateTime<chrono::Utc>;
@@ -283,7 +283,7 @@ mod tests {
 
     #[sinex_test]
     fn test_schemaless_event_builder() {
-        let event = Event::schemaless()
+        let event = RawEvent::schemaless()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test.created"))
             .payload(json!({"message": "hello"}))
@@ -299,7 +299,7 @@ mod tests {
 
     #[sinex_test]
     fn test_simple_constructor() {
-        let event = Event::simple(
+        let event = RawEvent::simple(
             EventSource::new("test"),
             EventType::new("test.created"),
             json!({"message": "hello"}),
@@ -312,8 +312,8 @@ mod tests {
 
     #[sinex_test]
     fn test_synthesis_event() {
-        let source_ids = vec![Id::<Event>::new(), Id::<Event>::new()];
-        let event = Event::schemaless()
+        let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
+        let event = RawEvent::schemaless()
             .source(EventSource::new("processor"))
             .event_type(EventType::new("analysis.completed"))
             .payload(json!({"result": "success"}))

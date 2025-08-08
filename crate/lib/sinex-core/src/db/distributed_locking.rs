@@ -4,10 +4,10 @@
 //! functionality. Advisory locks are perfect for leader election, singleton job processing,
 //! and resource coordination across multiple processes/instances.
 
-use crate::DbPool;
 use crate::types::error::SinexError;
 use crate::types::utils::ResourceGuard;
 use crate::types::Result as CoreResult;
+use crate::DbPool;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;

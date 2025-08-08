@@ -2,13 +2,13 @@
 //!
 //! Monitors hardware device events via udev
 
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 
-use sinex_satellite_sdk::SatelliteResult;
 use sinex_core::types::events::{
     UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -18,7 +18,7 @@ macro_rules! create_udev_event {
     ($payload_type:ident, $action:expr, $device_path:expr, $device_type:expr,
      $subsystem:expr, $devtype:expr, $vendor:expr, $model:expr, $serial:expr,
      $properties:expr, $timestamp:expr) => {
-        Ok(Event::from_payload($payload_type {
+        Ok(RawEvent::from_payload($payload_type {
             action: $action.to_string(),
             device_path: $device_path.to_string(),
             device_type: $device_type.to_string(),

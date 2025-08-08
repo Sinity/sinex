@@ -30,10 +30,10 @@
 use camino::Utf8PathBuf;
 use chrono::Utc;
 use copypasta::{ClipboardContext, ClipboardProvider};
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::Timestamp;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_core::types::Timestamp;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::process::Command;
@@ -584,7 +584,7 @@ impl ClipboardWatcher {
 
         let file_count = content.file_paths.as_ref().map(|paths| paths.len());
 
-        let event = Event::from_payload(sinex_types::events::ClipboardCopiedPayload {
+        let event = RawEvent::from_payload(sinex_types::events::ClipboardCopiedPayload {
             operation: operation.to_string(),
             content_type: content.content_type.clone(),
             content_size: content.size_bytes,
@@ -645,7 +645,7 @@ impl ClipboardWatcher {
             (content.text_preview.clone(), None, None)
         };
 
-        let event = Event::from_payload(sinex_types::events::ClipboardSelectedPayload {
+        let event = RawEvent::from_payload(sinex_types::events::ClipboardSelectedPayload {
             selection_type: "primary".to_string(),
             content_type: content.content_type.clone(),
             content_size: content.size_bytes,

@@ -1,8 +1,8 @@
 use crate::models::RawEvent;
 use crate::security::{SecurityError, SecurityValidator};
+use crate::types::domain::EventSource;
 use color_eyre::eyre::Result;
 use serde_json::Value;
-use crate::types::domain::EventSource;
 use std::borrow::Cow;
 
 /// Event sanitization service that modifies events before storage
@@ -140,13 +140,13 @@ impl EventSanitizer {
 mod tests {
     use super::*;
     use crate::models::RawEvent;
+    use crate::types::domain::EventType;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use crate::types::domain::EventType;
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::schemaless()
+        let mut event = RawEvent::schemaless()
             .source(EventSource::new("../../../etc/passwd"))
             .event_type(EventType::new("security.test"))
             .payload(json!({"path": "../../sensitive/file.txt"}))
@@ -167,7 +167,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::schemaless()
+        let mut event = RawEvent::schemaless()
             .source(EventSource::new("test\0source"))
             .event_type(EventType::new("security.test"))
             .payload(json!({"data": "test\0value"}))
@@ -183,7 +183,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::schemaless()
+        let mut event = RawEvent::schemaless()
             .source(EventSource::new("security.test"))
             .event_type(EventType::new("sql.injection"))
             .payload(json!({"query": "'; DROP TABLE events; --"}))

@@ -67,7 +67,7 @@ pub fn test_event_with_version<P: EventPayload>(
     // Cache the version for this test
     cache_schema_version(schema_id, version.to_string());
 
-    let mut event = Event::from_payload(payload);
+    let mut event = RawEvent::from_payload(payload);
     event.payload_schema_id = Some(schema_id);
     event
 }

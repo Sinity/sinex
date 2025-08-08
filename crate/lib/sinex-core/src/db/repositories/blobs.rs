@@ -3,10 +3,10 @@
 //! Provides access to core.blobs table for managing binary large objects
 //! stored in git-annex with metadata in PostgreSQL.
 
+use crate::types::{ulid::Ulid, Id};
 use chrono::Utc;
 use color_eyre::eyre::{Context, Result};
 use num_traits::ToPrimitive;
-use crate::types::{ulid::Ulid, Id};
 use sqlx::PgPool;
 use tracing::instrument;
 

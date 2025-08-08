@@ -79,11 +79,11 @@
 //! # }
 //! ```
 
-use crate::{DbPool, DbPoolRef};
-use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::ulid::Ulid;
 use crate::types::{retry, timeouts};
+use crate::{DbPool, DbPoolRef};
+use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 use sqlx::{Error as SqlxError, Postgres, Transaction};
 use std::future::Future;
 use std::time::Duration;

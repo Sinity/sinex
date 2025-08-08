@@ -2,10 +2,10 @@
 //!
 //! Represents large binary objects stored in git-annex with metadata in PostgreSQL.
 
+use crate::types::{ulid::Ulid, Id};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use crate::types::{ulid::Ulid, Id};
 
 /// Blob metadata stored in core.blobs table
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]

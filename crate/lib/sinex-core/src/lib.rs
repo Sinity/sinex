@@ -44,7 +44,7 @@ pub mod types {
     pub use crate::types_impl::*;
 }
 
-// Database module - database access and models  
+// Database module - database access and models
 pub mod db {
     // Re-export the entire db module structure
     pub use crate::db_impl::*;
@@ -54,7 +54,7 @@ pub mod db {
 #[path = "types/mod.rs"]
 mod types_impl;
 
-#[path = "db/mod.rs"] 
+#[path = "db/mod.rs"]
 mod db_impl;
 
 // Re-export database macros at crate level
@@ -63,19 +63,35 @@ pub use sinex_macros::{db_query, db_transaction};
 
 // Re-export commonly used types and functions at crate level for convenience
 pub use types::{
-    domain, error, events, ids, ulid, utils, validation,
-    Id, JsonValue, OptionalTimestamp, Result as SinexResult, SinexError, Timestamp, Ulid,
-    HealthCheck, HealthStatus, MetricsEntry, ServiceInfo, ServiceKind,
+    domain,
+    error,
+    events,
+    ids,
+    ulid,
+    utils,
     // Export validation functions for backward compatibility
-    validate_json, validate_path,
+    validate_json,
+    validate_path,
+    validation,
+    HealthCheck,
+    HealthStatus,
+    Id,
+    JsonValue,
+    MetricsEntry,
+    OptionalTimestamp,
+    Result as SinexResult,
+    ServiceInfo,
+    ServiceKind,
+    SinexError,
+    Timestamp,
+    Ulid,
 };
 
 pub use db::{
-    models, pool, query_helpers, repositories, constants, distributed_locking,
-    sanitization, security, schema_migrations, seaquery_helpers,
-    create_pool, create_pool_strict, create_pool_with_config, create_pool_with_config_strict,
-    create_test_pool, create_database_if_not_exists, get_database_url, run_migrations,
-    DbPool, DbPoolRef, PoolConfig,
+    constants, create_database_if_not_exists, create_pool, create_pool_strict,
+    create_pool_with_config, create_pool_with_config_strict, create_test_pool, distributed_locking,
+    get_database_url, models, pool, query_helpers, repositories, run_migrations, sanitization,
+    schema_migrations, seaquery_helpers, security, DbPool, DbPoolRef, PoolConfig,
 };
 
 // Re-export migration functionality
@@ -111,23 +127,23 @@ pub mod prelude {
         events::EventPayload,
         Id, JsonValue, OptionalTimestamp, Timestamp, Ulid,
     };
-    
+
     // Database types and functions
     pub use crate::db::{
         models::RawEvent,
         query_helpers::{
             db_error, from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db,
-            ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction, DbUuidCollectionExt,
-            DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
+            ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction,
+            DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
         },
-        seaquery_helpers::SeaQueryUlidExt,
         repositories::{
             Checkpoint, CheckpointRepository, DbPoolExt, EventRepository, EventSearchFilters,
             NewSchema, Repository,
         },
+        seaquery_helpers::SeaQueryUlidExt,
         DbPool, DbPoolRef, PoolConfig,
     };
-    
+
     // Common external crates
     pub use color_eyre::eyre::{eyre, Result};
     pub use sqlx::{FromRow, Postgres, Transaction};

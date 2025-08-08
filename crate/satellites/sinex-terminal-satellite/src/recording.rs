@@ -31,9 +31,9 @@
 
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_core::db::models::Event;
-use sinex_satellite_sdk::SatelliteResult;
+use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::{AsciinemaSessionEndedPayload, AsciinemaSessionStartedPayload};
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use tokio::fs;
@@ -388,7 +388,7 @@ end
                     }
                 };
 
-                let event = Event::from_payload(AsciinemaSessionStartedPayload {
+                let event = RawEvent::from_payload(AsciinemaSessionStartedPayload {
                     session_id: session_id.clone(),
                     terminal_type: "asciinema".to_string(),
                     terminal_id: path.to_string(),
@@ -445,7 +445,7 @@ end
                         // Emit session ended event
                         let duration = chrono::Utc::now().signed_duration_since(start_time);
 
-                        let event = Event::from_payload(AsciinemaSessionEndedPayload {
+                        let event = RawEvent::from_payload(AsciinemaSessionEndedPayload {
                             session_id: session_id.clone(),
                             terminal_type: "asciinema".to_string(),
                             terminal_id: path.to_string(),

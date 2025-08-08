@@ -3,14 +3,14 @@
 //! This module provides systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 
 use crate::payloads::*;
-use sinex_satellite_sdk::SatelliteResult;
 use sinex_core::types::events::{
     JournalEntryWrittenPayload as EventJournalEntryWrittenPayload,
     JournalSyncCompletedPayload as EventJournalSyncCompletedPayload,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -219,7 +219,7 @@ impl JournalWatcher {
                 duration_ms: start_time.elapsed().as_millis() as u64,
             };
 
-            let sync_event = Event::from_payload(EventJournalSyncCompletedPayload {
+            let sync_event = RawEvent::from_payload(EventJournalSyncCompletedPayload {
                 sync_type: sync_payload.sync_type,
                 start_cursor: sync_payload.start_cursor,
                 end_cursor: sync_payload.end_cursor,
@@ -513,7 +513,7 @@ impl JournalWatcher {
             fields,
         };
 
-        let event = Event::from_payload(EventJournalEntryWrittenPayload {
+        let event = RawEvent::from_payload(EventJournalEntryWrittenPayload {
             cursor: payload.cursor,
             timestamp_us: payload.timestamp_us,
             timestamp: payload.timestamp,

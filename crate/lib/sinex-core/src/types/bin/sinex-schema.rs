@@ -6,13 +6,13 @@
 //! - Validates schema compatibility
 //! - Exports schemas for external use
 
+use crate::events::payloads::*;
+use crate::events::EventPayload;
+use crate::Ulid;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
 use schemars::schema_for;
 use serde_json::Value;
-use crate::events::payloads::*;
-use crate::events::EventPayload;
-use crate::Ulid;
 use sqlx::postgres::PgPool;
 use sqlx::Row;
 use std::collections::HashMap;

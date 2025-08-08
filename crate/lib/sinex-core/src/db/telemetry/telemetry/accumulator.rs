@@ -204,14 +204,14 @@
 //! - **Daily rollups**: For long-term trending
 
 use crate::models::RawEvent;
-use chrono::{DateTime, Utc};
-use once_cell::sync::Lazy;
-use parking_lot::RwLock;
-use serde_json::{json, Value as JsonValue};
 use crate::types::events::{
     ComponentResourceUsagePayload, ErrorsSummaryPayload, EventsProcessedPayload,
     OperationPerformancePayload, SystemResourcesPayload,
 };
+use chrono::{DateTime, Utc};
+use once_cell::sync::Lazy;
+use parking_lot::RwLock;
+use serde_json::{json, Value as JsonValue};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -219,7 +219,7 @@ use tokio::sync::{mpsc, RwLock as TokioRwLock};
 use tracing::{debug, error, info};
 
 /// Type alias for event sender
-pub type EventSender = mpsc::UnboundedSender<Event>;
+pub type EventSender = mpsc::UnboundedSender<RawEvent>;
 
 /// Telemetry accumulator that collects metrics and emits periodic summary events.
 ///
@@ -432,7 +432,7 @@ impl TelemetryAccumulator {
                 // The event_counts map has event types as keys
                 let events_per_type = state.event_counts.clone();
 
-                events.push(Event::from_payload(EventsProcessedPayload {
+                events.push(RawEvent::from_payload(EventsProcessedPayload {
                     time_range_seconds: period_seconds,
                     total_events,
                     events_per_source,
@@ -455,7 +455,7 @@ impl TelemetryAccumulator {
                     metrics.insert("count".to_string(), json!(latencies.len()));
                     metrics.insert("duration_ms".to_string(), percentiles);
 
-                    events.push(Event::from_payload(OperationPerformancePayload {
+                    events.push(RawEvent::from_payload(OperationPerformancePayload {
                         operation_name: operation.clone(),
                         duration_ms: avg_duration as u64,
                         items_processed: latencies.len() as u64,
@@ -479,7 +479,7 @@ impl TelemetryAccumulator {
                     "peak": state.cpu_samples.iter().fold(0.0_f64, |a, &b| a.max(b)),
                 });
 
-                events.push(Event::from_payload(ComponentResourceUsagePayload {
+                events.push(RawEvent::from_payload(ComponentResourceUsagePayload {
                     component: self.component.clone(),
                     period_seconds,
                     memory_mb,
@@ -504,7 +504,7 @@ impl TelemetryAccumulator {
                 let mut errors_by_component = HashMap::new();
                 errors_by_component.insert(self.component.clone(), total_errors);
 
-                events.push(Event::from_payload(ErrorsSummaryPayload {
+                events.push(RawEvent::from_payload(ErrorsSummaryPayload {
                     time_range_seconds: period_seconds,
                     total_errors,
                     errors_by_severity,
@@ -621,7 +621,7 @@ impl SystemTelemetryEmitter {
     pub async fn emit_system_resources(&self) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: Implement actual system resource collection using sysinfo crate
         // For now, emit placeholder data
-        let event = Event::from_payload(SystemResourcesPayload {
+        let event = RawEvent::from_payload(SystemResourcesPayload {
             cpu_usage_percent: 0.0,
             memory_usage_bytes: 0,
             memory_total_bytes: 0,
@@ -708,10 +708,10 @@ pub fn record_function_telemetry(module: &str, function: &str, duration_ms: f64,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::domain::EventType;
     use color_eyre::eyre::eyre;
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use crate::types::domain::EventType;
     use std::time::Duration;
     use tokio::sync::mpsc;
 

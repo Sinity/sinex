@@ -2,14 +2,14 @@
 //!
 //! Monitors systemd services, timers, and unit state changes
 
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 
-use sinex_satellite_sdk::SatelliteResult;
 use sinex_core::types::events::{
     SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,
     SystemdUnitStartedPayload, SystemdUnitStartingPayload, SystemdUnitStateChangedPayload,
     SystemdUnitStatusPayload, SystemdUnitStoppedPayload, SystemdUnitStoppingPayload,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -89,7 +89,7 @@ impl SystemdWatcher {
                     "other"
                 };
 
-                return Some(Event::from_payload(SystemdUnitStatusPayload {
+                return Some(RawEvent::from_payload(SystemdUnitStatusPayload {
                     unit_name: unit_name.to_string(),
                     unit_type: unit_type.to_string(),
                     description: description.to_string(),
@@ -105,21 +105,21 @@ impl SystemdWatcher {
             let status = status_part.split(' ').next().unwrap_or("unknown");
 
             return match status {
-                "active" => Some(Event::from_payload(SystemdUnitStartedPayload {
+                "active" => Some(RawEvent::from_payload(SystemdUnitStartedPayload {
                     unit_name: "unknown".to_string(), // Will be filled by journal monitoring
                     unit_type: "unknown".to_string(),
                     main_pid: None,
                     active_state: status.to_string(),
                     sub_state: status_part.to_string(),
                 })),
-                "inactive" => Some(Event::from_payload(SystemdUnitStoppedPayload {
+                "inactive" => Some(RawEvent::from_payload(SystemdUnitStoppedPayload {
                     unit_name: "unknown".to_string(),
                     unit_type: "unknown".to_string(),
                     exit_code: None,
                     active_state: status.to_string(),
                     sub_state: status_part.to_string(),
                 })),
-                "failed" => Some(Event::from_payload(SystemdUnitFailedPayload {
+                "failed" => Some(RawEvent::from_payload(SystemdUnitFailedPayload {
                     unit_name: "unknown".to_string(),
                     message: status_part.to_string(),
                     cursor: "unknown".to_string(),
@@ -128,17 +128,17 @@ impl SystemdWatcher {
                     timestamp: chrono::Utc::now().to_rfc3339(),
                     journal_timestamp: None,
                 })),
-                "activating" => Some(Event::from_payload(SystemdUnitStartingPayload {
+                "activating" => Some(RawEvent::from_payload(SystemdUnitStartingPayload {
                     status: status.to_string(),
                     status_detail: status_part.to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 })),
-                "deactivating" => Some(Event::from_payload(SystemdUnitStoppingPayload {
+                "deactivating" => Some(RawEvent::from_payload(SystemdUnitStoppingPayload {
                     status: status.to_string(),
                     status_detail: status_part.to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
                 })),
-                _ => Some(Event::from_payload(SystemdUnitStateChangedPayload {
+                _ => Some(RawEvent::from_payload(SystemdUnitStateChangedPayload {
                     status: status.to_string(),
                     status_detail: status_part.to_string(),
                     timestamp: chrono::Utc::now().to_rfc3339(),
@@ -313,7 +313,7 @@ impl SystemdWatcher {
                         })
                         .unwrap_or("unknown");
 
-                    Some(Event::from_payload(SystemdUnitStartedPayload {
+                    Some(RawEvent::from_payload(SystemdUnitStartedPayload {
                         unit_name: unit_name.unwrap_or("unknown").to_string(),
                         unit_type: unit_type.to_string(),
                         main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
@@ -335,7 +335,7 @@ impl SystemdWatcher {
                         })
                         .unwrap_or("unknown");
 
-                    Some(Event::from_payload(SystemdUnitStoppedPayload {
+                    Some(RawEvent::from_payload(SystemdUnitStoppedPayload {
                         unit_name: unit_name.unwrap_or("unknown").to_string(),
                         unit_type: unit_type.to_string(),
                         exit_code: None,
@@ -343,7 +343,7 @@ impl SystemdWatcher {
                         sub_state: "dead".to_string(),
                     }))
                 } else if message.contains("Failed ") {
-                    Some(Event::from_payload(SystemdUnitFailedPayload {
+                    Some(RawEvent::from_payload(SystemdUnitFailedPayload {
                         unit_name: unit_name.unwrap_or("unknown").to_string(),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
@@ -353,7 +353,7 @@ impl SystemdWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     }))
                 } else if message.contains("Reloaded ") {
-                    Some(Event::from_payload(SystemdUnitReloadedPayload {
+                    Some(RawEvent::from_payload(SystemdUnitReloadedPayload {
                         unit_name: unit_name.map(String::from),
                         message: message.to_string(),
                         cursor: cursor.to_string(),
@@ -363,7 +363,7 @@ impl SystemdWatcher {
                         journal_timestamp: entry["__REALTIME_TIMESTAMP"].as_str().map(String::from),
                     }))
                 } else if message.contains("Triggered ") {
-                    Some(Event::from_payload(SystemdTimerTriggeredPayload {
+                    Some(RawEvent::from_payload(SystemdTimerTriggeredPayload {
                         unit_name: unit_name.map(String::from),
                         message: message.to_string(),
                         cursor: cursor.to_string(),

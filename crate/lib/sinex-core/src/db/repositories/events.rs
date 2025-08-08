@@ -1,13 +1,13 @@
-use crate::models::{Event, Provenance, SourceMaterial};
+use crate::db::schema::Events;
+use crate::models::{RawEvent, Provenance, SourceMaterial};
 use crate::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use crate::repositories::common::{
     db_error, DbResult, EnhancedRepository, EventSearchFilters, Repository, TimeBucketResult,
 };
-use crate::db::schema::Events;
-use chrono::{DateTime, Utc};
-use serde_json::Value as JsonValue;
 use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
 use crate::types::Id;
+use chrono::{DateTime, Utc};
+use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
 /// Event repository for database operations
@@ -60,13 +60,13 @@ pub struct EventRecord {
 
 impl EventRecord {
     /// Convert database record to domain Event
-    pub fn to_event(self) -> Event {
+    pub fn to_event(self) -> RawEvent {
         // Reconstruct provenance from separate fields
         let provenance = match (self.source_event_ids, self.source_material_id) {
             (Some(event_ids), None) if !event_ids.is_empty() => Some(Provenance::Events(
                 event_ids
                     .into_iter()
-                    .map(|uuid| Id::<Event>::from(uuid_to_ulid(uuid)))
+                    .map(|uuid| Id::<RawEvent>::from(uuid_to_ulid(uuid)))
                     .collect(),
             )),
             (None, Some(material_id)) => Some(Provenance::Material {
@@ -81,8 +81,8 @@ impl EventRecord {
             .associated_blob_ids
             .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
 
-        Event {
-            id: Some(Id::<Event>::from_uuid(self.event_id)),
+        RawEvent {
+            id: Some(Id::<RawEvent>::from_uuid(self.event_id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
@@ -100,7 +100,7 @@ impl EventRecord {
 
 /// Extract provenance fields from domain Event for database storage
 fn extract_provenance(
-    event: &Event,
+    event: &RawEvent,
 ) -> (
     Option<Vec<uuid::Uuid>>, // source_event_ids
     Option<uuid::Uuid>,      // source_material_id
@@ -159,7 +159,7 @@ pub struct NewSchema {
 #[derive(Debug, FromRow)]
 pub struct EventAnnotation {
     pub id: Id<EventAnnotation>,
-    pub event_id: Id<Event>,
+    pub event_id: Id<RawEvent>,
     pub annotation_type: String,
     pub content: String,
     pub metadata: JsonValue,
@@ -171,7 +171,7 @@ pub struct EventAnnotation {
 /// Invalid payload event record
 #[derive(Debug)]
 pub struct InvalidPayloadEvent {
-    pub event_id: Id<Event>,
+    pub event_id: Id<RawEvent>,
     pub source: String,
     pub event_type: String,
     pub ts_ingest: DateTime<Utc>,
@@ -181,8 +181,8 @@ pub struct InvalidPayloadEvent {
 /// Batch violation record
 #[derive(Debug, FromRow)]
 pub struct BatchViolation {
-    pub event_id: Option<Id<Event>>,
-    pub prev_event_id: Option<Id<Event>>,
+    pub event_id: Option<Id<RawEvent>>,
+    pub prev_event_id: Option<Id<RawEvent>>,
     pub ts_orig: Option<DateTime<Utc>>,
     pub prev_ts_orig: Option<DateTime<Utc>>,
     pub source: String,
@@ -192,7 +192,7 @@ pub struct BatchViolation {
 /// Suspicious event record  
 #[derive(Debug, FromRow)]
 pub struct SuspiciousEvent {
-    pub event_id: Id<Event>,
+    pub event_id: Id<RawEvent>,
     pub source: String,
     pub event_type: String,
     pub payload: JsonValue,
@@ -203,7 +203,7 @@ pub struct SuspiciousEvent {
 /// Invalid timestamp record
 #[derive(Debug)]
 pub struct InvalidTimestamp {
-    pub event_id: Id<Event>,
+    pub event_id: Id<RawEvent>,
     pub ts_orig: Option<DateTime<Utc>>,
     pub ts_ingest: DateTime<Utc>,
 }
@@ -232,8 +232,8 @@ pub struct EventTypeCount {
 }
 
 impl<'a> EventRepository<'a> {
-    pub async fn insert(&self, mut event: Event) -> DbResult<Event> {
-        let id = event.id.get_or_insert_with(Id::<Event>::new).clone();
+    pub async fn insert(&self, mut event: RawEvent) -> DbResult<RawEvent> {
+        let id = event.id.get_or_insert_with(Id::<RawEvent>::new).clone();
 
         // Extract provenance into separate fields for database
         let (
@@ -310,7 +310,7 @@ impl<'a> EventRepository<'a> {
         Ok(record.to_event())
     }
 
-    pub async fn get_by_id(&self, id: Id<Event>) -> DbResult<Option<Event>> {
+    pub async fn get_by_id(&self, id: Id<RawEvent>) -> DbResult<Option<RawEvent>> {
         let record = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -353,7 +353,7 @@ impl<'a> EventRepository<'a> {
         Ok(result.unwrap_or(0))
     }
 
-    pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<Event>> {
+    pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<RawEvent>> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -393,7 +393,7 @@ impl<'a> EventRepository<'a> {
         source: &EventSource,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<Event>> {
+    ) -> DbResult<Vec<RawEvent>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -439,7 +439,7 @@ impl<'a> EventRepository<'a> {
         event_type: &EventType,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<Event>> {
+    ) -> DbResult<Vec<RawEvent>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -510,7 +510,7 @@ impl<'a> EventRepository<'a> {
         end: DateTime<Utc>,
         limit: Option<i64>,
         offset: Option<i64>,
-    ) -> DbResult<Vec<Event>> {
+    ) -> DbResult<Vec<RawEvent>> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
@@ -594,7 +594,7 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Event>> {
+    ) -> DbResult<Vec<RawEvent>> {
         let limit = limit.unwrap_or(100);
 
         let records = sqlx::query_as::<_, EventRecord>(
@@ -640,7 +640,7 @@ impl<'a> EventRepository<'a> {
         source: &EventSource,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
-    ) -> DbResult<Vec<Event>> {
+    ) -> DbResult<Vec<RawEvent>> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -680,7 +680,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
-    pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<Event>> {
+    pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<RawEvent>> {
         use crate::db::schema::Events;
         use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 
@@ -907,9 +907,9 @@ impl<'a> EventRepository<'a> {
     pub async fn insert_with_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
-        mut event: Event,
-    ) -> DbResult<Event> {
-        let id = event.id.get_or_insert_with(Id::<Event>::new).clone();
+        mut event: RawEvent,
+    ) -> DbResult<RawEvent> {
+        let id = event.id.get_or_insert_with(Id::<RawEvent>::new).clone();
 
         // Extract provenance into separate fields for database
         let (
@@ -986,7 +986,7 @@ impl<'a> EventRepository<'a> {
         Ok(record.to_event())
     }
 
-    pub async fn insert_batch(&self, events: Vec<Event>) -> DbResult<Vec<Event>> {
+    pub async fn insert_batch(&self, events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
         // For batch inserts, we'll use a transaction and insert one by one
         // A more efficient implementation would use UNNEST or COPY
         let mut tx = self
@@ -1331,7 +1331,7 @@ impl<'a> EventRepository<'a> {
     /// Add an annotation to an event
     pub async fn add_annotation(
         &self,
-        event_id: Id<Event>,
+        event_id: Id<RawEvent>,
         annotation_type: &str,
         content: &str,
         metadata: serde_json::Value,
@@ -1349,7 +1349,7 @@ impl<'a> EventRepository<'a> {
             )
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1370,13 +1370,13 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Get annotations for an event
-    pub async fn get_annotations(&self, id: Id<Event>) -> DbResult<Vec<EventAnnotation>> {
+    pub async fn get_annotations(&self, id: Id<RawEvent>) -> DbResult<Vec<EventAnnotation>> {
         sqlx::query_as!(
             EventAnnotation,
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1407,7 +1407,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1441,7 +1441,7 @@ impl<'a> EventRepository<'a> {
             WHERE id = $1
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1486,7 +1486,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<Event>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1531,7 +1531,7 @@ impl<'a> EventRepository<'a> {
         .map(|rows| {
             rows.into_iter()
                 .map(|row| InvalidPayloadEvent {
-                    event_id: Id::<Event>::from_uuid(row.event_id),
+                    event_id: Id::<RawEvent>::from_uuid(row.event_id),
                     source: row.source,
                     event_type: row.event_type,
                     ts_ingest: row.ts_ingest,
@@ -1545,7 +1545,7 @@ impl<'a> EventRepository<'a> {
     pub async fn find_timestamp_regressions(
         &self,
         limit: i64,
-    ) -> DbResult<Vec<(Id<Event>, Id<Event>, DateTime<Utc>, DateTime<Utc>)>> {
+    ) -> DbResult<Vec<(Id<RawEvent>, Id<RawEvent>, DateTime<Utc>, DateTime<Utc>)>> {
         let rows = sqlx::query!(
             r#"
             WITH ordered_events AS (
@@ -1576,8 +1576,8 @@ impl<'a> EventRepository<'a> {
             .into_iter()
             .map(|r| {
                 (
-                    Id::<Event>::from_uuid(r.event_id),
-                    Id::<Event>::from_uuid(r.prev_id),
+                    Id::<RawEvent>::from_uuid(r.event_id),
+                    Id::<RawEvent>::from_uuid(r.prev_id),
                     r.ts_orig,
                     r.prev_ts,
                 )
@@ -1610,8 +1610,8 @@ impl<'a> EventRepository<'a> {
                 LIMIT 10000
             )
             SELECT 
-                event_id as "event_id?: Id<Event>",
-                prev_event_id as "prev_event_id?: Id<Event>",
+                event_id as "event_id?: Id<RawEvent>",
+                prev_event_id as "prev_event_id?: Id<RawEvent>",
                 ts_orig,
                 prev_ts_orig,
                 source,
@@ -1641,7 +1641,7 @@ impl<'a> EventRepository<'a> {
             SuspiciousEvent,
             r#"
             SELECT 
-                event_id as "event_id: Id<Event>",
+                event_id as "event_id: Id<RawEvent>",
                 source as "source!",
                 event_type as "event_type!",
                 payload as "payload!",
@@ -1674,7 +1674,7 @@ impl<'a> EventRepository<'a> {
             InvalidTimestamp,
             r#"
             SELECT 
-                event_id as "event_id: Id<Event>", 
+                event_id as "event_id: Id<RawEvent>", 
                 ts_orig, 
                 ts_ingest as "ts_ingest!"
             FROM core.events
@@ -1700,8 +1700,8 @@ impl<'a> EventRepository<'a> {
         source: &str,
         event_type: &str,
         payload: serde_json::Value,
-    ) -> DbResult<Event> {
-        let event = Event::builder()
+    ) -> DbResult<RawEvent> {
+        let event = RawEvent::builder()
             .source(EventSource::new(source.to_string()))
             .event_type(EventType::new(event_type.to_string()))
             .host(HostName::new("test-host".to_string()))
@@ -1712,14 +1712,14 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Get a test event by ID
-    pub async fn get_test_event(&self, id: Id<Event>) -> DbResult<Option<Event>> {
+    pub async fn get_test_event(&self, id: Id<RawEvent>) -> DbResult<Option<RawEvent>> {
         self.get_by_id(id).await
     }
 
     /// Update test event payload
     pub async fn update_test_event(
         &self,
-        id: Id<Event>,
+        id: Id<RawEvent>,
         payload: serde_json::Value,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
@@ -1739,7 +1739,7 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Delete a test event
-    pub async fn delete_test_event(&self, id: Id<Event>) -> DbResult<bool> {
+    pub async fn delete_test_event(&self, id: Id<RawEvent>) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
             DELETE FROM core.events
@@ -2029,9 +2029,9 @@ impl<'a> EventRepository<'a> {
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use crate::types::domain::{EventSource, EventType, HostName};
     use serde_json::json;
     use sinex_test_utils::prelude::*;
-    use crate::types::domain::{EventSource, EventType, HostName};
 
     #[sinex_test]
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {

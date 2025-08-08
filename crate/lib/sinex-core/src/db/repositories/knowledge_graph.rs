@@ -1,11 +1,11 @@
-use crate::repositories::{common::*, Repository};
 use crate::db::schema::Entities;
+use crate::repositories::{common::*, Repository};
+use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::types::Id;
 use sqlx::PgPool;
 
-use crate::models::{Entity, EntityRelation, Event};
+use crate::models::{Entity, EntityRelation, RawEvent};
 
 /// Entity types supported by the knowledge graph
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -200,7 +200,7 @@ pub struct EntityRelationRecord {
     pub valid_from: DateTime<Utc>,
     pub valid_until: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
-    pub created_from_event_id: Option<Id<Event>>,
+    pub created_from_event_id: Option<Id<RawEvent>>,
 }
 
 /// Entity relation to create
@@ -213,7 +213,7 @@ pub struct CreateEntityRelation {
     pub metadata: Option<serde_json::Value>,
     pub valid_from: Option<DateTime<Utc>>,
     pub valid_until: Option<DateTime<Utc>>,
-    pub created_from_event_id: Option<Id<Event>>,
+    pub created_from_event_id: Option<Id<RawEvent>>,
 }
 
 impl CreateEntityRelation {
@@ -260,7 +260,7 @@ impl CreateEntityRelation {
     }
 
     /// Fluent method to set created_from_event_id
-    pub fn with_created_from_event(mut self, event_id: Id<Event>) -> Self {
+    pub fn with_created_from_event(mut self, event_id: Id<RawEvent>) -> Self {
         self.created_from_event_id = Some(event_id);
         self
     }
@@ -595,7 +595,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 valid_from as "valid_from!",
                 valid_until,
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: Id<Event>"
+                created_from_event_id as "created_from_event_id: Id<RawEvent>"
             "#,
             *id.as_ulid() as _,
             *relation.from_entity_id.as_ulid() as _,
@@ -634,7 +634,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<Event>"
+                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -662,7 +662,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<Event>"
+                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -689,7 +689,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<Event>"
+                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         (from_entity_id = $1 OR to_entity_id = $1)
@@ -715,7 +715,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                         valid_from as "valid_from!",
                         valid_until,
                         created_at as "created_at!",
-                        created_from_event_id as "created_from_event_id: Id<Event>"
+                        created_from_event_id as "created_from_event_id: Id<RawEvent>"
                     FROM core.entity_relations
                     WHERE 
                         from_entity_id = $1 OR to_entity_id = $1
@@ -752,7 +752,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
                 valid_from as "valid_from!",
                 valid_until,
                 created_at as "created_at!",
-                created_from_event_id as "created_from_event_id: Id<Event>"
+                created_from_event_id as "created_from_event_id: Id<RawEvent>"
             "#,
             *id.as_ulid() as _,
             valid_until

@@ -4,9 +4,9 @@
 
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_core::db::models::Event;
-use sinex_satellite_sdk::SatelliteResult;
+use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::ShellOutputCapturedPayload;
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use tokio::fs;
@@ -405,7 +405,7 @@ impl ScrollbackWatcher {
         };
 
         // Create event
-        let event = Event::from_payload(ShellOutputCapturedPayload {
+        let event = RawEvent::from_payload(ShellOutputCapturedPayload {
             window_id: window.id.to_string(),
             terminal_type: "kitty".to_string(),
             cwd: window.cwd.clone(),
