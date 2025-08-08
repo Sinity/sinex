@@ -5,6 +5,7 @@
 use camino::Utf8PathBuf;
 use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
 use sinex_core::types::events::{
     BashHistoricalCommandPayload, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
 };
@@ -164,19 +165,19 @@ impl HistoryWatcher {
         let source_file_str = source_file.to_string();
 
         let event: RawEvent = if source_file_str.contains("fish") {
-            RawEvent::from_payload(FishHistoricalCommandPayload {
+            Event::from_payload(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
             .into()
         } else if source_file_str.contains("zsh") {
-            RawEvent::from_payload(ZshHistoricalCommandPayload {
+            Event::from_payload(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
             .into()
         } else {
-            RawEvent::from_payload(BashHistoricalCommandPayload {
+            Event::from_payload(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })

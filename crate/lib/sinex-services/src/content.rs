@@ -62,7 +62,7 @@ impl ContentService {
     /// Get content metadata by blob ID
     pub async fn get_content_metadata(
         &self,
-        blob_id: sinex_types::ulid::Ulid,
+        blob_id: sinex_core::types::ulid::Ulid,
     ) -> ServiceResult<sinex_satellite_sdk::annex::BlobMetadata> {
         // Get blob metadata from blob manager
         let blob_metadata = self
@@ -77,7 +77,10 @@ impl ContentService {
     }
 
     /// Verify content integrity by blob ID
-    pub async fn verify_content(&self, blob_id: sinex_types::ulid::Ulid) -> ServiceResult<bool> {
+    pub async fn verify_content(
+        &self,
+        blob_id: sinex_core::types::ulid::Ulid,
+    ) -> ServiceResult<bool> {
         // Use blob manager verification
         self.blob_manager.verify_blob(&blob_id).await.map_err(|e| {
             ServiceError::OperationFailed(format!("Content verification failed: {}", e))

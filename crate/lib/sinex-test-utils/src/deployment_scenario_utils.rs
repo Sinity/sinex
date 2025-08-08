@@ -206,7 +206,7 @@ impl ConfigCompatibilityTester {
     /// Create a new configuration compatibility tester
     pub async fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
-            sinex_types::error::SinexError::io("temp_directory")
+            sinex_core::types::error::SinexError::io("temp_directory")
                 .with_context("source", e.to_string())
         })?;
 
@@ -837,7 +837,7 @@ impl ConfigCompatibilityTester {
             fs::write(&config_path, &component.config_file_content)
                 .await
                 .map_err(|e| {
-                    sinex_types::error::SinexError::io(config_path.display().to_string())
+                    sinex_core::types::error::SinexError::io(config_path.display().to_string())
                         .with_context("source", e.to_string())
                 })?;
         }

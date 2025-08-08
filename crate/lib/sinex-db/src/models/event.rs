@@ -262,7 +262,7 @@ impl Event {
     /// 3. Restore schema_id lookup functionality
     /// 4. Restore ingestor_version tracking
     /// 5. Ensure ts_ingest is properly initialized
-    pub fn from_payload<P: sinex_types::events::EventPayload>(payload: P) -> Self {
+    pub fn from_payload<P: sinex_core::types::events::EventPayload>(payload: P) -> Self {
         Event::builder()
             .source(P::SOURCE)
             .event_type(P::EVENT_TYPE)
@@ -283,7 +283,7 @@ mod tests {
 
     #[sinex_test]
     fn test_schemaless_event_builder() {
-        let event = Event::schemaless()
+        let event = RawEvent::schemaless()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test.created"))
             .payload(json!({"message": "hello"}))
@@ -313,7 +313,7 @@ mod tests {
     #[sinex_test]
     fn test_synthesis_event() {
         let source_ids = vec![Id::<Event>::new(), Id::<Event>::new()];
-        let event = Event::schemaless()
+        let event = RawEvent::schemaless()
             .source(EventSource::new("processor"))
             .event_type(EventType::new("analysis.completed"))
             .payload(json!({"result": "success"}))

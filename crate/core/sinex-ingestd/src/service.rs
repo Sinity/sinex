@@ -13,7 +13,7 @@ use crate::{
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
 use once_cell::sync::Lazy;
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
@@ -176,7 +176,7 @@ impl IngestService {
             .with_interval(Duration::from_secs(300)); // 5 minutes
 
         // Set global telemetry
-        sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+        sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
 
         // Spawn telemetry emitter
         accumulator.clone().spawn_emitter();
@@ -776,7 +776,7 @@ impl IngestServiceImpl {
     /// Convert protobuf event to Event
     async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<Event> {
         // Validate and parse JSON payload
-        let payload = sinex_types::validate_json(&proto.payload)
+        let payload = sinex_core::types::validate_json(&proto.payload)
             .map_err(|e| IngestdError::Validation(format!("Invalid JSON payload: {}", e)))?;
 
         let _blob_id = proto

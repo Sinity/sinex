@@ -148,7 +148,7 @@ pub fn clear_cache() {
 /// # Example
 /// ```ignore
 /// // In your main function or initialization code:
-/// sinex_types::events::initialize_schema_cache(&pool).await
+/// sinex_core::types::events::initialize_schema_cache(&pool).await
 ///     .expect("Failed to initialize schema cache");
 /// ```
 pub async fn initialize_schema_cache(

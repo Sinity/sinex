@@ -99,6 +99,7 @@ use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::error::with_context;
+use sinex_core::types::events::Event;
 use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
@@ -522,7 +523,7 @@ impl FilesystemProcessor {
         &self,
         path: &Utf8Path,
         metadata: &std::fs::Metadata,
-    ) -> SatelliteResult<Vec<Event>> {
+    ) -> SatelliteResult<Vec<RawEvent>> {
         // Validate path before processing
         let path_str = path.as_str();
 
@@ -534,7 +535,7 @@ impl FilesystemProcessor {
 
         if metadata.is_file() {
             let event: RawEvent =
-                RawEvent::from_payload(sinex_types::events::FileDiscoveredPayload {
+                Event::from_payload(sinex_core::types::events::FileDiscoveredPayload {
                     path: path_str.to_string(),
                     size: metadata.len(),
                     modified_at: Utc::now(),
@@ -544,7 +545,7 @@ impl FilesystemProcessor {
             events.push(event);
         } else if metadata.is_dir() {
             let event: RawEvent =
-                RawEvent::from_payload(sinex_types::events::DirDiscoveredPayload {
+                Event::from_payload(sinex_core::types::events::DirDiscoveredPayload {
                     path: path_str.to_string(),
                     modified_at: Utc::now(),
                 })
@@ -653,7 +654,7 @@ impl FilesystemProcessor {
             let cleanup_tracker = self.rename_tracker.clone();
             let cleanup_task = tokio::task::spawn(async move {
                 let mut cleanup_interval =
-                    tokio::time::interval(sinex_types::filesystem::CLEANUP_INTERVAL);
+                    tokio::time::interval(sinex_core::types::filesystem::CLEANUP_INTERVAL);
                 loop {
                     cleanup_interval.tick().await;
                     Self::cleanup_old_rename_operations(&cleanup_tracker);
@@ -782,7 +783,7 @@ impl FilesystemProcessor {
     }
 
     /// Convert notify event to RawEvent with rich metadata (placeholder for full implementation)
-    fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<Event>> {
+    fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<RawEvent>> {
         // This would contain the full event conversion logic from the original implementation
         // For now, return empty to focus on the architectural changes
         Ok(vec![])

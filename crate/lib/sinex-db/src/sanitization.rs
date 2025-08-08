@@ -146,7 +146,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::schemaless()
+        let mut event = RawEvent::schemaless()
             .source(EventSource::new("../../../etc/passwd"))
             .event_type(EventType::new("security.test"))
             .payload(json!({"path": "../../sensitive/file.txt"}))
@@ -167,7 +167,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::schemaless()
+        let mut event = RawEvent::schemaless()
             .source(EventSource::new("test\0source"))
             .event_type(EventType::new("security.test"))
             .payload(json!({"data": "test\0value"}))
@@ -183,7 +183,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = Event::schemaless()
+        let mut event = RawEvent::schemaless()
             .source(EventSource::new("security.test"))
             .event_type(EventType::new("sql.injection"))
             .payload(json!({"query": "'; DROP TABLE events; --"}))

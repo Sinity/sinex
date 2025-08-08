@@ -58,6 +58,7 @@ use color_eyre::eyre::eyre;
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::types::events::Event;
 use sinex_core::types::{ulid::Ulid, Id};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -280,7 +281,7 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
 
             // Create event for this log line
             use sinex_core::types::events::LogLinePayload;
-            let event: RawEvent = RawEvent::from_payload(LogLinePayload {
+            let event: RawEvent = Event::from_payload(LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
                 log_source: self.log_source.clone(),

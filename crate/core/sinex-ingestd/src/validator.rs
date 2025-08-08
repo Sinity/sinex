@@ -2,7 +2,7 @@
 
 use crate::IngestdResult;
 use ahash::AHashMap;
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
 use sqlx::FromRow;
@@ -227,7 +227,7 @@ impl EventValidator {
     }
 
     /// Check if a schema is available by ID
-    pub fn has_schema_by_id(&self, schema_id: &sinex_types::ulid::Ulid) -> bool {
+    pub fn has_schema_by_id(&self, schema_id: &sinex_core::types::ulid::Ulid) -> bool {
         let schema_key = Arc::new(schema_id.to_string());
         self.schema_cache.read().contains_key(&schema_key)
     }
@@ -355,7 +355,9 @@ pub enum ValidationResult {
     /// No schema specified for the event
     NoSchema,
     /// Schema not found
-    SchemaNotFound { schema_id: sinex_types::ulid::Ulid },
+    SchemaNotFound {
+        schema_id: sinex_core::types::ulid::Ulid,
+    },
     /// Event is invalid
     Invalid { errors: Vec<String> },
 }

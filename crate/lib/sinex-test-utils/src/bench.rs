@@ -127,7 +127,7 @@ pub fn create_benchmark_result(
 /// Extract suite name from fully qualified function name
 ///
 /// Examples:
-/// - `sinex_db::events::bench_insert` -> `sinex_db::events`
+/// - `sinex_core::db::events::bench_insert` -> `sinex_core::db::events`
 /// - `bench_simple` -> `bench`
 #[cfg(feature = "bench")]
 pub fn extract_suite(benchmark_name: &str) -> String {
@@ -186,8 +186,8 @@ mod tests {
     #[sinex_test]
     fn test_extract_suite() {
         assert_eq!(
-            extract_suite("sinex_db::events::bench_insert"),
-            "sinex_db::events"
+            extract_suite("sinex_core::db::events::bench_insert"),
+            "sinex_core::db::events"
         );
         assert_eq!(extract_suite("bench_simple"), "bench");
         assert_eq!(

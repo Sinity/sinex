@@ -290,7 +290,7 @@ impl<'ctx> PropertyTester<'ctx> {
                 assert!(by_id.is_some());
 
                 // Should be findable by source
-                let source_ref = sinex_types::domain::EventSource::from(source.as_str());
+                let source_ref = sinex_core::types::domain::EventSource::from(source.as_str());
                 let by_source = self
                     .ctx
                     .pool
@@ -301,7 +301,7 @@ impl<'ctx> PropertyTester<'ctx> {
             }
 
             // Should be findable by type
-            let type_ref = sinex_types::domain::EventType::from(event_type.as_str());
+            let type_ref = sinex_core::types::domain::EventType::from(event_type.as_str());
             let by_type = self
                 .ctx
                 .pool
@@ -563,7 +563,7 @@ mod tests {
 
         // Property: querying by source should return exactly those events
         for source in &sources {
-            let source_ref = sinex_types::domain::EventSource::from(*source);
+            let source_ref = sinex_core::types::domain::EventSource::from(*source);
             let events = ctx
                 .pool
                 .events()

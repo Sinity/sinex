@@ -47,7 +47,7 @@ use sinex_core::db::models::{Blob, RawEvent};
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::DbPool;
 use sinex_core::types::events::{
-    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
+    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, Event, StorageStatisticsPayload,
 };
 use sinex_core::types::{ulid::Ulid, Id};
 use std::time::Instant;
@@ -98,7 +98,7 @@ impl BlobManager {
             }
 
             // Emit deduplication event
-            let event: RawEvent = RawEvent::from_payload(BlobIngestedPayload {
+            let event: RawEvent = Event::from_payload(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
                 mime_type: existing.mime_type.clone(),
@@ -157,7 +157,7 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event
-        let event: RawEvent = RawEvent::from_payload(BlobIngestedPayload {
+        let event: RawEvent = Event::from_payload(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
             mime_type: Some(mime_type),
@@ -207,7 +207,7 @@ impl BlobManager {
             self.add_original_filename(&existing_id, filename).await?;
 
             // Emit deduplication event
-            let event: RawEvent = RawEvent::from_payload(BlobIngestedPayload {
+            let event: RawEvent = Event::from_payload(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
                 mime_type: existing.mime_type.clone(),
@@ -269,7 +269,7 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event
-        let event: RawEvent = RawEvent::from_payload(BlobIngestedPayload {
+        let event: RawEvent = Event::from_payload(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
             mime_type: Some(content_type.to_string()),
@@ -305,7 +305,7 @@ impl BlobManager {
             .wrap_err("Failed to read blob content")?;
 
         // Emit blob retrieved event
-        let event: RawEvent = RawEvent::from_payload(BlobRetrievedPayload {
+        let event: RawEvent = Event::from_payload(BlobRetrievedPayload {
             blob_id: annex_key.to_string(), // Using annex_key as blob identifier
             retrieval_time_ms: start.elapsed().as_millis() as u64,
             cache_hit: true, // git-annex get ensures it's local
@@ -331,7 +331,7 @@ impl BlobManager {
         self.annex.get_content(&blob.annex_key).await?;
 
         // Emit blob retrieved event
-        let event: RawEvent = RawEvent::from_payload(BlobRetrievedPayload {
+        let event: RawEvent = Event::from_payload(BlobRetrievedPayload {
             blob_id: blob_id.to_string(),
             retrieval_time_ms: start.elapsed().as_millis() as u64,
             cache_hit: true, // git-annex get ensures it's local
@@ -365,7 +365,7 @@ impl BlobManager {
         self.update_verification_status(blob_id, status).await?;
 
         // Emit blob verified event
-        let event: RawEvent = RawEvent::from_payload(BlobVerifiedPayload {
+        let event: RawEvent = Event::from_payload(BlobVerifiedPayload {
             blob_id: blob_id.to_string(),
             verification_status: status.to_string(),
             checksum_matched: is_verified,
@@ -497,7 +497,7 @@ impl BlobManager {
         let failed_count = 0i64; // TODO: Track failed verifications
 
         // Insert metric event using EventRepository
-        let new_event: RawEvent = RawEvent::from_payload(StorageStatisticsPayload {
+        let new_event: RawEvent = Event::from_payload(StorageStatisticsPayload {
             total_blobs: blob_count,
             total_size_bytes: total_size,
             failed_verifications: failed_count,

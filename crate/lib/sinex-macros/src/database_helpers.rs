@@ -151,7 +151,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_optional(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "query")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -160,7 +160,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_all(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "query")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -169,7 +169,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_one(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "query")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -180,7 +180,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
             quote! {
                 OperationQueries::execute(pool, #sql, &[#(#param_names),*])
                     .await
-                    .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                    .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                         .wrap_err_with("operation", "query")
                         .wrap_err_with("function", stringify!(#fn_name))
                         .build())
@@ -211,7 +211,7 @@ fn generate_transaction_function(transaction: &DbTransaction) -> proc_macro2::To
         #[sinex_macros::with_context(operation = "database_transaction")]
         pub #signature {
             let mut tx = #pool_param.begin().await
-                .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                     .wrap_err_with("operation", "transaction_begin")
                     .wrap_err_with("function", stringify!(#fn_name))
                     .build())?;
@@ -224,7 +224,7 @@ fn generate_transaction_function(transaction: &DbTransaction) -> proc_macro2::To
             match result {
                 Ok(_) => {
                     tx.commit().await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "transaction_commit")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())

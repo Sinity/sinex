@@ -21,7 +21,7 @@
 //!
 //! ```rust,no_run
 //! use crate::prelude::*;
-//! use sinex_core::db::models::Event;
+//! use sinex_core::db::models::RawEvent;
 //!
 //! # async fn example(pool: &DbPool) -> SinexResult<()> {
 //! // Simple query with automatic error context

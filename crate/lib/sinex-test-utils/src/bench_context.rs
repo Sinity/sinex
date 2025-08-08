@@ -86,7 +86,7 @@ impl BenchContext {
             .await?;
 
         // Run migrations if needed
-        sinex_db::run_migrations(&pool)
+        sinex_core::db::run_migrations(&pool)
             .await
             .map_err(|e| eyre!("Migration failed: {}", e))?;
 

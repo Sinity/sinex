@@ -59,7 +59,7 @@ where
 /// Create a test event with a specific payload and schema version
 pub fn test_event_with_version<P: EventPayload>(
     payload: P,
-    schema_id: sinex_types::ulid::Ulid,
+    schema_id: sinex_core::types::ulid::Ulid,
     version: &str,
 ) -> Event {
     use crate::schema_registry::cache_schema_version;

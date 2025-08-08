@@ -24,6 +24,7 @@
 use camino::Utf8Path;
 use regex::Regex;
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -336,7 +337,7 @@ impl KittyWatcher {
                 let previous_process = self.process_states.get(&window_id).cloned();
 
                 let process_event: RawEvent =
-                    RawEvent::from_payload(sinex_types::events::KittyProcessChangedPayload {
+                    Event::from_payload(sinex_core::types::events::KittyProcessChangedPayload {
                         kitty_window_id: window_id.clone(),
                         kitty_tab_id: window.parent_tab_id.clone(),
                         previous_process: previous_process
@@ -379,8 +380,8 @@ impl KittyWatcher {
                     // Create command completion event with both command and output
                     // Create command completion event
 
-                    let completion_event: RawEvent =
-                        RawEvent::from_payload(sinex_types::events::KittyCommandCompletedPayload {
+                    let completion_event: RawEvent = Event::from_payload(
+                        sinex_core::types::events::KittyCommandCompletedPayload {
                             command: command_text.clone(),
                             working_directory: window.cwd.clone().unwrap_or_default(),
                             exit_status: window.last_cmd_exit_status.unwrap_or(0),
@@ -390,8 +391,9 @@ impl KittyWatcher {
                             kitty_tab_id: window_state.tab_id.clone(),
                             output_lines: Some(last_output.lines().count() as u32),
                             error_output: None, // TODO: Separate stderr capture
-                        })
-                        .into();
+                        },
+                    )
+                    .into();
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
@@ -446,7 +448,7 @@ impl KittyWatcher {
                 // Create tab focused event
 
                 let tab_focused_event: RawEvent =
-                    RawEvent::from_payload(sinex_types::events::KittyTabFocusedPayload {
+                    Event::from_payload(sinex_core::types::events::KittyTabFocusedPayload {
                         kitty_tab_id: focused_tab_id.clone(),
                         kitty_window_id: "unknown".to_string(),
                         tab_title: title.clone(),
@@ -499,7 +501,7 @@ impl KittyWatcher {
             // Create content streamed event
 
             let scrollback_event: RawEvent =
-                RawEvent::from_payload(sinex_types::events::KittyContentStreamedPayload {
+                Event::from_payload(sinex_core::types::events::KittyContentStreamedPayload {
                     kitty_window_id: window_id.clone(),
                     new_lines: new_lines,
                     line_start_offset: previous_line_count as usize,

@@ -110,7 +110,7 @@ impl Default for HealthAggregator {
 impl NatsEventBatchProcessor for HealthAggregator {
     async fn process_batch(
         &mut self,
-        events: Vec<sinex_db::models::Event>,
+        events: Vec<sinex_core::db::models::RawEvent>,
     ) -> SatelliteResult<NatsBatchProcessingResult> {
         // Simple implementation that just acknowledges all events
         info!("Health aggregator processed {} events", events.len());

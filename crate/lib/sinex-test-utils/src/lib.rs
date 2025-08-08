@@ -456,12 +456,12 @@ pub fn test_event_types() -> Vec<(&'static str, &'static str)> {
 }
 
 #[fixture]
-pub fn test_event_sources() -> Vec<sinex_types::domain::EventSource> {
+pub fn test_event_sources() -> Vec<sinex_core::types::domain::EventSource> {
     vec![
-        sinex_types::domain::EventSource::from_static("fs-watcher"),
-        sinex_types::domain::EventSource::from_static("terminal"),
-        sinex_types::domain::EventSource::from_static("desktop"),
-        sinex_types::domain::EventSource::from_static("system"),
+        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
+        sinex_core::types::domain::EventSource::from_static("terminal"),
+        sinex_core::types::domain::EventSource::from_static("desktop"),
+        sinex_core::types::domain::EventSource::from_static("system"),
     ]
 }
 
@@ -918,11 +918,11 @@ mod tests {
         // Batch insert and verify
         let batch_events = (0..10)
             .map(|i| {
-                Event::schemaless()
-                    .source(EventSource::from("count-test"))
-                    .event_type(EventType::from("batch"))
-                    .payload(json!({"batch_index": i}))
-                    .build()
+                RawEvent::schemaless(
+                    EventSource::from("count-test"),
+                    EventType::from("batch"),
+                    json!({"batch_index": i}),
+                )
             })
             .collect::<Vec<_>>();
 

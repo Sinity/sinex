@@ -174,7 +174,7 @@ impl TerminalCommandCanonicalizer {
             ts_orig: command_data.start_time,
             ts_ingest: Utc::now(),
             source_event_ids: Some(command_data.source_events.clone()),
-            host: sinex_db::models::HostName::current(),
+            host: sinex_core::db::models::HostName::current(),
             ingestor_version: "1.0.0".to_string(),
             schema_id: None,
         };

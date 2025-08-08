@@ -425,7 +425,7 @@ mod tests {
         use sinex_core::db::repositories::*;
         use sinex_core::types::domain::*;
 
-        let new_event = Event::builder()
+        let new_event = RawEvent::builder()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test.event"))
             .host(HostName::new("test-host"))
@@ -459,7 +459,7 @@ mod tests {
         use sinex_core::db::repositories::*;
         use sinex_core::types::domain::*;
 
-        let new_event = Event::builder()
+        let new_event = RawEvent::builder()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test"))
             .host(HostName::new("test"))
@@ -545,7 +545,7 @@ mod benches {
     //             None,
     //             None,
     //         )
-    //         .fetch_one::<sinex_types::RawEvent>(ctx.pool())
+    //         .fetch_one::<sinex_core::types::RawEvent>(ctx.pool())
     //         .await?;
 
     //         // Add annotation
@@ -553,7 +553,7 @@ mod benches {
     //             "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator)
     //              VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')"
     //         )
-    //         .bind(sinex_types::ulid::Ulid::new().to_uuid())
+    //         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
     //         .bind(event.id.to_uuid())
     //         .execute(ctx.pool())
     //         .await?;
@@ -603,7 +603,7 @@ mod benches {
     //              VALUES ($1, $2, $3, '{}'::jsonb)"
     //         )
     //         .bind(format!("satellite_{}", i % 3))
-    //         .bind(sinex_types::ulid::Ulid::new().to_uuid())
+    //         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
     //         .bind(i as i64 * 10)
     //         .execute(ctx.pool())
     //         .await?;

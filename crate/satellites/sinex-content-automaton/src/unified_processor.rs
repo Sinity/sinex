@@ -159,7 +159,7 @@ impl EventBatchProcessor for ContentServiceProcessor {
                         // Submit response as synthesis event
                         if let Some(ctx) = &self.context {
                             // Create response event
-                            let synthesis_event: RawEvent = RawEvent::from_payload(RpcContentResponsePayload {
+                            let synthesis_event: RawEvent = Event::from_payload(RpcContentResponsePayload {
                                 request_id: event.payload.get("request_id").cloned(),
                                 response: Some(response),
                                 error: None,
@@ -175,7 +175,7 @@ impl EventBatchProcessor for ContentServiceProcessor {
                         
                         // Submit error response
                         if let Some(ctx) = &self.context {
-                            let synthesis_event: RawEvent = RawEvent::from_payload(RpcContentResponsePayload {
+                            let synthesis_event: RawEvent = Event::from_payload(RpcContentResponsePayload {
                                 request_id: event.payload.get("request_id").cloned(),
                                 response: None,
                                 error: Some(RpcError {

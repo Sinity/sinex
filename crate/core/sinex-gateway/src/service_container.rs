@@ -98,7 +98,7 @@ impl ServiceContainer {
                 .with_interval(Duration::from_secs(300)); // 5 minutes
 
             // Set global telemetry
-            sinex_db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
+            sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;
 
             // Spawn telemetry emitter
             accumulator.clone().spawn_emitter();

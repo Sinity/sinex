@@ -32,6 +32,7 @@
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
 use sinex_core::types::events::{AsciinemaSessionEndedPayload, AsciinemaSessionStartedPayload};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
@@ -360,7 +361,7 @@ end
             }
 
             // New active recording
-            let session_id = sinex_types::ulid::Ulid::new().to_string();
+            let session_id = sinex_core::types::ulid::Ulid::new().to_string();
             self.active_sessions.insert(
                 path.clone(),
                 RecordingSession {
@@ -388,7 +389,7 @@ end
                     }
                 };
 
-                let event: RawEvent = RawEvent::from_payload(AsciinemaSessionStartedPayload {
+                let event: RawEvent = Event::from_payload(AsciinemaSessionStartedPayload {
                     session_id: session_id.clone(),
                     terminal_type: "asciinema".to_string(),
                     terminal_id: path.to_string(),
@@ -446,20 +447,19 @@ end
                         // Emit session ended event
                         let duration = chrono::Utc::now().signed_duration_since(start_time);
 
-                        let event: RawEvent =
-                            RawEvent::from_payload(AsciinemaSessionEndedPayload {
-                                session_id: session_id.clone(),
-                                terminal_type: "asciinema".to_string(),
-                                terminal_id: path.to_string(),
-                                end_time: chrono::Utc::now().to_rfc3339(),
-                                duration_seconds: duration.num_milliseconds() as f64 / 1000.0,
-                                event_count: 0, // Would need to count from recording
-                                recording_file: path.to_string(),
-                                file_size_bytes: Some(file_size),
-                                git_annex_path: None,
-                                git_annex_key: None,
-                            })
-                            .into();
+                        let event: RawEvent = Event::from_payload(AsciinemaSessionEndedPayload {
+                            session_id: session_id.clone(),
+                            terminal_type: "asciinema".to_string(),
+                            terminal_id: path.to_string(),
+                            end_time: chrono::Utc::now().to_rfc3339(),
+                            duration_seconds: duration.num_milliseconds() as f64 / 1000.0,
+                            event_count: 0, // Would need to count from recording
+                            recording_file: path.to_string(),
+                            file_size_bytes: Some(file_size),
+                            git_annex_path: None,
+                            git_annex_key: None,
+                        })
+                        .into();
 
                         if tx.send(event).is_err() {
                             warn!("Event channel closed");

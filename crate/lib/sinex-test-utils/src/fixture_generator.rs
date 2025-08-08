@@ -245,7 +245,7 @@ impl FixtureGenerator {
 
         use sinex_core::types::domain::*;
 
-        Event::builder()
+        RawEvent::builder()
             .source(EventSource::new(source))
             .event_type(EventType::new(event_type))
             .host(HostName::new("fixture_host"))

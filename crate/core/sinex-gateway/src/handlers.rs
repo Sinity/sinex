@@ -3,7 +3,7 @@
 use color_eyre::eyre::{Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use sinex_core::db::models::Entity;
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_core::types::{ulid::Ulid, Id};
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchQuery, SearchService};
 

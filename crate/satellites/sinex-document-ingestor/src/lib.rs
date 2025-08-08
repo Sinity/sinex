@@ -12,7 +12,7 @@ use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
-use sinex_core::types::events::DocumentIngestedPayload;
+use sinex_core::types::events::{DocumentIngestedPayload, Event};
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -107,7 +107,7 @@ impl DocumentProcessor {
                 .await?;
 
             // Step 2: Create and emit document.ingested event with provenance
-            let event: RawEvent = RawEvent::from_payload(DocumentIngestedPayload {
+            let event: RawEvent = Event::from_payload(DocumentIngestedPayload {
                 file_path: file_path.to_string(),
                 source_material_id: source_material_id.to_string(),
                 size_bytes: content.len() as u64,

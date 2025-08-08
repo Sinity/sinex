@@ -297,7 +297,7 @@ impl Drop for TestDatabase {
             rt.block_on(async {
                 // Try to release the advisory lock with a short timeout
                 match tokio::time::timeout(
-                    sinex_types::timeouts::DEFAULT_TERMINAL_POLL_INTERVAL,
+                    sinex_core::types::timeouts::DEFAULT_TERMINAL_POLL_INTERVAL,
                     sqlx::query("SELECT pg_advisory_unlock($1)")
                         .bind(lock_id)
                         .execute(&pool_clone),
@@ -782,7 +782,7 @@ async fn ensure_template_database(admin_url: &str, base_url: &str) -> Result<Str
 
         tokio::time::timeout(
             Duration::from_secs(30),
-            sinex_db::run_migrations(&template_pool),
+            sinex_core::db::run_migrations(&template_pool),
         )
         .await
         .map_err(|_| {
@@ -1108,7 +1108,7 @@ mod tests {
             // Insert test data
 
             let repo = db.pool.events();
-            let event = Event::builder()
+            let event = RawEvent::builder()
                 .source(EventSource::new("test"))
                 .event_type(EventType::new("test.event"))
                 .host(HostName::new("test-host"))
@@ -1198,7 +1198,7 @@ mod tests {
         use sinex_core::types::domain::*;
 
         let repo = db.pool.events();
-        let event_to_insert = Event::builder()
+        let event_to_insert = RawEvent::builder()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test"))
             .host(HostName::new("test"))
@@ -1211,7 +1211,7 @@ mod tests {
             "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator) 
              VALUES ($1, $2, 'test', '{}'::jsonb, 'test-user')"
         )
-        .bind(sinex_types::ulid::Ulid::new().to_uuid())
+        .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
         .bind(event.id.expect("Event must have an ID").to_uuid())
         .execute(db.pool())
         .await?;
@@ -1260,7 +1260,7 @@ mod tests {
 
                 let repo = db.pool.events();
                 for _j in 0..5 {
-                    let event = Event::builder()
+                    let event = RawEvent::builder()
                         .source(EventSource::new(&format!("task_{}", i)))
                         .event_type(EventType::new("stress.test"))
                         .host(HostName::new("test"))
@@ -1271,7 +1271,7 @@ mod tests {
 
                 // Verify isolation
                 let repo = db.pool.events();
-                let source = sinex_types::domain::EventSource::new(&format!("task_{}", i));
+                let source = sinex_core::types::domain::EventSource::new(&format!("task_{}", i));
                 let count = repo.count_by_source(&source).await?;
 
                 assert_eq!(count, 5);
@@ -1436,7 +1436,7 @@ mod benches {
 
         let repo = pool.events();
         for i in 0..100 {
-            let new_event = Event::builder()
+            let new_event = RawEvent::builder()
                 .source(EventSource::new("bench"))
                 .event_type(EventType::new("test"))
                 .host(HostName::new("host"))
@@ -1483,7 +1483,7 @@ mod benches {
 
         let repo = pool.events();
         for i in 0..50 {
-            let new_event = Event::builder()
+            let new_event = RawEvent::builder()
                 .source(EventSource::new(&format!("source_{}", i % 10)))
                 .event_type(EventType::new("test"))
                 .host(HostName::new("bench"))

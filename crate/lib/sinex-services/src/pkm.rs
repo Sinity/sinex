@@ -3,7 +3,7 @@
 use crate::error::ServiceResult;
 use serde_json::json;
 use sinex_core::db::models::Entity as DbEntity;
-use sinex_core::db::models::Event;
+use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
 use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
@@ -23,7 +23,7 @@ impl PkmService {
     /// Create a note annotation on an event with source material tracking
     pub async fn create_note(
         &self,
-        event_id: Id<Event>,
+        event_id: Id<RawEvent>,
         content: &str,
         tags: Vec<String>,
         created_by: &str,

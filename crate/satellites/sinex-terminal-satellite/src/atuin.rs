@@ -9,6 +9,7 @@ use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rusqlite::{Connection, Row};
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -273,7 +274,7 @@ impl AtuinWatcher {
         let ts_start = ts_end - chrono::Duration::milliseconds((duration_secs * 1000.0) as i64);
 
         let event: RawEvent =
-            RawEvent::from_payload(sinex_types::events::AtuinCommandExecutedPayload {
+            Event::from_payload(sinex_core::types::events::AtuinCommandExecutedPayload {
                 command_string: entry.command.clone(),
                 cwd: entry.cwd.clone(),
                 exit_code: entry.exit_code,

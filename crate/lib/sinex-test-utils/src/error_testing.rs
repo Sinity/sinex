@@ -5,7 +5,7 @@
 
 use crate::prelude::*;
 use serde_json::Value;
-use sinex_core::db::models::*;
+use sinex_core::db::models::RawEvent;
 use sinex_core::types::error::SinexError;
 use std::fmt::Debug;
 
@@ -170,7 +170,7 @@ impl<'ctx> ValidationTester<'ctx> {
         payload: Value,
         expected_error: &str,
     ) -> crate::Result<()> {
-        use sinex_core::types::domain::*;
+        use sinex_core::types::domain::{EventSource, EventType};
         let result = self
             .ctx
             .create_test_event(source, event_type, payload)
@@ -186,8 +186,8 @@ impl<'ctx> ValidationTester<'ctx> {
         source: &str,
         event_type: &str,
         payload: Value,
-    ) -> std::result::Result<Event, SinexError> {
-        use sinex_core::types::domain::*;
+    ) -> std::result::Result<RawEvent, SinexError> {
+        use sinex_core::types::domain::{EventSource, EventType};
         self.ctx
             .create_test_event(source, event_type, payload)
             .await

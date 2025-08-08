@@ -18,7 +18,7 @@ pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
-    last_processed_id: Option<Id<Event>>,
+    last_processed_id: Option<Id<RawEvent>>,
     processed_count: i64,
     state_data: Option<JsonValue>,
     checkpoint_version: i32,
@@ -47,7 +47,7 @@ impl TestCheckpointBuilder {
     }
 
     /// Set last processed ID
-    pub fn last_processed_id(mut self, id: Id<Event>) -> Self {
+    pub fn last_processed_id(mut self, id: Id<RawEvent>) -> Self {
         self.last_processed_id = Some(id);
         self
     }
@@ -94,7 +94,7 @@ impl TestCheckpointBuilder {
 /// Builder for test scenarios with multiple events - manual implementation
 #[derive(Debug)]
 pub(crate) struct TestScenarioBuilder {
-    events: Vec<Event>,
+    events: Vec<RawEvent>,
     checkpoints: Vec<TestCheckpointBuilder>,
     pool: Option<DbPool>,
 }
@@ -117,14 +117,14 @@ impl TestScenarioBuilder {
     /// Add multiple events from the same source
     pub fn with_events_from_source(mut self, source: &str, event_type: &str, count: usize) -> Self {
         for i in 0..count {
-            let event = Event::schemaless()
-                .source(EventSource::from(source))
-                .event_type(EventType::from(event_type))
-                .payload(json!({
+            let event = RawEvent::schemaless(
+                EventSource::from(source),
+                EventType::from(event_type),
+                json!({
                     "index": i,
                     "batch": true
-                }))
-                .build();
+                }),
+            );
             self.events.push(event);
         }
         self

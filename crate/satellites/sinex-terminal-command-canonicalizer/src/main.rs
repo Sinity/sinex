@@ -38,7 +38,7 @@ impl NatsEventBatchProcessor for SimpleTerminalCanonicalizer {
 
     async fn process_batch(
         &mut self,
-        events: Vec<sinex_db::models::Event>,
+        events: Vec<sinex_core::db::models::RawEvent>,
     ) -> SatelliteResult<NatsBatchProcessingResult> {
         info!(
             "Terminal command canonicalizer processed {} events",

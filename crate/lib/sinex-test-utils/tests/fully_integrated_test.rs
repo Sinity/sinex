@@ -143,7 +143,7 @@ async fn test_all_features_combined(
     }
 
     // Verify all were created
-    let source_ref = sinex_types::domain::EventSource::from("bulk-test");
+    let source_ref = sinex_core::types::domain::EventSource::from("bulk-test");
     let events = ctx
         .pool
         .events()
@@ -212,7 +212,7 @@ async fn test_with_fixtures(
         }
     }
 
-    let type_ref = sinex_types::domain::EventType::from(format!("file.{}", operation));
+    let type_ref = sinex_core::types::domain::EventType::from(format!("file.{}", operation));
     let events = ctx
         .pool
         .events()
