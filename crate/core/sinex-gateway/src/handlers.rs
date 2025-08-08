@@ -48,7 +48,7 @@ pub async fn handle_create_note(service: &PkmService, params: Value) -> Result<V
         .get("event_id")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<Ulid>().ok())
-        .map(Id::<Event>::from_ulid)
+        .map(Id::<RawEvent>::from_ulid)
         .wrap_err("Invalid or missing event_id")?;
 
     let content = params

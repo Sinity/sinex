@@ -249,7 +249,7 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
 mod tests {
     use super::*;
 
-    #[sinex_test]
+    #[test]
     fn test_event_registry_parsing() {
         let input = quote! {
             sources {

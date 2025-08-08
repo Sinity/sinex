@@ -372,15 +372,13 @@ impl ClipboardWatcher {
             entry.copy_count += 1;
         } else {
             // Add new entry
-            self.clipboard_history
-                .push_back(ClipboardHistoryEntry {
-                    content_hash,
-                    _first_seen: now,
-                    last_seen: now,
-                    _content_type: content_type,
-                    copy_count: 1,
-                })
-                .into();
+            self.clipboard_history.push_back(ClipboardHistoryEntry {
+                content_hash,
+                _first_seen: now,
+                last_seen: now,
+                _content_type: content_type,
+                copy_count: 1,
+            });
 
             // Trim history if needed
             if self.clipboard_history.len() > self.max_history_entries {
@@ -603,7 +601,8 @@ impl ClipboardWatcher {
                 annex_key,
                 blob_id,
             })
-            .with_ts_orig(Some(content.timestamp));
+            .with_ts_orig(Some(content.timestamp))
+            .into();
 
         Ok(event)
     }
@@ -662,7 +661,8 @@ impl ClipboardWatcher {
                 annex_key,
                 blob_id,
             })
-            .with_ts_orig(Some(content.timestamp));
+            .with_ts_orig(Some(content.timestamp))
+            .into();
 
         Ok(event)
     }

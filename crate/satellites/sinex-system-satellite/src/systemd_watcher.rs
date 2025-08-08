@@ -58,7 +58,7 @@ impl SystemdWatcher {
     }
 
     /// Parse systemd unit status line
-    fn parse_unit_status(&self, line: &str) -> Option<Event> {
+    fn parse_unit_status(&self, line: &str) -> Option<RawEvent> {
         // Example systemd monitor output format:
         // "● service.service - Description"
         // "  Active: active (running) since ..."
@@ -172,7 +172,7 @@ impl SystemdWatcher {
     }
 
     /// Get current systemd unit status
-    async fn get_unit_status(&self, tx: &mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
+    async fn get_unit_status(&self, tx: &mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
         info!("Checking systemd unit status");
 
         let mut args = vec!["status"];
@@ -233,7 +233,7 @@ impl SystemdWatcher {
     /// Monitor systemd journal for unit state changes
     async fn monitor_systemd_journal(
         &self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting systemd journal monitoring for unit changes");
 
@@ -312,7 +312,7 @@ impl SystemdWatcher {
     }
 
     /// Parse systemd journal entry for unit state changes
-    fn parse_systemd_journal_entry(&self, line: &str) -> Option<Event> {
+    fn parse_systemd_journal_entry(&self, line: &str) -> Option<RawEvent> {
         match serde_json::from_str::<serde_json::Value>(line) {
             Ok(entry) => {
                 let message = entry["MESSAGE"].as_str().unwrap_or("");
@@ -429,7 +429,7 @@ impl SystemdWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting systemd event streaming");
 

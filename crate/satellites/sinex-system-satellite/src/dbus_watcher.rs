@@ -35,7 +35,7 @@ impl DbusWatcher {
     /// Start monitoring both session and system buses concurrently
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting D-Bus monitoring");
 
@@ -43,7 +43,7 @@ impl DbusWatcher {
 
         // Helper closure to spawn monitoring tasks
         let spawn_monitor =
-            |bus_type: &'static str, tx: mpsc::UnboundedSender<Event>, config: DbusConfig| {
+            |bus_type: &'static str, tx: mpsc::UnboundedSender<RawEvent>, config: DbusConfig| {
                 tokio::spawn(async move { Self::monitor_bus(bus_type, tx, config).await })
             };
 
@@ -72,7 +72,7 @@ impl DbusWatcher {
     /// Monitor a specific D-Bus bus with real-time signal subscription
     async fn monitor_bus(
         bus_type: &str,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
         config: DbusConfig,
     ) -> SatelliteResult<()> {
         loop {
@@ -94,7 +94,7 @@ impl DbusWatcher {
     /// Inner monitoring loop with proper error handling
     async fn monitor_bus_inner(
         bus_type: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         info!("Connecting to D-Bus {} bus", bus_type);
@@ -198,7 +198,7 @@ impl DbusWatcher {
         sender: Option<String>,
         destination: Option<String>,
         args: serde_json::Value,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         let interface = interface.unwrap_or_default();
@@ -250,7 +250,7 @@ impl DbusWatcher {
         sender: &Option<String>,
         args: &serde_json::Value,
         timestamp: String,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         // Extract specialized events based on interface
@@ -396,7 +396,7 @@ impl DbusWatcher {
         destination: &Option<String>,
         args: &serde_json::Value,
         timestamp: String,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
         _config: &DbusConfig,
     ) -> SatelliteResult<()> {
         let event: RawEvent = Event::from_payload(DbusMethodCalledPayload {
@@ -720,8 +720,8 @@ impl DbusWatcher {
 
     /// Send event with error logging
     async fn send_event(
-        tx: &mpsc::UnboundedSender<Event>,
-        event: Event,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+        event: RawEvent,
         context: &str,
     ) -> SatelliteResult<()> {
         if tx.send(event).is_err() {

@@ -266,8 +266,7 @@ impl WindowManagerWatcher {
                     );
                 }
             }
-        })
-        .into();
+        });
     }
 
     /// Discover Hyprland socket paths (both event and command)
@@ -388,14 +387,12 @@ impl WindowManagerWatcher {
         }
 
         let mut history = self._focus_history.lock().unwrap();
-        history
-            .push_front(FocusHistoryEntry {
-                _timestamp: Utc::now(),
-                _window_address: window_address,
-                _window_class: window_class,
-                _window_title: window_title,
-            })
-            .into();
+        history.push_front(FocusHistoryEntry {
+            _timestamp: Utc::now(),
+            _window_address: window_address,
+            _window_class: window_class,
+            _window_title: window_title,
+        });
 
         // Keep only last 100 entries
         if history.len() > 100 {

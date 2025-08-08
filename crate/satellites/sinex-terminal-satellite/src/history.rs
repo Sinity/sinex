@@ -161,7 +161,7 @@ impl HistoryWatcher {
         &self,
         command: String,
         source_file: &Utf8PathBuf,
-    ) -> SatelliteResult<Event> {
+    ) -> SatelliteResult<RawEvent> {
         let source_file_str = source_file.to_string();
 
         let event: RawEvent = if source_file_str.contains("fish") {
@@ -190,7 +190,7 @@ impl HistoryWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!(
             "Starting shell history event streaming for {} files",

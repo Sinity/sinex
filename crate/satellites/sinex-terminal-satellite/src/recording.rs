@@ -305,7 +305,10 @@ end
         Ok(integration_code)
     }
 
-    async fn scan_recordings(&mut self, tx: &mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
+    async fn scan_recordings(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let pattern = self.recordings_dir.join(&self.file_pattern);
         let pattern_str = pattern.to_string();
 
@@ -341,7 +344,7 @@ end
     async fn process_recording_file(
         &mut self,
         path: &Utf8PathBuf,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let metadata = fs::metadata(path).await.map_err(|e| {
             sinex_satellite_sdk::SatelliteError::Processing(format!(
@@ -545,7 +548,7 @@ end
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting recording event streaming");
 

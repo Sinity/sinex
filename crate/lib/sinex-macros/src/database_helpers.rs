@@ -345,7 +345,7 @@ mod tests {
     use super::*;
     use syn::parse_quote;
 
-    #[sinex_test]
+    #[test]
     fn test_db_query_parsing() {
         let input = quote! {
             async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<RawEvent> {
@@ -363,7 +363,7 @@ mod tests {
         assert_eq!(parsed.queries[1].signature.ident, "get_events_by_source");
     }
 
-    #[sinex_test]
+    #[test]
     fn test_db_transaction_parsing() {
         let input = quote! {
             async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
@@ -382,7 +382,7 @@ mod tests {
         );
     }
 
-    #[sinex_test]
+    #[test]
     fn test_type_detection() {
         let option_type: Type = parse_quote!(Option<RawEvent>);
         assert!(is_option_type(&option_type));

@@ -312,7 +312,7 @@ impl KittyWatcher {
     async fn process_window_commands(
         &mut self,
         window: &KittyWindow,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let window_id = window.id.to_string();
 
@@ -434,7 +434,7 @@ impl KittyWatcher {
     async fn process_tab_focus_changes(
         &mut self,
         tabs: Vec<(String, String, u32, bool)>,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -474,7 +474,7 @@ impl KittyWatcher {
     async fn capture_incremental_scrollback(
         &mut self,
         window: &KittyWindow,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let window_id = window.id.to_string();
 
@@ -531,7 +531,7 @@ impl KittyWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         if self.socket_path.is_none() {
             warn!("No Kitty socket available, skipping Kitty event streaming");

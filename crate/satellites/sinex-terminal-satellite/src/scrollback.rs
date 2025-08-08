@@ -5,7 +5,7 @@
 use camino::Utf8PathBuf;
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
-use sinex_core::types::events::ShellOutputCapturedPayload;
+use sinex_core::types::events::{Event, ShellOutputCapturedPayload};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
@@ -339,7 +339,7 @@ impl ScrollbackWatcher {
     async fn process_window(
         &mut self,
         window: WindowState,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         // Get scrollback content
         let scrollback = match self.get_window_scrollback(window.id, true).await {
@@ -452,7 +452,7 @@ impl ScrollbackWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting scrollback event streaming");
 

@@ -559,7 +559,7 @@ impl JournalWatcher {
     /// Send event with error logging
     async fn send_event(
         tx: &mpsc::UnboundedSender<RawEvent>,
-        event: Event,
+        event: RawEvent,
         context: &str,
     ) -> SatelliteResult<()> {
         if tx.send(event).is_err() {

@@ -10,7 +10,7 @@ use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_core::types::events::{
-    JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
+    Event, JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };
 use sinex_satellite_sdk::{

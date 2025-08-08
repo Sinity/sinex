@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::{
-    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
+    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload, Event,
     WindowManagerHistoricalPayload,
 };
 use sinex_satellite_sdk::{
@@ -686,8 +686,7 @@ impl ExplorationProvider for DesktopProcessor {
                 "window_manager_enabled": self.config.window_manager_enabled,
                 "window_manager_type": self.config.window_manager_type,
                 "clipboard_poll_interval_secs": self.config.clipboard_poll_interval_secs
-            })
-            .into();
+            });
 
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(&config_data)?,
