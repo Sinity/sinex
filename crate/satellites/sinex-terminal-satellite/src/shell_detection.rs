@@ -219,6 +219,7 @@ fn get_parent_pid() -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_shell_type_detection() -> color_eyre::eyre::Result<()> {

@@ -741,19 +741,21 @@ mod sqlx_impl {
 mod tests {
     use super::*;
     use crate::types::events::EventPayload;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_string_type_creation() {
+    fn test_string_type_creation() -> color_eyre::eyre::Result<()> {
         let source = crate::events::payloads::filesystem::FileCreatedPayload::SOURCE;
         assert_eq!(source.as_str(), "fs-watcher");
         assert_eq!(source.to_string(), "fs-watcher");
 
         let event_type = EventType::from("file.created");
         assert_eq!(event_type.as_str(), "file.created");
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_event_type_validation() {
+    fn test_event_type_validation() -> color_eyre::eyre::Result<()> {
         // Valid event types
         assert!(EventType::new("file.created").validate().is_ok());
         assert!(EventType::new("command.executed").validate().is_ok());
@@ -765,10 +767,11 @@ mod tests {
         assert!(EventType::new("file.").validate().is_err());
         assert!(EventType::new("file..created").validate().is_err());
         assert!(EventType::new("File.Created").validate().is_err()); // uppercase not allowed
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_event_source_validation() {
+    fn test_event_source_validation() -> color_eyre::eyre::Result<()> {
         // Valid sources
         assert!(
             crate::events::payloads::filesystem::FileCreatedPayload::SOURCE
@@ -790,10 +793,11 @@ mod tests {
         assert!(EventSource::new("").validate().is_err());
         assert!(EventSource::new("FS-Watcher").validate().is_err()); // uppercase not allowed
         assert!(EventSource::new("fs watcher").validate().is_err()); // spaces not allowed
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_schema_version_validation() {
+    fn test_schema_version_validation() -> color_eyre::eyre::Result<()> {
         // Valid versions
         assert!(SchemaVersion::new("1.0.0").validate().is_ok());
         assert!(SchemaVersion::new("0.1.0").validate().is_ok());
@@ -804,10 +808,11 @@ mod tests {
         assert!(SchemaVersion::new("1.0").validate().is_err());
         assert!(SchemaVersion::new("1.0.0.0").validate().is_err());
         assert!(SchemaVersion::new("1.0.alpha").validate().is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_type_safety() {
+    fn test_type_safety() -> color_eyre::eyre::Result<()> {
         let source = EventSource::new("test");
         let event_type = EventType::new("test");
 
@@ -816,10 +821,11 @@ mod tests {
 
         // But we can compare the underlying strings if needed
         assert_eq!(source.as_str(), event_type.as_str());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_sanitized_path_validation() {
+    fn test_sanitized_path_validation() -> color_eyre::eyre::Result<()> {
         // Valid paths should work (in test environment, assuming /tmp exists)
         // Note: In real environments this would do actual path canonicalization
         // assert!(SanitizedPath::from_str("/tmp").is_ok());
@@ -828,10 +834,11 @@ mod tests {
         assert!(SanitizedPath::from_str("").is_err());
         assert!(SanitizedPath::from_str("../etc/passwd").is_err());
         assert!(SanitizedPath::from_str("/path/with/../traversal").is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_relative_path_validation() {
+    fn test_relative_path_validation() -> color_eyre::eyre::Result<()> {
         // Valid relative paths
         assert!(RelativePath::from_str("file.txt").is_ok());
         assert!(RelativePath::from_str("dir/file.txt").is_ok());
@@ -841,10 +848,11 @@ mod tests {
         assert!(RelativePath::from_str("").is_err());
         assert!(RelativePath::from_str("/absolute/path").is_err());
         assert!(RelativePath::from_str("../parent").is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_absolute_uri_validation() {
+    fn test_absolute_uri_validation() -> color_eyre::eyre::Result<()> {
         // Valid absolute URIs
         assert!(AbsoluteUri::from_str("https://example.com").is_ok());
         assert!(AbsoluteUri::from_str("file:///path/to/file").is_ok());
@@ -854,10 +862,11 @@ mod tests {
         assert!(AbsoluteUri::from_str("").is_err());
         assert!(AbsoluteUri::from_str("not-a-uri").is_err());
         assert!(AbsoluteUri::from_str("relative/path").is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_blake3_hash_validation() {
+    fn test_blake3_hash_validation() -> color_eyre::eyre::Result<()> {
         // Valid BLAKE3 hash (64 hex chars)
         let valid_hash = "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3";
         assert!(Blake3Hash::from_str(valid_hash).is_ok());
@@ -878,10 +887,11 @@ mod tests {
         // Verify normalization to lowercase
         let hash = Blake3Hash::from_str(&valid_hash.to_uppercase()).unwrap();
         assert_eq!(hash.as_str(), valid_hash);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_sha256_hash_validation() {
+    fn test_sha256_hash_validation() -> color_eyre::eyre::Result<()> {
         // Valid SHA256 hash (64 hex chars)
         let valid_hash = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
         assert!(Sha256Hash::from_str(valid_hash).is_ok());
@@ -902,10 +912,11 @@ mod tests {
         // Verify normalization to lowercase
         let hash = Sha256Hash::from_str(&valid_hash.to_uppercase()).unwrap();
         assert_eq!(hash.as_str(), valid_hash);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_annex_key_validation() {
+    fn test_annex_key_validation() -> color_eyre::eyre::Result<()> {
         // Valid annex keys
         assert!(AnnexKey::from_str("SHA256E-s12345--filename.txt").is_ok());
         assert!(AnnexKey::from_str("BLAKE2B--somefile").is_ok());
@@ -917,10 +928,11 @@ mod tests {
         assert!(AnnexKey::from_str("--no-prefix").is_err());
         assert!(AnnexKey::from_str("prefix--").is_err());
         assert!(AnnexKey::from_str("multiple--double--dashes").is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_annex_key_parsing() {
+    fn test_annex_key_parsing() -> color_eyre::eyre::Result<()> {
         let key = AnnexKey::from_str("SHA256E-s12345-m1234567890--filename.txt").unwrap();
         let (backend, size, mtime, filename) = key.parse_components().unwrap();
 
@@ -937,10 +949,11 @@ mod tests {
         assert_eq!(size, None);
         assert_eq!(mtime, None);
         assert_eq!(filename, "document.pdf");
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_nats_subject_validation() {
+    fn test_nats_subject_validation() -> color_eyre::eyre::Result<()> {
         // Valid NATS subjects
         assert!(NatsSubject::from_str("events").is_ok());
         assert!(NatsSubject::from_str("events.filesystem").is_ok());
@@ -954,14 +967,16 @@ mod tests {
         assert!(NatsSubject::from_str("events..filesystem").is_err());
         assert!(NatsSubject::from_str("events.file system").is_err()); // space not allowed
         assert!(NatsSubject::from_str("events.file@system").is_err()); // @ not allowed
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_service_name_and_job_id() {
+    fn test_service_name_and_job_id() -> color_eyre::eyre::Result<()> {
         // These use the basic string type without additional validation
         assert!(ServiceName::from_str("sinex-ingestd").is_ok());
         assert!(ServiceName::from_str("fs-watcher").is_ok());
         assert!(JobId::from_str("job_12345").is_ok());
         assert!(JobId::from_str("background-task-001").is_ok());
+        Ok(())
     }
 }
