@@ -7,7 +7,6 @@ use crate::channel_helpers::{
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt,
 };
 use crate::prelude::*;
-use crate::Result;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;

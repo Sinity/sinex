@@ -228,7 +228,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
-        config: Self::Config,
+        _config: Self::Config,
     ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),

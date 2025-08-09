@@ -1,7 +1,6 @@
 //! Analytics Automaton - Unified StatefulStreamProcessor implementation
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre;
 
 use async_trait::async_trait;
 use chrono::Utc;

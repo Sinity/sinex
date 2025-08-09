@@ -729,7 +729,7 @@ pub(crate) async fn with_transaction_fixture<F, T>(ctx: &TestContext, fixture_fn
 where
     F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> BoxFuture<'a, Result<T>>,
 {
-    let mut tx = ctx.pool.begin().await?;
+    let tx = ctx.pool.begin().await?;
 
     // Create some fixture data in the transaction
     let _event = ctx

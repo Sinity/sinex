@@ -67,7 +67,7 @@ impl DocumentProcessor {
 
     /// Process a file using stage-as-you-go pattern for real-time provenance
     async fn process_file(&self, file_path: &Utf8Path) -> SatelliteResult<()> {
-        let ctx = self.context.as_ref().ok_or_else(|| {
+        let _ctx = self.context.as_ref().ok_or_else(|| {
             SatelliteError::Processing("Document ingestor context not initialized".to_string())
         })?;
 

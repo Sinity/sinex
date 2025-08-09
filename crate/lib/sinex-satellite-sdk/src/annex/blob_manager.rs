@@ -77,7 +77,7 @@ impl BlobManager {
         original_filename: Option<&str>,
     ) -> Result<BlobMetadata> {
         info!("Ingesting file: {:?}", file_path);
-        let start = Instant::now();
+        let _start = Instant::now();
 
         // Compute BLAKE3 hash for deduplication
         let blake3_hash = GitAnnex::compute_blake3_hash(file_path).await?;
@@ -352,7 +352,7 @@ impl BlobManager {
     /// Verify blob integrity
     pub async fn verify_blob(&self, blob_id: &Ulid) -> Result<bool> {
         let start = Instant::now();
-        let blob = self.get_blob_metadata(blob_id).await?;
+        let _blob = self.get_blob_metadata(blob_id).await?;
 
         // Run git-annex fsck on specific key
         let fsck_output = self.annex.fsck(false, false).await?;

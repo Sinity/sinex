@@ -1,7 +1,6 @@
 // Test Macros - TestContext Integration Helpers
 
 // Re-export rstest macros for convenience
-pub use rstest::{fixture, rstest};
 
 // Helper macro to create rstest case with TestContext
 // This allows using rstest with our async TestContext pattern

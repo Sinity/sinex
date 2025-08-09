@@ -228,12 +228,12 @@ mod tests {
 
     #[sinex_test]
     fn test_schemaless_event_builder() {
-        let event = RawEvent::schemaless()
-            .source(EventSource::new("test"))
-            .event_type(EventType::new("test.created"))
-            .payload(json!({"message": "hello"}))
-            .host(HostName::new("test-host"))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test"),
+            EventType::new("test.created"),
+            json!({"message": "hello"}),
+        );
+        event.host = HostName::new("test-host");
 
         assert_eq!(event.source.as_str(), "test");
         assert_eq!(event.event_type.as_str(), "test.created");
@@ -258,13 +258,13 @@ mod tests {
     #[sinex_test]
     fn test_synthesis_event() {
         let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
-        let event = RawEvent::schemaless()
-            .source(EventSource::new("processor"))
-            .event_type(EventType::new("analysis.completed"))
-            .payload(json!({"result": "success"}))
-            .host(HostName::new("test-host"))
-            .build()
-            .with_provenance(Provenance::Events(source_ids.clone()));
+        let mut event = RawEvent::schemaless(
+            EventSource::new("processor"),
+            EventType::new("analysis.completed"),
+            json!({"result": "success"}),
+        );
+        event.host = HostName::new("test-host");
+        let event = event.with_provenance(Provenance::Events(source_ids.clone()));
 
         assert!(event.is_synthesis_event());
         assert!(!event.is_raw_event());

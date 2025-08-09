@@ -146,15 +146,13 @@ mod tests {
 
     use color_eyre::eyre::Result;
 
-    use serde_json::json;
-
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless()
-            .source(EventSource::new("../../../etc/passwd"))
-            .event_type(EventType::new("security.test"))
-            .payload(json!({"path": "../../sensitive/file.txt"}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("../../../etc/passwd"),
+            EventType::new("security.test"),
+            json!({"path": "../../sensitive/file.txt"}),
+        );
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -171,11 +169,11 @@ mod tests {
 
     #[sinex_test]
     async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless()
-            .source(EventSource::new("test\0source"))
-            .event_type(EventType::new("security.test"))
-            .payload(json!({"data": "test\0value"}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test\0source"),
+            EventType::new("security.test"),
+            json!({"data": "test\0value"}),
+        );
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(was_modified);
@@ -187,11 +185,11 @@ mod tests {
 
     #[sinex_test]
     async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let mut event = RawEvent::schemaless()
-            .source(EventSource::new("security.test"))
-            .event_type(EventType::new("sql.injection"))
-            .payload(json!({"query": "'; DROP TABLE events; --"}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("security.test"),
+            EventType::new("sql.injection"),
+            json!({"query": "'; DROP TABLE events; --"}),
+        );
 
         let was_modified = EventSanitizer::sanitize_event(&mut event).unwrap();
         assert!(!was_modified);

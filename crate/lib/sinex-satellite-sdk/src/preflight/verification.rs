@@ -246,7 +246,7 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
 }
 
 /// Test transaction operations
-async fn test_transactions(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
+async fn test_transactions(pool: &PgPool, _messages: &mut Vec<String>) -> Result<Value> {
     // Test committed transaction
     let tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
 

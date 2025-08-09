@@ -728,7 +728,6 @@ mod tests {
 
     use color_eyre::eyre::Result;
 
-    use serde_json::json;
     use std::time::Duration;
     use tokio::sync::mpsc;
 

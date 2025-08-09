@@ -8,7 +8,7 @@ use crate::prelude::*;
 use bon::Builder;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_core::db::{self, repositories::DbPoolExt, DbPool};
+use sinex_core::db::{repositories::DbPoolExt, DbPool};
 
 // Test data builders using bon derive macros
 

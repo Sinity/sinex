@@ -170,7 +170,6 @@ impl<'ctx> ValidationTester<'ctx> {
         payload: Value,
         expected_error: &str,
     ) -> crate::Result<()> {
-        use sinex_core::types::domain::{EventSource, EventType};
         let result = self
             .ctx
             .create_test_event(source, event_type, payload)
@@ -187,7 +186,6 @@ impl<'ctx> ValidationTester<'ctx> {
         event_type: &str,
         payload: Value,
     ) -> std::result::Result<RawEvent, SinexError> {
-        use sinex_core::types::domain::{EventSource, EventType};
         self.ctx
             .create_test_event(source, event_type, payload)
             .await

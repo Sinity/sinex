@@ -2035,8 +2035,6 @@ mod tests {
 
     use color_eyre::eyre::Result;
 
-    use serde_json::json;
-
     #[sinex_test]
     async fn test_event_record_insert(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let pool = &ctx.pool;

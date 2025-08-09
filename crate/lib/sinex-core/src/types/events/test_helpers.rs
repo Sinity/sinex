@@ -39,6 +39,7 @@ where
     // Verify migration via try_from_legacy
     let _new_from_legacy: New = New::try_from_legacy(old_json, old_version)
         .map_err(|e| format!("try_from_legacy failed: {}", e))?;
+    Ok(())
 }
 
 /// Migrate a payload from old version to new version
@@ -222,5 +223,6 @@ mod tests {
         let v2 = migrate_payload::<TestPayloadV1, TestPayloadV2>(v1_json, "1.0.0").unwrap();
         assert_eq!(v2.name, "test");
         assert_eq!(v2.count, 0); // Default value
+        Ok(())
     }
 }
