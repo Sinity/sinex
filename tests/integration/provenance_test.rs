@@ -1,5 +1,7 @@
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
-use sinex_db::repositories::DbPoolExt;
+use color_eyre::eyre::Result;
+use sinex_core::db::repositories::DbPoolExt;
 use serde_json::json;
 use tracing::info;
 

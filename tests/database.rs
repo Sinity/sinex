@@ -10,6 +10,7 @@
 //! Uses #[sinex_test] for automatic transaction isolation and TestContext
 //! for unified database access patterns.
 
+use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_test_utils::prelude::*;
 use std::time::Duration as StdDuration;

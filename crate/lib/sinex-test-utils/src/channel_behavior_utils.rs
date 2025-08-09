@@ -684,6 +684,7 @@ pub mod scenarios {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[tokio::test]
     async fn test_channel_test_utilities() {

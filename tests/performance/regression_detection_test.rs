@@ -4,11 +4,12 @@
 // performance against established baselines. Includes trend analysis,
 // statistical significance testing, and automated alerting capabilities.
 
+use color_eyre::eyre::Result;
 use super::baseline_performance_test::{
     BaselineTracker, EnvironmentInfo, PerformanceBaseline,
 };
 use serde_json::json;
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -410,7 +411,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> color
             }),
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         baseline_tracker.record_measurement("database_insertion", duration, result.is_ok());
@@ -443,7 +444,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> color
             }),
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         detector.record_measurement("database_insertion", duration, result.is_ok());
@@ -486,7 +487,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> color
             }))
             .build();
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         degraded_detector.record_measurement("database_insertion", duration, result.is_ok());
@@ -533,7 +534,7 @@ async fn test_database_operation_regression_detection(ctx: TestContext) -> color
             }))
             .build();
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         severe_detector.record_measurement("database_insertion", duration, result.is_ok());
@@ -596,7 +597,7 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_ey
                 }))
                 .build();
 
-            let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+            let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
             let duration = start.elapsed();
 
             baseline_tracker.record_measurement(operation_name, duration, result.is_ok());
@@ -641,7 +642,7 @@ async fn test_multi_operation_regression_detection(ctx: TestContext) -> color_ey
                 }))
                 .build();
 
-            let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+            let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
             let duration = start.elapsed();
 
             detector.record_measurement(operation_name, duration, result.is_ok());
@@ -742,7 +743,7 @@ async fn test_custom_threshold_regression_detection(ctx: TestContext) -> color_e
             .payload(json!({"iteration": i}))
             .build();
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         baseline_tracker.record_measurement("strict_operation", duration, result.is_ok());
@@ -774,7 +775,7 @@ async fn test_custom_threshold_regression_detection(ctx: TestContext) -> color_e
             .payload(json!({"iteration": i}))
             .build();
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         strict_detector.record_measurement("strict_operation", duration, result.is_ok());
@@ -827,7 +828,7 @@ async fn test_custom_threshold_regression_detection(ctx: TestContext) -> color_e
             .payload(json!({"iteration": i}))
             .build();
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         lenient_detector.record_measurement("strict_operation", duration, result.is_ok());

@@ -44,6 +44,7 @@
 // 3. **Ordering Resilience**: System must cope with impossible event sequences
 // 4. **Concurrency Safety**: No race conditions under maximum contention
 
+use color_eyre::eyre::Result;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{events, get_events_by_source, worker_test_utils};
@@ -245,7 +246,7 @@ async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> color_eyre:
                 let event =
                     events::test_event_batch("thundering_herd", "burst.event", 1)[0].clone();
 
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(_) => {
                         metrics_clone.record_event_sent();
                     }
@@ -368,7 +369,7 @@ async fn test_collector_backpressure_extreme_load(ctx: TestContext) -> color_eyr
                 );
 
                 let insert_start = std::time::Instant::now();
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(_) => {
                         metrics_clone.record_event_sent();
 
@@ -749,7 +750,7 @@ async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre
             event.ts_orig
         );
 
-        match sinex_db::insert_event_with_validator(ctx.pool(), event, None).await {
+        match sinex_core::db::insert_event_with_validator(ctx.pool(), event, None).await {
             Ok(_) => {
                 metrics.record_event_sent();
 
@@ -861,7 +862,7 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
                     0, // No artificial delay
                 );
 
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(inserted) => {
                         local_ids.push(inserted.id);
                         metrics_clone.record_event_sent();
@@ -1009,7 +1010,7 @@ async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> color_e
                 let mut event = events::test_event_batch("chaos", "temporal.chaos", 1)[0].clone();
                 event.ts_orig = Some(impossible_timestamp);
 
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(_) => {
                         metrics_clone.record_event_sent();
 

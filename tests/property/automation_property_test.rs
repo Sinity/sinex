@@ -4,12 +4,13 @@
 //! for the modern NATS-based StatefulStreamProcessor implementations.
 
 use chrono::{DateTime, Utc};
+use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_satellite_sdk::stream_processor::{Checkpoint, ProcessorType, ScanArgs, TimeHorizon};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 
 /// Create property test strategies for events
@@ -68,17 +69,17 @@ fn arb_event_data() -> impl Strategy<Value = (String, String, serde_json::Value)
 }
 
 /// Create test events for processing
-fn create_test_event(source: &str, event_type: &str, payload: serde_json::Value) -> Event {
-    Event::schemaless()
-        .source(EventSource::new(source))
-        .event_type(EventType::new(event_type))
-        .payload(payload)
-        .build()
+fn create_test_event(source: &str, event_type: &str, payload: serde_json::Value) -> RawEvent {
+    RawEvent::schemaless(
+        EventSource::new(source),
+        EventType::new(event_type),
+        payload,
+    )
 }
 
 /// Test checkpoint handling properties
 proptest! {
-    #[sinex_test]
+    #[test]
     fn test_checkpoint_properties(
         message_count in 0u64..10000u64,
         timestamp_offset in 0i64..86400i64,
@@ -87,7 +88,7 @@ proptest! {
         let checkpoints = vec![
             Checkpoint::None,
             Checkpoint::Internal {
-                event_id: sinex_types::ulid::Ulid::new(),
+                event_id: sinex_core::types::ulid::Ulid::new(),
                 message_count,
             },
             Checkpoint::Timestamp {
@@ -115,7 +116,7 @@ proptest! {
 
 /// Test scan args validation properties
 proptest! {
-    #[sinex_test]
+    #[test]
     fn test_scan_args_properties(
         max_events in 0u64..10000u64,
         dry_run in any::<bool>(),
@@ -148,7 +149,7 @@ proptest! {
 
 /// Test processor type consistency
 #[sinex_test]
-fn test_processor_type_properties() {
+fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
     let types = vec![ProcessorType::Ingestor, ProcessorType::Automaton];
 
     for processor_type in types {
@@ -162,11 +163,12 @@ fn test_processor_type_properties() {
         let debug2 = format!("{:?}", processor_type);
         assert_eq!(debug1, debug2);
     }
+    Ok(())
 }
 
 /// Test event processing determinism (without actual scan)
 proptest! {
-    #[sinex_test]
+    #[test]
     fn test_event_creation_determinism(
         events in proptest::collection::vec(arb_event_data(), 1..=20),
     ) {
@@ -188,7 +190,7 @@ proptest! {
 
 /// Test error handling with malformed data
 proptest! {
-    #[sinex_test]
+    #[test]
     fn test_error_handling_robustness(
         malformed_payloads in proptest::collection::vec(
             prop_oneof![
@@ -220,12 +222,12 @@ proptest! {
 
 /// Test checkpoint description consistency
 proptest! {
-    #[sinex_test]
-    fn test_checkpoint_description_properties(
+    #[test]
+fn test_checkpoint_description_properties(
         message_count in 0u64..1000u64,
     ) {
         let checkpoint1 = Checkpoint::Internal {
-            event_id: sinex_types::ulid::Ulid::new(),
+            event_id: sinex_core::types::ulid::Ulid::new(),
             message_count,
         };
 
@@ -243,7 +245,7 @@ proptest! {
 
         // Property: Same type checkpoints should have similar description format
         let checkpoint4 = Checkpoint::Internal {
-            event_id: sinex_types::ulid::Ulid::new(),
+            event_id: sinex_core::types::ulid::Ulid::new(),
             message_count,
         };
 
@@ -256,8 +258,8 @@ proptest! {
 
 /// Test time horizon property consistency
 proptest! {
-    #[sinex_test]
-    fn test_time_horizon_behavior_properties(
+    #[test]
+fn test_time_horizon_behavior_properties(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
     ) {
         let end_time = Utc::now() + chrono::Duration::hours(hours_forward as i64);
@@ -303,8 +305,8 @@ proptest! {
 
 /// Test automation-related data structure consistency
 proptest! {
-    #[sinex_test]
-    fn test_automation_data_structure_consistency(
+    #[test]
+fn test_automation_data_structure_consistency(
         event_count in 1..100usize,
         batch_size in 1..50usize,
     ) {
@@ -312,14 +314,14 @@ proptest! {
         let mut events = Vec::new();
 
         for i in 0..event_count {
-            let event = Event::schemaless()
-                .source(EventSource::from_static("automation-test"))
-                .event_type(EventType::from_static("batch.test"))
-                .payload(json!({
+            let event = RawEvent::schemaless(
+                EventSource::from_static("automation-test"),
+                EventType::from_static("batch.test"),
+                json!({
                     "batch_index": i,
                     "total_events": event_count
-                }))
-                .build();
+                }),
+            );
 
             events.push(event);
         }

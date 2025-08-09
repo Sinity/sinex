@@ -300,6 +300,7 @@ macro_rules! emit_heartbeat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[tokio::test]
     async fn test_heartbeat_emitter_creation() {
@@ -321,7 +322,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_heartbeat_metrics_creation() {
+    fn test_heartbeat_metrics_creation() -> color_eyre::eyre::Result<()> {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         emitter.increment_events_processed(10);
         emitter.record_error("test error");
@@ -330,12 +331,14 @@ mod tests {
         assert_eq!(metrics.service_name, "test-service");
         assert_eq!(metrics.errors_count, 1);
         assert!(metrics.last_error_message.is_some());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_emit_heartbeat_macro() {
+    fn test_emit_heartbeat_macro() -> color_eyre::eyre::Result<()> {
         // This test just ensures the macro compiles
         emit_heartbeat!("test-service");
         emit_heartbeat!("test-service", events_processed = 5, status = "healthy");
+        Ok(())
     }
 }

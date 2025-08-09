@@ -120,6 +120,7 @@ pub static FIXTURE_CONFIG: Lazy<FixtureConfig> = Lazy::new(FixtureConfig::from_e
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     fn test_default_config() {

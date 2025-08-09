@@ -39,8 +39,6 @@ where
     // Verify migration via try_from_legacy
     let _new_from_legacy: New = New::try_from_legacy(old_json, old_version)
         .map_err(|e| format!("try_from_legacy failed: {}", e))?;
-
-    Ok(())
 }
 
 /// Migrate a payload from old version to new version
@@ -211,7 +209,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_migration_helper() {
+    fn test_migration_helper() -> color_eyre::eyre::Result<()> {
         let v1_json = json!({
             "name": "test"
         });

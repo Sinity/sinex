@@ -1,5 +1,6 @@
 //! Example of using the modern test infrastructure with rstest, insta, and tracing-test
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use rstest::*;
 use insta::assert_json_snapshot;

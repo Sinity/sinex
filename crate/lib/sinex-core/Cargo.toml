@@ -5,14 +5,14 @@ edition.workspace = true
 authors.workspace = true
 repository.workspace = true
 license.workspace = true
-description = "Core types and database layer for Sinex - unified from sinex-db and sinex-types"
+description = "Core types and database layer for Sinex - unified from sinex-core and sinex-core"
 
 [dependencies]
 # Core dependencies merged from both crates
 sinex-macros = { path = "../sinex-macros", optional = true }
 sinex-migrations = { path = "../sinex-migrations" }
 
-# Database dependencies (from sinex-db)
+# Database dependencies (from sinex-core)
 camino = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
@@ -41,7 +41,7 @@ sea-query = { version = "0.30", features = ["with-uuid", "with-chrono", "with-js
 # Migration system  
 sea-orm-migration = { version = "1.0", features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
 
-# Type dependencies (from sinex-types)
+# Type dependencies (from sinex-core)
 ulid = { workspace = true }
 rand = { workspace = true }
 proptest = { workspace = true, optional = true }

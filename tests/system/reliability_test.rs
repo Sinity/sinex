@@ -20,11 +20,12 @@
 // - **Resource usage**: High CPU/memory usage, significant database load
 // - **Dependencies**: Full system integration with external services
 
-use sinex_db::models::EventFactory;
+use color_eyre::eyre::Result;
+use sinex_core::db::models::EventFactory;
 use sinex_test_utils::database_pool::acquire_test_database;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use std::fs;
 
 // ==================== OPERATIONAL SCENARIOS ====================
@@ -129,7 +130,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
             event.host = "localhost".to_string();
             event.ingestor_version = Some("1.0.0".to_string());
 
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
         // Simulate restart by running migrations again
@@ -199,7 +200,7 @@ async fn test_startup_sequence_robustness(ctx: TestContext) -> color_eyre::eyre:
 
             // Try to run migrations with corrupted state
             // Note: Using sinex_db's migration system now
-            let migration_result = sinex_db::run_migrations(pool).await;
+            let migration_result = sinex_core::db::run_migrations(pool).await;
 
             match migration_result {
                 Ok(()) => {
@@ -400,7 +401,7 @@ async fn test_shutdown_sequence_graceful_termination(ctx: TestContext) -> color_
                 event.host = "localhost".to_string();
                 event.ingestor_version = Some("1.0.0".to_string());
 
-                sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+                sinex_core::db::insert_event_with_validator(&pool, &event, None).await?;
 
                 // Simulate work with small delays
                 if i % 100 == 0 {
@@ -957,7 +958,7 @@ async fn test_data_migration_safety(ctx: TestContext) -> color_eyre::eyre::Resul
             event.host = "localhost".to_string();
             event.ingestor_version = Some("1.0.0".to_string());
 
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?;
         }
 
         // Record initial state - use timing utilities for consistency
@@ -1213,7 +1214,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_e
         event.host = "localhost".to_string();
         event.ingestor_version = Some("1.0.0".to_string());
 
-        let _event = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+        let _event = sinex_core::db::insert_event_with_validator(&pool, &event, None).await?;
         Ok(())
     }
 
@@ -1298,7 +1299,7 @@ async fn test_graceful_degradation_database_failure(ctx: TestContext) -> color_e
 
     let recovery_test = timeout(
         Duration::from_secs(5),
-        sinex_db::insert_event_with_validator(&pool, &event, None),
+        sinex_core::db::insert_event_with_validator(&pool, &event, None),
     )
     .await;
 
@@ -1422,7 +1423,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
                 event.host = "localhost".to_string();
                 event.ingestor_version = Some("1.0.0".to_string());
 
-                let result = sinex_db::insert_event_with_validator(&pool, &event, None).await;
+                let result = sinex_core::db::insert_event_with_validator(&pool, &event, None).await;
 
                 if result.is_ok() {
                     processed += 1;

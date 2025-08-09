@@ -4453,11 +4453,13 @@ name = "sinex-macros"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "color-eyre",
  "proc-macro2",
  "quote",
  "rand 0.8.5",
  "serde",
  "serde_json",
+ "sinex-test-utils",
  "syn 2.0.104",
  "thiserror 1.0.69",
  "tokio",
@@ -4548,6 +4550,7 @@ dependencies = [
  "serde_json",
  "sinex-core",
  "sinex-macros",
+ "sinex-test-utils",
  "sqlx",
  "sysinfo 0.31.4",
  "tempfile",

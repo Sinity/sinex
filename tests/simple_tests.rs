@@ -4,21 +4,23 @@
 
 use color_eyre::eyre::eyre;
 use serde_json::json;
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::{Id, Ulid};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
-use sinex_types::{Id, Ulid};
 
 #[sinex_test]
-fn test_ulid_generation() {
+fn test_ulid_generation() -> color_eyre::eyre::Result<()> {
     let ulid = Ulid::new();
     assert_eq!(ulid.to_string().len(), 26);
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_source_creation() {
+fn test_event_source_creation() -> color_eyre::eyre::Result<()> {
     let source = EventSource::from_static("test-source");
     assert_eq!(source.as_str(), "test-source");
+    Ok(())
 }
 
 #[sinex_test]

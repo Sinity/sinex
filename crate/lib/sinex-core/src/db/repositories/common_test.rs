@@ -6,7 +6,11 @@ mod tests {
     use crate::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
     use crate::types::ulid::Ulid;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_test]
     async fn test_enhanced_repository_count_all(ctx: TestContext) -> Result<()> {

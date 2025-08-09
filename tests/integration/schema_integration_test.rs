@@ -7,13 +7,14 @@
 // - Security validation (injection attacks, null bytes, etc.)
 // - Performance under load
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use rstest::*;
 use insta::assert_json_snapshot;
 use tracing_test::traced_test;
-use sinex_db::models::{EventFactory, services, event_types};
-use sinex_db::integrity::{malformed_detection, IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::{EventValidator, SchemaViolationType, ValidationError};
+use sinex_core::db::models::{EventFactory, services, event_types};
+use sinex_core::db::integrity::{malformed_detection, IntegrityTestConfig, IntegrityTester};
+use sinex_core::db::validation::{EventValidator, SchemaViolationType, ValidationError};
 use serde_json::Value;
 
 #[sinex_test]
@@ -339,7 +340,7 @@ async fn test_comprehensive_integrity_validation(ctx: TestContext) -> color_eyre
     // Insert some test events with known issues
     let valid_event = EventFactory::new("test.comprehensive")
         .create_event("valid_event", json!({"data": "valid"}));
-    let _valid_event = sinex_db::insert_event_with_validator(&pool, &valid_event, None).await?;
+    let _valid_event = sinex_core::db::insert_event_with_validator(&pool, &valid_event, None).await?;
 
     // Create integrity tester
     let integrity_tester = IntegrityTester::new(&pool).await?;

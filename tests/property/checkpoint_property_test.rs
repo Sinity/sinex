@@ -3,6 +3,7 @@
 //! Tests that verify checkpoint consistency, recovery, and concurrency properties
 //! using modern test infrastructure.
 
+use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
@@ -525,7 +526,7 @@ mod unit_tests {
         assert_eq!(state.last_processed_id(), Some("stream-123".to_string()));
 
         // Test setting ULID
-        let ulid = sinex_types::Ulid::new();
+        let ulid = sinex_core::types::Ulid::new();
         state.set_last_processed_id(Some(ulid.to_string()));
         assert_eq!(state.last_processed_id(), Some(ulid.to_string()));
 

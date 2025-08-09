@@ -4,10 +4,11 @@
 // detect memory leaks, and verify memory efficiency under various load conditions.
 // These tests help identify memory bottlenecks and optimization opportunities.
 
+use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_db::queries::{CheckpointQueries, EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::db::queries::{CheckpointQueries, EventQueries};
+use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -192,7 +193,7 @@ async fn test_event_processing_memory_usage(ctx: TestContext) -> color_eyre::eyr
                 }),
             );
 
-            sinex_db::insert_event_with_validator(pool, &event, None).await?;
+            sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
         }
 
         metrics.record_measurement(&format!("After batch {}", batch_size));
@@ -280,7 +281,7 @@ async fn test_concurrent_memory_usage(ctx: TestContext) -> color_eyre::eyre::Res
                 // Process events
                 for (i, event) in worker_events.iter().enumerate() {
                     if let Err(e) =
-                        sinex_db::insert_event_with_validator(&pool_clone, event, None).await
+                        sinex_core::db::insert_event_with_validator(&pool_clone, event, None).await
                     {
                         println!("Worker {} event {} failed: {}", worker_id, i, e);
                     }
@@ -392,7 +393,7 @@ async fn test_large_payload_memory_usage(ctx: TestContext) -> color_eyre::eyre::
                 }),
             );
 
-            sinex_db::insert_event_with_validator(pool, &event, None).await?;
+            sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
 
             if i % 10 == 0 {
                 metrics.record_measurement(&format!("{} payload event {}", size_label, i));
@@ -474,7 +475,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> color_eyre::eyre::Re
                 }),
             );
 
-            sinex_db::insert_event_with_validator(pool, &event, None).await?;
+            sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
         }
 
         metrics.record_measurement(&format!("Stress cycle {} processed", cycle));
@@ -506,7 +507,7 @@ async fn test_memory_stress_conditions(ctx: TestContext) -> color_eyre::eyre::Re
             }),
         );
 
-        sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
 
         operation_count += 1;
 

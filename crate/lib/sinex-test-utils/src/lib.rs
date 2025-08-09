@@ -506,6 +506,7 @@ pub use test_context::TestContext;
 #[cfg(test)]
 mod tests {
     use super::prelude::*;
+    use crate::sinex_test;
     use serde_json::json;
     use sinex_core::db::models::*;
     use sinex_core::db::repositories::DbPoolExt;

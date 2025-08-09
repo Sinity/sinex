@@ -3,6 +3,7 @@
 // This module tests the integration of version tracking with migration functionality.
 // Tests version info creation, consistency, and performance across different scenarios.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use sinex_satellite_sdk::VersionInfo;
 use std::collections::HashMap;

@@ -889,7 +889,11 @@ mod tests {
         use crate::telemetry::metrics::collectors::{
             store_metric_entry, MetricType, MetricValue, SummaryValue, METRICS_STORAGE,
         };
-        use sinex_test_utils::prelude::*;
+        use sinex_test_utils::{sinex_test, TestContext};
+
+        use color_eyre::eyre::Result;
+
+        use serde_json::json;
 
         fn setup_bench_metrics() {
             METRICS_STORAGE.write().clear();

@@ -402,6 +402,7 @@ impl TestContextErrorExt for TestContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use serde_json::json;
 
     #[sinex_test]
@@ -697,7 +698,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_error_type_matching() {
+    fn test_error_type_matching() -> color_eyre::eyre::Result<()> {
         // Test SinexError variant matching
         let validation_err = SinexError::validation("test");
         let database_err = SinexError::database("test");
@@ -717,5 +718,7 @@ mod tests {
             SinexError::Service(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
+
+        Ok(())
     }
 }

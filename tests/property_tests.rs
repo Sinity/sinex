@@ -6,14 +6,15 @@
 //! of specific input values using the current architecture.
 
 // Import test utilities without broad prelude to avoid Event type conflicts
+use color_eyre::eyre::Result;
 use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_db::models::Event as DbEvent;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::models::RawEvent as DbEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType, HostName};
+use sinex_core::types::{Id, Ulid};
 use sinex_test_utils::{sinex_test, TestContext};
-use sinex_types::domain::{EventSource, EventType, HostName};
-use sinex_types::{Id, Ulid};
 
 // =============================================================================
 // ULID PROPERTY TESTS - Invariants for time-ordered identifiers
@@ -131,11 +132,11 @@ fn test_event_creation_properties() -> color_eyre::eyre::Result<()> {
         event_type in arb_event_type(),
         payload in arb_json_value()
     )| {
-        let event = DbEvent::schemaless()
-            .source(source.clone())
-            .event_type(event_type.clone())
-            .payload(payload.clone())
-            .build();
+        let event = DbEvent::schemaless(
+            source.clone(),
+            event_type.clone(),
+            payload.clone(),
+        );
 
         // Property: Event should preserve all input values
         prop_assert_eq!(event.source, source);
@@ -168,11 +169,11 @@ fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
             "boolean": bool_value
         });
 
-        let original_event = DbEvent::schemaless()
-            .source(EventSource::new(&source))
-            .event_type(EventType::new(&event_type))
-            .payload(payload)
-            .build();
+        let original_event = DbEvent::schemaless(
+            EventSource::new(&source),
+            EventType::new(&event_type),
+            payload,
+        );
 
         // Property: Serialization should never fail for valid events
         let json_result = serde_json::to_string(&original_event);
@@ -378,15 +379,15 @@ fn test_unicode_handling_properties() -> color_eyre::eyre::Result<()> {
         unicode_type in "\\PC*",
         unicode_value in "\\PC*"
     )| {
-        let event = DbEvent::schemaless()
-            .source(EventSource::new(&unicode_source))
-            .event_type(EventType::new(&unicode_type))
-            .payload(json!({
+        let event = DbEvent::schemaless(
+            EventSource::new(&unicode_source),
+            EventType::new(&unicode_type),
+            json!({
                 "unicode_value": unicode_value,
                 "original_source": unicode_source,
                 "original_type": unicode_type
-            }))
-            .build();
+            }),
+        );
 
         // Property: Unicode should be preserved in all fields
         prop_assert_eq!(event.source.as_str(), unicode_source.as_str());
@@ -425,11 +426,11 @@ fn test_large_payload_properties() -> color_eyre::eyre::Result<()> {
             }
         });
 
-        let event = DbEvent::schemaless()
-            .source(EventSource::from_static("large-payload-test"))
-            .event_type(EventType::from_static("large.payload"))
-            .payload(payload.clone())
-            .build();
+        let event = DbEvent::schemaless(
+            EventSource::from_static("large-payload-test"),
+            EventType::from_static("large.payload"),
+            payload.clone(),
+        );
 
         // Property: Large payloads should be handled correctly
         prop_assert_eq!(event.payload.clone(), payload);
@@ -520,11 +521,11 @@ fn test_validation_properties() -> color_eyre::eyre::Result<()> {
         prop_assert_eq!(event_type.as_str().len(), type_len);
 
         // Property: Events should be creatable with any valid domain types
-        let event = DbEvent::schemaless()
-            .source(source)
-            .event_type(event_type)
-            .payload(json!({"test": true}))
-            .build();
+        let event = DbEvent::schemaless(
+            source,
+            event_type,
+            json!({"test": true}),
+        );
 
         prop_assert_eq!(event.source.as_str().len(), source_len);
         prop_assert_eq!(event.event_type.as_str().len(), type_len);

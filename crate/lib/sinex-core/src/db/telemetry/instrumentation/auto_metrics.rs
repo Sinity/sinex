@@ -306,7 +306,11 @@ macro_rules! track_function {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_test]
     async fn test_function_metrics(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -484,7 +488,11 @@ mod tests {
 #[cfg(all(test, feature = "bench"))]
 mod benches {
     use super::*;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_bench]
     async fn bench_function_metrics_creation(

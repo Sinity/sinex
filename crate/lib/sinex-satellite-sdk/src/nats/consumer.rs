@@ -414,19 +414,21 @@ impl NatsConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_consumer_config() {
+    fn test_consumer_config() -> color_eyre::eyre::Result<()> {
         let config = ConsumerConfig::default();
         assert_eq!(config.name, "default-consumer");
         assert_eq!(config.stream, "SINEX_RAW_EVENTS");
 
         let js_config = config.to_jetstream_config();
         assert_eq!(js_config.ack_policy, AckPolicy::Explicit);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_consumer_config_serialization() {
+    fn test_consumer_config_serialization() -> color_eyre::eyre::Result<()> {
         let config = ConsumerConfig {
             name: "test-consumer".to_string(),
             group: "test-group".to_string(),
@@ -440,5 +442,6 @@ mod tests {
 
         assert_eq!(config.name, deserialized.name);
         assert_eq!(config.filter_subject, deserialized.filter_subject);
+        Ok(())
     }
 }

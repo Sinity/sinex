@@ -3,12 +3,13 @@
 //! Tests that verify satellite communication, lifecycle, and coordination properties
 //! using modern Sinex infrastructure (NATS JetStream, TestContext, etc.)
 
+use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
 use std::time::Duration;
 
 /// Property test strategies for event data
@@ -21,11 +22,11 @@ mod strategies {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
                     |(source, event_type, payload)| {
-                        Event::schemaless()
-                            .source(EventSource::new(&source))
-                            .event_type(EventType::new(&event_type))
-                            .payload(payload)
-                            .build()
+                        RawEvent::schemaless(
+                            EventSource::new(&source),
+                            EventType::new(&event_type),
+                            payload,
+                        )
                     },
                 ),
                 size,
@@ -128,6 +129,7 @@ proptest! {
             }
         });
     }
+    Ok(())
 }
 
 /// Test satellite fault tolerance with intermittent failures
@@ -159,11 +161,11 @@ proptest! {
 
                 if should_fail {
                     // Simulate failure by creating invalid event (empty source)
-                    let invalid_event = Event::schemaless()
-                        .source(EventSource::new(""))  // Invalid empty source
-                        .event_type(EventType::new(event_type))
-                        .payload(payload.clone())
-                        .build();
+                    let invalid_event = RawEvent::schemaless(
+                        EventSource::new(""),  // Invalid empty source
+                        EventType::new(event_type),
+                        payload.clone(),
+                    );
 
                     let result = ctx.pool.events().insert(invalid_event).await;
                     if result.is_err() {
@@ -171,11 +173,11 @@ proptest! {
                     }
                 } else {
                     // Process normal event
-                    let event = Event::schemaless()
-                        .source(EventSource::new(source))
-                        .event_type(EventType::new(event_type))
-                        .payload(payload.clone())
-                        .build();
+                    let event = RawEvent::schemaless(
+                        EventSource::new(source),
+                        EventType::new(event_type),
+                        payload.clone(),
+                    );
 
                     ctx.pool.events().insert(event).await.unwrap();
                     successful_events += 1;
@@ -195,16 +197,17 @@ proptest! {
             assert!(successful_events > 0, "At least some events should succeed");
         });
     }
+    Ok(())
 }
 
 /// Test satellite resource management with concurrent processing
 proptest! {
     #[sinex_test]
-    fn satellite_manages_resources_efficiently(
+fn satellite_manages_resources_efficiently(
         concurrent_operations in 1usize..5usize,
         events_per_operation in 1usize..50usize,
         processing_delay in 1u64..50u64,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
@@ -221,11 +224,11 @@ proptest! {
                     let mut operation_events = 0;
 
                     for j in 0..events_per_operation {
-                        let event = Event::schemaless()
-                            .source(EventSource::new(&source))
-                            .event_type(EventType::new(&format!("test.event.{}", j)))
-                            .payload(json!({"operation": i, "event": j}))
-                            .build();
+                        let event = RawEvent::schemaless(
+                            EventSource::new(&source),
+                            EventType::new(&format!("test.event.{}", j)),
+                            json!({"operation": i, "event": j}),
+                        );
 
                         ctx_clone.pool.events().insert(event).await.unwrap();
                         operation_events += 1;
@@ -257,16 +260,17 @@ proptest! {
             assert_eq!(final_count, total_events as i64);
         });
     }
+    Ok(())
 }
 
 /// Test satellite configuration validation properties
 proptest! {
     #[sinex_test]
-    fn satellite_config_validation_is_robust(
+fn satellite_config_validation_is_robust(
         service_name in "[a-zA-Z0-9_-]+",
         _batch_size in 1usize..10000usize,
         _timeout_secs in 1u64..3600u64,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         use sinex_satellite_sdk::config::SatelliteConfig;
 
         // Test config creation with various valid parameters
@@ -284,6 +288,7 @@ proptest! {
         let env_config = SatelliteConfig::load_from_env(&service_name);
         assert_eq!(env_config.service_name, service_name);
     }
+    Ok(())
 }
 
 /// Test event processing with varying batch configurations
@@ -309,11 +314,11 @@ proptest! {
             // Process events in first batch configuration
             let half_point = events.len() / 2;
             for (source, event_type, payload) in events.iter().take(half_point) {
-                let event = Event::schemaless()
-                    .source(EventSource::new(source))
-                    .event_type(EventType::new(event_type))
-                    .payload(payload.clone())
-                    .build();
+                let event = RawEvent::schemaless(
+                    EventSource::new(source),
+                    EventType::new(event_type),
+                    payload.clone(),
+                );
 
                 ctx.pool.events().insert(event).await.unwrap();
             }
@@ -323,11 +328,11 @@ proptest! {
 
             // Process remaining events (simulating batch size change)
             for (source, event_type, payload) in events.iter().skip(half_point) {
-                let event = Event::schemaless()
-                    .source(EventSource::new(source))
-                    .event_type(EventType::new(event_type))
-                    .payload(payload.clone())
-                    .build();
+                let event = RawEvent::schemaless(
+                    EventSource::new(source),
+                    EventType::new(event_type),
+                    payload.clone(),
+                );
 
                 ctx.pool.events().insert(event).await.unwrap();
             }
@@ -340,28 +345,29 @@ proptest! {
             assert_eq!(final_count, events.len() as i64);
         });
     }
+    Ok(())
 }
 
 /// Test satellite resilience to processing interruptions
 proptest! {
     #[sinex_test]
-    fn satellite_survives_processing_interruptions(
+fn satellite_survives_processing_interruptions(
         interruption_duration in 1u64..100u64,
         events_before_interruption in 1usize..20usize,
         events_during_interruption in 1usize..20usize,
         events_after_interruption in 1usize..20usize,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
 
             // Phase 1: Normal operation
             for i in 0..events_before_interruption {
-                let event = Event::schemaless()
-                    .source(EventSource::new("interruption_test"))
-                    .event_type(EventType::new(&format!("before.{}", i)))
-                    .payload(json!({"phase": "before", "index": i}))
-                    .build();
+                let event = RawEvent::schemaless(
+                    EventSource::new("interruption_test"),
+                    EventType::new(&format!("before.{}", i)),
+                    json!({"phase": "before", "index": i}),
+                );
 
                 ctx.pool.events().insert(event).await.unwrap();
             }
@@ -372,11 +378,11 @@ proptest! {
             let _interruption_start = tokio::time::Instant::now();
 
             for i in 0..events_during_interruption {
-                let event = Event::schemaless()
-                    .source(EventSource::new("interruption_test"))
-                    .event_type(EventType::new(&format!("during.{}", i)))
-                    .payload(json!({"phase": "during", "index": i}))
-                    .build();
+                let event = RawEvent::schemaless(
+                    EventSource::new("interruption_test"),
+                    EventType::new(&format!("during.{}", i)),
+                    json!({"phase": "during", "index": i}),
+                );
 
                 // Try to insert with timeout to simulate network issues
                 let _ = tokio::time::timeout(
@@ -390,11 +396,11 @@ proptest! {
 
             // Phase 3: Recovery
             for i in 0..events_after_interruption {
-                let event = Event::schemaless()
-                    .source(EventSource::new("interruption_test"))
-                    .event_type(EventType::new(&format!("after.{}", i)))
-                    .payload(json!({"phase": "after", "index": i}))
-                    .build();
+                let event = RawEvent::schemaless(
+                    EventSource::new("interruption_test"),
+                    EventType::new(&format!("after.{}", i)),
+                    json!({"phase": "after", "index": i}),
+                );
 
                 ctx.pool.events().insert(event).await.unwrap();
             }
@@ -407,16 +413,17 @@ proptest! {
             assert!(final_count >= expected_minimum as i64);
         });
     }
+    Ok(())
 }
 
 /// Test event ordering properties under concurrent load
 proptest! {
     #[sinex_test]
-    fn satellite_maintains_event_ordering_under_load(
+fn satellite_maintains_event_ordering_under_load(
         concurrent_sources in 1usize..5usize,
         events_per_source in 1usize..20usize,
         processing_jitter in 1u64..20u64,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
@@ -430,15 +437,15 @@ proptest! {
 
                 let handle = tokio::spawn(async move {
                     for event_id in 0..events_per_source {
-                        let event = Event::schemaless()
-                            .source(EventSource::new(&source_name))
-                            .event_type(EventType::new("ordering.test"))
-                            .payload(json!({
+                        let event = RawEvent::schemaless(
+                            EventSource::new(&source_name),
+                            EventType::new("ordering.test"),
+                            json!({
                                 "source_id": source_id,
                                 "event_id": event_id,
                                 "timestamp": chrono::Utc::now().timestamp_millis()
-                            }))
-                            .build();
+                            }),
+                        );
 
                         ctx_clone.pool.events().insert(event).await.unwrap();
 
@@ -498,4 +505,5 @@ proptest! {
             }
         });
     }
+    Ok(())
 }

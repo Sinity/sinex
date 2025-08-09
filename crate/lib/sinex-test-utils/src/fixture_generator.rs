@@ -457,6 +457,7 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     fn test_dataset_configs() {

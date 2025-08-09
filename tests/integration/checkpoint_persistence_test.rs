@@ -4,6 +4,7 @@
 //! Verifies that checkpoints are correctly saved to and restored from the database,
 //! and that checkpoint managers can persist and recover state correctly.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_satellite_sdk::checkpoint::CheckpointManager;

@@ -152,6 +152,7 @@ pub static OPERATIONS_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     fn test_standard_fixtures_have_unique_seeds() {

@@ -9,8 +9,9 @@
 //! These tests validate the core ingestion patterns that satellites use
 //! to submit events for processing and storage.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use std::time::Duration;
 use tokio::time::timeout;
 

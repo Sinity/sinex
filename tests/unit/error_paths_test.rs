@@ -3,7 +3,8 @@
 //! This module tests all error conditions that could trigger unwrap() or expect()
 //! failures in production code, ensuring graceful error handling.
 
-use sinex_db::query_helpers::ulid_to_uuid;
+use color_eyre::eyre::Result;
+use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_test_utils::prelude::*;
 use std::str::FromStr;
 
@@ -12,7 +13,7 @@ use std::str::FromStr;
 // =============================================================================
 
 #[sinex_test]
-fn test_checkpoint_invalid_ulid_parsing() {
+fn test_checkpoint_invalid_ulid_parsing() -> color_eyre::eyre::Result<()> {
     // Test various invalid ULID formats that could cause parsing errors
     let invalid_ulids = vec![
         ("not-a-ulid", "Non-ULID string"),
@@ -67,10 +68,11 @@ fn test_checkpoint_invalid_ulid_parsing() {
             );
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_ulid_uuid_conversion_errors() {
+fn test_ulid_uuid_conversion_errors() -> color_eyre::eyre::Result<()> {
     // Test ULID to UUID conversion edge cases
     let edge_cases = vec![
         // Test with well-known valid ULIDs
@@ -95,6 +97,7 @@ fn test_ulid_uuid_conversion_errors() {
         println!("  ULID bytes: {:?}", &ulid_bytes[..8]);
         println!("  UUID bytes: {:?}", &uuid_bytes[..8]);
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -102,7 +105,7 @@ fn test_ulid_uuid_conversion_errors() {
 // =============================================================================
 
 #[sinex_test]
-fn test_timestamp_conversion_boundaries() {
+fn test_timestamp_conversion_boundaries() -> color_eyre::eyre::Result<()> {
     // Test timestamp values that could cause conversion errors
     let edge_timestamps = vec![
         (0i64, "Unix epoch"),
@@ -135,10 +138,11 @@ fn test_timestamp_conversion_boundaries() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_timestamp_overflow_in_calculations() {
+fn test_timestamp_overflow_in_calculations() -> color_eyre::eyre::Result<()> {
     // Test timestamp arithmetic that could overflow
     let base_time = chrono::Utc::now();
 
@@ -162,6 +166,7 @@ fn test_timestamp_overflow_in_calculations() {
             }
         }
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -169,7 +174,7 @@ fn test_timestamp_overflow_in_calculations() {
 // =============================================================================
 
 #[sinex_test]
-fn test_json_parsing_edge_cases() {
+fn test_json_parsing_edge_cases() -> color_eyre::eyre::Result<()> {
     use serde_json::{json, Value};
 
     // Test JSON values that could cause parsing errors
@@ -224,6 +229,7 @@ fn test_json_parsing_edge_cases() {
             }
         }
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -235,7 +241,7 @@ fn test_json_parsing_edge_cases() {
 // =============================================================================
 
 #[sinex_test]
-fn test_query_builder_invalid_operations() {
+fn test_query_builder_invalid_operations() -> color_eyre::eyre::Result<()> {
     // NOTE: This test focuses on SQL injection prevention and basic query validation.
 
     println!("Testing query security and validation...");
@@ -265,10 +271,11 @@ fn test_query_builder_invalid_operations() {
     }
 
     println!("  ✓ Query security patterns validated");
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_creation_validation_errors() {
+fn test_event_creation_validation_errors() -> color_eyre::eyre::Result<()> {
     // Test synchronous event creation errors without database
     println!("Testing event creation validation...");
 
@@ -299,10 +306,11 @@ fn test_event_creation_validation_errors() {
 
     assert_eq!(event_with_complex_json.source.as_str(), "test");
     println!("  ✓ Complex JSON payload handled correctly");
+    Ok(())
 }
 
 #[sinex_test]
-fn test_ulid_generation_properties() {
+fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
     // Test ULID generation properties (synchronous)
     println!("Testing ULID generation properties...");
 
@@ -339,4 +347,5 @@ fn test_ulid_generation_properties() {
         ulids.len(),
         ordering_ratio * 100.0
     );
+    Ok(())
 }

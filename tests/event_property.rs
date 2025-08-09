@@ -135,7 +135,7 @@ fn arb_timestamp() -> impl Strategy<Value = chrono::DateTime<Utc>> {
 }
 
 /// Strategy for generating complete Event instances
-fn arb_event() -> impl Strategy<Value = Event> {
+fn arb_event() -> impl Strategy<Value = RawEvent> {
     (
         arb_source_name(),
         arb_event_type_name(),
@@ -143,11 +143,11 @@ fn arb_event() -> impl Strategy<Value = Event> {
         prop::option::of(arb_timestamp()),
     )
         .prop_map(|(source, event_type, payload, ts_orig)| {
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source))
-                .event_type(EventType::new(event_type))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source),
+                EventType::new(event_type),
+                payload,
+            );
 
             // Set ts_ingest manually since it's skipped by the builder
             event.ts_ingest = Utc::now();
@@ -171,7 +171,7 @@ fn test_event_serde_roundtrip() -> Result<()> {
         let json_str = serde_json::to_string(&event).unwrap();
 
         // Deserialize back
-        let deserialized: Event = serde_json::from_str(&json_str).unwrap();
+        let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
 
         // Should be identical
         prop_assert_eq!(event.id, deserialized.id);
@@ -196,21 +196,21 @@ fn test_event_id_properties() -> Result<()> {
         event_type in arb_event_type_name(),
         payload in arb_json_value()
     )| {
-        let mut event1 = Event::schemaless()
-            .source(EventSource::new(source.clone()))
-            .event_type(EventType::new(event_type.clone()))
-            .payload(payload.clone())
-            .build();
+        let mut event1 = RawEvent::schemaless(
+            EventSource::new(source.clone()),
+            EventType::new(event_type.clone()),
+            payload.clone(),
+        );
         event1.ts_ingest = Utc::now();
 
         // Small delay to ensure different timestamps
         std::thread::sleep(std::time::Duration::from_millis(1));
 
-        let mut event2 = Event::schemaless()
-            .source(EventSource::new(source))
-            .event_type(EventType::new(event_type))
-            .payload(payload)
-            .build();
+        let mut event2 = RawEvent::schemaless(
+            EventSource::new(source),
+            EventType::new(event_type),
+            payload,
+        );
         event2.ts_ingest = Utc::now();
 
         // Events should be unique (different ts_ingest times)
@@ -268,13 +268,12 @@ fn test_event_builder_preserves_values() -> Result<()> {
         ts_orig in arb_timestamp(),
         host in arb_hostname()
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new(source.clone()))
-            .event_type(EventType::new(event_type.clone()))
-            .payload(payload.clone())
-            .host(HostName::new(host.clone()))
-            .build()
-            .with_ts_orig(Some(ts_orig));
+        let mut event = RawEvent::schemaless(
+            EventSource::new(source.clone()),
+            EventType::new(event_type.clone()),
+            payload.clone(),
+        ).with_ts_orig(Some(ts_orig));
+        event.host = HostName::new(host.clone());
         event.ts_ingest = Utc::now();
 
         prop_assert_eq!(event.source.as_str(), source);
@@ -296,11 +295,11 @@ fn test_multiple_events_created_in_sequence_should_have_ordered_timestamps() -> 
         let mut events = Vec::new();
 
         for payload in payloads {
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source.clone()))
-                .event_type(EventType::new(event_type.clone()))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source.clone()),
+                EventType::new(event_type.clone()),
+                payload,
+            );
             event.ts_ingest = Utc::now();
             events.push(event);
 
@@ -335,16 +334,16 @@ fn test_event_edge_case_payloads() -> Result<()> {
         ];
 
         for payload in edge_cases {
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source.clone()))
-                .event_type(EventType::new(event_type.clone()))
-                .payload(payload.clone())
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source.clone()),
+                EventType::new(event_type.clone()),
+                payload.clone(),
+            );
             event.ts_ingest = Utc::now();
 
             // Should serialize and deserialize correctly
             let json_str = serde_json::to_string(&event).unwrap();
-            let deserialized: Event = serde_json::from_str(&json_str).unwrap();
+            let deserialized: RawEvent = serde_json::from_str(&json_str).unwrap();
             prop_assert_eq!(event.payload, deserialized.payload);
         }
     });
@@ -471,11 +470,11 @@ mod unit_tests {
 
     #[sinex_test]
     fn test_event_builder_defaults() -> Result<()> {
-        let mut event = Event::schemaless()
-            .source(EventSource::new("test_source"))
-            .event_type(EventType::new("test.event"))
-            .payload(json!({"key": "value"}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test_source"),
+            EventType::new("test.event"),
+            json!({"key": "value"}),
+        );
         event.ts_ingest = Utc::now();
 
         assert_eq!(event.source.as_str(), "test_source");

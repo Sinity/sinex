@@ -220,8 +220,8 @@ fn get_parent_pid() -> Option<u32> {
 mod tests {
     use super::*;
 
-    #[sinex_test]
-    fn test_shell_type_detection() {
+    #[test]
+    fn test_shell_type_detection() -> color_eyre::eyre::Result<()> {
         assert_eq!(detect_shell_type("/bin/bash"), ShellType::Bash);
         assert_eq!(detect_shell_type("/usr/bin/zsh"), ShellType::Zsh);
         assert_eq!(detect_shell_type("fish"), ShellType::Fish);
@@ -230,10 +230,11 @@ mod tests {
             detect_shell_type("unknown"),
             ShellType::Unknown("unknown".to_string())
         );
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_shell_capabilities() {
+    #[test]
+    fn test_shell_capabilities() -> color_eyre::eyre::Result<()> {
         let bash_caps = detect_capabilities(&ShellType::Bash);
         assert!(bash_caps.supports_hooks);
         assert!(bash_caps.supports_functions);
@@ -243,5 +244,6 @@ mod tests {
         assert!(!nushell_caps.supports_hooks);
         assert!(nushell_caps.supports_functions);
         assert!(!nushell_caps.supports_aliases);
+        Ok(())
     }
 }

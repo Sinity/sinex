@@ -13,7 +13,7 @@ mimalloc = { workspace = true }
 sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
 sinex-services = { path = "../../lib/sinex-services" }
 # sinex-annex folded into sinex-satellite-sdk
-# sinex-telemetry folded into sinex-db
+# sinex-telemetry folded into sinex-core
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 
 # Async runtime

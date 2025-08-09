@@ -365,6 +365,7 @@ impl PropertyTestExt for TestContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     async fn test_event_source_strategy(ctx: TestContext) -> Result<()> {
@@ -591,7 +592,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_strategy_determinism() {
+    fn test_strategy_determinism() -> color_eyre::eyre::Result<()> {
         let mut runner1 = proptest::test_runner::TestRunner::deterministic();
         let mut runner2 = proptest::test_runner::TestRunner::deterministic();
 
@@ -607,7 +608,7 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_malicious_payload_generation() {
+    fn test_malicious_payload_generation() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Should generate various malicious payloads

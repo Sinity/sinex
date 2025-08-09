@@ -226,20 +226,22 @@ fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use std::env;
 
     #[sinex_test]
-    fn test_default_config() {
+    fn test_default_config() -> color_eyre::eyre::Result<()> {
         let config = IngestdFigmentConfig::default();
         assert_eq!(config.database_pool_size, 25);
         assert_eq!(config.batch_size, 100);
         assert_eq!(config.batch_timeout_secs, 5);
         assert!(!config.dry_run);
         assert!(config.validate_schemas);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_config_validation() {
+    fn test_config_validation() -> color_eyre::eyre::Result<()> {
         let mut config = IngestdFigmentConfig::default();
         config.database_url = "postgresql://localhost/test".to_string();
         config.nats_url = "nats://localhost:4222".to_string();
@@ -249,10 +251,11 @@ mod tests {
         // Invalid database URL
         config.database_url = "mysql://localhost/test".to_string();
         assert!(config.validate_config().is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_from_args() {
+    fn test_from_args() -> color_eyre::eyre::Result<()> {
         let config = IngestdFigmentConfig::from_args(
             Some("postgresql://custom/db".to_string()),
             "nats://custom:4222".to_string(),
@@ -270,10 +273,11 @@ mod tests {
         assert_eq!(config.batch_size, 200);
         assert_eq!(config.batch_timeout_secs, 10);
         assert!(config.dry_run);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_env_override() {
+    fn test_env_override() -> color_eyre::eyre::Result<()> {
         // Set environment variables
         env::set_var("INGESTD_BATCH_SIZE", "500");
         env::set_var("INGESTD_DRY_RUN", "true");
@@ -289,5 +293,6 @@ mod tests {
         // Clean up
         env::remove_var("INGESTD_BATCH_SIZE");
         env::remove_var("INGESTD_DRY_RUN");
+        Ok(())
     }
 }

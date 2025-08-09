@@ -248,7 +248,11 @@ impl LeadershipGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
     use std::time::Duration;
 
     #[sinex_test]

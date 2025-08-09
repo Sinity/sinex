@@ -4,11 +4,12 @@
 // These tests create repeatable benchmarks that can be used to detect
 // performance regressions and track improvements over time.
 
+use color_eyre::eyre::Result;
 use redis::cmd;
 use serde_json::json;
-use sinex_db::queries::{CheckpointQueries, EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::db::queries::{CheckpointQueries, EventQueries};
+use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -193,7 +194,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
         );
-        sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
     }
 
     let env_info = EnvironmentInfo {
@@ -218,7 +219,7 @@ async fn test_establish_database_operation_baselines(ctx: TestContext) -> color_
             }),
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         tracker.record_measurement("single_event_insertion", duration, result.is_ok());
@@ -587,7 +588,7 @@ async fn test_establish_concurrent_operation_baselines(ctx: TestContext) -> colo
                     );
 
                     let result =
-                        sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                        sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                     let duration = start.elapsed();
 
                     worker_measurements.push((duration, result.is_ok()));
@@ -712,7 +713,7 @@ async fn test_establish_recovery_baselines(ctx: TestContext) -> color_eyre::eyre
             }),
         );
 
-        let insert_result = sinex_db::insert_event_with_validator(&mut tx, &event, None).await;
+        let insert_result = sinex_core::db::insert_event_with_validator(&mut tx, &event, None).await;
         let commit_result = if insert_result.is_ok() {
             tx.commit().await
         } else {

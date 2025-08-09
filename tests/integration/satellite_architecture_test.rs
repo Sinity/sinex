@@ -3,7 +3,8 @@
 // These tests verify that the satellite services can communicate
 // properly and that the overall system works as expected.
 
-use sinex_db::repositories::DbPoolExt;
+use color_eyre::eyre::Result;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{config::EventSourceConfig, grpc_client::IngestClient};
 use sinex_test_utils::sinex_test;
 use sinex_test_utils::prelude::*;

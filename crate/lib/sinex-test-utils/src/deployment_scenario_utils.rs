@@ -1180,6 +1180,7 @@ pub fn generate_compatibility_report(results: &[CompatibilityResult]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[tokio::test]
     async fn test_compatibility_tester_creation() {

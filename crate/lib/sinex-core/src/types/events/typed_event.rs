@@ -5,7 +5,7 @@
 //! event processing while maintaining compatibility with `RawEvent` for
 //! heterogeneous processing scenarios.
 
-use crate::db::models::event::{JsonValue, OptionalTimestamp, Timestamp};
+use crate::db::models::event::{OptionalTimestamp, Timestamp};
 use crate::db::models::{Provenance, RawEvent};
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::events::EventPayload;

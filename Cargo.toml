@@ -35,8 +35,8 @@ members = [
   # "crate/sinex-annex", # Folded into sinex-satellite-sdk
   # "crate/sinex-preflight", # Folded into sinex-satellite-sdk
   # "crate/sinex-nats", # Folded into sinex-satellite-sdk
-  # "crate/sinex-telemetry", # Folded into sinex-db
-  # "crate/sinex-schema-manager", # Folded into sinex-types
+  # "crate/sinex-telemetry", # Folded into sinex-core
+  # "crate/sinex-schema-manager", # Folded into sinex-core
 ]
 resolver = "2"
 

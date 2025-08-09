@@ -7,8 +7,9 @@
 //! - Service lifecycle management
 //! - Cross-service resource coordination
 
+use color_eyre::eyre::Result;
+use sinex_core::types::utils::ResourceGuard;
 use sinex_test_utils::prelude::*;
-use sinex_types::utils::ResourceGuard;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Arc;
 use tokio::time::Duration;

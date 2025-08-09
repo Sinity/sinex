@@ -1,8 +1,9 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
+use sinex_core::types::Ulid;
 use sinex_test_utils::sinex_test;
-use sinex_types::Ulid;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -51,7 +52,6 @@ fn test_ulid_chronological_ordering() -> Result<()> {
             );
         }
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -79,7 +79,6 @@ fn test_ulid_uniqueness_under_rapid_generation() -> Result<()> {
             sorted_ulids.len()
         );
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -99,7 +98,6 @@ fn test_ulid_timestamp_extraction() -> Result<()> {
             time_diff
         );
     });
-    Ok(())
 }
 
 // Note: Event generator tests removed as generators are not available in current test utils
@@ -177,7 +175,6 @@ fn test_concurrent_ulid_uniqueness() -> Result<()> {
         // Should have generated expected total count
         prop_assert_eq!(ulids.len(), num_threads * ulids_per_thread);
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -209,7 +206,6 @@ fn test_concurrent_ulid_time_ordering() -> Result<()> {
             }
         }
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -232,7 +228,6 @@ fn test_concurrent_ulid_timestamp_correlation() -> Result<()> {
             prop_assert!(ulid_timestamp <= test_end + ChronoDuration::seconds(1));
         }
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -259,7 +254,6 @@ fn test_concurrent_ulid_thread_distribution() -> Result<()> {
             );
         }
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -302,7 +296,6 @@ fn test_high_contention_ulid_generation() -> Result<()> {
 
         prop_assert_eq!(all_ulids.len(), burst_size * num_bursts);
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -339,7 +332,6 @@ fn test_ulid_ordering_with_timing_patterns() -> Result<()> {
                 ulid2.timestamp(), ulid1.timestamp());
         }
     });
-    Ok(())
 }
 
 // =============================================================================
@@ -405,7 +397,6 @@ fn test_ulid_ordering_property_in_memory() -> Result<()> {
         prop_assert_eq!(unique_set.len(), ulids.len(),
             "All ULIDs in sequence should be unique");
     });
-    Ok(())
 }
 
 // Database test temporarily disabled due to direct sqlx usage
@@ -524,7 +515,6 @@ async fn test_ulid_range_query_property(ctx: TestContext) -> Result<()> {
             Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -564,7 +554,6 @@ fn test_ulid_timestamp_extraction_property() -> Result<()> {
         prop_assert!(ulid_str.chars().all(|c| "0123456789ABCDEFGHJKMNPQRSTVWXYZ".contains(c)),
             "ULID should only contain valid Crockford base32 characters");
     });
-    Ok(())
 } */
 
 #[sinex_test]
@@ -618,7 +607,6 @@ fn test_ulid_monotonic_property_with_rapid_generation() -> Result<()> {
         prop_assert_eq!(ulids, sorted_ulids,
             "ULIDs should already be in sorted order due to monotonic generation");
     });
-    Ok(())
 }
 
 // Foreign key test temporarily disabled due to direct sqlx usage

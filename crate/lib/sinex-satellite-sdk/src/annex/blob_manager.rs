@@ -519,9 +519,10 @@ impl BlobManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_mime_type_detection() {
+    fn test_mime_type_detection() -> color_eyre::eyre::Result<()> {
         let path = Utf8Path::new("test.txt");
         let mime = BlobManager::detect_mime_type(path).unwrap();
         assert_eq!(mime, "text/plain");
@@ -529,5 +530,6 @@ mod tests {
         let path = Utf8Path::new("image.jpg");
         let mime = BlobManager::detect_mime_type(path).unwrap();
         assert_eq!(mime, "image/jpeg");
+        Ok(())
     }
 }

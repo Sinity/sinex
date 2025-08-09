@@ -3,6 +3,7 @@
 //! This module tests critical failure scenarios that could break the system
 //! in production, focusing on system resilience and error handling.
 
+use color_eyre::eyre::Result;
 use sinex_satellite_sdk::VersionInfo;
 use sinex_test_utils::prelude::*;
 use std::fs;

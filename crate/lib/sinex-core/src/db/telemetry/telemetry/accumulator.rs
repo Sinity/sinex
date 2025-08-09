@@ -724,7 +724,11 @@ mod tests {
     use crate::types::domain::EventType;
     use color_eyre::eyre::eyre;
     use serde_json::json;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
     use std::time::Duration;
     use tokio::sync::mpsc;
 
@@ -1163,7 +1167,11 @@ mod tests {
     #[cfg(all(test, feature = "bench"))]
     mod benches {
         use super::*;
-        use sinex_test_utils::prelude::*;
+        use sinex_test_utils::{sinex_test, TestContext};
+
+        use color_eyre::eyre::Result;
+
+        use serde_json::json;
 
         #[sinex_bench]
         async fn bench_telemetry_record_event(

@@ -18,12 +18,12 @@
 
 use color_eyre::eyre::{eyre, Result};
 use serde_json::json;
-use sinex_db::telemetry::telemetry::{
+use sinex_core::db::telemetry::telemetry::{
     get_global_telemetry, record_function_telemetry, set_global_telemetry, SystemTelemetryEmitter,
     TelemetryAccumulator,
 };
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::EventType;
+use sinex_core::types::domain::EventType;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Instant};

@@ -8,10 +8,11 @@
 //!
 //! Migrated to modern infrastructure: #[sinex_test], TestContext, repository pattern.
 
+use color_eyre::eyre::Result;
 use chrono::Utc;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::types::domain::{EventSource, EventType};
 use serde_json::json;
 use std::collections::HashMap;
 use tokio::time::sleep;

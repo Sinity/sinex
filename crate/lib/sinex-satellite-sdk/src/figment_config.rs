@@ -303,9 +303,10 @@ pub fn generate_example_configs() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_satellite_config_defaults() {
+    fn test_satellite_config_defaults() -> color_eyre::eyre::Result<()> {
         let config = SatelliteFigmentConfig {
             service_name: "test-satellite".to_string(),
             log_level: default_log_level(),
@@ -321,10 +322,11 @@ mod tests {
         assert!(config.validate().is_ok());
         assert_eq!(config.log_level, "info");
         assert_eq!(config.checkpoint_interval_secs, 300);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_event_source_validation() {
+    fn test_event_source_validation() -> color_eyre::eyre::Result<()> {
         let mut config = EventSourceFigmentConfig {
             base: SatelliteFigmentConfig {
                 service_name: "".to_string(), // Invalid
@@ -347,10 +349,11 @@ mod tests {
 
         config.base.service_name = "valid-name".to_string();
         assert!(config.validate().is_ok());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_automaton_config_validation() {
+    fn test_automaton_config_validation() -> color_eyre::eyre::Result<()> {
         let config = AutomatonFigmentConfig {
             base: SatelliteFigmentConfig {
                 service_name: "test-automaton".to_string(),
@@ -372,5 +375,6 @@ mod tests {
         };
 
         assert!(config.validate().is_ok());
+        Ok(())
     }
 }

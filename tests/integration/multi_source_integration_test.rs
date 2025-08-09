@@ -1,4 +1,6 @@
+use color_eyre::eyre::Result;
 use async_trait::async_trait;
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;

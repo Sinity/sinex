@@ -25,9 +25,10 @@
 // - Deadlock detection and recovery mechanisms
 // - Race condition monitoring and reporting
 
+use color_eyre::eyre::Result;
 use futures::future::join_all;
 use sinex_test_utils::prelude::*;
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use std::collections::HashSet;
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};

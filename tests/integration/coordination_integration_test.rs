@@ -6,8 +6,9 @@
 //! - Hot standby pattern
 //! - Advisory lock cleanup
 
+use color_eyre::eyre::Result;
 use sinex_core_utils::{CoordinationPrimitive, ResourceGuard};
-use sinex_db::distributed_locking::{AdvisoryLock, DistributedCoordination};
+use sinex_core::db::distributed_locking::{AdvisoryLock, DistributedCoordination};
 use sinex_satellite_sdk::coordination::{SatelliteCoordination, InstanceMode};
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
 use sinex_test_utils::{sinex_test, TestContext};

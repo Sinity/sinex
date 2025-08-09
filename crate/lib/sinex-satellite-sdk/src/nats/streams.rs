@@ -278,9 +278,10 @@ impl StreamManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_stream_configs() {
+    fn test_stream_configs() -> color_eyre::eyre::Result<()> {
         let raw = StreamConfig::raw_events();
         assert_eq!(raw.name, "SINEX_RAW_EVENTS");
         assert_eq!(raw.subjects, vec!["sinex.events.raw.>"]);
@@ -290,10 +291,11 @@ mod tests {
 
         let metrics = StreamConfig::metrics();
         assert_eq!(metrics.name, "SINEX_METRICS");
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_subject_creation() {
+    fn test_subject_creation() -> color_eyre::eyre::Result<()> {
         assert_eq!(
             StreamManager::event_subject("filesystem", "created"),
             "sinex.events.raw.filesystem.created"
@@ -318,5 +320,6 @@ mod tests {
             StreamManager::control_subject("fs-watcher", "restart"),
             "sinex.satellite.control.fs-watcher.restart"
         );
+        Ok(())
     }
 }

@@ -400,6 +400,7 @@ impl<'ctx> ContextualAssert<'ctx> {
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use crate::sinex_test;
     use serde_json::json;
 
     #[sinex_test]

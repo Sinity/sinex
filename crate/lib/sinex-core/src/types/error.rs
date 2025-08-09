@@ -802,7 +802,11 @@ where
 #[cfg(test)]
 mod tests {
     use super::SinexError;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_test]
     fn test_error_display_with_displaydoc() -> color_eyre::eyre::Result<()> {

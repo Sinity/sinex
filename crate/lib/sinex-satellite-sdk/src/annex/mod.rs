@@ -384,14 +384,16 @@ impl GitAnnex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use tempfile::TempDir;
 
     #[sinex_test]
-    fn test_annex_key_parsing() {
+    fn test_annex_key_parsing() -> color_eyre::eyre::Result<()> {
         let key = AnnexKey::parse("SHA256E-s12345--abcdef123456.dat").unwrap();
         assert_eq!(key.backend, "SHA256E");
         assert_eq!(key.size, 12345);
         assert!(key.hash.contains("abcdef123456"));
+        Ok(())
     }
 
     #[tokio::test]

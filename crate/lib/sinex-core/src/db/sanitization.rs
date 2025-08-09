@@ -142,7 +142,11 @@ mod tests {
     use crate::models::RawEvent;
     use crate::types::domain::EventType;
     use serde_json::json;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_test]
     async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {

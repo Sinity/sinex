@@ -7,16 +7,17 @@
 //! - TestContext instead of custom fixtures
 //! - Modern Event API with Event::from_payload()
 //! - Direct repository access via ctx.pool.*()
-//! - Modern payload types from sinex_types::events::payloads
+//! - Modern payload types from sinex_core::types::events::payloads
 //! - color_eyre for error handling
 
-use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
-use sinex_test_utils::prelude::*;
-use sinex_types::events::payloads::{
+use color_eyre::eyre::Result;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
+use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
 // =============================================================================

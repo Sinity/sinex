@@ -18,7 +18,7 @@
 //! - Test with extreme values: empty strings, very long strings, unicode, control chars
 //! - Test with edge case numbers: negative, zero, max values, floating point precision
 //! - Test with malformed but parseable JSON structures
-//! - Focus on the modern Event::schemaless() API and database insertion paths
+//! - Focus on the modern RawEvent::schemaless() API and database insertion paths
 
 use sinex_test_utils::prelude::*;
 
@@ -26,9 +26,9 @@ use chrono::{DateTime, TimeZone, Utc};
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use sinex_db::repositories::DbPoolExt;
-use sinex_satellite_sdk::Event; // Modern Event API
-use sinex_types::{
+use sinex_core::db::models::RawEvent; // Modern Event API
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
     Ulid,
 };
@@ -163,7 +163,7 @@ fn malformed_json_values() -> impl Strategy<Value = JsonValue> {
 }
 
 /// Strategy for generating fuzzed Event instances using modern API
-fn fuzzed_events() -> impl Strategy<Value = Event> {
+fn fuzzed_events() -> impl Strategy<Value = RawEvent> {
     (
         problematic_strings(),    // source
         problematic_strings(),    // event_type
@@ -172,14 +172,14 @@ fn fuzzed_events() -> impl Strategy<Value = Event> {
         malformed_json_values(),  // payload
     )
         .prop_map(|(source, event_type, ts_orig, host, payload)| {
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source))
-                .event_type(EventType::new(event_type))
-                .host(HostName::new(host))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source),
+                EventType::new(event_type),
+                payload,
+            );
 
             // Set required timestamp fields
+            event.host = HostName::new(host);
             event.ts_ingest = Utc::now();
             event.ts_orig = Some(ts_orig);
 
@@ -452,11 +452,11 @@ fn test_filesystem_events_robustness() -> Result<()> {
             Just("dir.deleted"),
         ],
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new(if source.is_empty() { "fs".to_string() } else { source }))
-            .event_type(EventType::new(event_type.to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new(if source.is_empty() { "fs".to_string() } else { source }),
+            EventType::new(event_type.to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -490,11 +490,11 @@ fn test_terminal_events_robustness() -> Result<()> {
             Just("session.ended"),
         ],
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new(source.to_string()))
-            .event_type(EventType::new(event_type.to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new(source.to_string()),
+            EventType::new(event_type.to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -519,11 +519,11 @@ fn test_clipboard_events_robustness() -> Result<()> {
             Just("selected"),
         ],
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new("clipboard".to_string()))
-            .event_type(EventType::new(event_type.to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("clipboard".to_string()),
+            EventType::new(event_type.to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -554,11 +554,11 @@ fn test_window_manager_events_robustness() -> Result<()> {
             Just("workspace.destroyed"),
         ],
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new("wm.hyprland".to_string()))
-            .event_type(EventType::new(event_type.to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("wm.hyprland".to_string()),
+            EventType::new(event_type.to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -589,11 +589,11 @@ fn test_system_events_robustness() -> Result<()> {
             Just("state.changed"),
         ],
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new(source.to_string()))
-            .event_type(EventType::new(event_type.to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new(source.to_string()),
+            EventType::new(event_type.to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -614,11 +614,11 @@ fn test_json_serialization_robustness() -> Result<()> {
     proptest::proptest!(|(
         payload in malformed_json_values(),
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new("test".to_string()))
-            .event_type(EventType::new("test.event".to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test".to_string()),
+            EventType::new("test.event".to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -659,11 +659,11 @@ fn test_ulid_robustness_with_extreme_timestamps() -> Result<()> {
         let _string = ulid.to_string();
 
         // Test that we can create an event with this timestamp
-        let mut event = Event::schemaless()
-            .source(EventSource::new("test".to_string()))
-            .event_type(EventType::new("test.event".to_string()))
-            .payload(serde_json::json!({}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test".to_string()),
+            EventType::new("test.event".to_string()),
+            serde_json::json!({}),
+        );
 
         event.ts_ingest = timestamp;
         event.ts_orig = Some(timestamp);
@@ -682,12 +682,12 @@ fn test_string_handling_robustness() -> Result<()> {
         event_type in problematic_strings(),
         host in problematic_strings(),
     )| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new(source.clone()))
-            .event_type(EventType::new(event_type.clone()))
-            .host(HostName::new(host.clone()))
-            .payload(serde_json::json!({}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new(source.clone()),
+            EventType::new(event_type.clone()),
+            serde_json::json!({}),
+        );
+        event.host = HostName::new(host.clone());
 
         event.ts_ingest = Utc::now();
 
@@ -721,7 +721,7 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> Result<()> {
         match json_result {
             Ok(json_str) => {
                 // If serialization succeeds, test deserialization as well
-                let deserialize_result = serde_json::from_str::<Event>(&json_str);
+                let deserialize_result = serde_json::from_str::<RawEvent>(&json_str);
                 assert!(
                     deserialize_result.is_ok(),
                     "Event should deserialize successfully if serialization succeeded"
@@ -779,11 +779,11 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
     ];
 
     for (i, payload) in test_cases.into_iter().enumerate() {
-        let event = Event::schemaless()
-            .source(EventSource::new("fuzzing".to_string()))
-            .event_type(EventType::new("extreme.payload".to_string()))
-            .payload(payload)
-            .build();
+        let event = RawEvent::schemaless(
+            EventSource::new("fuzzing".to_string()),
+            EventType::new("extreme.payload".to_string()),
+            payload,
+        );
 
         // Test should not panic regardless of success or failure
         // Focus on serialization since that's the critical path for database storage
@@ -791,7 +791,7 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
         match json_result {
             Ok(json_str) => {
                 // If serialization succeeds, test deserialization too
-                let deserialize_result = serde_json::from_str::<Event>(&json_str);
+                let deserialize_result = serde_json::from_str::<RawEvent>(&json_str);
                 if deserialize_result.is_err() {
                     // Log for debugging but don't fail - the important thing is no panic
                     eprintln!(
@@ -821,12 +821,12 @@ mod additional_tests {
 
     #[sinex_test]
     async fn test_event_with_null_bytes(ctx: TestContext) -> Result<()> {
-        let mut event = Event::schemaless()
-            .source(EventSource::new("test\0null\0bytes".to_string()))
-            .event_type(EventType::new("test\0event".to_string()))
-            .host(HostName::new("test\0host".to_string()))
-            .payload(serde_json::json!({"null_bytes": "test\0data"}))
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test\0null\0bytes".to_string()),
+            EventType::new("test\0event".to_string()),
+            serde_json::json!({"null_bytes": "test\0data"}),
+        );
+        event.host = HostName::new("test\0host".to_string());
 
         event.ts_ingest = Utc::now();
 
@@ -848,11 +848,11 @@ mod additional_tests {
             }
         });
 
-        let mut event = Event::schemaless()
-            .source(EventSource::new("test".to_string()))
-            .event_type(EventType::new("test.large".to_string()))
-            .payload(large_payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test".to_string()),
+            EventType::new("test.large".to_string()),
+            large_payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -873,11 +873,11 @@ mod additional_tests {
             "very_small": f64::MIN,
         });
 
-        let mut event = Event::schemaless()
-            .source(EventSource::new("test".to_string()))
-            .event_type(EventType::new("test.numbers".to_string()))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new("test".to_string()),
+            EventType::new("test.numbers".to_string()),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
 
@@ -892,18 +892,18 @@ mod additional_tests {
     fn test_panic_safety_with_catch_unwind() {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
-            let mut event = Event::schemaless()
-                .source(EventSource::new("\x00\x01\x02".to_string()))
-                .event_type(EventType::new("💀🔥test".to_string()))
-                .host(HostName::new("🦀".to_string()))
-                .payload(serde_json::json!({
+            let mut event = RawEvent::schemaless(
+                EventSource::new("\x00\x01\x02".to_string()),
+                EventType::new("💀🔥test".to_string()),
+                serde_json::json!({
                     "🔥": "💀",
                     "\x00": "\x01",
                     "nested": {
                         "💀": [1, 2, 3, f64::INFINITY]
                     }
-                }))
-                .build();
+                }),
+            );
+            event.host = HostName::new("🦀".to_string());
 
             event.ts_ingest = Utc::now();
 

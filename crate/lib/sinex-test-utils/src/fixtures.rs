@@ -1117,6 +1117,7 @@ macro_rules! fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use std::sync::Arc;
     use std::time::Duration;
 

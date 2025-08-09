@@ -368,7 +368,11 @@ pub fn opt_vec_from_db(uuids: Option<Vec<SqlxUuid>>) -> Option<Vec<Ulid>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_test]
     async fn test_ulid_conversion(ctx: TestContext) -> color_eyre::eyre::Result<()> {

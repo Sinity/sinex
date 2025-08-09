@@ -1,8 +1,9 @@
+use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};
+use sinex_core::types::validation::{validate_json, ValidationError};
 use sinex_test_utils::prelude::*;
-use sinex_types::validation::{validate_json, ValidationError};
 
 /// Property tests for schema validation functionality
 ///
@@ -170,7 +171,6 @@ async fn test_json_validation_normal_payloads() -> color_eyre::eyre::Result<()> 
             }
         }
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -188,7 +188,6 @@ async fn test_json_validation_security_payloads() -> color_eyre::eyre::Result<()
             }
         }
     });
-    Ok(())
 }
 
 #[sinex_test]
@@ -212,7 +211,6 @@ async fn test_json_validation_consistency() -> color_eyre::eyre::Result<()> {
             }
         }
     });
-    Ok(())
 }
 
 // =============================================================================
@@ -281,7 +279,6 @@ async fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
             }
         }
     });
-    Ok(())
 }
 
 // =============================================================================
@@ -290,7 +287,7 @@ async fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
 
 /// Test validation chain behavior with various inputs
 #[sinex_test]
-fn test_validation_chain_properties() {
+fn test_validation_chain_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         test_strings in prop::collection::vec(".*", 1..=10)
     )| {
@@ -320,7 +317,7 @@ fn test_validation_chain_properties() {
 
 /// Test validation chain with numeric values  
 #[sinex_test]
-fn test_validation_chain_numeric_properties() {
+fn test_validation_chain_numeric_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         test_numbers in prop::collection::vec(any::<i64>(), 1..=10)
     )| {
@@ -415,7 +412,6 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> color_eyre::eyr
             Ok::<(), proptest::test_runner::TestCaseError>(())
         })?
     });
-    Ok(())
 }
 
 // =============================================================================
@@ -452,8 +448,6 @@ async fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
         // The main property we're testing is that it doesn't crash
         assert!(true);
     }
-
-    Ok(())
 }
 
 // =============================================================================
@@ -487,8 +481,6 @@ async fn test_json_validation_database_integration(
             panic!("Unexpected validation error: {}", e);
         }
     }
-
-    Ok(())
 }
 
 // =============================================================================
@@ -496,7 +488,7 @@ async fn test_json_validation_database_integration(
 // =============================================================================
 
 #[sinex_test]
-fn test_validation_performance_properties() {
+fn test_validation_performance_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         payload_sizes in prop::collection::vec(100usize..=10000, 1..=10),
         validation_count in 10usize..=100
@@ -583,7 +575,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_payload_generators() {
+    fn test_payload_generators() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test normal payload generator
@@ -605,7 +597,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_source_type_generator() {
+    fn test_source_type_generator() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let (source, event_type) = arb_event_source_type()
             .new_tree(&mut runner)
@@ -619,7 +611,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_modern_validation_basic_functionality() {
+    fn test_modern_validation_basic_functionality() -> color_eyre::eyre::Result<()> {
         // Test basic validation concepts using simple logic
         let valid_name = "Alice";
         let valid_age = 30u32;
@@ -639,7 +631,7 @@ mod unit_tests {
     }
 
     #[sinex_test]
-    fn test_validation_error_types() {
+    fn test_validation_error_types() -> color_eyre::eyre::Result<()> {
         // Test different validation scenarios
         let empty_value = "";
         let valid_value = "test";

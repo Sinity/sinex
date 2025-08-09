@@ -618,7 +618,11 @@ impl Collector for ExternalMetricsCollector {
 mod tests {
     use super::*;
     use crate::telemetry::metrics::collectors::{MetricEntry, MetricType, MetricValue};
-    use sinex_test_utils::prelude::*;
+    use sinex_test_utils::{sinex_test, TestContext};
+
+    use color_eyre::eyre::Result;
+
+    use serde_json::json;
 
     #[sinex_test]
     fn test_metrics_registry_creation() {
@@ -914,7 +918,11 @@ mod tests {
     #[cfg(all(test, feature = "bench"))]
     mod benches {
         use super::*;
-        use sinex_test_utils::prelude::*;
+        use sinex_test_utils::{sinex_test, TestContext};
+
+        use color_eyre::eyre::Result;
+
+        use serde_json::json;
 
         #[sinex_bench]
         async fn bench_counter_increment(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {

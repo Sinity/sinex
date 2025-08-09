@@ -177,6 +177,7 @@ pub fn build_test_satellite_config(service_name: &str, socket_path: &str) -> ser
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {

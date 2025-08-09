@@ -52,11 +52,11 @@ use sqlx::PgPool;
 /// ```
 pub trait DbPoolExt {
     fn blobs(&self) -> blobs::BlobRepository;
-    fn events(&self) -> events::EventRepository;
-    fn checkpoints(&self) -> checkpoints::CheckpointRepository;
-    fn source_materials(&self) -> source_materials::SourceMaterialRepository;
-    fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository;
-    fn state(&self) -> state::StateRepository;
+    fn events(&self) -> events::EventRepository<'_>;
+    fn checkpoints(&self) -> checkpoints::CheckpointRepository<'_>;
+    fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_>;
+    fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_>;
+    fn state(&self) -> state::StateRepository<'_>;
 }
 
 impl DbPoolExt for PgPool {
@@ -64,23 +64,23 @@ impl DbPoolExt for PgPool {
         blobs::BlobRepository::new(self.clone())
     }
 
-    fn events(&self) -> events::EventRepository {
+    fn events(&self) -> events::EventRepository<'_> {
         events::EventRepository::new(self)
     }
 
-    fn checkpoints(&self) -> checkpoints::CheckpointRepository {
+    fn checkpoints(&self) -> checkpoints::CheckpointRepository<'_> {
         checkpoints::CheckpointRepository::new(self)
     }
 
-    fn source_materials(&self) -> source_materials::SourceMaterialRepository {
+    fn source_materials(&self) -> source_materials::SourceMaterialRepository<'_> {
         source_materials::SourceMaterialRepository::new(self)
     }
 
-    fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository {
+    fn knowledge_graph(&self) -> knowledge_graph::KnowledgeGraphRepository<'_> {
         knowledge_graph::KnowledgeGraphRepository::new(self)
     }
 
-    fn state(&self) -> state::StateRepository {
+    fn state(&self) -> state::StateRepository<'_> {
         state::StateRepository::new(self)
     }
 }

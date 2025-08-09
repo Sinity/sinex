@@ -5,11 +5,11 @@
 
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_db::models::Event as DbEvent;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::models::RawEvent as DbEvent;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::grpc_client::{IngestClient, BatchResult, HealthStatus};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType, HostName};
+use sinex_core::types::domain::{EventSource, EventType, HostName};
 use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{debug, info, warn};

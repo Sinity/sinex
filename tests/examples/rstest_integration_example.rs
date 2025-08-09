@@ -3,6 +3,7 @@
 //! This demonstrates TRUE integration where sinex_test automatically detects
 //! and handles rstest #[case] parameters without needing #[rstest] attribute.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 // Example 1: Basic rstest integration with sinex_test

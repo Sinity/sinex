@@ -12,11 +12,12 @@
 //! IMPORTANT: These tests require git-annex to be available. If git-annex
 //! is not installed, tests will be skipped with appropriate warnings.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::resources::{create_test_file, temp_dir};
 use futures;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager, GitAnnex};
-use sinex_types::events::{sources, event_types};
+use sinex_core::types::events::{sources, event_types};
 use camino::Utf8Path;
 use std::sync::Arc;
 use tempfile::TempDir;

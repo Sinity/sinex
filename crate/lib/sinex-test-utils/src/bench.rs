@@ -181,6 +181,7 @@ pub fn is_significant_change(change_percent: f64, std_dev_percent: Option<f64>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[cfg(feature = "bench")]
     #[sinex_test]

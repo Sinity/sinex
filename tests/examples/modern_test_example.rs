@@ -3,6 +3,7 @@
 //! This file shows best practices for using rstest, insta, tracing-test, and similar-asserts
 //! with the TestContext infrastructure.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 // ===== Basic rstest parameterized tests =====
@@ -270,7 +271,8 @@ mod tests {
     
     // This ensures all examples compile and can run
     #[sinex_test]
-    fn examples_compile() {
+fn examples_compile() -> color_eyre::eyre::Result<()> {
         // The examples above serve as both documentation and tests
     }
+    Ok(())
 }
