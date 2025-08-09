@@ -620,15 +620,14 @@ mod tests {
     use crate::telemetry::metrics::collectors::{MetricEntry, MetricType, MetricValue};
     use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_metrics_registry_creation() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_metrics_registry_creation() {
         let registry = MetricsRegistry::new();
         assert!(registry.get_all_metric_families().is_empty());
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_counter_registration() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_counter_registration() {
         let registry = MetricsRegistry::new();
         let counter = registry
             .register_counter("test_counter", "A test counter", HashMap::new())
@@ -652,11 +651,10 @@ mod tests {
 
         assert_eq!(counter_vec.with_label_values(&["GET", "200"]).get(), 1.0);
         assert_eq!(counter_vec.with_label_values(&["POST", "201"]).get(), 2.0);
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_gauge_registration() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_gauge_registration() {
         let registry = MetricsRegistry::new();
         let gauge = registry
             .register_gauge("test_gauge", "A test gauge", HashMap::new())
@@ -680,11 +678,10 @@ mod tests {
 
         assert_eq!(gauge_vec.with_label_values(&["cpu"]).get(), 75.5);
         assert_eq!(gauge_vec.with_label_values(&["memory"]).get(), 80.2);
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_histogram_registration() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_histogram_registration() {
         let registry = MetricsRegistry::new();
         let histogram = registry
             .register_histogram(
@@ -722,11 +719,10 @@ mod tests {
                 .get_sample_count(),
             2
         );
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_family_retrieval() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_metric_family_retrieval() {
         let registry = MetricsRegistry::new();
 
         // Register different metric types
@@ -763,11 +759,10 @@ mod tests {
         // Test get all
         let families = registry.get_all_metric_families();
         assert_eq!(families.len(), 3);
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_duplicate_registration() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_duplicate_registration() {
         let registry = MetricsRegistry::new();
 
         // First registration should succeed
@@ -779,11 +774,10 @@ mod tests {
         assert!(registry
             .register_counter("dup_counter", "Counter 2", HashMap::new())
             .is_err());
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_prometheus_export() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_prometheus_export() {
         let registry = MetricsRegistry::new();
         let counter = registry
             .register_counter("test_counter", "A test counter", HashMap::new())
@@ -796,11 +790,10 @@ mod tests {
         assert!(prometheus_output.contains("1"));
         assert!(prometheus_output.contains("# HELP test_counter A test counter"));
         assert!(prometheus_output.contains("# TYPE test_counter counter"));
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_json_export() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_json_export() {
         let registry = MetricsRegistry::new();
         let counter = registry
             .register_counter("test_counter", "A test counter", HashMap::new())
@@ -823,11 +816,10 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("Counter"));
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_json_export_with_labels() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_json_export_with_labels() {
         let registry = MetricsRegistry::new();
         let mut labels = HashMap::new();
         labels.insert("environment".to_string(), "test".to_string());
@@ -855,11 +847,10 @@ mod tests {
             "1.0"
         );
         assert_eq!(metric.get("value").unwrap().as_f64().unwrap(), 5.0);
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_global_metrics() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_global_metrics() {
         let counter = GlobalMetrics::get_or_create_counter(
             "global_test_counter",
             "A global test counter",
@@ -879,8 +870,8 @@ mod tests {
         assert_eq!(counter2.get(), 1.0); // Same counter, retains value
     }
 
-    #[tokio::test]
-    async fn test_external_metrics_collector() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_external_metrics_collector() {
         let collector = ExternalMetricsCollector::new("test_collector".to_string());
 
         let metric = MetricEntry {
@@ -903,8 +894,8 @@ mod tests {
         assert!(families.is_empty()); // Simplified implementation returns empty
     }
 
-    #[tokio::test]
-    async fn test_init_global_registry() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_init_global_registry(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
         init_global_registry().await;
 
         // Should have created initialization counter

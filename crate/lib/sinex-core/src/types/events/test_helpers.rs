@@ -8,7 +8,7 @@ use serde_json::Value;
 ///
 /// # Example
 /// ```ignore
-/// #[tokio::test]
+/// #[sinex_test]
 /// fn test_file_created_migration() {
 ///     let v1_json = json!({
 ///         "path": "/test.txt",
@@ -77,7 +77,7 @@ pub fn test_event_with_version<P: EventPayload>(
 ///
 /// # Example
 /// ```ignore
-/// #[tokio::test]
+/// #[sinex_test]
 /// fn test_incompatible_migration() {
 ///     let bad_json = json!({
 ///         "path": "/test.txt",
@@ -210,8 +210,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_migration_helper() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_migration_helper() {
         let v1_json = json!({
             "name": "test"
         });
@@ -224,6 +224,5 @@ mod tests {
         let v2 = migrate_payload::<TestPayloadV1, TestPayloadV2>(v1_json, "1.0.0").unwrap();
         assert_eq!(v2.name, "test");
         assert_eq!(v2.count, 0); // Default value
-        Ok(())
     }
 }

@@ -258,8 +258,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_path_sanitization() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_path_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Valid paths should work
         assert_eq!(
             SecurityValidator::sanitize_path("/home/user/file.txt").unwrap(),
@@ -280,8 +280,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_unicode_sanitization() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_unicode_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Null byte
         assert_eq!(
             SecurityValidator::sanitize_unicode("test\0value"),
@@ -296,16 +296,16 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_json_depth() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_json_depth(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let shallow = serde_json::json!({"a": {"b": {"c": 1}}});
         assert!(SecurityValidator::check_json_depth(&shallow, 5).is_ok());
         assert!(SecurityValidator::check_json_depth(&shallow, 2).is_err());
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_json_size() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_json_size(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let small = serde_json::json!({"a": 1, "b": 2});
         assert!(SecurityValidator::check_json_size(&small, 10).is_ok());
         assert!(SecurityValidator::check_json_size(&small, 2).is_err());

@@ -123,8 +123,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_database_config_validation() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_database_config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let valid = DatabaseConfig {
             url: "postgresql://localhost/test".to_string(),
             max_connections: 50,
@@ -143,8 +143,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_server_config_validation() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_server_config_validation(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let valid = ServerConfig {
             name: "test-server".to_string(),
             bind_address: "127.0.0.1".to_string(),
@@ -163,8 +163,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_config_validation_trait() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_config_validation_trait(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let config = ServerConfig {
             name: "test".to_string(),
             bind_address: "not-an-ip".to_string(),

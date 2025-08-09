@@ -190,8 +190,8 @@ pub fn format_validation_errors_with_context(errors: &ValidationErrors, context:
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_database_config_validation() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_database_config_validation() {
         let valid_config = DatabaseConfig {
             connection_url: "postgresql://user:pass@localhost/db".to_string(),
             max_connections: 100,
@@ -215,11 +215,10 @@ mod tests {
         assert!(errors.field_errors().contains_key("connection_url"));
         assert!(errors.field_errors().contains_key("max_connections"));
         assert!(errors.field_errors().contains_key("database_name"));
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_event_validation() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_event_validation() {
         let valid_event = EventValidation {
             event_type: "user.created".to_string(),
             source: "api".to_string(),
@@ -237,11 +236,10 @@ mod tests {
         };
 
         assert!(invalid_event.validate().is_err());
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_friendly_error_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_friendly_error_formatting() {
         let config = DatabaseConfig {
             connection_url: "invalid".to_string(),
             max_connections: 0,
@@ -253,6 +251,5 @@ mod tests {
         assert!(error.contains("connection_url"));
         assert!(error.contains("max_connections"));
         assert!(error.contains("database_name"));
-        Ok(())
     }
 }

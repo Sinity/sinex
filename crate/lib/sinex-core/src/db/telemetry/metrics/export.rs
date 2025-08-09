@@ -584,16 +584,15 @@ mod tests {
         register_collector(Box::new(collector));
     }
 
-    #[tokio::test]
-    async fn test_prometheus_export() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_prometheus_export() {
         let output = export_prometheus();
         // Should contain Prometheus format metrics
         assert!(output.contains("# HELP") || output.is_empty());
-        Ok(())
     }
 
     // TODO: Fix these tests to not depend on internal storage access
-    // #[tokio::test]
+    // #[sinex_test]
     #[allow(dead_code)]
     async fn test_json_export_comprehensive() -> color_eyre::eyre::Result<()> {
         setup_test_metrics();
@@ -624,8 +623,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_entry_to_json() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_metric_entry_to_json() {
         let metric = MetricEntry {
             name: "test_metric".to_string(),
             help: "Test metric".to_string(),
@@ -645,10 +644,9 @@ mod tests {
         // Check labels
         let labels = json["labels"].as_object().unwrap();
         assert_eq!(labels.get("label1").unwrap().as_str().unwrap(), "value1");
-        Ok(())
     }
 
-    // #[tokio::test]
+    // #[sinex_test]
     #[allow(dead_code)]
     async fn test_openmetrics_export_comprehensive() -> color_eyre::eyre::Result<()> {
         setup_test_metrics();
@@ -670,9 +668,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_entry_to_openmetrics_all_types() -> Result<(), Box<dyn std::error::Error>>
-    {
+    #[sinex_test]
+    fn test_metric_entry_to_openmetrics_all_types() {
         // Test Counter
         let counter = MetricEntry {
             name: "test_counter".to_string(),
@@ -706,10 +703,9 @@ mod tests {
         assert!(openmetrics.contains("test_summary_count 100"));
         assert!(openmetrics.contains("test_summary_sum 500"));
         assert!(openmetrics.contains("test_summary{quantile=\"0.5\"} 50"));
-        Ok(())
     }
 
-    // #[tokio::test]
+    // #[sinex_test]
     #[allow(dead_code)]
     async fn test_influxdb_export_comprehensive() -> color_eyre::eyre::Result<()> {
         setup_test_metrics();
@@ -739,8 +735,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_entry_to_influxdb_with_labels() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_metric_entry_to_influxdb_with_labels() {
         let metric = MetricEntry {
             name: "test_gauge".to_string(),
             help: "Test gauge".to_string(),
@@ -759,10 +755,9 @@ mod tests {
         assert!(influxdb.contains("label2=value2"));
         assert!(influxdb.contains("value=42"));
         assert!(influxdb.ends_with("1234567890000000000")); // Nanoseconds
-        Ok(())
     }
 
-    // #[tokio::test]
+    // #[sinex_test]
     #[allow(dead_code)]
     async fn test_statsd_export_comprehensive() -> color_eyre::eyre::Result<()> {
         setup_test_metrics();
@@ -781,8 +776,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_entry_to_statsd_all_types() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_metric_entry_to_statsd_all_types() {
         // Counter
         let counter = MetricEntry {
             name: "counter".to_string(),
@@ -818,10 +813,9 @@ mod tests {
         assert!(statsd.contains("histogram:1|h"));
         assert!(statsd.contains("histogram:2|h"));
         assert!(statsd.contains("histogram:3|h"));
-        Ok(())
     }
 
-    // #[tokio::test]
+    // #[sinex_test]
     #[allow(dead_code)]
     async fn test_export_summary_with_metrics() -> color_eyre::eyre::Result<()> {
         setup_test_metrics();
@@ -857,8 +851,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_labels_to_openmetrics() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_labels_to_openmetrics() {
         // Empty labels
         assert_eq!(labels_to_openmetrics(&HashMap::new()), "");
 
@@ -876,11 +870,10 @@ mod tests {
         assert!(openmetrics.contains("key2=\"value2\""));
         assert!(openmetrics.starts_with("{"));
         assert!(openmetrics.ends_with("}"));
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_type_to_openmetrics() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_metric_type_to_openmetrics() {
         assert_eq!(metric_type_to_openmetrics(MetricType::Counter), "counter");
         assert_eq!(metric_type_to_openmetrics(MetricType::Gauge), "gauge");
         assert_eq!(
@@ -888,7 +881,6 @@ mod tests {
             "histogram"
         );
         assert_eq!(metric_type_to_openmetrics(MetricType::Summary), "summary");
-        Ok(())
     }
 
     #[cfg(all(test, feature = "bench"))]

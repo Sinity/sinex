@@ -270,14 +270,13 @@ mod tests {
     use super::*;
     use crate::events::event_payload::EventPayload;
 
-    #[tokio::test]
-    async fn test_event_payload_constants() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_event_payload_constants() {
         // Verify that the EventPayload trait is implemented
         assert_eq!(ProcessHeartbeatPayload::SOURCE.as_str(), "sinex");
         assert_eq!(
             ProcessHeartbeatPayload::EVENT_TYPE.as_str(),
             "process.heartbeat"
         );
-        Ok(())
     }
 }

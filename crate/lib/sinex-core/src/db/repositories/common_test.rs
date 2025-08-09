@@ -8,8 +8,8 @@ mod tests {
     use sea_query::{Alias, PostgresQueryBuilder, Query};
     use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_enhanced_repository_count_all() -> Result<()> {
+    #[sinex_test]
+    async fn test_enhanced_repository_count_all(ctx: TestContext) -> Result<()> {
         let pool = &ctx.pool;
 
         // Test with checkpoints repository
@@ -22,8 +22,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_enhanced_repository_exists_by_id() -> Result<()> {
+    #[sinex_test]
+    async fn test_enhanced_repository_exists_by_id(ctx: TestContext) -> Result<()> {
         let pool = &ctx.pool;
 
         // Test with checkpoints repository
@@ -37,8 +37,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_repository_polymorphism() -> Result<()> {
+    #[sinex_test]
+    async fn test_repository_polymorphism(ctx: TestContext) -> Result<()> {
         let pool = &ctx.pool;
 
         // We can use EnhancedRepository trait methods on different repository types
@@ -59,8 +59,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_seaquery_integration() -> Result<()> {
+    #[sinex_test]
+    async fn test_seaquery_integration(ctx: TestContext) -> Result<()> {
         let pool = &ctx.pool;
 
         // Build a query using SeaQuery and TableDef
@@ -80,8 +80,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_table_def_constants() -> Result<()> {
+    #[sinex_test]
+    async fn test_table_def_constants(_ctx: TestContext) -> Result<()> {
         // Test that all TableDef implementations have correct values
         assert_eq!(Events::table_name(), "events");
         assert_eq!(Events::schema_name(), "core");

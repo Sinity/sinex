@@ -144,8 +144,8 @@ mod tests {
     use serde_json::json;
     use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_path_traversal_sanitization() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_path_traversal_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let mut event = RawEvent::schemaless()
             .source(EventSource::new("../../../etc/passwd"))
             .event_type(EventType::new("security.test"))
@@ -165,8 +165,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_null_byte_sanitization() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_null_byte_sanitization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let mut event = RawEvent::schemaless()
             .source(EventSource::new("test\0source"))
             .event_type(EventType::new("security.test"))
@@ -181,8 +181,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_sql_injection_preserved() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_sql_injection_preserved(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let mut event = RawEvent::schemaless()
             .source(EventSource::new("security.test"))
             .event_type(EventType::new("sql.injection"))

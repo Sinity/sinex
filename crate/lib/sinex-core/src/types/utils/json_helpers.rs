@@ -123,8 +123,8 @@ mod tests {
         value: i32,
     }
 
-    #[tokio::test]
-    async fn test_parse_json() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_parse_json() {
         let json = r#"{"name": "test", "value": 42}"#;
         let result: TestStruct = parse_json(json, "test struct", "test_operation").unwrap();
         assert_eq!(result.name, "test");
@@ -134,11 +134,10 @@ mod tests {
         let bad_json = r#"{"invalid": json}"#;
         let result: Result<TestStruct> = parse_json(bad_json, "test struct", "test_operation");
         assert!(result.is_err());
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_extract_field() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_extract_field() {
         let json_value = serde_json::json!({
             "name": "test",
             "value": 42,
@@ -156,6 +155,5 @@ mod tests {
         // Test missing field
         let result: Result<String> = extract_field(&json_value, "missing", "test_op");
         assert!(result.is_err());
-        Ok(())
     }
 }

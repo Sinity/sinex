@@ -193,8 +193,8 @@ mod tests {
     use super::*;
     use crate::events::payloads::filesystem::FileCreatedPayload;
 
-    #[tokio::test]
-    async fn test_option_payload() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_option_payload() {
         let value = serde_json::json!(null);
         let result: Option<FileCreatedPayload> =
             Option::<FileCreatedPayload>::try_from_legacy(value, "1.0.0").unwrap();
@@ -208,11 +208,10 @@ mod tests {
         let result: Option<FileCreatedPayload> =
             Option::<FileCreatedPayload>::try_from_legacy(value, "1.0.0").unwrap();
         assert!(result.is_some());
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_vec_payload() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_vec_payload() {
         let value = serde_json::json!([
             {
                 "path": "/test1.txt",
@@ -231,6 +230,5 @@ mod tests {
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, "/test1.txt");
         assert_eq!(result[1].path, "/test2.txt");
-        Ok(())
     }
 }

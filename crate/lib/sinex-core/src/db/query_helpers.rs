@@ -370,8 +370,8 @@ mod tests {
     use super::*;
     use sinex_test_utils::prelude::*;
 
-    #[tokio::test]
-    async fn test_ulid_conversion() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_ulid_conversion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let ulid = Ulid::new();
         let uuid = ulid_to_uuid(ulid);
         let converted_back = uuid_to_ulid(uuid);
@@ -379,8 +379,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_ulid_array_conversion() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_ulid_array_conversion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let uuids = ulids.to_uuid_vec();
         assert_eq!(ulids.len(), uuids.len());
@@ -391,8 +391,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_retry_config_default() -> color_eyre::eyre::Result<()> {
+    #[sinex_test]
+    async fn test_retry_config_default(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         let config = RetryConfig::default();
         assert_eq!(config.max_attempts, retry::MAX_RETRY_ATTEMPTS);
         assert_eq!(
@@ -404,7 +404,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_is_retryable_db_error_function_exists(
         ctx: TestContext,
     ) -> color_eyre::eyre::Result<()> {

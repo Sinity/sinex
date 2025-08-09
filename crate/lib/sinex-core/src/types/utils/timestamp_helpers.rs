@@ -80,8 +80,8 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn test_timestamp_conversions() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_timestamp_conversions() {
         // Test seconds conversion
         let dt = timestamp_to_datetime(1700000000);
         assert_eq!(dt.timestamp(), 1700000000);
@@ -96,11 +96,10 @@ mod tests {
         let dt = timestamp_nanos_to_datetime(timestamp_ns);
         assert_eq!(dt.timestamp(), 1700000000);
         assert_eq!(dt.timestamp_subsec_nanos(), 123456789);
-        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_flexible_parsing() -> Result<(), Box<dyn std::error::Error>> {
+    #[sinex_test]
+    fn test_flexible_parsing() {
         // Test RFC3339
         let dt = parse_flexible_timestamp("2023-11-14T12:00:00Z").unwrap();
         assert_eq!(dt.to_rfc3339(), "2023-11-14T12:00:00+00:00");
@@ -112,6 +111,5 @@ mod tests {
         // Test milliseconds (a timestamp from 2023)
         let dt = parse_flexible_timestamp("1700000000000").unwrap();
         assert_eq!(dt.timestamp_millis(), 1700000000000);
-        Ok(())
     }
 }
