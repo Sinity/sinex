@@ -706,6 +706,7 @@ mod tests {
         assert!(openmetrics.contains("test_summary_count 100"));
         assert!(openmetrics.contains("test_summary_sum 500"));
         assert!(openmetrics.contains("test_summary{quantile=\"0.5\"} 50"));
+        Ok(())
     }
 
     // #[sinex_test]
@@ -758,6 +759,7 @@ mod tests {
         assert!(influxdb.contains("label2=value2"));
         assert!(influxdb.contains("value=42"));
         assert!(influxdb.ends_with("1234567890000000000")); // Nanoseconds
+        Ok(())
     }
 
     // #[sinex_test]
@@ -816,6 +818,7 @@ mod tests {
         assert!(statsd.contains("histogram:1|h"));
         assert!(statsd.contains("histogram:2|h"));
         assert!(statsd.contains("histogram:3|h"));
+        Ok(())
     }
 
     // #[sinex_test]
@@ -873,6 +876,7 @@ mod tests {
         assert!(openmetrics.contains("key2=\"value2\""));
         assert!(openmetrics.starts_with("{"));
         assert!(openmetrics.ends_with("}"));
+        Ok(())
     }
 
     #[test]
@@ -884,6 +888,7 @@ mod tests {
             "histogram"
         );
         assert_eq!(metric_type_to_openmetrics(MetricType::Summary), "summary");
+        Ok(())
     }
 
     #[cfg(all(test, feature = "bench"))]
