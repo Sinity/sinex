@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use crate::events::payloads::filesystem::FileCreatedPayload;
 
-    #[test]
+    #[sinex_test]
     fn test_option_payload() -> Result<(), SinexError> {
         let value = serde_json::json!(null);
         let result: Option<FileCreatedPayload> =
@@ -211,7 +211,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_vec_payload() -> Result<(), SinexError> {
         let value = serde_json::json!([
             {

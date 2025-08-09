@@ -1558,7 +1558,7 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_validation_type_equality() -> Result<()> {
         assert_eq!(
             ValidationType::ConfigurationLoad,
@@ -1575,7 +1575,7 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_compatibility_test_result_creation() -> Result<()> {
         let result = CompatibilityResult {
             scenario_name: "test".to_string(),

@@ -209,7 +209,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn test_migration_helper() -> color_eyre::eyre::Result<()> {
         let v1_json = json!({
             "name": "test"

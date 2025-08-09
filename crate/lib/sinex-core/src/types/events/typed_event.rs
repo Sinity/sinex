@@ -244,7 +244,7 @@ mod tests {
     use super::*;
     use crate::types::events::payloads::filesystem::FileCreatedPayload;
 
-    #[test]
+    #[sinex_test]
     fn test_event_creation() {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
@@ -261,7 +261,7 @@ mod tests {
         assert!(event.id.is_none());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_event_to_raw_conversion() {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
@@ -281,7 +281,7 @@ mod tests {
         assert_eq!(raw_event.payload, payload_json);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_raw_to_event_conversion() {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
@@ -299,7 +299,7 @@ mod tests {
         assert_eq!(converted_event.event_type, event.event_type);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_raw_to_event_conversion_type_mismatch() {
         use crate::types::events::payloads::filesystem::FileDeletedPayload;
 
@@ -318,7 +318,7 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
+    #[sinex_test]
     fn test_builder_methods() {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),

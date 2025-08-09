@@ -81,7 +81,7 @@ mod tests {
     use super::*;
     use color_eyre::eyre::Result;
 
-    #[test]
+    #[sinex_test]
     fn test_timestamp_conversions() -> Result<()> {
         // Test seconds conversion
         let dt = timestamp_to_datetime(1700000000);
@@ -100,7 +100,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_flexible_parsing() -> Result<()> {
         // Test RFC3339
         let dt = parse_flexible_timestamp("2023-11-14T12:00:00Z").unwrap();

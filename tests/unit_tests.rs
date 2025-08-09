@@ -557,7 +557,7 @@ fn test_event_json_roundtrip() -> color_eyre::eyre::Result<()> {
     let json_str = serde_json::to_string(&original_event).unwrap();
 
     // Deserialize back
-    let deserialized_event: Event = serde_json::from_str(&json_str).unwrap();
+    let deserialized_event: DbEvent = serde_json::from_str(&json_str).unwrap();
 
     // Should be equal
     assert_eq!(deserialized_event.source, original_event.source);

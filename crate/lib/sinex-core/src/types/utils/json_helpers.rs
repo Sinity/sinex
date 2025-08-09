@@ -123,7 +123,7 @@ mod tests {
         value: i32,
     }
 
-    #[test]
+    #[sinex_test]
     fn test_parse_json() -> Result<()> {
         let json = r#"{"name": "test", "value": 42}"#;
         let result: TestStruct = parse_json(json, "test struct", "test_operation").unwrap();
@@ -137,7 +137,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_extract_field() -> Result<()> {
         let json_value = serde_json::json!({
             "name": "test",

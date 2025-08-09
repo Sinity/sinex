@@ -191,7 +191,7 @@ mod tests {
     use super::*;
     use color_eyre::eyre::Result;
 
-    #[test]
+    #[sinex_test]
     fn test_database_config_validation() -> Result<()> {
         let valid_config = DatabaseConfig {
             connection_url: "postgresql://user:pass@localhost/db".to_string(),
@@ -219,7 +219,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_event_validation() -> Result<()> {
         let valid_event = EventValidation {
             event_type: "user.created".to_string(),
@@ -241,7 +241,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_friendly_error_formatting() -> Result<()> {
         let config = DatabaseConfig {
             connection_url: "invalid".to_string(),

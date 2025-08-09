@@ -121,7 +121,7 @@ pub static FIXTURE_CONFIG: Lazy<FixtureConfig> = Lazy::new(FixtureConfig::from_e
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_default_config() {
         let config = FixtureConfig::default();
         assert_eq!(config.small_dataset_size, 100);
@@ -132,7 +132,7 @@ mod tests {
         assert!(!config.verbose);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_dataset_size_selection() {
         let config = FixtureConfig::default();
         assert_eq!(config.get_dataset_size(50), 100);

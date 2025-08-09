@@ -227,7 +227,7 @@ mod tests {
     use color_eyre::eyre::Result;
     use serde_json::json;
 
-    #[test]
+    #[sinex_test]
     fn test_schemaless_event_builder() -> Result<()> {
         let mut event = RawEvent::schemaless(
             EventSource::new("test"),
@@ -244,7 +244,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_simple_constructor() -> Result<()> {
         let event = RawEvent::simple(
             EventSource::new("test"),
@@ -258,7 +258,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_synthesis_event() -> Result<()> {
         let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
         let mut event = RawEvent::schemaless(

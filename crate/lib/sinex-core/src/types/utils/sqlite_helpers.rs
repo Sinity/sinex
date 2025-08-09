@@ -125,7 +125,7 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
-    #[test]
+    #[sinex_test]
     fn test_sqlite_connection_helpers() -> Result<()> {
         // Create a temporary database
         let temp_file = NamedTempFile::new().unwrap();
@@ -145,7 +145,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_statement_prepare_helper() -> Result<()> {
         let temp_file = NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_file.path()).unwrap();

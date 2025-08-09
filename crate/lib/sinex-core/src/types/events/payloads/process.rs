@@ -271,7 +271,7 @@ mod tests {
     use crate::events::event_payload::EventPayload;
     use color_eyre::eyre::Result;
 
-    #[test]
+    #[sinex_test]
     fn test_event_payload_constants() -> Result<()> {
         // Verify that the EventPayload trait is implemented
         assert_eq!(ProcessHeartbeatPayload::SOURCE.as_str(), "sinex");

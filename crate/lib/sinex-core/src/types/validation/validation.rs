@@ -369,7 +369,7 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[test]
+    #[sinex_test]
     fn test_path_validation() -> Result<()> {
         // Valid paths
         assert!(validate_path("normal/path.txt").is_ok());
@@ -386,7 +386,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_filename_sanitization() -> Result<()> {
         // Normal filename
         assert_eq!(
@@ -407,7 +407,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_json_validation() -> Result<()> {
         // Valid JSON
         let valid = r#"{"key": "value", "number": 42}"#;
@@ -431,7 +431,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_validate_json_value() -> Result<()> {
         use serde_json::json;
 
@@ -454,7 +454,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_deserialize_json_with_validation() -> Result<()> {
         #[derive(Debug, serde::Deserialize, PartialEq)]
         struct TestStruct {
@@ -483,7 +483,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_unicode_normalization() -> Result<()> {
         // Normal text
         assert_eq!(normalize_unicode("hello").unwrap(), "hello");
@@ -496,7 +496,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_shell_metacharacters() -> Result<()> {
         assert!(!contains_shell_metacharacters("normal command"));
         assert!(!contains_shell_metacharacters("rm -rf /")); // This is dangerous but has no metacharacters

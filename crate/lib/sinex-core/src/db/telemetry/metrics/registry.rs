@@ -624,14 +624,14 @@ mod tests {
 
     use serde_json::json;
 
-    #[test]
+    #[sinex_test]
     fn test_metrics_registry_creation() -> Result<()> {
         let registry = MetricsRegistry::new();
         assert!(registry.get_all_metric_families().is_empty());
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_counter_registration() -> Result<()> {
         let registry = MetricsRegistry::new();
         let counter = registry
@@ -659,7 +659,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_gauge_registration() -> Result<()> {
         let registry = MetricsRegistry::new();
         let gauge = registry
@@ -687,7 +687,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_histogram_registration() -> Result<()> {
         let registry = MetricsRegistry::new();
         let histogram = registry
@@ -729,7 +729,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_metric_family_retrieval() -> Result<()> {
         let registry = MetricsRegistry::new();
 
@@ -770,7 +770,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_duplicate_registration() -> Result<()> {
         let registry = MetricsRegistry::new();
 
@@ -786,7 +786,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_prometheus_export() -> Result<()> {
         let registry = MetricsRegistry::new();
         let counter = registry
@@ -803,7 +803,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_json_export() -> Result<()> {
         let registry = MetricsRegistry::new();
         let counter = registry
@@ -830,7 +830,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_json_export_with_labels() -> Result<()> {
         let registry = MetricsRegistry::new();
         let mut labels = HashMap::new();
@@ -862,7 +862,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_global_metrics() -> Result<()> {
         let counter = GlobalMetrics::get_or_create_counter(
             "global_test_counter",
@@ -884,7 +884,7 @@ mod tests {
         Ok(())
     }
 
-    #[test]
+    #[sinex_test]
     fn test_external_metrics_collector() -> Result<()> {
         let collector = ExternalMetricsCollector::new("test_collector".to_string());
 

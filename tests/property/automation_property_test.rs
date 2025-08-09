@@ -79,7 +79,7 @@ fn create_test_event(source: &str, event_type: &str, payload: serde_json::Value)
 
 /// Test checkpoint handling properties
 proptest! {
-    #[test]
+    #[sinex_test]
     fn test_checkpoint_properties(
         message_count in 0u64..10000u64,
         timestamp_offset in 0i64..86400i64,
@@ -116,7 +116,7 @@ proptest! {
 
 /// Test scan args validation properties
 proptest! {
-    #[test]
+    #[sinex_test]
     fn test_scan_args_properties(
         max_events in 0u64..10000u64,
         dry_run in any::<bool>(),
@@ -149,7 +149,7 @@ proptest! {
 
 /// Test processor type consistency
 #[sinex_test]
-fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
+fn test_processor_type_properties() {
     let types = vec![ProcessorType::Ingestor, ProcessorType::Automaton];
 
     for processor_type in types {
@@ -167,7 +167,7 @@ fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
 
 /// Test event processing determinism (without actual scan)
 proptest! {
-    #[test]
+    #[sinex_test]
     fn test_event_creation_determinism(
         events in proptest::collection::vec(arb_event_data(), 1..=20),
     ) {
@@ -189,7 +189,7 @@ proptest! {
 
 /// Test error handling with malformed data
 proptest! {
-    #[test]
+    #[sinex_test]
     fn test_error_handling_robustness(
         malformed_payloads in proptest::collection::vec(
             prop_oneof![
@@ -221,7 +221,7 @@ proptest! {
 
 /// Test checkpoint description consistency
 proptest! {
-    #[test]
+    #[sinex_test]
 fn test_checkpoint_description_properties(
         message_count in 0u64..1000u64,
     ) {
@@ -257,7 +257,7 @@ fn test_checkpoint_description_properties(
 
 /// Test time horizon property consistency
 proptest! {
-    #[test]
+    #[sinex_test]
 fn test_time_horizon_behavior_properties(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
     ) {
@@ -304,7 +304,7 @@ fn test_time_horizon_behavior_properties(
 
 /// Test automation-related data structure consistency
 proptest! {
-    #[test]
+    #[sinex_test]
 fn test_automation_data_structure_consistency(
         event_count in 1..100usize,
         batch_size in 1..50usize,
