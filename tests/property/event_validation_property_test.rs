@@ -35,7 +35,7 @@ fn event_payloads() -> impl Strategy<Value = Value> {
 }
 
 /// Strategy for generating arbitrary valid events
-fn arbitrary_event() -> impl Strategy<Value = Event> {
+fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
     (
         "[a-z][a-z0-9_]{2,49}",  // source
         "[a-z][a-z0-9_.]{2,99}", // event_type
@@ -65,7 +65,7 @@ fn arbitrary_event() -> impl Strategy<Value = Event> {
 }
 
 /// Strategy for generating events with empty source
-fn empty_source_event() -> impl Strategy<Value = Event> {
+fn empty_source_event() -> impl Strategy<Value = RawEvent> {
     (
         Just("".to_string()),    // empty source
         "[a-z][a-z0-9_.]{2,99}", // event_type
@@ -84,7 +84,7 @@ fn empty_source_event() -> impl Strategy<Value = Event> {
 }
 
 /// Strategy for generating events with metadata
-fn metadata_rich_events() -> impl Strategy<Value = Event> {
+fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
     (
         "[a-z][a-z0-9_]{2,49}",  // source
         "[a-z][a-z0-9_.]{2,99}", // event_type
@@ -111,7 +111,7 @@ fn metadata_rich_events() -> impl Strategy<Value = Event> {
 }
 
 /// Strategy for generating boundary condition events
-fn boundary_condition_events() -> impl Strategy<Value = Event> {
+fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     let edge_cases = vec![
         // Very short fields
         ("a".to_string(), "b.c".to_string(), json!(null)),
@@ -160,7 +160,7 @@ fn boundary_condition_events() -> impl Strategy<Value = Event> {
 
 /// Strategy for generating concurrent operation events
 #[cfg(feature = "concurrent_tests")]
-fn concurrent_operation_events() -> impl Strategy<Value = Vec<Event>> {
+fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(
         (0usize..10, 0u64..1000).prop_map(|(worker_id, operation_id)| {
             let payload = json!({
@@ -184,12 +184,12 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<Event>> {
 
 /// Strategy for performance characteristic events
 #[cfg(feature = "performance_tests")]
-fn performance_characteristic_events() -> impl Strategy<Value = Vec<Event>> {
+fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(arbitrary_event(), 10..1000)
 }
 
 /// Simple validation function for events (replaces ValidationChain)
-fn validate_event(event: &Event) -> std::result::Result<(), String> {
+fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
     if event.source.is_empty() {
         return Err("Empty source".to_string());
     }
@@ -220,7 +220,6 @@ fn test_valid_events_pass_validation() -> Result<()> {
             prop_assert!(result.is_ok(), "Generated event should pass validation: {:?}", result);
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -239,7 +238,6 @@ fn test_empty_source_fails_validation() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -268,7 +266,6 @@ fn test_event_field_constraints() -> Result<()> {
             prop_assert!(event.host.len() <= 255);
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -302,7 +299,6 @@ fn test_payload_size_validation() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -323,7 +319,6 @@ fn test_event_timestamp_consistency() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -346,7 +341,6 @@ fn test_event_uniqueness_properties() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -365,7 +359,6 @@ fn test_source_event_id_validation() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -384,7 +377,6 @@ fn test_json_schema_compatibility() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -404,7 +396,6 @@ fn test_event_metadata_fields() -> Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 #[sinex_test]
@@ -426,7 +417,6 @@ fn test_boundary_condition_handling() -> Result<()> {
                 .expect("Boundary payload should be serializable");
         }
     }
-    Ok(())
 }
 
 // =============================================================================

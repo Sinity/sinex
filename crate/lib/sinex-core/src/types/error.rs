@@ -802,7 +802,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::SinexError;
-    use sinex_test_utils::{sinex_test, TestContext};
+    use sinex_test_utils::sinex_test;
 
     use color_eyre::eyre::Result;
 
@@ -819,8 +819,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_with_context() {
+    #[test]
+    fn test_error_with_context() -> Result<()> {
         let error = SinexError::database("Connection failed")
             .with_context("host", "localhost")
             .with_context("port", 5432);
@@ -829,10 +829,11 @@ mod tests {
         assert!(error_str.contains("Connection failed"));
         assert!(error_str.contains("host: localhost"));
         assert!(error_str.contains("port: 5432"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_with_source_chain() {
+    #[test]
+    fn test_error_with_source_chain() -> Result<()> {
         let error = SinexError::service("Processing failed")
             .with_source("Database connection timed out")
             .with_source("Network unreachable");
@@ -841,10 +842,11 @@ mod tests {
         assert!(error_str.contains("Processing failed"));
         assert!(error_str.contains("Database connection timed out"));
         assert!(error_str.contains("Network unreachable"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_categorization() {
+    #[test]
+    fn test_error_categorization() -> Result<()> {
         assert!(SinexError::timeout("test").is_retryable());
         assert!(SinexError::network("test").is_retryable());
         assert!(!SinexError::validation("test").is_retryable());
@@ -856,10 +858,11 @@ mod tests {
         assert!(SinexError::max_retries_exceeded("test").is_permanent());
         assert!(SinexError::permission_denied("test").is_permanent());
         assert!(!SinexError::timeout("test").is_permanent());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_status_codes() {
+    #[test]
+    fn test_status_codes() -> Result<()> {
         assert_eq!(SinexError::validation("test").status_code(), 400);
         assert_eq!(SinexError::not_found("test").status_code(), 404);
         assert_eq!(SinexError::permission_denied("test").status_code(), 403);
@@ -867,10 +870,11 @@ mod tests {
         assert_eq!(SinexError::already_exists("test").status_code(), 409);
         assert_eq!(SinexError::resource_exhausted("test").status_code(), 429);
         assert_eq!(SinexError::database("test").status_code(), 500);
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_serialization() {
+    #[test]
+    fn test_error_serialization() -> Result<()> {
         let error = SinexError::database("Connection failed")
             .with_context("host", "localhost")
             .with_context("port", 5432);
@@ -881,10 +885,11 @@ mod tests {
 
         let deserialized: SinexError = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.to_string(), error.to_string());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_anyhow_integration() {
+    #[test]
+    fn test_anyhow_integration() -> Result<()> {
         fn returns_anyhow() -> color_eyre::eyre::Result<()> {
             Err(SinexError::database("test"))?
         }
@@ -892,10 +897,11 @@ mod tests {
         let result = returns_anyhow();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("Database error"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_from_implementations() {
+    #[test]
+    fn test_from_implementations() -> Result<()> {
         let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file not found");
         let sinex_err: SinexError = io_err.into();
         assert!(matches!(sinex_err, SinexError::Io(_)));
@@ -903,10 +909,11 @@ mod tests {
         let json_err = serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err();
         let sinex_err: SinexError = json_err.into();
         assert!(matches!(sinex_err, SinexError::Serialization(_)));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_context_preservation() {
+    #[test]
+    fn test_context_preservation() -> Result<()> {
         let error = SinexError::database("Connection failed")
             .with_context("attempt", 3)
             .with_context("retry_after", "5s");
@@ -914,10 +921,11 @@ mod tests {
         let context = error.context_map();
         assert_eq!(context.get("attempt"), Some(&"3".to_string()));
         assert_eq!(context.get("retry_after"), Some(&"5s".to_string()));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_ordered_context() {
+    #[test]
+    fn test_ordered_context() -> Result<()> {
         let error = SinexError::validation("Invalid input")
             .with_context("field", "email")
             .with_context("value", "not-an-email")
@@ -926,10 +934,11 @@ mod tests {
         let error_str = error.to_string();
         // IndexMap preserves insertion order
         assert!(error_str.contains("field: email, value: not-an-email, reason: missing @ symbol"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_convenience_methods() {
+    #[test]
+    fn test_convenience_methods() -> Result<()> {
         use camino::Utf8Path;
         use std::time::Duration;
 
@@ -944,10 +953,11 @@ mod tests {
         assert_eq!(context.get("duration_ms"), Some(&"1500".to_string()));
         assert_eq!(context.get("retry_count"), Some(&"3".to_string()));
         assert_eq!(context.get("request_id"), Some(&"abc123".to_string()));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_accessor_methods() {
+    #[test]
+    fn test_accessor_methods() -> Result<()> {
         let error = SinexError::database("Query failed")
             .with_context("table", "users")
             .with_source("Connection timeout");
@@ -956,10 +966,11 @@ mod tests {
         assert_eq!(error.variant_name(), "Database");
         assert_eq!(error.sources(), &["Connection timeout"]);
         assert_eq!(error.context_map().get("table"), Some(&"users".to_string()));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_all_error_variants() {
+    #[test]
+    fn test_all_error_variants() -> Result<()> {
         // Test each error variant constructor
         let errors = vec![
             (SinexError::database("db"), "Database"),
@@ -989,10 +1000,11 @@ mod tests {
         for (error, expected_variant) in errors {
             assert_eq!(error.variant_name(), expected_variant);
         }
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_details_display() {
+    #[test]
+    fn test_error_details_display() -> Result<()> {
         let details = crate::error::ErrorDetails::new("Base error")
             .with_context("key1", "value1")
             .with_context("key2", "value2")
@@ -1006,10 +1018,11 @@ mod tests {
         assert!(display.contains("Caused by:"));
         assert!(display.contains("1: Source 1"));
         assert!(display.contains("2: Source 2"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_chain_building() {
+    #[test]
+    fn test_error_chain_building() -> Result<()> {
         let error = SinexError::service("Service unavailable")
             .with_source("Database connection failed")
             .with_source("Network unreachable")
@@ -1019,16 +1032,18 @@ mod tests {
         assert_eq!(error.sources()[0], "Database connection failed");
         assert_eq!(error.sources()[1], "Network unreachable");
         assert_eq!(error.sources()[2], "DNS resolution failed");
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_result_ext_trait() {
+    #[test]
+    fn test_result_ext_trait() -> Result<()> {
         fn failing_operation() -> std::result::Result<(), std::io::Error> {
             Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))
         }
 
         use crate::error::ResultExt;
-        let result: crate::Result<()> = ResultExt::context(failing_operation(), "Operation failed");
+        let result: crate::error::Result<()> =
+            ResultExt::context(failing_operation(), "Operation failed");
 
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -1037,16 +1052,17 @@ mod tests {
             err.context_map().get("context"),
             Some(&"Operation failed".to_string())
         );
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_result_ext_with_context() {
+    #[test]
+    fn test_result_ext_with_context() -> Result<()> {
         fn failing_operation() -> std::result::Result<(), std::io::Error> {
             Err(std::io::Error::new(std::io::ErrorKind::NotFound, "test"))
         }
 
         use crate::error::ResultExt;
-        let result: crate::Result<()> = ResultExt::with_context(failing_operation(), || {
+        let result: crate::error::Result<()> = ResultExt::with_context(failing_operation(), || {
             SinexError::service("Custom error").with_context("component", "test-component")
         });
 
@@ -1059,10 +1075,11 @@ mod tests {
             err.context_map().get("component"),
             Some(&"test-component".to_string())
         );
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_serialization_roundtrip() {
+    #[test]
+    fn test_serialization_roundtrip() -> Result<()> {
         let original = SinexError::database("Connection failed")
             .with_context("host", "localhost")
             .with_context("port", 5432)
@@ -1076,10 +1093,11 @@ mod tests {
         assert_eq!(original.variant_name(), deserialized.variant_name());
         assert_eq!(original.sources(), deserialized.sources());
         assert_eq!(original.context_map(), deserialized.context_map());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_empty_context_serialization() {
+    #[test]
+    fn test_empty_context_serialization() -> Result<()> {
         let error = SinexError::validation("Simple error");
         let json = serde_json::to_string(&error).unwrap();
 
@@ -1091,26 +1109,29 @@ mod tests {
         let deserialized: SinexError = serde_json::from_str(&json).unwrap();
         assert!(deserialized.context_map().is_empty());
         assert!(deserialized.sources().is_empty());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_with_operation_helper() {
+    #[test]
+    fn test_with_operation_helper() -> Result<()> {
         let error = SinexError::database("Query failed").with_operation("user.find_by_id");
 
         assert_eq!(
             error.context_map().get("operation"),
             Some(&"user.find_by_id".to_string())
         );
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_error_conversion_chain() {
+    #[test]
+    fn test_error_conversion_chain() -> Result<()> {
         // Test that errors can be converted and preserve information
         let io_error = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "Access denied");
         let sinex_error: SinexError = io_error.into();
 
         assert!(matches!(sinex_error, SinexError::Io(_)));
         assert!(sinex_error.message().contains("Access denied"));
+        Ok(())
     }
 
     #[tokio::test]
@@ -1137,8 +1158,8 @@ mod tests {
         }
     }
 
-    #[sinex_test]
-    fn test_error_equality_after_cloning() {
+    #[test]
+    fn test_error_equality_after_cloning() -> Result<()> {
         let error = SinexError::validation("Test error")
             .with_context("field", "email")
             .with_source("Invalid format");
@@ -1149,10 +1170,11 @@ mod tests {
         assert_eq!(error.variant_name(), cloned.variant_name());
         assert_eq!(error.context_map(), cloned.context_map());
         assert_eq!(error.sources(), cloned.sources());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_complex_context_values() {
+    #[test]
+    fn test_complex_context_values() -> Result<()> {
         use std::collections::HashMap;
 
         let mut map = HashMap::new();
@@ -1167,10 +1189,11 @@ mod tests {
         assert!(context.get("json").unwrap().contains("nested"));
         assert_eq!(context.get("array").unwrap(), "[1, 2, 3]");
         assert!(context.get("map").unwrap().contains("key"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_indexmap_preserves_order() {
+    #[test]
+    fn test_indexmap_preserves_order() -> Result<()> {
         let error = SinexError::validation("Test")
             .with_context("a", "1")
             .with_context("b", "2")
@@ -1179,10 +1202,11 @@ mod tests {
 
         let keys: Vec<_> = error.context_map().keys().collect();
         assert_eq!(keys, vec!["a", "b", "c", "d"]);
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_edge_cases() {
+    #[test]
+    fn test_edge_cases() -> Result<()> {
         // Empty message
         let error = SinexError::unknown("");
         assert_eq!(error.message(), "");
@@ -1207,5 +1231,6 @@ mod tests {
             error.context_map().get("arabic"),
             Some(&"مرحبا".to_string())
         );
+        Ok(())
     }
 }

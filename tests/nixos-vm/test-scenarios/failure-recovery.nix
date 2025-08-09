@@ -1,5 +1,5 @@
 # Failure recovery test for Sinex
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 let
   # Enhanced query tool with recovery testing support
@@ -48,7 +48,7 @@ let
             return False
 
     def service_status():
-        services = ['sinex-unified-collector', 'sinex-promo-worker', 'postgresql']
+        services = ['sinex-ingestd', 'sinex-gateway', 'postgresql']
         statuses = {}
         for service in services:
             result = subprocess.run([
@@ -141,17 +141,17 @@ let
         ;;
       collector-crash)
         echo "Stopping collector for $DURATION seconds..."
-        systemctl stop sinex-unified-collector
+        systemctl stop sinex-ingestd
         sleep $DURATION
         echo "Restarting collector..."
-        systemctl start sinex-unified-collector
+        systemctl start sinex-ingestd
         ;;
       worker-crash)
         echo "Stopping worker for $DURATION seconds..."
-        systemctl stop sinex-promo-worker
+        systemctl stop sinex-gateway
         sleep $DURATION
         echo "Restarting worker..."
-        systemctl start sinex-promo-worker
+        systemctl start sinex-gateway
         ;;
       disk-full)
         echo "Simulating disk full condition..."
@@ -212,7 +212,7 @@ let
     done
     
     # Check service status
-    while ! systemctl is-active sinex-unified-collector >/dev/null 2>&1; do
+    while ! systemctl is-active sinex-ingestd >/dev/null 2>&1; do
         current_time=$(date +%s)
         elapsed=$((current_time - start_time))
         if [ $elapsed -gt $MAX_WAIT ]; then
@@ -223,7 +223,7 @@ let
         sleep 2
     done
     
-    while ! systemctl is-active sinex-promo-worker >/dev/null 2>&1; do
+    while ! systemctl is-active sinex-gateway >/dev/null 2>&1; do
         current_time=$(date +%s)
         elapsed=$((current_time - start_time))
         if [ $elapsed -gt $MAX_WAIT ]; then
@@ -265,7 +265,7 @@ pkgs.nixosTest {
 
       services.sinex = {
         enable = true;
-        package = sinex-collector;
+        package = sinex-ingestd;
         promoWorker.enable = true;
 
         unifiedCollector = {
@@ -328,15 +328,15 @@ pkgs.nixosTest {
       
       # Package overlays
       nixpkgs.overlays = [(final: prev: {
-        sinex-unified-collector = sinex-collector;
-        sinex-promo-worker = sinex-promo-worker;
+        sinex-ingestd = sinex-ingestd;
+        sinex-gateway = sinex-gateway;
         postgresql16Packages = prev.postgresql16Packages // {
           pg_jsonschema = pg_jsonschema;
         };
       })];
 
       # Enhanced service configuration for failure testing
-      systemd.services.sinex-unified-collector = {
+      systemd.services.sinex-ingestd = {
         serviceConfig = {
           Restart = "always";
           RestartSec = "5";
@@ -345,7 +345,7 @@ pkgs.nixosTest {
         };
       };
 
-      systemd.services.sinex-promo-worker = {
+      systemd.services.sinex-gateway = {
         serviceConfig = {
           Restart = "always";
           RestartSec = "5";
@@ -365,12 +365,12 @@ pkgs.nixosTest {
     machine.wait_for_unit("multi-user.target")
     machine.wait_for_unit("postgresql.service")
     machine.wait_for_unit("sinex-migrate.service")
-    machine.wait_for_unit("sinex-unified-collector.service")
-    machine.wait_for_unit("sinex-promo-worker.service")
+    machine.wait_for_unit("sinex-ingestd.service")
+    machine.wait_for_unit("sinex-gateway.service")
 
     # Verify all services are active
-    machine.succeed("systemctl is-active sinex-unified-collector")
-    machine.succeed("systemctl is-active sinex-promo-worker")
+    machine.succeed("systemctl is-active sinex-ingestd")
+    machine.succeed("systemctl is-active sinex-gateway")
 
     # Initialize baseline system state
     with subtest("Initialize baseline system state"):
@@ -537,16 +537,16 @@ pkgs.nixosTest {
         baseline_count = int(baseline_match.group(1)) if baseline_match else 0
         
         # Simultaneously crash collector and worker
-        machine.execute("systemctl stop sinex-unified-collector &")
-        machine.execute("systemctl stop sinex-promo-worker &")
+        machine.execute("systemctl stop sinex-ingestd &")
+        machine.execute("systemctl stop sinex-gateway &")
         machine.sleep(2)
         
         # Generate events during double failure
         machine.succeed("su - test -c 'echo multi-failure-test > /home/test/watched/multi-failure.txt'")
         
         # Restart both services
-        machine.succeed("systemctl start sinex-unified-collector")
-        machine.succeed("systemctl start sinex-promo-worker")
+        machine.succeed("systemctl start sinex-ingestd")
+        machine.succeed("systemctl start sinex-gateway")
         
         # Verify recovery
         machine.succeed("sinex-verify 30")
@@ -570,7 +570,7 @@ pkgs.nixosTest {
         print("Validating graceful degradation behavior...")
         
         # Test partial service availability
-        machine.succeed("systemctl stop sinex-promo-worker")
+        machine.succeed("systemctl stop sinex-gateway")
         
         # System should continue capturing events even without worker
         machine.succeed("su - test -c 'echo degraded-mode > /home/test/watched/degraded.txt'")
@@ -581,7 +581,7 @@ pkgs.nixosTest {
         print(f"Stats with worker stopped: {pre_worker_stats}")
         
         # Restart worker - events should be processed
-        machine.succeed("systemctl start sinex-promo-worker")
+        machine.succeed("systemctl start sinex-gateway")
         machine.sleep(5)
         
         # Verify degraded event was captured

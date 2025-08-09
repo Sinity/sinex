@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::EventSource;
+use sinex_core::types::events::Event;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use tracing::{error, info, warn};

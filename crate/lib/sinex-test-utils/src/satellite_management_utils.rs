@@ -396,8 +396,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_ingestd_handle_drop() {
+    #[test]
+    fn test_ingestd_handle_drop() -> color_eyre::eyre::Result<()> {
         // Test that drop doesn't panic even with no process
         let handle = TestIngestdHandle {
             socket_path: "/tmp/drop-test.sock".to_string(),
@@ -405,10 +405,11 @@ mod tests {
         };
 
         drop(handle); // Should not panic
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_orchestrator_thread_safety() {
+    #[test]
+    fn test_orchestrator_thread_safety() -> color_eyre::eyre::Result<()> {
         use std::sync::Arc;
         use std::thread;
 
@@ -435,5 +436,6 @@ mod tests {
 
         // Should have all satellites
         assert_eq!(orchestrator.satellites.lock().unwrap().len(), 10);
+        Ok(())
     }
 }

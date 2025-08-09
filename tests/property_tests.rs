@@ -28,6 +28,7 @@ fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
         let mut ulids = Vec::new();
         for _ in 0..count {
             ulids.push(Ulid::new());
+        Ok(())
         }
 
         // Property: All ULIDs should be unique (check pairwise)
@@ -72,6 +73,7 @@ fn test_ulid_ordering_transitivity() -> color_eyre::eyre::Result<()> {
             ulids.push(Ulid::new());
             if delay_ms > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+        Ok(())
             }
         }
 
@@ -150,6 +152,7 @@ fn test_event_creation_properties() -> color_eyre::eyre::Result<()> {
         let now = chrono::Utc::now();
         prop_assert!(event.ts_ingest <= now);
         prop_assert!(event.ts_ingest > now - chrono::Duration::minutes(1));
+        Ok(())
     });
     Ok(())
 }
@@ -217,6 +220,7 @@ fn test_event_source_properties() -> color_eyre::eyre::Result<()> {
         // Property: Different creation methods should be equal for same string
         let static_source = EventSource::new(&source_str);
         prop_assert_eq!(source.clone(), static_source);
+        Ok(())
     });
     Ok(())
 }
@@ -234,6 +238,7 @@ fn test_event_type_properties() -> color_eyre::eyre::Result<()> {
         // Property: Clone should be identical
         let cloned = event_type.clone();
         prop_assert_eq!(event_type, cloned);
+        Ok(())
     });
     Ok(())
 }
@@ -267,6 +272,7 @@ fn test_generic_id_properties() -> color_eyre::eyre::Result<()> {
         let mut ids = Vec::new();
         for _ in 0..count {
             ids.push(Id::<DbEvent>::new());
+        Ok(())
         }
 
         // Property: All IDs should be unique (check pairwise)
@@ -310,6 +316,7 @@ fn test_id_ulid_conversion_properties() -> color_eyre::eyre::Result<()> {
 
             // Property: String conversion should be consistent
             prop_assert_eq!(original_id.to_string(), ulid.to_string());
+        Ok(())
         }
     });
     Ok(())

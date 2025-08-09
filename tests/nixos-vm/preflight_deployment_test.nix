@@ -202,17 +202,17 @@ in {
     sinex_machine.wait_for_unit("sinex-preflight.service")
     
     # Start collector (depends on pre-flight verification)
-    sinex_machine.succeed("systemctl start sinex-unified-collector.service")
-    sinex_machine.wait_for_unit("sinex-unified-collector.service")
+    sinex_machine.succeed("systemctl start sinex-ingestd.service")
+    sinex_machine.wait_for_unit("sinex-ingestd.service")
     
     # Start promotion worker
-    sinex_machine.succeed("systemctl start sinex-promo-worker.service")
-    sinex_machine.wait_for_unit("sinex-promo-worker.service")
+    sinex_machine.succeed("systemctl start sinex-gateway.service")
+    sinex_machine.wait_for_unit("sinex-gateway.service")
     
     # Test 1.4: Verify services are healthy
     print("Verifying service health...")
-    sinex_machine.succeed("systemctl is-active sinex-unified-collector")
-    sinex_machine.succeed("systemctl is-active sinex-promo-worker")
+    sinex_machine.succeed("systemctl is-active sinex-ingestd")
+    sinex_machine.succeed("systemctl is-active sinex-gateway")
     
     # Test 1.5: Test database connectivity and heartbeats
     print("Testing database operations...")
@@ -245,8 +245,8 @@ in {
     sinex_machine.wait_for_unit("sinex-update.service")
     
     # Test 2.2: Verify services restarted successfully
-    sinex_machine.succeed("systemctl is-active sinex-unified-collector")
-    sinex_machine.succeed("systemctl is-active sinex-promo-worker")
+    sinex_machine.succeed("systemctl is-active sinex-ingestd")
+    sinex_machine.succeed("systemctl is-active sinex-gateway")
     
     # Test 2.3: Verify update was recorded in database
     sinex_machine.succeed("""
@@ -267,7 +267,7 @@ in {
     print("✓ Pre-flight verification correctly failed with bad configuration")
     
     # Test 3.2: Verify collector doesn't start without pre-flight verification
-    result = sinex_rollback_test.fail("systemctl start sinex-unified-collector.service")
+    result = sinex_rollback_test.fail("systemctl start sinex-ingestd.service")
     print("✓ Collector correctly refused to start without pre-flight verification")
     
     print("=== Test 4: Resource Constraint Testing ===")
@@ -388,8 +388,8 @@ in {
     print("=== All Tests Completed Successfully ===")
     
     # Final verification - ensure all services are still healthy
-    sinex_machine.succeed("systemctl is-active sinex-unified-collector")
-    sinex_machine.succeed("systemctl is-active sinex-promo-worker")
+    sinex_machine.succeed("systemctl is-active sinex-ingestd")
+    sinex_machine.succeed("systemctl is-active sinex-gateway")
     sinex_machine.succeed("systemctl is-active postgresql")
     
     print("✓ Final health check passed - all services remain active")

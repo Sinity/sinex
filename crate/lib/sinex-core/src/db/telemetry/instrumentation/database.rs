@@ -436,12 +436,13 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_track_database_query_helper() {
+    #[test]
+    fn test_track_database_query_helper() -> Result<()> {
         let guard = track_database_query("TEST_QUERY");
 
         // Guard should be created with proper metrics
         assert_eq!(guard.metrics.operation, "TEST_QUERY");
+        Ok(())
     }
 }
 

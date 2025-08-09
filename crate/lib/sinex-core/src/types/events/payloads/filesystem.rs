@@ -5,7 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use sinex_macros::EventPayload;
 
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.created", version = "1.0.0")]
 pub struct FileCreatedPayload {
     pub path: String,

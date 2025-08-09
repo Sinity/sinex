@@ -44,7 +44,6 @@ fn checkpoint_data() -> impl Strategy<Value = serde_json::Value> {
 
 /// Test that checkpoint updates are idempotent
 proptest! {
-    #[sinex_test]
     fn checkpoint_updates_are_idempotent(
         processor_name in processor_names(),
         processed_count in 0u64..10000u64,
@@ -97,7 +96,6 @@ proptest! {
 
 /// Test checkpoint recovery under various failure scenarios
 proptest! {
-    #[sinex_test]
     fn checkpoint_recovery_is_robust(
         processor_name in processor_names(),
         checkpoints in proptest::collection::vec(
@@ -147,7 +145,6 @@ proptest! {
 
 /// Test concurrent checkpoint access
 proptest! {
-    #[sinex_test]
     fn concurrent_checkpoint_access_is_safe(
         processor_name in processor_names(),
         concurrent_updates in proptest::collection::vec(0u64..1000u64, 1..=20),
@@ -207,7 +204,6 @@ proptest! {
 
 /// Test checkpoint state transitions
 proptest! {
-    #[sinex_test]
     fn checkpoint_state_transitions_are_valid(
         processor_name in processor_names(),
         initial_count in 0u64..100u64,
@@ -263,7 +259,6 @@ proptest! {
 
 /// Test checkpoint data integrity
 proptest! {
-    #[sinex_test]
     fn checkpoint_data_integrity_is_preserved(
         processor_name in processor_names(),
         test_data in checkpoint_data(),
@@ -346,7 +341,6 @@ proptest! {
 
 /// Test checkpoint cleanup behavior
 proptest! {
-    #[sinex_test]
     fn checkpoint_cleanup_maintains_consistency(
         processor_names in proptest::collection::vec(processor_names(), 1..=10),
         cleanup_threshold in 1u64..100u64,

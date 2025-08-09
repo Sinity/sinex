@@ -249,13 +249,8 @@ mod tests {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
-            mode: 0o644,
-            uid: 1000,
-            gid: 1000,
-            mtime: None,
-            atime: None,
-            ctime: None,
-            hash: None,
+            created_at: chrono::Utc::now(),
+            permissions: Some(0o644),
         };
 
         let event = Event::from_payload(payload.clone());
@@ -271,13 +266,8 @@ mod tests {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
-            mode: 0o644,
-            uid: 1000,
-            gid: 1000,
-            mtime: None,
-            atime: None,
-            ctime: None,
-            hash: None,
+            created_at: chrono::Utc::now(),
+            permissions: Some(0o644),
         };
 
         let event = Event::from_payload(payload.clone());
@@ -296,13 +286,8 @@ mod tests {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
-            mode: 0o644,
-            uid: 1000,
-            gid: 1000,
-            mtime: None,
-            atime: None,
-            ctime: None,
-            hash: None,
+            created_at: chrono::Utc::now(),
+            permissions: Some(0o644),
         };
 
         let event = Event::from_payload(payload.clone());
@@ -321,13 +306,8 @@ mod tests {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
-            mode: 0o644,
-            uid: 1000,
-            gid: 1000,
-            mtime: None,
-            atime: None,
-            ctime: None,
-            hash: None,
+            created_at: chrono::Utc::now(),
+            permissions: Some(0o644),
         };
 
         let event = Event::from_payload(payload);
@@ -343,13 +323,8 @@ mod tests {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
-            mode: 0o644,
-            uid: 1000,
-            gid: 1000,
-            mtime: None,
-            atime: None,
-            ctime: None,
-            hash: None,
+            created_at: chrono::Utc::now(),
+            permissions: Some(0o644),
         };
 
         let ts = chrono::Utc::now();

@@ -84,7 +84,7 @@ mod tests {
     use super::*;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
 
-    #[sinex_test]
+    #[test]
     fn test_eq_ulid() {
         let ulid = Ulid::new();
         let query = Query::select()
@@ -96,7 +96,7 @@ mod tests {
         assert!(sql.contains("WHERE"));
     }
 
-    #[sinex_test]
+    #[test]
     fn test_in_ulids() {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let query = Query::select()

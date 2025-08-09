@@ -373,9 +373,12 @@ mod tests {
     use super::*;
     use crate::sinex_test;
     use color_eyre::eyre::eyre;
+    use sinex_core::SinexError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+
+    type Result<T> = std::result::Result<T, SinexError>;
 
     #[sinex_test]
     async fn test_synchronizer_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -784,8 +787,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_barrier_generation_tracking() {
+    #[test]
+    fn test_barrier_generation_tracking() -> Result<()> {
         let barrier = TestBarrier::new(2);
 
         assert_eq!(barrier.generation(), 0);
@@ -795,5 +798,6 @@ mod tests {
         barrier.counter.fetch_add(1, Ordering::SeqCst);
         assert_eq!(barrier.current_count(), 1);
         assert_eq!(barrier.generation(), 0);
+        Ok(())
     }
 }

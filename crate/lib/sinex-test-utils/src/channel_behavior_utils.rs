@@ -987,8 +987,8 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_channel_monitor_thread_safety() {
+    #[test]
+    fn test_channel_monitor_thread_safety() -> Result<()> {
         use std::thread;
 
         let monitor = Arc::new(ChannelMonitor::new());
@@ -1016,5 +1016,7 @@ mod comprehensive_tests {
         assert_eq!(stats.sent, 1000);
         assert_eq!(stats.received, 1000);
         assert_eq!(stats.queue_depth, 0);
+
+        Ok(())
     }
 }

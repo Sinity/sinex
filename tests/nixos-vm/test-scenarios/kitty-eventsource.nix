@@ -1,5 +1,5 @@
 # Dedicated Kitty EventSource test with proper configuration
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 let
   inherit (pkgs) lib;
@@ -12,7 +12,7 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [ 
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-collector sinex-promo-worker pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
       })
     ];
 
@@ -134,8 +134,8 @@ EOF
     
     def wait_for_sinex_ready():
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-unified-collector.service", timeout=60)
-        machine.wait_until_succeeds("systemctl is-active sinex-unified-collector", timeout=30)
+        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+        machine.wait_until_succeeds("systemctl is-active sinex-ingestd", timeout=30)
     
     def get_event_count(event_type=None):
         if event_type:
@@ -169,7 +169,7 @@ EOF
         wait_for_sinex_ready()
         
         machine.succeed("systemctl is-active postgresql")
-        machine.succeed("systemctl is-active sinex-unified-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         
         print("✓ Core services started")
 
@@ -391,7 +391,7 @@ EOF
             machine.sleep(5)
             
             # Sinex should still be running
-            machine.succeed("systemctl is-active sinex-unified-collector")
+            machine.succeed("systemctl is-active sinex-ingestd")
             print("✓ Sinex handles Kitty disconnection gracefully")
             
             # Restart kitty
@@ -399,7 +399,7 @@ EOF
             machine.sleep(5)
             
             # Should reconnect automatically
-            machine.succeed("systemctl is-active sinex-unified-collector")
+            machine.succeed("systemctl is-active sinex-ingestd")
             print("✓ Sinex handles Kitty reconnection")
             
         except Exception as e:
@@ -433,7 +433,7 @@ EOF
     with subtest("Final system state"):
         # Ensure all services are still healthy
         machine.succeed("systemctl is-active postgresql")
-        machine.succeed("systemctl is-active sinex-unified-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         
         total_events = get_event_count()
         print(f"Total events captured during test: {total_events}")

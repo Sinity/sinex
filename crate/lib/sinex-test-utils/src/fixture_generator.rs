@@ -113,7 +113,7 @@ impl FixtureGenerator {
     }
 
     /// Generate events for the dataset
-    pub fn generate_events(&mut self) -> Vec<Event> {
+    pub fn generate_events(&mut self) -> Vec<RawEvent> {
         let mut events = Vec::with_capacity(self.config.event_count);
 
         // Pre-generate sources and event types
@@ -202,7 +202,7 @@ impl FixtureGenerator {
         payload_size: usize,
         timestamp: DateTime<Utc>,
         index: usize,
-    ) -> Event {
+    ) -> RawEvent {
         use sinex_core::types::*;
         let mut payload = HashMap::new();
 
@@ -256,7 +256,7 @@ impl FixtureGenerator {
     }
 
     /// Generate SQL for the dataset
-    pub fn generate_sql(&mut self, events: &[Event]) -> String {
+    pub fn generate_sql(&mut self, events: &[RawEvent]) -> String {
         let mut sql = String::new();
 
         // Header
@@ -353,7 +353,7 @@ impl FixtureGenerator {
     }
 
     /// Generate JSON dataset
-    pub fn generate_json(&mut self, events: &[Event]) -> serde_json::Value {
+    pub fn generate_json(&mut self, events: &[RawEvent]) -> serde_json::Value {
         json!({
             "metadata": {
                 "dataset": self.config.name,

@@ -67,5 +67,8 @@ sd-notify.workspace = true
 sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }
+
 [build-dependencies]
 tonic-build.workspace = true

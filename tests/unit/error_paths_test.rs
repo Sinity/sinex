@@ -4,6 +4,7 @@
 //! failures in production code, ensuring graceful error handling.
 
 use color_eyre::eyre::Result;
+use sinex_core::db::models::RawEvent;
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_test_utils::prelude::*;
 use std::str::FromStr;
@@ -281,11 +282,11 @@ fn test_event_creation_validation_errors() -> color_eyre::eyre::Result<()> {
 
     // Test empty source validation
     let result = std::panic::catch_unwind(|| {
-        Event::schemaless()
-            .source(EventSource::from(""))
-            .event_type(EventType::from("test.event"))
-            .payload(json!({}))
-            .build()
+        RawEvent::schemaless(
+            EventSource::from(""),
+            EventType::from("test.event"),
+            json!({}),
+        )
     });
 
     // Note: Depending on validation implementation, this might panic or return an error
@@ -293,16 +294,16 @@ fn test_event_creation_validation_errors() -> color_eyre::eyre::Result<()> {
     println!("  Event with empty source: {:?}", result.is_err());
 
     // Test invalid JSON payload (this should work as JSON can represent most values)
-    let event_with_complex_json = Event::schemaless()
-        .source(EventSource::from("test"))
-        .event_type(EventType::from("test.event"))
-        .payload(json!({
+    let event_with_complex_json = RawEvent::schemaless(
+        EventSource::from("test"),
+        EventType::from("test.event"),
+        json!({
             "null_value": null,
             "empty_array": [],
             "nested": {"deep": {"value": 42}},
             "unicode": "🦀🔥"
-        }))
-        .build();
+        }),
+    );
 
     assert_eq!(event_with_complex_json.source.as_str(), "test");
     println!("  ✓ Complex JSON payload handled correctly");

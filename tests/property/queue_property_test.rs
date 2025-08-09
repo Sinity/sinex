@@ -211,8 +211,6 @@ async fn nats_consumer_with_crashes(
     if let Some(ref mgr) = checkpoint_mgr {
         let _ = mgr.save_checkpoint(&checkpoint_state).await;
     }
-
-    Ok(())
 }
 
 /// Test that NATS JetStream prevents duplicate processing even with crashes
@@ -1027,7 +1025,6 @@ fn test_processing_tracker_thread_safety() -> color_eyre::eyre::Result<()> {
         assert_eq!(tracker.processed_count(), 10); // Count shouldn't increase
         assert_eq!(tracker.get_duplicates().len(), 3); // Should have 3 duplicates
     }
-    Ok(())
 }
 
 // =============================================================================
@@ -1036,7 +1033,6 @@ fn test_processing_tracker_thread_safety() -> color_eyre::eyre::Result<()> {
 
 proptest! {
     /// Test JetStream consumer retry behavior with exponential backoff
-    #[sinex_test]
 fn test_consumer_retry_timing_boundaries(
         attempts in 0i32..20,
         base_delay in 1.0f64..300.0,
@@ -1130,5 +1126,4 @@ fn test_message_timestamp_ordering(
         assert!(diff <= 24 * 3600 * 1000, "Time difference should be less than 24 hours");
         assert!(diff >= 1, "Time difference should be at least 1ms for ordering");
     }
-    Ok(())
 }

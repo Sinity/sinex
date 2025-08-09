@@ -163,7 +163,6 @@ fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
         let debug2 = format!("{:?}", processor_type);
         assert_eq!(debug1, debug2);
     }
-    Ok(())
 }
 
 /// Test event processing determinism (without actual scan)

@@ -475,13 +475,14 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_track_function_helper() {
+    #[test]
+    fn test_track_function_helper() -> Result<()> {
         let guard = track_function_call("helper_test", "test_module");
 
         // Guard should be created
         assert_eq!(guard.metrics.name, "helper_test");
         assert_eq!(guard.metrics.module, "test_module");
+        Ok(())
     }
 }
 

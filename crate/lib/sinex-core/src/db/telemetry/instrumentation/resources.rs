@@ -299,13 +299,13 @@ pub fn create_system_metrics() -> Arc<ResourceMetrics> {
 mod tests {
     use super::*;
 
-    #[sinex_test]
+    #[test]
     fn test_resource_metrics_creation() {
         let metrics = create_system_metrics();
         assert_eq!(metrics.tracked_resources.len(), 4);
     }
 
-    #[sinex_test]
+    #[test]
     fn test_system_metrics_collection() {
         let metrics = create_system_metrics();
         metrics.collect_system_metrics();

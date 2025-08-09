@@ -224,10 +224,11 @@ fn get_hostname() -> HostName {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use color_eyre::eyre::Result;
     use serde_json::json;
 
-    #[sinex_test]
-    fn test_schemaless_event_builder() {
+    #[test]
+    fn test_schemaless_event_builder() -> Result<()> {
         let mut event = RawEvent::schemaless(
             EventSource::new("test"),
             EventType::new("test.created"),
@@ -240,10 +241,11 @@ mod tests {
         assert!(event.id.is_none());
         assert!(event.is_raw_event());
         assert!(!event.is_persisted());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_simple_constructor() {
+    #[test]
+    fn test_simple_constructor() -> Result<()> {
         let event = RawEvent::simple(
             EventSource::new("test"),
             EventType::new("test.created"),
@@ -253,10 +255,11 @@ mod tests {
         assert_eq!(event.source.as_str(), "test");
         assert_eq!(event.event_type.as_str(), "test.created");
         assert!(event.id.is_none());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_synthesis_event() {
+    #[test]
+    fn test_synthesis_event() -> Result<()> {
         let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
         let mut event = RawEvent::schemaless(
             EventSource::new("processor"),
@@ -269,5 +272,6 @@ mod tests {
         assert!(event.is_synthesis_event());
         assert!(!event.is_raw_event());
         assert_eq!(event.get_source_event_ids().unwrap(), &source_ids);
+        Ok(())
     }
 }

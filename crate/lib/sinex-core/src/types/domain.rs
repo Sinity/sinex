@@ -740,6 +740,7 @@ mod sqlx_impl {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::events::EventPayload;
 
     #[test]
     fn test_string_type_creation() {

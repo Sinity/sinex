@@ -605,6 +605,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(tree1.current(), tree2.current());
+        Ok(())
     }
 
     #[sinex_test]
@@ -635,6 +636,7 @@ mod tests {
 
         // Should generate at least some malicious patterns
         assert!(has_sql || has_xss || has_path);
+        Ok(())
     }
 
     #[sinex_test]

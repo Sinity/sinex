@@ -125,8 +125,8 @@ mod tests {
     use super::*;
     use tempfile::NamedTempFile;
 
-    #[sinex_test]
-    fn test_sqlite_connection_helpers() {
+    #[test]
+    fn test_sqlite_connection_helpers() -> Result<()> {
         // Create a temporary database
         let temp_file = NamedTempFile::new().unwrap();
         let path = Utf8Path::from_path(temp_file.path()).unwrap();
@@ -142,10 +142,11 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM test", [], |row| row.get(0))
             .unwrap();
         assert_eq!(count, 0);
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_statement_prepare_helper() {
+    #[test]
+    fn test_statement_prepare_helper() -> Result<()> {
         let temp_file = NamedTempFile::new().unwrap();
         let conn = Connection::open(temp_file.path()).unwrap();
 
@@ -160,5 +161,6 @@ mod tests {
         // Test prepare error
         let result = conn.prepare_with_context("SELECT * FROM nonexistent", "test_query");
         assert!(result.is_err());
+        Ok(())
     }
 }

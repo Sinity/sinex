@@ -332,9 +332,12 @@ mod tests {
 
     #[async_trait]
     impl StatefulStreamProcessor for MockProcessor {
+        type Config = ();
+
         async fn initialize(
             &mut self,
             _ctx: crate::stream_processor::StreamProcessorContext,
+            _config: Self::Config,
         ) -> SatelliteResult<()> {
             Ok(())
         }

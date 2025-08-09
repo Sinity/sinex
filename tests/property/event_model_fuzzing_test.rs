@@ -733,8 +733,6 @@ async fn test_database_insertion_robustness(ctx: TestContext) -> Result<()> {
             }
         }
     }
-
-    Ok(())
 }
 
 /// Test event creation with extreme payloads in database context
@@ -806,8 +804,6 @@ async fn test_extreme_payload_database_handling(ctx: TestContext) -> Result<()> 
             }
         }
     }
-
-    Ok(())
 }
 
 // ============================================================================
@@ -888,8 +884,8 @@ mod additional_tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_panic_safety_with_catch_unwind() {
+    #[test]
+    fn test_panic_safety_with_catch_unwind() -> Result<()> {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
             let mut event = RawEvent::schemaless(

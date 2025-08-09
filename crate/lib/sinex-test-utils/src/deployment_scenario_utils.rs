@@ -1558,8 +1558,8 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_validation_type_equality() {
+    #[test]
+    fn test_validation_type_equality() -> Result<()> {
         assert_eq!(
             ValidationType::ConfigurationLoad,
             ValidationType::ConfigurationLoad
@@ -1572,10 +1572,11 @@ mod comprehensive_tests {
             ValidationType::DatabaseConnection,
             ValidationType::RedisConnection
         );
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_compatibility_test_result_creation() {
+    #[test]
+    fn test_compatibility_test_result_creation() -> Result<()> {
         let result = CompatibilityResult {
             scenario_name: "test".to_string(),
             overall_success: true,
@@ -1594,5 +1595,6 @@ mod comprehensive_tests {
         assert!(result.overall_success);
         assert!(result.step_results.is_empty());
         assert!(result.issues_found.is_empty());
+        Ok(())
     }
 }

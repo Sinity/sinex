@@ -17,11 +17,11 @@ let
             """Wait for Sinex services to be fully ready."""
             self.machine.wait_for_unit("postgresql.service", timeout=timeout)
             self.machine.wait_for_unit("sinex-migrate.service", timeout=timeout)
-            self.machine.wait_for_unit("sinex-unified-collector.service", timeout=timeout)
+            self.machine.wait_for_unit("sinex-ingestd.service", timeout=timeout)
             
             # Verify services are actually working
             self.machine.wait_until_succeeds(
-                "systemctl is-active sinex-unified-collector",
+                "systemctl is-active sinex-ingestd",
                 timeout=30
             )
             

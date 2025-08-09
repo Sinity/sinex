@@ -69,8 +69,8 @@
           echo "Verifying rollback state..."
           
           # Check service status
-          systemctl is-active sinex-unified-collector.service || exit 1
-          systemctl is-active sinex-promo-worker.service || exit 1
+          systemctl is-active sinex-ingestd.service || exit 1
+          systemctl is-active sinex-gateway.service || exit 1
           
           # Check event flow
           EVENT_COUNT=$(sudo -u postgres psql -d sinex -t -c \
@@ -96,8 +96,8 @@
     
     # Initial setup
     sinex.wait_for_unit("postgresql.service")
-    sinex.wait_for_unit("sinex-unified-collector.service")
-    sinex.wait_for_unit("sinex-promo-worker.service")
+    sinex.wait_for_unit("sinex-ingestd.service")
+    sinex.wait_for_unit("sinex-gateway.service")
     
     # Capture baseline state
     with subtest("Establish baseline"):
@@ -121,17 +121,17 @@
         sinex.execute("inject-failure config")
         
         # Attempt service restart
-        sinex.fail("systemctl restart sinex-unified-collector.service")
+        sinex.fail("systemctl restart sinex-ingestd.service")
         
         # Service should rollback to previous config
         time.sleep(5)
         
         # Restore valid config
         sinex.succeed("cp /tmp/collector.toml.backup /etc/sinex/collector.toml")
-        sinex.succeed("systemctl start sinex-unified-collector.service")
+        sinex.succeed("systemctl start sinex-ingestd.service")
         
         # Verify service recovered
-        sinex.wait_for_unit("sinex-unified-collector.service")
+        sinex.wait_for_unit("sinex-ingestd.service")
         sinex.succeed("verify-rollback")
     
     # Test database schema rollback
@@ -161,7 +161,7 @@
         )
         
         # Services should remain operational
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
     
     # Test permission failure rollback
     with subtest("Permission failure rollback"):
@@ -172,15 +172,15 @@
         sinex.execute("inject-failure permission")
         
         # Service should fail and attempt recovery
-        sinex.execute("systemctl restart sinex-unified-collector.service || true")
+        sinex.execute("systemctl restart sinex-ingestd.service || true")
         time.sleep(5)
         
         # Fix permissions
         sinex.succeed("chmod 755 /var/lib/sinex/")
         
         # Service should recover
-        sinex.succeed("systemctl start sinex-unified-collector.service")
-        sinex.wait_for_unit("sinex-unified-collector.service")
+        sinex.succeed("systemctl start sinex-ingestd.service")
+        sinex.wait_for_unit("sinex-ingestd.service")
         
         # Verify functionality
         sinex.succeed("verify-rollback")
@@ -188,18 +188,18 @@
     # Test partial update rollback
     with subtest("Partial update rollback"):
         # Start update process
-        sinex.execute("systemctl reload sinex-unified-collector.service")
+        sinex.execute("systemctl reload sinex-ingestd.service")
         
         # Simulate failure during grace period
         time.sleep(15)
-        sinex.execute("pkill -9 sinex-collector || true")
+        sinex.execute("pkill -9 sinex-ingestd || true")
         
         # System should detect failure and rollback
         time.sleep(5)
         
         # Restart services
-        sinex.succeed("systemctl start sinex-unified-collector.service")
-        sinex.wait_for_unit("sinex-unified-collector.service")
+        sinex.succeed("systemctl start sinex-ingestd.service")
+        sinex.wait_for_unit("sinex-ingestd.service")
         
         # Verify event collection continues
         pre_count = int(sinex.succeed(
@@ -220,10 +220,10 @@
     # Test cascading failure prevention
     with subtest("Cascading failure prevention"):
         # Kill promo worker
-        sinex.execute("systemctl stop sinex-promo-worker.service")
+        sinex.execute("systemctl stop sinex-gateway.service")
         
         # Collector should continue operating
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
         
         # Events should still be captured
         sinex.execute("touch /tmp/cascade-test-{1..5}")
@@ -238,8 +238,8 @@
         )
         
         # Restart promo worker
-        sinex.succeed("systemctl start sinex-promo-worker.service")
-        sinex.wait_for_unit("sinex-promo-worker.service")
+        sinex.succeed("systemctl start sinex-gateway.service")
+        sinex.wait_for_unit("sinex-gateway.service")
         
         # System should recover fully
         sinex.succeed("verify-rollback")
@@ -257,7 +257,7 @@
         time.sleep(3)
         
         # Simulate failed update
-        sinex.execute("systemctl stop sinex-unified-collector.service")
+        sinex.execute("systemctl stop sinex-ingestd.service")
         time.sleep(2)
         
         # Check Dead Letter Queue captured events
@@ -266,8 +266,8 @@
         ).strip()
         
         # Restart service
-        sinex.succeed("systemctl start sinex-unified-collector.service")
-        sinex.wait_for_unit("sinex-unified-collector.service")
+        sinex.succeed("systemctl start sinex-ingestd.service")
+        sinex.wait_for_unit("sinex-ingestd.service")
         
         # Final event count should include preserved events
         final_events = int(sinex.succeed(

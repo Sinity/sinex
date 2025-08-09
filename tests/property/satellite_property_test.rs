@@ -17,7 +17,7 @@ mod strategies {
     use super::*;
 
     /// Strategy for generating realistic event sequences
-    pub fn event_sequences() -> impl Strategy<Value = Vec<Event>> {
+    pub fn event_sequences() -> impl Strategy<Value = Vec<RawEvent>> {
         (1usize..=100).prop_flat_map(|size| {
             proptest::collection::vec(
                 (event_sources(), event_types(), event_payloads()).prop_map(
@@ -85,7 +85,6 @@ use strategies::*;
 
 /// Test event processing preserves order
 proptest! {
-    #[sinex_test]
     fn satellite_event_processing_preserves_order(
         events in event_sequences(),
         batch_size in 1usize..100usize,
@@ -129,12 +128,10 @@ proptest! {
             }
         });
     }
-    Ok(())
 }
 
 /// Test satellite fault tolerance with intermittent failures
 proptest! {
-    #[sinex_test]
     fn satellite_handles_intermittent_failures(
         failure_rate in 0.0..0.3f64, // Up to 30% failure rate
         events in proptest::collection::vec(
@@ -197,17 +194,15 @@ proptest! {
             assert!(successful_events > 0, "At least some events should succeed");
         });
     }
-    Ok(())
 }
 
 /// Test satellite resource management with concurrent processing
 proptest! {
-    #[sinex_test]
-fn satellite_manages_resources_efficiently(
+    fn satellite_manages_resources_efficiently(
         concurrent_operations in 1usize..5usize,
         events_per_operation in 1usize..50usize,
         processing_delay in 1u64..50u64,
-    ) -> color_eyre::eyre::Result<()> {
+    ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
@@ -260,17 +255,15 @@ fn satellite_manages_resources_efficiently(
             assert_eq!(final_count, total_events as i64);
         });
     }
-    Ok(())
 }
 
 /// Test satellite configuration validation properties
 proptest! {
-    #[sinex_test]
-fn satellite_config_validation_is_robust(
+    fn satellite_config_validation_is_robust(
         service_name in "[a-zA-Z0-9_-]+",
         _batch_size in 1usize..10000usize,
         _timeout_secs in 1u64..3600u64,
-    ) -> color_eyre::eyre::Result<()> {
+    ) {
         use sinex_satellite_sdk::config::SatelliteConfig;
 
         // Test config creation with various valid parameters
@@ -288,12 +281,10 @@ fn satellite_config_validation_is_robust(
         let env_config = SatelliteConfig::load_from_env(&service_name);
         assert_eq!(env_config.service_name, service_name);
     }
-    Ok(())
 }
 
 /// Test event processing with varying batch configurations
 proptest! {
-    #[sinex_test]
     fn satellite_batch_processing_is_consistent(
         initial_batch_size in 1usize..100usize,
         updated_batch_size in 1usize..100usize,
@@ -345,18 +336,16 @@ proptest! {
             assert_eq!(final_count, events.len() as i64);
         });
     }
-    Ok(())
 }
 
 /// Test satellite resilience to processing interruptions
 proptest! {
-    #[sinex_test]
-fn satellite_survives_processing_interruptions(
+    fn satellite_survives_processing_interruptions(
         interruption_duration in 1u64..100u64,
         events_before_interruption in 1usize..20usize,
         events_during_interruption in 1usize..20usize,
         events_after_interruption in 1usize..20usize,
-    ) -> color_eyre::eyre::Result<()> {
+    ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
@@ -413,17 +402,15 @@ fn satellite_survives_processing_interruptions(
             assert!(final_count >= expected_minimum as i64);
         });
     }
-    Ok(())
 }
 
 /// Test event ordering properties under concurrent load
 proptest! {
-    #[sinex_test]
-fn satellite_maintains_event_ordering_under_load(
+    fn satellite_maintains_event_ordering_under_load(
         concurrent_sources in 1usize..5usize,
         events_per_source in 1usize..20usize,
         processing_jitter in 1u64..20u64,
-    ) -> color_eyre::eyre::Result<()> {
+    ) {
         let rt = tokio::runtime::Runtime::new().unwrap();
         rt.block_on(async {
             let ctx = TestContext::new().await.unwrap();
@@ -505,5 +492,4 @@ fn satellite_maintains_event_ordering_under_load(
             }
         });
     }
-    Ok(())
 }

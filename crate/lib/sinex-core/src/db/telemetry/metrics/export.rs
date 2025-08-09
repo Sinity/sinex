@@ -517,6 +517,7 @@ mod tests {
     use crate::telemetry::metrics::collectors::{
         register_collector, MetricEntry, MetricType, MetricValue, SummaryValue,
     };
+    use color_eyre::eyre::Result;
 
     fn setup_test_metrics() {
         // We can't clear metrics storage directly as it's private
@@ -584,11 +585,12 @@ mod tests {
         register_collector(Box::new(collector));
     }
 
-    #[sinex_test]
-    fn test_prometheus_export() {
+    #[test]
+    fn test_prometheus_export() -> Result<()> {
         let output = export_prometheus();
         // Should contain Prometheus format metrics
         assert!(output.contains("# HELP") || output.is_empty());
+        Ok(())
     }
 
     // TODO: Fix these tests to not depend on internal storage access
@@ -623,8 +625,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_metric_entry_to_json() {
+    #[test]
+    fn test_metric_entry_to_json() -> Result<()> {
         let metric = MetricEntry {
             name: "test_metric".to_string(),
             help: "Test metric".to_string(),
@@ -644,6 +646,7 @@ mod tests {
         // Check labels
         let labels = json["labels"].as_object().unwrap();
         assert_eq!(labels.get("label1").unwrap().as_str().unwrap(), "value1");
+        Ok(())
     }
 
     // #[sinex_test]
@@ -668,8 +671,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_metric_entry_to_openmetrics_all_types() {
+    #[test]
+    fn test_metric_entry_to_openmetrics_all_types() -> Result<()> {
         // Test Counter
         let counter = MetricEntry {
             name: "test_counter".to_string(),
@@ -735,8 +738,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_metric_entry_to_influxdb_with_labels() {
+    #[test]
+    fn test_metric_entry_to_influxdb_with_labels() -> Result<()> {
         let metric = MetricEntry {
             name: "test_gauge".to_string(),
             help: "Test gauge".to_string(),
@@ -776,8 +779,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_metric_entry_to_statsd_all_types() {
+    #[test]
+    fn test_metric_entry_to_statsd_all_types() -> Result<()> {
         // Counter
         let counter = MetricEntry {
             name: "counter".to_string(),
@@ -851,8 +854,8 @@ mod tests {
         Ok(())
     }
 
-    #[sinex_test]
-    fn test_labels_to_openmetrics() {
+    #[test]
+    fn test_labels_to_openmetrics() -> Result<()> {
         // Empty labels
         assert_eq!(labels_to_openmetrics(&HashMap::new()), "");
 
@@ -872,8 +875,8 @@ mod tests {
         assert!(openmetrics.ends_with("}"));
     }
 
-    #[sinex_test]
-    fn test_metric_type_to_openmetrics() {
+    #[test]
+    fn test_metric_type_to_openmetrics() -> Result<()> {
         assert_eq!(metric_type_to_openmetrics(MetricType::Counter), "counter");
         assert_eq!(metric_type_to_openmetrics(MetricType::Gauge), "gauge");
         assert_eq!(

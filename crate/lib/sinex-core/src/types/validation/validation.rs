@@ -369,8 +369,8 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
 mod tests {
     use super::*;
 
-    #[sinex_test]
-    fn test_path_validation() {
+    #[test]
+    fn test_path_validation() -> Result<()> {
         // Valid paths
         assert!(validate_path("normal/path.txt").is_ok());
         assert!(validate_path("/absolute/path.txt").is_ok());
@@ -383,10 +383,11 @@ mod tests {
         // Test path cleaning functionality
         let cleaned = validate_path("./some/../path/./file.txt").unwrap();
         assert_eq!(cleaned, PathBuf::from("path/file.txt"));
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_filename_sanitization() {
+    #[test]
+    fn test_filename_sanitization() -> Result<()> {
         // Normal filename
         assert_eq!(
             sanitize_filename_component("normal.txt").unwrap(),
@@ -403,10 +404,11 @@ mod tests {
 
         // Empty filename
         assert!(sanitize_filename_component("").is_err());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_json_validation() {
+    #[test]
+    fn test_json_validation() -> Result<()> {
         // Valid JSON
         let valid = r#"{"key": "value", "number": 42}"#;
         assert!(validate_json(valid).is_ok());
@@ -426,10 +428,11 @@ mod tests {
         }
         deep.push('}');
         assert!(validate_json(&deep).is_err());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_validate_json_value() {
+    #[test]
+    fn test_validate_json_value() -> Result<()> {
         use serde_json::json;
 
         // Valid JSON value
@@ -448,10 +451,11 @@ mod tests {
         let deep_json = r#"{"a":{"b":{"c":{"d":{"e":{"f":{"g":{"h":{"i":{"j":{"k":{"l":{"m":{"n":{"o":{"p":{"q":{"r":{"s":{"t":{"u":{"v":{"w":{"x":{"y":{"z":{"aa":{"bb":{"cc":{"dd":{"ee":{"ff":{"gg":{"hh":{"ii":{"jj":{"kk":{"ll":{"mm":{"nn": 1}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}"#;
         let deep_value: Value = serde_json::from_str(deep_json).unwrap();
         assert!(validate_json_value(&deep_value).is_err());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_deserialize_json_with_validation() {
+    #[test]
+    fn test_deserialize_json_with_validation() -> Result<()> {
         #[derive(Debug, serde::Deserialize, PartialEq)]
         struct TestStruct {
             name: String,
@@ -475,10 +479,12 @@ mod tests {
         let large_json = format!(r#"{{"name": "{}", "age": 25}}"#, "x".repeat(11_000_000));
         let result: Result<TestStruct> = deserialize_json_with_validation(&large_json);
         assert!(result.is_err());
+
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_unicode_normalization() {
+    #[test]
+    fn test_unicode_normalization() -> Result<()> {
         // Normal text
         assert_eq!(normalize_unicode("hello").unwrap(), "hello");
 
@@ -487,10 +493,11 @@ mod tests {
 
         // Text with RTL override
         assert!(normalize_unicode("file\u{202E}txt.exe").is_err());
+        Ok(())
     }
 
-    #[sinex_test]
-    fn test_shell_metacharacters() {
+    #[test]
+    fn test_shell_metacharacters() -> Result<()> {
         assert!(!contains_shell_metacharacters("normal command"));
         assert!(!contains_shell_metacharacters("rm -rf /")); // This is dangerous but has no metacharacters
         assert!(contains_shell_metacharacters("echo $(whoami)"));
@@ -498,5 +505,6 @@ mod tests {
         assert!(contains_shell_metacharacters("ls; rm file"));
         assert!(contains_shell_metacharacters("echo 'test'"));
         assert!(contains_shell_metacharacters("file*"));
+        Ok(())
     }
 }
