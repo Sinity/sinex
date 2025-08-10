@@ -41,7 +41,7 @@ impl ShellType {
 
     /// Get the default configuration file path for this shell
     pub fn default_config_path(&self) -> Option<Utf8PathBuf> {
-        let home = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())?;
+        let home = get_home_dir()?;
 
         match self {
             ShellType::Bash => Some(home.join(".bashrc")),
@@ -56,7 +56,7 @@ impl ShellType {
 
     /// Get the history file path for this shell
     pub fn default_history_path(&self) -> Option<Utf8PathBuf> {
-        let home = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())?;
+        let home = get_home_dir()?;
 
         match self {
             ShellType::Bash => Some(home.join(".bash_history")),
@@ -247,4 +247,9 @@ mod tests {
         assert!(!nushell_caps.supports_aliases);
         Ok(())
     }
+}
+
+/// Helper function to get home directory as Utf8PathBuf
+fn get_home_dir() -> Option<Utf8PathBuf> {
+    dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
 }

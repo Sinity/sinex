@@ -112,6 +112,13 @@ pub struct SystemProcessor {
 impl SystemProcessor {
     /// Create a new unified system processor
     pub fn new() -> Self {
+        // TODO: Complete implementation of system satellite processor
+        // Issue: #XXX - Implement D-Bus, journal, and udev monitoring
+        // This should:
+        // 1. Monitor D-Bus for system events
+        // 2. Follow systemd journal for logs
+        // 3. Track udev hardware changes
+
         Self {
             context: None,
             config: SystemConfig::default(),

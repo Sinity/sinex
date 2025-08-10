@@ -12,7 +12,7 @@ use sinex_satellite_sdk::{
     SourceState,
 };
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Configuration for RPC Dispatcher processor
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -60,9 +60,11 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
         until: TimeHorizon,
         _args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
-        let start_time = Utc::now();
+        // TODO: Implement RPC dispatcher scanning functionality
+        // Issue: #XXX - Add actual RPC command dispatch and execution
+        warn!("RPC dispatcher scan not yet implemented");
 
-        // Simplified implementation for now
+        let start_time = Utc::now();
         let events_processed = 0; // All modes unimplemented
 
         Ok(ScanReport {

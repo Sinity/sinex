@@ -133,22 +133,33 @@ pub enum ProcessorCommand {
     },
 }
 
+/// Parse checkpoint as JSON
+fn parse_checkpoint_json(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+    serde_json::from_str::<serde_json::Value>(checkpoint_str)
+        .and_then(|v| serde_json::from_value::<Checkpoint>(v))
+        .context("Invalid checkpoint JSON")
+}
+
+/// Parse checkpoint as timestamp
+fn parse_checkpoint_timestamp(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+    checkpoint_str
+        .parse::<DateTime<Utc>>()
+        .map(|ts| Checkpoint::timestamp(ts, None))
+        .context("Invalid timestamp format")
+}
+
+/// Parse checkpoint as stream ID
+fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
+    Checkpoint::stream(checkpoint_str, None)
+}
+
 /// Parse checkpoint from string representation
 pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
     match checkpoint_str.to_lowercase().as_str() {
         "none" | "start" => Ok(Checkpoint::None),
-        _ => {
-            // Try to parse as JSON first
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(checkpoint_str) {
-                serde_json::from_value::<Checkpoint>(value).context("Invalid checkpoint JSON")
-            } else if let Ok(timestamp) = checkpoint_str.parse::<DateTime<Utc>>() {
-                // Parse as ISO timestamp
-                Ok(Checkpoint::timestamp(timestamp, None))
-            } else {
-                // Treat as stream message ID
-                Ok(Checkpoint::stream(checkpoint_str, None))
-            }
-        }
+        _ => parse_checkpoint_json(checkpoint_str)
+            .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
+            .unwrap_or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str))),
     }
 }
 

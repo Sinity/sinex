@@ -483,6 +483,16 @@ impl TerminalProcessor {
 
         Ok(event_count)
     }
+
+    /// Helper function to parse configuration field values
+    fn parse_config_field<T: serde::de::DeserializeOwned>(
+        config: &std::collections::HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<T> {
+        config
+            .get(key)
+            .and_then(|v| serde_json::from_value::<T>(v.clone()).ok())
+    }
 }
 
 impl Default for TerminalProcessor {
@@ -547,38 +557,30 @@ impl StatefulStreamProcessor for TerminalProcessor {
         }
 
         // Override with individual config values if present
-        if let Some(enabled_sources_json) = ctx.config.get("enabled_sources") {
-            if let Ok(sources) =
-                serde_json::from_value::<HashMap<String, bool>>(enabled_sources_json.clone())
-            {
-                self.config.enabled_sources = sources;
-            }
+        if let Some(sources) =
+            Self::parse_config_field::<HashMap<String, bool>>(&ctx.config, "enabled_sources")
+        {
+            self.config.enabled_sources = sources;
         }
 
-        if let Some(atuin_db_path_json) = ctx.config.get("atuin_db_path") {
-            if let Ok(path) = serde_json::from_value::<Utf8PathBuf>(atuin_db_path_json.clone()) {
-                self.config.atuin_db_path = Some(path);
-            }
+        if let Some(path) = Self::parse_config_field::<Utf8PathBuf>(&ctx.config, "atuin_db_path") {
+            self.config.atuin_db_path = Some(path);
         }
 
-        if let Some(history_files_json) = ctx.config.get("history_files") {
-            if let Ok(files) =
-                serde_json::from_value::<Vec<Utf8PathBuf>>(history_files_json.clone())
-            {
-                self.config.history_files = files;
-            }
+        if let Some(files) =
+            Self::parse_config_field::<Vec<Utf8PathBuf>>(&ctx.config, "history_files")
+        {
+            self.config.history_files = files;
         }
 
-        if let Some(polling_interval_json) = ctx.config.get("polling_interval_secs") {
-            if let Ok(interval) = serde_json::from_value::<u64>(polling_interval_json.clone()) {
-                self.config.polling_interval_secs = interval;
-            }
+        if let Some(interval) =
+            Self::parse_config_field::<u64>(&ctx.config, "polling_interval_secs")
+        {
+            self.config.polling_interval_secs = interval;
         }
 
-        if let Some(batch_size_json) = ctx.config.get("batch_size") {
-            if let Ok(size) = serde_json::from_value::<usize>(batch_size_json.clone()) {
-                self.config.batch_size = size;
-            }
+        if let Some(size) = Self::parse_config_field::<usize>(&ctx.config, "batch_size") {
+            self.config.batch_size = size;
         }
 
         info!(

@@ -138,6 +138,17 @@ impl DesktopProcessor {
         }
     }
 
+    /// Parse configuration value from context with type conversion
+    fn parse_config_value<T: serde::de::DeserializeOwned>(
+        &self,
+        key: &str,
+        ctx: &StreamProcessorContext,
+    ) -> Option<T> {
+        ctx.config
+            .get(key)
+            .and_then(|json| serde_json::from_value::<T>(json.clone()).ok())
+    }
+
     /// Take a snapshot of current desktop state
     async fn take_snapshot(&mut self) -> SatelliteResult<DesktopState> {
         let mut enabled_sources = Vec::new();
@@ -315,28 +326,21 @@ impl StatefulStreamProcessor for DesktopProcessor {
         }
 
         // Override with individual config values if present
-        if let Some(clipboard_enabled_json) = ctx.config.get("clipboard_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(clipboard_enabled_json.clone()) {
-                self.config.clipboard_enabled = enabled;
-            }
+        if let Some(enabled) = self.parse_config_value::<bool>("clipboard_enabled", &ctx) {
+            self.config.clipboard_enabled = enabled;
         }
 
-        if let Some(wm_enabled_json) = ctx.config.get("window_manager_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(wm_enabled_json.clone()) {
-                self.config.window_manager_enabled = enabled;
-            }
+        if let Some(enabled) = self.parse_config_value::<bool>("window_manager_enabled", &ctx) {
+            self.config.window_manager_enabled = enabled;
         }
 
-        if let Some(wm_type_json) = ctx.config.get("window_manager_type") {
-            if let Ok(wm_type) = serde_json::from_value::<String>(wm_type_json.clone()) {
-                self.config.window_manager_type = wm_type;
-            }
+        if let Some(wm_type) = self.parse_config_value::<String>("window_manager_type", &ctx) {
+            self.config.window_manager_type = wm_type;
         }
 
-        if let Some(poll_interval_json) = ctx.config.get("clipboard_poll_interval_secs") {
-            if let Ok(interval) = serde_json::from_value::<u64>(poll_interval_json.clone()) {
-                self.config.clipboard_poll_interval_secs = interval;
-            }
+        if let Some(interval) = self.parse_config_value::<u64>("clipboard_poll_interval_secs", &ctx)
+        {
+            self.config.clipboard_poll_interval_secs = interval;
         }
 
         info!(
@@ -455,24 +459,14 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 },
                 Utc::now(),
             )),
-            processor_stats: HashMap::from([
-                (
-                    "clipboard_enabled".to_string(),
-                    if self.config.clipboard_enabled { 1 } else { 0 },
-                ),
-                (
-                    "window_manager_enabled".to_string(),
-                    if self.config.window_manager_enabled {
-                        1
-                    } else {
-                        0
-                    },
-                ),
-                (
-                    "successful_targets".to_string(),
-                    successful_targets.len() as u64,
-                ),
-                ("failed_targets".to_string(), failed_targets.len() as u64),
+            processor_stats: [
+                ("clipboard_enabled", if self.config.clipboard_enabled { 1 } else { 0 }),
+                ("window_manager_enabled", if self.config.window_manager_enabled { 1 } else { 0 }),
+                ("successful_targets", successful_targets.len() as u64),
+                ("failed_targets", failed_targets.len() as u64),
+            ].into_iter()
+             .map(|(k, v)| (k.to_string(), v))
+             .collect(),
             ]),
             successful_targets,
             failed_targets,

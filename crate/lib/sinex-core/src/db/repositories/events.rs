@@ -55,7 +55,6 @@ pub struct EventRecord {
     // Schema fields
     pub payload_schema_name: Option<String>,
     pub payload_schema_version: Option<String>,
-    pub processor_manifest_id: Option<i32>,
 }
 
 impl EventRecord {
@@ -257,13 +256,12 @@ impl<'a> EventRepository<'a> {
                 source_material_id, source_material_offset_start, source_material_offset_end,
                 anchor_byte, associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8::uuid, $9::uuid[],
                 $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16, $17
+                $13, $14::uuid[], $15, $16
             )
             RETURNING 
                 id::uuid as "id!",
@@ -282,8 +280,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids::uuid[] as associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -300,8 +297,7 @@ impl<'a> EventRepository<'a> {
             event.anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
-            None::<String>, // payload_schema_version
-            None::<i32>     // processor_manifest_id
+            None::<String>  // payload_schema_version
         )
         .fetch_one(self.pool)
         .await
@@ -330,8 +326,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE id = $1
             "#,
@@ -373,8 +368,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             ORDER BY ts_ingest DESC
             LIMIT $1
@@ -416,8 +410,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE source = $1
             ORDER BY ts_ingest DESC
@@ -462,8 +455,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE event_type = $1
             ORDER BY ts_ingest DESC
@@ -533,8 +525,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE ts_ingest >= $1 AND ts_ingest <= $2
             ORDER BY ts_ingest DESC
@@ -616,8 +607,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
             ORDER BY ts_ingest DESC
@@ -660,8 +650,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE source = $1 
               AND event_type = 'process.heartbeat'
@@ -933,13 +922,12 @@ impl<'a> EventRepository<'a> {
                 source_material_id, source_material_offset_start, source_material_offset_end,
                 anchor_byte, associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8::uuid, $9::uuid[],
                 $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16, $17
+                $13, $14::uuid[], $15, $16
             )
             RETURNING 
                 id::uuid as "id!",
@@ -958,8 +946,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids::uuid[] as associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -976,8 +963,7 @@ impl<'a> EventRepository<'a> {
             event.anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
-            None::<String>, // payload_schema_version
-            None::<i32>     // processor_manifest_id
+            None::<String>  // payload_schema_version
         )
         .fetch_one(&mut **tx)
         .await
@@ -1349,7 +1335,7 @@ impl<'a> EventRepository<'a> {
             )
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1376,7 +1362,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1407,7 +1393,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1441,7 +1427,7 @@ impl<'a> EventRepository<'a> {
             WHERE id = $1
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1486,7 +1472,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                id as "event_id: Id<RawEvent>",
+                event_id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",

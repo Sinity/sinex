@@ -432,6 +432,7 @@ impl std::fmt::Debug for StreamProcessorContext {
 impl StreamProcessorContext {
     /// Send an event through the event channel
     // TODO: Fix macro to use sinex_core instead of sinex_db
+    // Issue: #XXX - Update macro to use correct module path
     // #[cfg_attr(
     //     feature = "macros",
     //     sinex_macros::auto_event_metrics(event_type = "emit")
@@ -665,13 +666,13 @@ pub trait StatefulStreamProcessor: Send + Sync {
     }
 
     /// Estimate scan scope for planning purposes
+    #[allow(unused_variables)]
     async fn estimate_scan_scope(
         &self,
         from: &Checkpoint,
         until: &TimeHorizon,
         args: &ScanArgs,
     ) -> SatelliteResult<ScanEstimate> {
-        let _ = (from, until, args);
         Ok(ScanEstimate::default())
     }
 
@@ -1047,7 +1048,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create dummy ingest client (not used with NATS)
         let ingest_client = IngestClient::new("/dev/null")
             .await
-            .unwrap_or_else(|_| panic!("Failed to create dummy ingest client"));
+            .expect("Failed to create dummy ingest client");
 
         // Create context with empty legacy config
         let context = StreamProcessorContext {
@@ -1158,7 +1159,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Create dummy ingest client (not used with NATS)
         let ingest_client = IngestClient::new("/dev/null")
             .await
-            .unwrap_or_else(|_| panic!("Failed to create dummy ingest client"));
+            .expect("Failed to create dummy ingest client");
 
         // Create context
         let context = StreamProcessorContext {

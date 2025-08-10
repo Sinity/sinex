@@ -6,6 +6,9 @@ use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
+/// Unix epoch start time as a constant
+const EPOCH_START: DateTime<Utc> = DateTime::from_timestamp(0, 0).unwrap();
+
 pub struct AnalyticsService {
     pool: DbPool,
 }
@@ -38,7 +41,7 @@ impl AnalyticsService {
             }
             _ => {
                 // For all-time stats, use a timestamp far in the past
-                let very_old = DateTime::from_timestamp(0, 0).unwrap();
+                let very_old = EPOCH_START;
                 let rows = self.pool.events().get_source_activity(very_old).await?;
 
                 for row in rows {
@@ -89,11 +92,7 @@ impl AnalyticsService {
         end_time: DateTime<Utc>,
         interval_minutes: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
-        let interval = PgInterval {
-            months: 0,
-            days: 0,
-            microseconds: interval_minutes as i64 * 60 * 1_000_000,
-        };
+        let interval = minutes_to_interval(interval_minutes);
 
         let rows = self
             .pool
@@ -135,11 +134,7 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
-        let interval = PgInterval {
-            months: 0,
-            days: 0,
-            microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
-        };
+        let interval = minutes_to_interval(bucket_size_minutes);
 
         let rows = self
             .pool
@@ -148,5 +143,14 @@ impl AnalyticsService {
             .await?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+    }
+}
+
+/// Helper function to create PgInterval from minutes
+fn minutes_to_interval(minutes: i32) -> PgInterval {
+    PgInterval {
+        months: 0,
+        days: 0,
+        microseconds: minutes as i64 * 60 * 1_000_000,
     }
 }

@@ -124,6 +124,12 @@ use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
 // use sinex_core::types::events::constants::{sources}; // already imported above
 
+/// Default debounce interval for filesystem events in milliseconds
+const DEFAULT_DEBOUNCE_MS: u64 = 100;
+
+/// Maximum number of sample file paths for diagnostics
+const MAX_DIAGNOSTIC_SAMPLES: usize = 100;
+
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FilesystemConfig {
@@ -187,7 +193,7 @@ impl Default for FilesystemConfig {
                 "**/.git/**".to_string(),
                 "**/node_modules/**".to_string(),
             ],
-            debounce_ms: 100,
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
         }
     }
@@ -216,7 +222,7 @@ pub struct FilesystemState {
     /// Directories being monitored
     pub directories: Vec<Utf8PathBuf>,
 
-    /// Sample file paths for diagnostics (limited to 100)
+    /// Sample file paths for diagnostics (limited to MAX_DIAGNOSTIC_SAMPLES)
     pub sample_paths: Vec<Utf8PathBuf>,
 }
 
@@ -334,8 +340,8 @@ impl FilesystemProcessor {
             if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
                 count += 1;
 
-                // Collect samples for diagnostics (limit to 100)
-                if sample_paths.len() < 100 {
+                // Collect samples for diagnostics (limit to MAX_DIAGNOSTIC_SAMPLES)
+                if sample_paths.len() < MAX_DIAGNOSTIC_SAMPLES {
                     if let Ok(utf8_path) = Utf8PathBuf::from_path_buf(entry.path().to_path_buf()) {
                         sample_paths.push(utf8_path);
                     }
@@ -427,7 +433,8 @@ impl FilesystemProcessor {
             }
 
             // Apply pattern filtering
-            if !self.matches_patterns(utf8_path) {
+            let should_process = self.matches_patterns(utf8_path);
+            if !should_process {
                 continue;
             }
 
@@ -784,10 +791,10 @@ impl FilesystemProcessor {
         }
     }
 
-    /// Convert notify event to RawEvent with rich metadata (placeholder for full implementation)
     fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<RawEvent>> {
-        // This would contain the full event conversion logic from the original implementation
-        // For now, return empty to focus on the architectural changes
+        // TODO: Implement filesystem event conversion to RawEvent format
+        // Issue: #XXX - Convert notify events to Sinex event format
+        // This should extract metadata like file size, permissions, timestamps
         Ok(vec![])
     }
 }
@@ -1245,7 +1252,7 @@ mod tests {
         let config = FilesystemConfig {
             watch_patterns: vec!["**/*.rs".to_string()],
             ignore_patterns: vec![],
-            debounce_ms: 100,
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
         };
 
@@ -1284,7 +1291,7 @@ mod tests {
         let config = FilesystemConfig {
             watch_patterns: vec![format!("{}/**/*.rs", base_path.display())],
             ignore_patterns: vec![],
-            debounce_ms: 100,
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
         };
 

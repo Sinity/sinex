@@ -26,8 +26,9 @@ use regex::Regex;
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::{CommandText, SanitizedPath};
 use sinex_core::types::events::Event;
-use sinex_satellite_sdk::SatelliteResult;
+use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
 use std::collections::HashMap;
+use std::io;
 use std::time::{Duration, SystemTime};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::UnixStream;
@@ -160,36 +161,27 @@ impl KittyWatcher {
             )
         })?;
 
-        let mut stream = UnixStream::connect(socket_path).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Failed to connect to socket: {}",
-                e
-            ))
-        })?;
+        let mut stream = UnixStream::connect(socket_path)
+            .await
+            .map_err(|e| io_to_satellite_error(e, "Failed to connect to socket"))?;
 
         let cmd_str = command.to_string();
         let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
 
-        stream.write_all(framed_cmd.as_bytes()).await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Failed to write command: {}",
-                e
-            ))
-        })?;
-        stream.flush().await.map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!("Failed to flush: {}", e))
-        })?;
+        stream
+            .write_all(framed_cmd.as_bytes())
+            .await
+            .map_err(|e| io_to_satellite_error(e, "Failed to write command"))?;
+        stream
+            .flush()
+            .await
+            .map_err(|e| io_to_satellite_error(e, "Failed to flush"))?;
 
         let mut response_buffer = Vec::new();
         stream
             .read_to_end(&mut response_buffer)
             .await
-            .map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!(
-                    "Failed to read response: {}",
-                    e
-                ))
-            })?;
+            .map_err(|e| io_to_satellite_error(e, "Failed to read response"))?;
 
         let response_str = String::from_utf8(response_buffer).map_err(|e| {
             sinex_satellite_sdk::SatelliteError::Processing(format!(
@@ -199,16 +191,13 @@ impl KittyWatcher {
         })?;
 
         // Extract JSON from framed response
-        if let Some(start) = response_str.find('{') {
-            if let Some(end) = response_str.rfind('}') {
-                let json_str = &response_str[start..=end];
-                return serde_json::from_str(json_str).map_err(|e| {
-                    sinex_satellite_sdk::SatelliteError::Processing(format!(
-                        "Failed to parse JSON: {}",
-                        e
-                    ))
-                });
-            }
+        if let Some(json_str) = extract_json_from_framed_response(&response_str) {
+            return serde_json::from_str(json_str).map_err(|e| {
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "Failed to parse JSON: {}",
+                    e
+                ))
+            });
         }
 
         Err(sinex_satellite_sdk::SatelliteError::Processing(
@@ -415,23 +404,16 @@ impl KittyWatcher {
 
     fn extract_command_from_output(prompt_patterns: &[Regex], output: &str) -> Option<String> {
         // Look for the last prompt line in the output to extract command
-        let lines: Vec<&str> = output.lines().collect();
-
-        // Search from the end for a prompt pattern
-        for line in lines.iter().rev() {
-            for pattern in prompt_patterns {
-                if let Some(captures) = pattern.captures(line) {
-                    if let Some(command) = captures.get(1) {
-                        let cmd = command.as_str().trim();
-                        if !cmd.is_empty() {
-                            return Some(cmd.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        None
+        output.lines().rev().find_map(|line| {
+            prompt_patterns.iter().find_map(|pattern| {
+                pattern
+                    .captures(line)
+                    .and_then(|captures| captures.get(1))
+                    .map(|command| command.as_str().trim())
+                    .filter(|cmd| !cmd.is_empty())
+                    .map(|cmd| cmd.to_string())
+            })
+        })
     }
 
     async fn process_tab_focus_changes(
@@ -599,4 +581,18 @@ impl KittyWatcher {
             sleep(self.poll_interval).await;
         }
     }
+}
+
+/// Helper function to convert IO errors to SatelliteError
+fn io_to_satellite_error(e: io::Error, operation: &str) -> SatelliteError {
+    SatelliteError::Processing(format!("{}: {}", operation, e))
+}
+
+/// Helper function to extract JSON from framed Kitty response
+fn extract_json_from_framed_response(response: &str) -> Option<&str> {
+    response.find('{').and_then(|start| {
+        response[start..]
+            .rfind('}')
+            .map(|end| &response[start..=start + end])
+    })
 }

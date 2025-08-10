@@ -47,8 +47,14 @@ impl IngestClient {
             Ok(inner.event_id.unwrap_or_default())
         } else {
             let error_msg = inner.error.unwrap_or_else(|| "Unknown error".to_string());
-            error!("Failed to ingest event: {}", error_msg);
-            Err(SatelliteError::Processing(error_msg))
+            error!(
+                "Failed to ingest event (ID: {:?}): {}",
+                inner.event_id, error_msg
+            );
+            Err(SatelliteError::Processing(format!(
+                "Event ingestion failed: {}",
+                error_msg
+            )))
         }
     }
 

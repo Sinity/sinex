@@ -475,6 +475,32 @@ impl WindowManagerWatcher {
         Ok(response)
     }
 
+    /// Send event or warn if channel closed, returning whether to continue
+    fn send_event_or_warn(&self, tx: &mpsc::UnboundedSender<RawEvent>, event: RawEvent) -> bool {
+        if tx.send(event).is_err() {
+            warn!("Event channel closed");
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Serialize values to JSON, handling errors gracefully
+    fn serialize_values<T: serde::Serialize>(
+        &self,
+        values: impl Iterator<Item = T>,
+    ) -> Vec<serde_json::Value> {
+        values.map(|v| serde_json::to_value(v).unwrap()).collect()
+    }
+
+    /// Parse ID string to integer with fallback and warning
+    fn parse_id(&self, id_str: &str, context: &str) -> i32 {
+        id_str.parse().unwrap_or_else(|_| {
+            warn!("Failed to parse {} '{}', defaulting to 0", context, id_str);
+            0
+        })
+    }
+
     /// Process Hyprland event line
     async fn process_hyprland_event(
         &mut self,
@@ -540,9 +566,7 @@ impl WindowManagerWatcher {
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             self.current_focused_window = Some(window_address.clone());
         }
@@ -571,7 +595,7 @@ impl WindowManagerWatcher {
                     window_id: window_address.to_string(),
                     window_class: window_class.to_string(),
                     window_title: window_title.to_string(),
-                    workspace_id: workspace_id.parse().unwrap_or(0),
+                    workspace_id: self.parse_id(&workspace_id, "workspace_id"),
                     monitor_id: 0, // TODO: Get actual monitor ID
                     geometry: sinex_core::types::events::WindowGeometry {
                         x: 0,
@@ -583,9 +607,7 @@ impl WindowManagerWatcher {
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             // Store window info
             self.windows.insert(
@@ -649,14 +671,12 @@ impl WindowManagerWatcher {
             let event: RawEvent =
                 Event::from_payload(sinex_core::types::events::HyprlandWindowMovedPayload {
                     window_address: address.to_string(),
-                    new_workspace_id: workspace.parse().unwrap_or(0),
+                    new_workspace_id: self.parse_id(workspace, "workspace_id"),
                     moved_at: chrono::Utc::now().to_rfc3339(),
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             // Update window workspace
             if let Some(window) = self.windows.get_mut(address) {
@@ -682,9 +702,9 @@ impl WindowManagerWatcher {
                 from_workspace_id: self
                     .current_workspace
                     .as_ref()
-                    .and_then(|w| w.parse().ok())
+                    .map(|w| self.parse_id(w, "current_workspace_id"))
                     .unwrap_or(0),
-                to_workspace_id: workspace_id.parse().unwrap_or(0),
+                to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
                 monitor_id: 0,          // TODO: Get actual monitor ID
                 active_window_id: None, // TODO: Get active window
             },
@@ -712,16 +732,14 @@ impl WindowManagerWatcher {
 
             let event =
                 Event::from_payload(sinex_core::types::events::HyprlandMonitorFocusedPayload {
-                    monitor_id: monitor.parse().unwrap_or(0),
-                    workspace_id: workspace.parse().unwrap_or(0),
+                    monitor_id: self.parse_id(monitor, "monitor_id"),
+                    workspace_id: self.parse_id(workspace, "workspace_id"),
                     previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
                     focused_at: chrono::Utc::now().to_rfc3339(),
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             self.current_monitor = Some(monitor.to_string());
         }
@@ -750,30 +768,18 @@ impl WindowManagerWatcher {
 
         let event: RawEvent =
             Event::from_payload(sinex_core::types::events::HyprlandStateCapturedPayload {
-                windows: self
-                    .windows
-                    .values()
-                    .map(|w| serde_json::to_value(w).unwrap())
-                    .collect(),
-                workspaces: self
-                    .workspaces
-                    .values()
-                    .map(|w| serde_json::to_value(w).unwrap())
-                    .collect(),
-                monitors: self
-                    .monitors
-                    .values()
-                    .map(|m| serde_json::to_value(m).unwrap())
-                    .collect(),
+                windows: self.serialize_values(self.windows.values()),
+                workspaces: self.serialize_values(self.workspaces.values()),
+                monitors: self.serialize_values(self.monitors.values()),
                 current_workspace: self
                     .current_workspace
                     .as_ref()
-                    .and_then(|w| w.parse().ok())
+                    .map(|w| self.parse_id(w, "current_workspace_id"))
                     .unwrap_or(0),
                 current_monitor: self
                     .current_monitor
                     .as_ref()
-                    .and_then(|m| m.parse().ok())
+                    .map(|m| self.parse_id(m, "current_monitor_id"))
                     .unwrap_or(0),
                 captured_at: chrono::Utc::now().to_rfc3339(),
             })

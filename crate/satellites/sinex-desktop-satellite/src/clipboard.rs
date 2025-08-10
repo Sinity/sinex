@@ -223,6 +223,20 @@ impl ClipboardWatcher {
         }
     }
 
+    /// Sanitize path component using core utilities
+    fn sanitize_path_component(&self, path_str: &str) -> String {
+        let path = std::path::Path::new(path_str);
+        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
+            let sanitized_name = sinex_core::types::sanitize_filename_component(filename)
+                .unwrap_or_else(|_| filename.to_string());
+            path.parent()
+                .map(|parent| parent.join(&sanitized_name).to_string_lossy().to_string())
+                .unwrap_or_else(|| sanitized_name)
+        } else {
+            path_str.to_string()
+        }
+    }
+
     /// Extract file paths from clipboard content
     fn extract_file_paths(&self, content: &str) -> Option<Vec<String>> {
         if content.starts_with("file://") {
@@ -232,27 +246,7 @@ impl ClipboardWatcher {
                     .filter_map(|line| {
                         line.strip_prefix("file://")
                             .and_then(|p| urlencoding::decode(p).ok())
-                            .map(|p| {
-                                // Sanitize the path components
-                                let path_str = p.to_string();
-                                let path = std::path::Path::new(&path_str);
-                                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                                    // Use sanitization but fall back to original if it fails
-                                    let sanitized_name =
-                                        sinex_core::types::sanitize_filename_component(filename)
-                                            .unwrap_or_else(|_| filename.to_string());
-                                    path.parent()
-                                        .map(|parent| {
-                                            parent
-                                                .join(&sanitized_name)
-                                                .to_string_lossy()
-                                                .to_string()
-                                        })
-                                        .unwrap_or_else(|| sanitized_name)
-                                } else {
-                                    path_str
-                                }
-                            })
+                            .map(|p| self.sanitize_path_component(&p.to_string()))
                     })
                     .collect(),
             )
@@ -261,23 +255,7 @@ impl ClipboardWatcher {
                 content
                     .lines()
                     .filter(|l| !l.is_empty())
-                    .map(|l| {
-                        // Sanitize the path components
-                        let path = std::path::Path::new(l);
-                        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                            // Use sanitization but fall back to original if it fails
-                            let sanitized_name =
-                                sinex_core::types::sanitize_filename_component(filename)
-                                    .unwrap_or_else(|_| filename.to_string());
-                            path.parent()
-                                .map(|parent| {
-                                    parent.join(&sanitized_name).to_string_lossy().to_string()
-                                })
-                                .unwrap_or_else(|| sanitized_name)
-                        } else {
-                            l.to_string()
-                        }
-                    })
+                    .map(|l| self.sanitize_path_component(l))
                     .collect(),
             )
         } else {
@@ -548,6 +526,38 @@ impl ClipboardWatcher {
         })
     }
 
+    /// Handle large content storage and return appropriate preview/metadata
+    async fn handle_large_content(
+        &self,
+        content: &ClipboardContent,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        if content.size_bytes <= self.max_content_size {
+            return (content.text_preview.clone(), None, None);
+        }
+
+        match self.store_large_content(&content.text, &content.hash).await {
+            Ok((key, id)) => {
+                info!(
+                    "Stored large content ({} bytes) in blob storage: {}",
+                    content.size_bytes, key
+                );
+                (
+                    Some("[Content stored in blob storage]".to_string()),
+                    Some(key),
+                    id,
+                )
+            }
+            Err(e) => {
+                error!("Failed to store large content: {}", e);
+                (
+                    Some("[Content too large - storage failed]".to_string()),
+                    None,
+                    None,
+                )
+            }
+        }
+    }
+
     /// Create rich clipboard changed event
     async fn create_clipboard_event(
         &self,
@@ -562,31 +572,7 @@ impl ClipboardWatcher {
         };
 
         // Handle large content with blob storage
-        let (text_preview, annex_key, blob_id) = if content.size_bytes > self.max_content_size {
-            match self.store_large_content(&content.text, &content.hash).await {
-                Ok((key, id)) => {
-                    info!(
-                        "Stored large clipboard content ({} bytes) in blob storage: {}",
-                        content.size_bytes, key
-                    );
-                    (
-                        Some("[Content stored in blob storage]".to_string()),
-                        Some(key),
-                        id,
-                    )
-                }
-                Err(e) => {
-                    error!("Failed to store large content in blob storage: {}", e);
-                    (
-                        Some("[Content too large - storage failed]".to_string()),
-                        None,
-                        None,
-                    )
-                }
-            }
-        } else {
-            (content.text_preview.clone(), None, None)
-        };
+        let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
 
         let file_count = content.file_paths.as_ref().map(|paths| paths.len());
 
@@ -624,34 +610,7 @@ impl ClipboardWatcher {
         };
 
         // Handle large content with blob storage
-        let (text_preview, annex_key, blob_id) = if content.size_bytes > self.max_content_size {
-            match self.store_large_content(&content.text, &content.hash).await {
-                Ok((key, id)) => {
-                    info!(
-                        "Stored large primary selection content ({} bytes) in blob storage: {}",
-                        content.size_bytes, key
-                    );
-                    (
-                        Some("[Content stored in blob storage]".to_string()),
-                        Some(key),
-                        id,
-                    )
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to store large primary selection in blob storage: {}",
-                        e
-                    );
-                    (
-                        Some("[Content too large - storage failed]".to_string()),
-                        None,
-                        None,
-                    )
-                }
-            }
-        } else {
-            (content.text_preview.clone(), None, None)
-        };
+        let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
 
         let event: RawEvent =
             Event::from_payload(sinex_core::types::events::ClipboardSelectedPayload {
@@ -669,6 +628,16 @@ impl ClipboardWatcher {
             .into();
 
         Ok(event)
+    }
+
+    /// Send event or warn if channel closed, returning whether to continue
+    fn send_event_or_warn(&self, tx: &mpsc::UnboundedSender<RawEvent>, event: RawEvent) -> bool {
+        if tx.send(event).is_err() {
+            warn!("Event channel closed");
+            false
+        } else {
+            true
+        }
     }
 
     /// Check for clipboard changes with enhanced monitoring
@@ -696,8 +665,7 @@ impl ClipboardWatcher {
                     .create_clipboard_event(&current_content, "copy")
                     .await?;
 
-                if tx.send(event).is_err() {
-                    warn!("Event channel closed");
+                if !self.send_event_or_warn(tx, event) {
                     return Ok(());
                 }
 
@@ -732,8 +700,7 @@ impl ClipboardWatcher {
                         .create_primary_selection_event(&current_primary)
                         .await?;
 
-                    if tx.send(event).is_err() {
-                        warn!("Event channel closed");
+                    if !self.send_event_or_warn(tx, event) {
                         return Ok(());
                     }
 

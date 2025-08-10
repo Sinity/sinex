@@ -155,8 +155,9 @@ impl PkmService {
         mime_type: Option<&str>,
         metadata: serde_json::Value,
     ) -> ServiceResult<Ulid> {
-        // Calculate checksum
-        let checksum = blake3::hash(content).to_hex().to_string();
+        // Calculate checksums
+        let (blake3_checksum, _) = calculate_checksums(content);
+        let checksum = blake3_checksum;
 
         // Check if blob already exists
         let existing_blob = self.pool.blobs().find_by_blake3(&checksum).await?;
@@ -253,8 +254,7 @@ impl PkmService {
         use sha2::{Digest, Sha256};
         use sinex_core::db::models::Blob;
 
-        let blake3_checksum = blake3::hash(content).to_hex().to_string();
-        let sha256_checksum = format!("{:x}", Sha256::digest(content));
+        let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
 
         // Create annex key (simplified - in real implementation this would use git-annex)
         let annex_key = format!("SHA256E-s{}--{}", content.len(), sha256_checksum);
@@ -363,4 +363,16 @@ impl PkmService {
             })
             .collect())
     }
+}
+
+/// Helper function to calculate both BLAKE3 and SHA256 checksums
+fn calculate_checksums(content: &[u8]) -> (String, String) {
+    let blake3_hash = blake3::hash(content).to_hex().to_string();
+    let sha256_hash = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(content);
+        format!("{:x}", hasher.finalize())
+    };
+    (blake3_hash, sha256_hash)
 }

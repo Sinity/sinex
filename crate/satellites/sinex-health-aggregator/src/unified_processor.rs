@@ -12,6 +12,7 @@ use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
+    redis_stream_consumer::BatchProcessingResult,
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -311,6 +312,18 @@ impl StatefulStreamProcessor for HealthAggregator {
         Ok(Checkpoint::Timestamp {
             timestamp: self.last_summary_time,
             metadata: self.get_checkpoint_data().await})
+    }
+
+    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<BatchProcessingResult> {
+        // TODO: Implement batch processing for health events
+        // Issue: #XXX - Process health-related events and update metrics
+        Ok(BatchProcessingResult::default())
+    }
+
+    async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
+        // TODO: Return current health aggregation state as checkpoint
+        // Issue: #XXX - Serialize current health metrics for checkpointing
+        None
     }
 }
 

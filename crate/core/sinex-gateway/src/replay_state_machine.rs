@@ -208,7 +208,7 @@ impl ReplayStateMachine {
         sqlx::query!(
             r#"
             INSERT INTO core.operations_log (
-                operation_id, actor, scope, state, checkpoint, created_at
+                id, actor, scope, state, checkpoint, created_at
             )
             VALUES ($1, $2, $3, $4, $5, $6)
             "#,
@@ -235,7 +235,7 @@ impl ReplayStateMachine {
         let row = sqlx::query!(
             r#"
             SELECT 
-                operation_id as "operation_id: Ulid",
+                id as "operation_id: Ulid",
                 actor,
                 scope,
                 state as "state: ReplayState",
@@ -250,7 +250,7 @@ impl ReplayStateMachine {
                 outcome,
                 error_details
             FROM core.operations_log
-            WHERE operation_id = $1
+            WHERE id = $1
             "#,
             operation_id as _,
         )
@@ -302,7 +302,7 @@ impl ReplayStateMachine {
             r#"
             SELECT state as "state: ReplayState"
             FROM core.operations_log
-            WHERE operation_id = $1
+            WHERE id = $1
             FOR UPDATE
             "#,
             operation_id as _,
@@ -335,7 +335,7 @@ impl ReplayStateMachine {
                     THEN $3 
                     ELSE finished_at 
                 END
-            WHERE operation_id = $1
+            WHERE id = $1
             "#,
             operation_id as _,
             new_state as _,
@@ -366,7 +366,7 @@ impl ReplayStateMachine {
                     WHEN state = 'planning' THEN 'previewed'::text 
                     ELSE state 
                 END
-            WHERE operation_id = $1
+            WHERE id = $1
             "#,
             operation_id as _,
             preview,
@@ -388,7 +388,7 @@ impl ReplayStateMachine {
             SET state = 'approved',
                 approved_by = $2,
                 approved_at = $3
-            WHERE operation_id = $1
+            WHERE id = $1
             AND state = 'previewed'
             "#,
             operation_id as _,
@@ -412,7 +412,7 @@ impl ReplayStateMachine {
             r#"
             UPDATE core.operations_log
             SET checkpoint = $2
-            WHERE operation_id = $1
+            WHERE id = $1
             "#,
             operation_id as _,
             serde_json::to_value(checkpoint)?,
@@ -436,7 +436,7 @@ impl ReplayStateMachine {
                 outcome = 'error',
                 error_details = $2,
                 finished_at = NOW()
-            WHERE operation_id = $1
+            WHERE id = $1
             "#,
             operation_id as _,
             error,
@@ -457,7 +457,7 @@ impl ReplayStateMachine {
                 outcome = 'cancelled',
                 error_details = $2,
                 finished_at = NOW()
-            WHERE operation_id = $1
+            WHERE id = $1
             AND state NOT IN ('completed', 'failed', 'cancelled')
             "#,
             operation_id as _,
@@ -500,7 +500,7 @@ impl ReplayStateMachine {
                 r#"
                 UPDATE core.operations_log
                 SET executor_node = $2
-                WHERE operation_id = $1
+                WHERE id = $1
                 "#,
                 operation_id as _,
                 executor_node,
@@ -543,7 +543,7 @@ impl ReplayStateMachine {
         let rows = sqlx::query!(
             r#"
             SELECT 
-                operation_id as "operation_id: Ulid",
+                id as "operation_id: Ulid",
                 actor,
                 scope,
                 state as "state: ReplayState",
