@@ -16,134 +16,30 @@ use serde_json::Value as JsonValue;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
-/// Operation types for the audit log
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationType {
-    // Event operations
-    EventIngested,
-    EventProcessed,
-    EventArchived,
-    EventRestored,
-    EventDeleted,
-
-    // Schema operations
-    SchemaRegistered,
-    SchemaDeprecated,
-    SchemaActivated,
-
-    // Checkpoint operations
-    CheckpointCreated,
-    CheckpointUpdated,
-    CheckpointDeleted,
-
-    // System operations
-    SystemStartup,
-    SystemShutdown,
-    ConfigurationChanged,
-    MigrationExecuted,
-
-    // Service operations
-    ServiceStarted,
-    ServiceStopped,
-    ServiceHealthCheck,
-
-    // Data operations
-    BulkImport,
-    BulkExport,
-    DataPurge,
-
-    // Security operations
-    AccessGranted,
-    AccessDenied,
-    AuthenticationFailed,
-}
-
-impl OperationType {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::EventIngested => "event_ingested",
-            Self::EventProcessed => "event_processed",
-            Self::EventArchived => "event_archived",
-            Self::EventRestored => "event_restored",
-            Self::EventDeleted => "event_deleted",
-            Self::SchemaRegistered => "schema_registered",
-            Self::SchemaDeprecated => "schema_deprecated",
-            Self::SchemaActivated => "schema_activated",
-            Self::CheckpointCreated => "checkpoint_created",
-            Self::CheckpointUpdated => "checkpoint_updated",
-            Self::CheckpointDeleted => "checkpoint_deleted",
-            Self::SystemStartup => "system_startup",
-            Self::SystemShutdown => "system_shutdown",
-            Self::ConfigurationChanged => "configuration_changed",
-            Self::MigrationExecuted => "migration_executed",
-            Self::ServiceStarted => "service_started",
-            Self::ServiceStopped => "service_stopped",
-            Self::ServiceHealthCheck => "service_health_check",
-            Self::BulkImport => "bulk_import",
-            Self::BulkExport => "bulk_export",
-            Self::DataPurge => "data_purge",
-            Self::AccessGranted => "access_granted",
-            Self::AccessDenied => "access_denied",
-            Self::AuthenticationFailed => "authentication_failed",
-        }
-    }
-}
-
-impl std::fmt::Display for OperationType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.as_str())
-    }
-}
-
-/// Operation log entry matching core.operations_log
+/// Operation log entry matching core.operations_log per TARGET_canonical.md
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Operation {
-    pub id: Id<Operation>,
-    pub operation_ts: DateTime<Utc>,
-    pub operation_type: String,
-    pub operator: String,
-    pub target_table: String,
-    pub target_id: Option<String>,
-    pub operation_data: JsonValue,
-    pub result_status: String,
-    pub result_message: Option<String>,
-    pub duration_ms: Option<i32>,
-    pub metadata: Option<JsonValue>,
+    pub operation_id: Id<Operation>,
+    pub actor: String,
+    pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
+    pub preview_summary: Option<JsonValue>, // { counts, cascades, churn_percent, time_quality_flips }
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub outcome: Option<String>, // success|error|cancelled
+    pub error_details: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
-/// New operation to log
+/// New operation to log per TARGET_canonical.md
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NewOperation {
-    pub operation_type: OperationType,
-    pub performed_by: String,
-    pub target_type: Option<String>,
-    pub target_id: Option<String>,
-    pub description: String,
-    pub metadata: Option<JsonValue>,
-    pub result: OperationResult,
-    pub error_message: Option<String>,
-    pub duration_ms: Option<i64>,
-}
-
-/// Operation result status
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum OperationResult {
-    Success,
-    Failure,
-    Partial,
-}
-
-impl OperationResult {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Success => "success",
-            Self::Failure => "failure",
-            Self::Partial => "partial",
-        }
-    }
+    pub actor: String,                      // e.g., 'user@host' or 'system'
+    pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
+    pub preview_summary: Option<JsonValue>, // { counts, cascades, churn_percent, time_quality_flips }
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+    pub outcome: Option<String>, // success|error|cancelled
+    pub error_details: Option<String>,
 }
 
 /// State repository combining checkpoints and operations
@@ -302,43 +198,36 @@ impl<'a> StateRepository<'a> {
     /// Log an operation
     pub async fn log_operation(&self, operation: NewOperation) -> DbResult<Operation> {
         let id = Id::<Operation>::new();
+        let started_at = operation.started_at.unwrap_or_else(Utc::now);
 
         let result = sqlx::query_as!(
             Operation,
             r#"
             INSERT INTO core.operations_log (
-                operation_id, operation_type, operator, target_table,
-                target_id, operation_data, result_status, result_message, duration_ms,
-                metadata
+                operation_id, actor, scope, preview_summary,
+                started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
                 created_at
             "#,
             *id.as_ulid() as _,
-            operation.operation_type.as_str(),
-            operation.performed_by,
-            operation
-                .target_type
-                .unwrap_or_else(|| "events".to_string()),
-            operation.target_id,
-            serde_json::json!({ "description": operation.description }),
-            operation.result.as_str(),
-            operation.error_message,
-            operation.duration_ms.map(|d| d as i32),
-            operation.metadata
+            operation.actor,
+            operation.scope,
+            operation.preview_summary,
+            started_at,
+            operation.finished_at,
+            operation.outcome,
+            operation.error_details
         )
         .fetch_one(self.pool)
         .await
@@ -353,17 +242,14 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
                 created_at
             FROM core.operations_log 
             WHERE operation_id = $1
@@ -381,20 +267,17 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
                 created_at
             FROM core.operations_log 
-            ORDER BY operation_ts DESC
+            ORDER BY started_at DESC
             LIMIT $1
             "#,
             limit
@@ -404,48 +287,43 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get recent operations"))
     }
 
-    /// Get operations by type
-    pub async fn get_operations_by_type(
+    /// Get operations by actor and scope
+    pub async fn get_operations_by_actor_and_scope(
         &self,
-        operation_type: OperationType,
+        actor: Option<&str>,
+        scope_filter: Option<JsonValue>,
         limit: Option<i64>,
     ) -> DbResult<Vec<Operation>> {
         let limit = limit.unwrap_or(100);
 
-        sqlx::query_as!(
-            Operation,
-            r#"
-            SELECT 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
-                created_at
-            FROM core.operations_log 
-            WHERE operation_type = $1
-            ORDER BY operation_ts DESC
-            LIMIT $2
-            "#,
-            operation_type.as_str(),
-            limit
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get operations by type"))
+        let mut query_builder = sqlx::QueryBuilder::new(
+            "SELECT operation_id, actor, scope, preview_summary, started_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
+        );
+
+        if let Some(actor) = actor {
+            query_builder.push(" AND actor = ");
+            query_builder.push_bind(actor);
+        }
+
+        if let Some(scope) = scope_filter {
+            query_builder.push(" AND scope @> ");
+            query_builder.push_bind(scope);
+        }
+
+        query_builder.push(" ORDER BY started_at DESC LIMIT ");
+        query_builder.push_bind(limit);
+
+        let query = query_builder.build_query_as::<Operation>();
+        query
+            .fetch_all(self.pool)
+            .await
+            .map_err(|e| db_error(e, "get operations by actor and scope"))
     }
 
-    /// Get operations for a target
-    pub async fn get_operations_for_target(
+    /// Get operations by scope filter (searches JSONB scope field)
+    pub async fn get_operations_by_scope(
         &self,
-        target_table: &str,
-        target_id: &str,
+        scope_filter: JsonValue,
         limit: Option<i64>,
     ) -> DbResult<Vec<Operation>> {
         let limit = limit.unwrap_or(100);
@@ -454,67 +332,60 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
                 created_at
             FROM core.operations_log 
-            WHERE target_table = $1 AND target_id = $2
-            ORDER BY operation_ts DESC
-            LIMIT $3
-            "#,
-            target_table,
-            target_id,
-            limit
-        )
-        .fetch_all(self.pool)
-        .await
-        .map_err(|e| db_error(e, "get operations for target"))
-    }
-
-    /// Get operations by operator
-    pub async fn get_operations_by_operator(
-        &self,
-        operator: &str,
-        limit: Option<i64>,
-    ) -> DbResult<Vec<Operation>> {
-        let limit = limit.unwrap_or(100);
-
-        sqlx::query_as!(
-            Operation,
-            r#"
-            SELECT 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
-                created_at
-            FROM core.operations_log 
-            WHERE operator = $1
-            ORDER BY operation_ts DESC
+            WHERE scope @> $1
+            ORDER BY started_at DESC
             LIMIT $2
             "#,
-            operator,
+            scope_filter,
             limit
         )
         .fetch_all(self.pool)
         .await
-        .map_err(|e| db_error(e, "get operations by operator"))
+        .map_err(|e| db_error(e, "get operations by scope"))
+    }
+
+    /// Get operations by actor
+    pub async fn get_operations_by_actor(
+        &self,
+        actor: &str,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<Operation>> {
+        let limit = limit.unwrap_or(100);
+
+        sqlx::query_as!(
+            Operation,
+            r#"
+            SELECT 
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
+                created_at
+            FROM core.operations_log 
+            WHERE actor = $1
+            ORDER BY started_at DESC
+            LIMIT $2
+            "#,
+            actor,
+            limit
+        )
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get operations by actor"))
     }
 
     /// Get failed operations
@@ -530,21 +401,18 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
                 created_at
             FROM core.operations_log 
-            WHERE result_status = 'failure' AND operation_ts > $1
-            ORDER BY operation_ts DESC
+            WHERE outcome = 'error' AND started_at > $1
+            ORDER BY started_at DESC
             LIMIT $2
             "#,
             since,
@@ -566,12 +434,12 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT
                 COUNT(*) as "total!",
-                COUNT(*) FILTER (WHERE result_status = 'success') as "successful!",
-                COUNT(*) FILTER (WHERE result_status = 'failure') as "failed!",
-                COUNT(*) FILTER (WHERE result_status = 'partial') as "partial!",
-                AVG(duration_ms) as "avg_duration_ms"
+                COUNT(*) FILTER (WHERE outcome = 'success') as "successful!",
+                COUNT(*) FILTER (WHERE outcome = 'error') as "failed!",
+                COUNT(*) FILTER (WHERE outcome = 'cancelled') as "cancelled!",
+                AVG(EXTRACT(EPOCH FROM (finished_at - started_at)) * 1000) as "avg_duration_ms"
             FROM core.operations_log
-            WHERE operation_ts > $1
+            WHERE started_at > $1
             "#,
             since
         )
@@ -583,7 +451,7 @@ impl<'a> StateRepository<'a> {
             total: result.total,
             successful: result.successful,
             failed: result.failed,
-            partial: result.partial,
+            cancelled: result.cancelled,
             avg_duration_ms: result.avg_duration_ms.and_then(|d: BigDecimal| {
                 use std::str::FromStr;
                 i64::from_str(&d.to_string()).ok()
@@ -1051,43 +919,36 @@ impl<'a> StateRepositoryTx<'a> {
     /// Log operation within transaction
     pub async fn log_operation(&mut self, operation: NewOperation) -> DbResult<Operation> {
         let id = Id::<Operation>::new();
+        let started_at = operation.started_at.unwrap_or_else(Utc::now);
 
         let result = sqlx::query_as!(
             Operation,
             r#"
             INSERT INTO core.operations_log (
-                operation_id, operation_type, operator, target_table,
-                target_id, operation_data, result_status, result_message, duration_ms,
-                metadata
+                operation_id, actor, scope, preview_summary,
+                started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                $1, $2, $3, $4, $5, $6, $7, $8
             )
             RETURNING 
-                operation_id as "id: Id<Operation>",
-                operation_ts,
-                operation_type,
-                operator,
-                target_table,
-                target_id,
-                operation_data,
-                result_status,
-                result_message,
-                duration_ms,
-                metadata,
+                operation_id as "operation_id: Id<Operation>",
+                actor,
+                scope,
+                preview_summary,
+                started_at,
+                finished_at,
+                outcome,
+                error_details,
                 created_at
             "#,
             *id.as_ulid() as _,
-            operation.operation_type.as_str(),
-            operation.performed_by,
-            operation
-                .target_type
-                .unwrap_or_else(|| "events".to_string()),
-            operation.target_id,
-            serde_json::json!({ "description": operation.description }),
-            operation.result.as_str(),
-            operation.error_message,
-            operation.duration_ms.map(|d| d as i32),
-            operation.metadata
+            operation.actor,
+            operation.scope,
+            operation.preview_summary,
+            started_at,
+            operation.finished_at,
+            operation.outcome,
+            operation.error_details
         )
         .fetch_one(&mut **self.tx)
         .await
@@ -1150,7 +1011,7 @@ pub struct OperationStatistics {
     pub total: i64,
     pub successful: i64,
     pub failed: i64,
-    pub partial: i64,
+    pub cancelled: i64,
     pub avg_duration_ms: Option<i64>,
 }
 
@@ -1229,39 +1090,46 @@ mod tests {
 
         // Log a successful operation
         let operation = NewOperation {
-            operation_type: OperationType::EventIngested,
-            performed_by: "ingestd".to_string(),
-            target_type: Some("events".to_string()),
-            target_id: Some(Id::<crate::models::RawEvent>::new().to_string()),
-            description: "Ingested event from fs-watcher".to_string(),
-            metadata: Some(serde_json::json!({ "source": "fs-watcher" })),
-            result: OperationResult::Success,
-            error_message: None,
-            duration_ms: Some(15),
+            actor: "ingestd@localhost".to_string(),
+            scope: json!({
+                "processor": "ingestd",
+                "mode": "ingestor",
+                "source": "fs-watcher"
+            }),
+            preview_summary: Some(json!({
+                "events_count": 1,
+                "types": ["file.created"]
+            })),
+            started_at: Some(Utc::now()),
+            finished_at: Some(Utc::now()),
+            outcome: Some("success".to_string()),
+            error_details: None,
         };
 
         let logged = repo.log_operation(operation).await?;
-        assert_eq!(logged.operation_type, "event_ingested");
-        assert_eq!(logged.result_status, "success");
-        assert!(logged.result_message.is_none());
+        assert_eq!(logged.actor, "ingestd@localhost");
+        assert_eq!(logged.outcome.as_deref(), Some("success"));
+        assert!(logged.error_details.is_none());
 
         // Log a failed operation
         let failed_op = NewOperation {
-            operation_type: OperationType::SchemaRegistered,
-            performed_by: "api-user".to_string(),
-            target_type: Some("schemas".to_string()),
-            target_id: Some("test-schema-1.0.0".to_string()),
-            description: "Failed to register schema".to_string(),
-            metadata: None,
-            result: OperationResult::Failure,
-            error_message: Some("Invalid JSON schema".to_string()),
-            duration_ms: Some(5),
+            actor: "api-user@localhost".to_string(),
+            scope: json!({
+                "processor": "schema-manager",
+                "mode": "automaton",
+                "target": "test-schema-1.0.0"
+            }),
+            preview_summary: None,
+            started_at: Some(Utc::now()),
+            finished_at: Some(Utc::now()),
+            outcome: Some("error".to_string()),
+            error_details: Some("Invalid JSON schema".to_string()),
         };
 
         let failed_logged = repo.log_operation(failed_op).await?;
-        assert_eq!(failed_logged.result_status, "failure");
+        assert_eq!(failed_logged.outcome.as_deref(), Some("error"));
         assert_eq!(
-            failed_logged.result_message.as_deref(),
+            failed_logged.error_details.as_deref(),
             Some("Invalid JSON schema")
         );
 
@@ -1269,11 +1137,11 @@ mod tests {
         let recent = repo.get_recent_operations(10).await?;
         assert_eq!(recent.len(), 2);
 
-        // Get operations by type
-        let ingested = repo
-            .get_operations_by_type(OperationType::EventIngested, None)
+        // Get operations by actor
+        let by_actor = repo
+            .get_operations_by_actor("ingestd@localhost", None)
             .await?;
-        assert_eq!(ingested.len(), 1);
+        assert_eq!(by_actor.len(), 1);
 
         // Get failed operations
         let failed = repo.get_failed_operations(None, None).await?;
@@ -1288,28 +1156,26 @@ mod tests {
 
         // Log various operations
         let operations = vec![
-            (OperationType::EventIngested, OperationResult::Success, 10),
-            (OperationType::EventProcessed, OperationResult::Success, 20),
-            (OperationType::EventArchived, OperationResult::Success, 15),
-            (OperationType::SchemaRegistered, OperationResult::Failure, 5),
-            (OperationType::BulkImport, OperationResult::Partial, 100),
+            ("success", None),
+            ("success", None),
+            ("success", None),
+            ("error", Some("Test error".to_string())),
+            ("cancelled", None),
         ];
 
-        for (op_type, result, duration) in operations {
+        for (outcome, error_details) in operations {
+            let started = Utc::now();
             let operation = NewOperation {
-                operation_type: op_type,
-                performed_by: "test-service".to_string(),
-                target_type: None,
-                target_id: None,
-                description: "Test operation".to_string(),
-                metadata: None,
-                result,
-                error_message: if result == OperationResult::Failure {
-                    Some("Test error".to_string())
-                } else {
-                    None
-                },
-                duration_ms: Some(duration),
+                actor: "test-service@localhost".to_string(),
+                scope: json!({
+                    "processor": "test",
+                    "mode": "automaton"
+                }),
+                preview_summary: None,
+                started_at: Some(started),
+                finished_at: Some(started + chrono::Duration::milliseconds(100)),
+                outcome: Some(outcome.to_string()),
+                error_details,
             };
 
             repo.log_operation(operation).await?;
@@ -1320,7 +1186,8 @@ mod tests {
         assert_eq!(stats.total, 5);
         assert_eq!(stats.successful, 3);
         assert_eq!(stats.failed, 1);
-        assert_eq!(stats.partial, 1);
+        assert_eq!(stats.cancelled, 1);
+        // avg_duration_ms should be around 100
         assert!(stats.avg_duration_ms.is_some());
 
         Ok(())

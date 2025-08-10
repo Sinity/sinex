@@ -1,6 +1,6 @@
-//! Migration to create replay_operations table for tracking replay operations with operation_id
+//! Migration to create operations_log table for tracking all operations with operation_id
 //!
-//! This table tracks replay operations with unique operation IDs
+//! This table tracks replay/archive/restore operations per TARGET_canonical.md specification
 
 use async_trait::async_trait;
 use sea_orm_migration::prelude::*;
@@ -11,51 +11,49 @@ pub struct Migration;
 #[async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Create core.replay_operations table
+        // Create core.operations_log table per TARGET_canonical.md spec
         manager
             .create_table(
                 Table::create()
-                    .table((Alias::new("core"), ReplayOperations::Table))
+                    .table((Alias::new("core"), OperationsLog::Table))
                     .if_not_exists()
                     .col(
-                        ColumnDef::new(ReplayOperations::OperationId)
+                        ColumnDef::new(OperationsLog::OperationId)
                             .string()
                             .not_null()
                             .primary_key(),
                     )
+                    .col(ColumnDef::new(OperationsLog::Actor).text().not_null())
+                    .col(ColumnDef::new(OperationsLog::Scope).json().not_null())
+                    .col(ColumnDef::new(OperationsLog::PreviewSummary).json())
                     .col(
-                        ColumnDef::new(ReplayOperations::OperationType)
-                            .string()
-                            .not_null()
-                            .default("replay"),
-                    )
-                    .col(
-                        ColumnDef::new(ReplayOperations::Status)
-                            .string()
-                            .not_null()
-                            .default("draft"),
-                    )
-                    .col(ColumnDef::new(ReplayOperations::Metadata).json())
-                    .col(
-                        ColumnDef::new(ReplayOperations::CreatedAt)
+                        ColumnDef::new(OperationsLog::StartedAt)
                             .timestamp_with_time_zone()
                             .not_null()
                             .default(Expr::current_timestamp()),
                     )
-                    .col(ColumnDef::new(ReplayOperations::ExecutedAt).timestamp_with_time_zone())
-                    .col(ColumnDef::new(ReplayOperations::CompletedAt).timestamp_with_time_zone())
-                    .col(ColumnDef::new(ReplayOperations::ErrorMessage).text())
+                    .col(ColumnDef::new(OperationsLog::FinishedAt).timestamp_with_time_zone())
+                    .col(ColumnDef::new(OperationsLog::Outcome).text())
+                    .col(ColumnDef::new(OperationsLog::ErrorDetails).text())
                     .col(
-                        ColumnDef::new(ReplayOperations::EventCount)
-                            .big_integer()
-                            .default(0),
+                        ColumnDef::new(OperationsLog::CreatedAt)
+                            .timestamp_with_time_zone()
+                            .not_null()
+                            .default(Expr::current_timestamp()),
                     )
-                    .col(
-                        ColumnDef::new(ReplayOperations::AffectedEventIds)
-                            .array(ColumnType::custom("ULID")),
-                    )
-                    .col(ColumnDef::new(ReplayOperations::Provenance).json())
                     .to_owned(),
+            )
+            .await?;
+
+        // Add CHECK constraint for outcome values
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                ALTER TABLE core.operations_log 
+                ADD CONSTRAINT operations_log_outcome_check 
+                CHECK (outcome IN ('success', 'error', 'cancelled'));
+                "#,
             )
             .await?;
 
@@ -64,10 +62,10 @@ impl MigrationTrait for Migration {
             .create_index(
                 Index::create()
                     .if_not_exists()
-                    .name("idx_replay_operations_type_status")
-                    .table((Alias::new("core"), ReplayOperations::Table))
-                    .col(ReplayOperations::OperationType)
-                    .col(ReplayOperations::Status)
+                    .name("idx_operations_log_actor_started")
+                    .table((Alias::new("core"), OperationsLog::Table))
+                    .col(OperationsLog::Actor)
+                    .col(OperationsLog::StartedAt)
                     .to_owned(),
             )
             .await?;
@@ -76,9 +74,21 @@ impl MigrationTrait for Migration {
             .create_index(
                 Index::create()
                     .if_not_exists()
-                    .name("idx_replay_operations_created_at")
-                    .table((Alias::new("core"), ReplayOperations::Table))
-                    .col(ReplayOperations::CreatedAt)
+                    .name("idx_operations_log_outcome_started")
+                    .table((Alias::new("core"), OperationsLog::Table))
+                    .col(OperationsLog::Outcome)
+                    .col(OperationsLog::StartedAt)
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .create_index(
+                Index::create()
+                    .if_not_exists()
+                    .name("idx_operations_log_started_at")
+                    .table((Alias::new("core"), OperationsLog::Table))
+                    .col(OperationsLog::StartedAt)
                     .to_owned(),
             )
             .await?;
@@ -156,7 +166,7 @@ impl MigrationTrait for Migration {
         manager
             .drop_index(
                 Index::drop()
-                    .name("idx_replay_operations_created_at")
+                    .name("idx_operations_log_started_at")
                     .to_owned(),
             )
             .await?;
@@ -164,7 +174,15 @@ impl MigrationTrait for Migration {
         manager
             .drop_index(
                 Index::drop()
-                    .name("idx_replay_operations_type_status")
+                    .name("idx_operations_log_outcome_started")
+                    .to_owned(),
+            )
+            .await?;
+
+        manager
+            .drop_index(
+                Index::drop()
+                    .name("idx_operations_log_actor_started")
                     .to_owned(),
             )
             .await?;
@@ -173,7 +191,7 @@ impl MigrationTrait for Migration {
         manager
             .drop_table(
                 Table::drop()
-                    .table((Alias::new("core"), ReplayOperations::Table))
+                    .table((Alias::new("core"), OperationsLog::Table))
                     .to_owned(),
             )
             .await?;
@@ -183,17 +201,15 @@ impl MigrationTrait for Migration {
 }
 
 #[derive(DeriveIden)]
-enum ReplayOperations {
+enum OperationsLog {
     Table,
     OperationId,
-    OperationType,
-    Status,
-    Metadata,
+    Actor,
+    Scope,
+    PreviewSummary,
+    StartedAt,
+    FinishedAt,
+    Outcome,
+    ErrorDetails,
     CreatedAt,
-    ExecutedAt,
-    CompletedAt,
-    ErrorMessage,
-    EventCount,
-    AffectedEventIds,
-    Provenance,
 }

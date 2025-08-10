@@ -38,7 +38,7 @@ pub use source_materials::{
     SourceMaterialRepository,
 };
 pub use state::{
-    NewOperation, Operation, OperationResult, OperationStatistics, OperationType, StateRepository,
+    NewOperation, Operation, OperationStatistics, StateRepository, SystemHealthReport,
 };
 
 use sqlx::PgPool;

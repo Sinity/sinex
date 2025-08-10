@@ -150,7 +150,7 @@ impl TimeHorizon {
 /// Different checkpoint types support various data sources:
 /// - `External`: For ingestors tracking external system state (files, logs, etc.)
 /// - `Internal`: For automata tracking processed event IDs in the event stream
-/// - `Stream`: For Redis Stream-based message processing
+/// - `Stream`: For message stream-based processing (NATS JetStream)
 /// - `Timestamp`: For time-based processing resumption
 ///
 /// # Examples
@@ -169,7 +169,7 @@ impl TimeHorizon {
 /// let event_id = Ulid::new();
 /// let internal = Checkpoint::internal(event_id, 150);
 ///
-/// // Stream checkpoint for Redis processing
+/// // Stream checkpoint for NATS JetStream processing
 /// let stream = Checkpoint::stream("1234567890-0", Some(event_id));
 /// ```
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -190,9 +190,9 @@ pub enum Checkpoint {
         /// Message count for verification
         message_count: u64,
     },
-    /// Redis Stream message ID for stream-based processing
+    /// Message stream ID for stream-based processing (NATS JetStream)
     Stream {
-        /// Redis Stream message ID
+        /// Stream message ID (NATS JetStream sequence number)
         message_id: String,
         /// Associated event ULID if known
         event_id: Option<Ulid>,
@@ -252,14 +252,14 @@ impl Checkpoint {
         }
     }
 
-    /// Create a checkpoint from a Redis Stream message ID.
+    /// Create a checkpoint from a stream message ID.
     ///
-    /// Used for Redis Stream-based processing. The message_id follows
-    /// Redis Stream format (e.g., "1234567890-0"), and event_id
-    /// provides correlation with the internal event stream.
+    /// Used for NATS JetStream-based processing. The message_id is
+    /// typically a sequence number, and event_id provides correlation
+    /// with the internal event stream.
     ///
     /// # Parameters
-    /// - `message_id`: Redis Stream message ID (format: "timestamp-sequence")
+    /// - `message_id`: Stream message ID (NATS JetStream sequence number)
     /// - `event_id`: Optional ULID of the corresponding internal event
     pub fn stream(message_id: impl Into<String>, event_id: Option<Ulid>) -> Self {
         Self::Stream {

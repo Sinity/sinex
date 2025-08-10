@@ -15,6 +15,8 @@ mod m20250810_000001_create_outbox_table;
 mod m20250810_000002_add_constraints_and_archives;
 mod m20250810_000003_create_sensd_tables;
 mod m20250810_000004_create_operations_log;
+mod m20250810_000005_fix_operations_log_table;
+mod m20250810_000006_add_archive_trigger;
 mod m20250810_111846_fix_operation_id_trigger;
 mod m20250810_132050_drop_obsolete_artifact_tables;
 pub mod schema;
@@ -40,6 +42,8 @@ impl MigratorTrait for Migrator {
             Box::new(m20250810_000002_add_constraints_and_archives::Migration),
             Box::new(m20250810_000003_create_sensd_tables::Migration),
             Box::new(m20250810_000004_create_operations_log::Migration),
+            Box::new(m20250810_000005_fix_operations_log_table::Migration),
+            Box::new(m20250810_000006_add_archive_trigger::Migration),
             Box::new(m20250810_111846_fix_operation_id_trigger::Migration),
             Box::new(m20250810_132050_drop_obsolete_artifact_tables::Migration),
         ]

@@ -14,14 +14,14 @@
 //!
 //! - `External`: For ingestors tracking external system state (file positions, timestamps)
 //! - `Internal`: For automata tracking processed event ULIDs
-//! - `Stream`: For Redis Stream message IDs
+//! - `Stream`: For message stream IDs (NATS JetStream)
 //! - `Timestamp`: For time-based processing resumption
 //!
 //! # Database Schema
 //!
 //! The `core.automaton_checkpoints` table stores:
 //! - `automaton_name`: Processor identifier
-//! - `consumer_group`: Redis consumer group (for automata)
+//! - `consumer_group`: Consumer group (for stream processing)
 //! - `consumer_name`: Instance identifier (hostname + PID)
 //! - `checkpoint_data`: JSON-serialized unified checkpoint (v2+)
 //!
@@ -108,7 +108,7 @@ pub struct CheckpointState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LegacyCheckpointState {
-    /// Last processed message ID from Redis Stream
+    /// Last processed message ID from stream
     pub last_processed_id: Option<String>,
 
     /// Total number of messages processed

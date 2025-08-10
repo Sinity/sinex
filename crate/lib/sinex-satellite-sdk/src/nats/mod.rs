@@ -1,7 +1,7 @@
 //! NATS JetStream integration for Sinex
 //!
-//! This crate provides NATS JetStream connectivity for the Sinex event system,
-//! replacing Redis Streams as the primary message bus for event distribution.
+//! This crate provides NATS JetStream connectivity for the Sinex event system
+//! as the primary message bus for event distribution.
 
 pub mod client;
 pub mod config;
