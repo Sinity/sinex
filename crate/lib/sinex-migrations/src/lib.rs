@@ -14,6 +14,7 @@ mod m20250103_000001_source_material_refactor;
 mod m20250810_000001_create_outbox_table;
 mod m20250810_000002_add_constraints_and_archives;
 mod m20250810_000003_create_sensd_tables;
+mod m20250810_000004_create_operations_log;
 pub mod schema;
 
 pub struct Migrator;
@@ -36,6 +37,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20250810_000001_create_outbox_table::Migration),
             Box::new(m20250810_000002_add_constraints_and_archives::Migration),
             Box::new(m20250810_000003_create_sensd_tables::Migration),
+            Box::new(m20250810_000004_create_operations_log::Migration),
         ]
     }
 }
