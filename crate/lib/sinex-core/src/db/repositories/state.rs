@@ -9,6 +9,7 @@ use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::OperationsLog;
 use crate::models::RawEvent;
 use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
+use crate::types::error::SinexError;
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -89,19 +90,15 @@ impl<'a> StateRepository<'a> {
     pub fn validate_replay_scope(scope: &JsonValue) -> DbResult<()> {
         // Required fields for replay scope
         if !scope.is_object() {
-            return Err(db_error(
-                "ReplayScope must be a JSON object",
-                "validate_replay_scope",
-            ));
+            return Err(SinexError::validation("ReplayScope must be a JSON object"));
         }
 
         let obj = scope.as_object().unwrap();
 
         // Check required fields
         if !obj.contains_key("target_type") {
-            return Err(db_error(
+            return Err(SinexError::validation(
                 "ReplayScope missing required field: target_type",
-                "validate_replay_scope",
             ));
         }
 
@@ -109,9 +106,8 @@ impl<'a> StateRepository<'a> {
         if let Some(target_type) = obj.get("target_type").and_then(|v| v.as_str()) {
             match target_type {
                 "event" | "time_range" | "cascade" | "operation" => {},
-                _ => return Err(db_error(
-                    format!("Invalid target_type: {}. Must be one of: event, time_range, cascade, operation", target_type),
-                    "validate_replay_scope"
+                _ => return Err(SinexError::validation(
+                    format!("Invalid target_type: {}. Must be one of: event, time_range, cascade, operation", target_type)
                 )),
             }
 
@@ -119,43 +115,34 @@ impl<'a> StateRepository<'a> {
             match target_type {
                 "event" => {
                     if !obj.contains_key("event_id") {
-                        return Err(db_error(
-                            "Event scope requires event_id",
-                            "validate_replay_scope",
-                        ));
+                        return Err(SinexError::validation("Event scope requires event_id"));
                     }
                 }
                 "time_range" => {
                     if !obj.contains_key("start_time") || !obj.contains_key("end_time") {
-                        return Err(db_error(
+                        return Err(SinexError::validation(
                             "Time range scope requires start_time and end_time",
-                            "validate_replay_scope",
                         ));
                     }
                 }
                 "cascade" => {
                     if !obj.contains_key("root_event_id") {
-                        return Err(db_error(
+                        return Err(SinexError::validation(
                             "Cascade scope requires root_event_id",
-                            "validate_replay_scope",
                         ));
                     }
                 }
                 "operation" => {
                     if !obj.contains_key("operation_id") {
-                        return Err(db_error(
+                        return Err(SinexError::validation(
                             "Operation scope requires operation_id",
-                            "validate_replay_scope",
                         ));
                     }
                 }
                 _ => {}
             }
         } else {
-            return Err(db_error(
-                "target_type must be a string",
-                "validate_replay_scope",
-            ));
+            return Err(SinexError::validation("target_type must be a string"));
         }
 
         Ok(())

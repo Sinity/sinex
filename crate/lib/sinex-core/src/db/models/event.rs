@@ -119,7 +119,7 @@ impl Provenance {
 }
 
 impl RawEvent {
-    /// Create a new event with minimal required fields
+    /// Create a schemaless event with untyped JSON payload
     ///
     /// This creates a RawEvent that can be chained with `with_*` methods:
     /// ```ignore

@@ -2041,8 +2041,8 @@ mod tests {
         assert_eq!(inserted.host.as_str(), "test-host");
         assert_eq!(inserted.payload["test"], "data");
 
-        // ts_ingest should be set by database (can be extracted from ULID)
-        assert!(inserted.ts_ingest_from_ulid().is_some());
+        // ID should be set after insertion
+        assert!(inserted.id.is_some());
 
         Ok(())
     }

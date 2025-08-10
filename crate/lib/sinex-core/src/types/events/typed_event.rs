@@ -101,21 +101,9 @@ impl<T: EventPayload> Event<T> {
         }
     }
 
-    /// Alias for backward compatibility - will be removed
-    #[deprecated(since = "0.2.0", note = "Use Event::new instead")]
-    pub fn from_payload(payload: T) -> Self {
-        Self::new(payload)
-    }
-
     /// Create a typed event from a payload with a specific timestamp
     pub fn with_timestamp(payload: T, ts_orig: Timestamp) -> Self {
         Self::new(payload).with_ts_orig(Some(ts_orig))
-    }
-
-    /// Alias for backward compatibility - will be removed
-    #[deprecated(since = "0.2.0", note = "Use Event::with_timestamp instead")]
-    pub fn from_payload_with_timestamp(payload: T, ts_orig: Timestamp) -> Self {
-        Self::with_timestamp(payload, ts_orig)
     }
 
     /// Builder pattern method to set timestamp origin
