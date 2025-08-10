@@ -87,7 +87,9 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
         .await?;
 
     // Query filesystem events using TestContext helpers
-    let filesystem_events = ctx.get_events_by_source("fs-watcher").await?;
+    let filesystem_events = ctx
+        .get_events_by_source(&EventSource::from_static("fs-watcher"))
+        .await?;
     assert!(filesystem_events.len() >= 2);
 
     for event in &filesystem_events {
@@ -168,7 +170,9 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
     }
 
     // Query filesystem events to verify they exist
-    let filesystem_events = ctx.get_events_by_source("fs-watcher").await?;
+    let filesystem_events = ctx
+        .get_events_by_source(&EventSource::from_static("fs-watcher"))
+        .await?;
     assert!(filesystem_events.len() >= 5);
 
     // Verify ULIDs are in chronological order by converting to strings

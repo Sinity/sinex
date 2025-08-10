@@ -8,7 +8,7 @@ use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::OperationsLog;
 use crate::models::RawEvent;
-use crate::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -862,8 +862,8 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Delete test events by source
-    pub async fn cleanup_test_events_by_source(&self, source: &str) -> DbResult<u64> {
-        let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source)
+    pub async fn cleanup_test_events_by_source(&self, source: &EventSource) -> DbResult<u64> {
+        let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source.as_str())
             .execute(self.pool)
             .await
             .map_err(|e| db_error(e, "cleanup test events by source"))?;
@@ -872,11 +872,15 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Delete test events by source and event type
-    pub async fn cleanup_test_events(&self, source: &str, event_type: &str) -> DbResult<u64> {
+    pub async fn cleanup_test_events(
+        &self,
+        source: &EventSource,
+        event_type: &EventType,
+    ) -> DbResult<u64> {
         let result = sqlx::query!(
             "DELETE FROM core.events WHERE source = $1 AND event_type = $2",
-            source,
-            event_type
+            source.as_str(),
+            event_type.as_str()
         )
         .execute(self.pool)
         .await

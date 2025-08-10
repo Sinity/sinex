@@ -52,8 +52,7 @@ impl NatsPublisher {
 
     /// Publish a raw event
     pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
-        let subject =
-            StreamManager::event_subject(event.source.as_str(), event.event_type.as_str());
+        let subject = StreamManager::event_subject(&event.source, &event.event_type);
 
         // Create headers
         let mut headers = HeaderMap::new();

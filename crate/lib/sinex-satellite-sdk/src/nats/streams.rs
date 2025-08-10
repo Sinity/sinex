@@ -7,6 +7,7 @@ use super::{
 };
 use async_nats::jetstream;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::domain::{EventSource, EventType, ServiceName};
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -220,18 +221,26 @@ impl StreamManager {
     }
 
     /// Create a subject for a specific event source and type
-    pub fn event_subject(source: &str, event_type: &str) -> String {
-        format!("sinex.events.raw.{}.{}", source, event_type)
+    pub fn event_subject(source: &EventSource, event_type: &EventType) -> String {
+        format!(
+            "sinex.events.raw.{}.{}",
+            source.as_str(),
+            event_type.as_str()
+        )
     }
 
     /// Create a subject for processed events
-    pub fn processed_subject(source: &str, event_type: &str) -> String {
-        format!("sinex.events.processed.{}.{}", source, event_type)
+    pub fn processed_subject(source: &EventSource, event_type: &EventType) -> String {
+        format!(
+            "sinex.events.processed.{}.{}",
+            source.as_str(),
+            event_type.as_str()
+        )
     }
 
     /// Create a subject for metrics
-    pub fn metrics_subject(component: &str, metric_type: &str) -> String {
-        format!("sinex.metrics.{}.{}", component, metric_type)
+    pub fn metrics_subject(component: &ServiceName, metric_type: &str) -> String {
+        format!("sinex.metrics.{}.{}", component.as_str(), metric_type)
     }
 
     /// Create a subject for alerts
@@ -296,18 +305,23 @@ mod tests {
 
     #[sinex_test]
     fn test_subject_creation() -> color_eyre::eyre::Result<()> {
+        let source = EventSource::from_static("filesystem");
+        let event_type = EventType::from_static("created");
         assert_eq!(
-            StreamManager::event_subject("filesystem", "created"),
+            StreamManager::event_subject(&source, &event_type),
             "sinex.events.raw.filesystem.created"
         );
 
+        let source2 = EventSource::from_static("terminal");
+        let event_type2 = EventType::from_static("command");
         assert_eq!(
-            StreamManager::processed_subject("terminal", "command"),
+            StreamManager::processed_subject(&source2, &event_type2),
             "sinex.events.processed.terminal.command"
         );
 
+        let service = ServiceName::from_static("ingestd");
         assert_eq!(
-            StreamManager::metrics_subject("ingestd", "throughput"),
+            StreamManager::metrics_subject(&service, "throughput"),
             "sinex.metrics.ingestd.throughput"
         );
 

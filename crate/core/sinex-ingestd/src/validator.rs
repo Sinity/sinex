@@ -4,6 +4,7 @@ use crate::IngestdResult;
 use ahash::AHashMap;
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_core::types::ulid::Ulid;
 use sqlx::FromRow;
 use std::sync::Arc;
@@ -233,11 +234,15 @@ impl EventValidator {
     }
 
     /// Get schema ID for a source and event type (latest version)
-    pub fn get_schema_id(&self, source: &str, event_type: &str) -> Option<Arc<String>> {
+    pub fn get_schema_id(
+        &self,
+        source: &EventSource,
+        event_type: &EventType,
+    ) -> Option<Arc<String>> {
         let lookup = self.schema_lookup.read();
         // Create Arc strings to use as lookup keys
-        let source_arc = Arc::new(source.to_string());
-        let event_type_arc = Arc::new(event_type.to_string());
+        let source_arc = Arc::new(source.as_str().to_string());
+        let event_type_arc = Arc::new(event_type.as_str().to_string());
         lookup.get(&(source_arc, event_type_arc)).cloned()
     }
 

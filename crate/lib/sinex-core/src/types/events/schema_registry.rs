@@ -3,6 +3,7 @@
 //! This module provides runtime access to schema IDs for EventPayload types.
 //! The actual schemas are managed by the sinex-schema-manager tool.
 
+use crate::domain::{EventSource, EventType};
 use crate::ulid::Ulid;
 use once_cell::sync::Lazy;
 use std::collections::HashMap;
@@ -32,8 +33,12 @@ static VERSION_CACHE: Lazy<RwLock<HashMap<Ulid, Arc<String>>>> =
 ///
 /// This will check the in-memory cache first, then query the database
 /// if needed. The cache is populated lazily as schemas are looked up.
-pub async fn lookup_schema_id(pool: &sqlx::PgPool, source: &str, event_type: &str) -> Option<Ulid> {
-    let schema_name = format!("{}.{}", source, event_type);
+pub async fn lookup_schema_id(
+    pool: &sqlx::PgPool,
+    source: &EventSource,
+    event_type: &EventType,
+) -> Option<Ulid> {
+    let schema_name = format!("{}.{}", source.as_str(), event_type.as_str());
 
     // Check cache first
     {
@@ -82,8 +87,8 @@ pub fn get_schema_version(schema_id: Ulid) -> Option<Arc<String>> {
 ///
 /// This returns the cached schema ID for a given source and event type.
 /// The cache must be populated beforehand using `preload_schemas`.
-pub fn get_schema_id(source: &str, event_type: &str) -> Option<Ulid> {
-    let schema_name = format!("{}.{}", source, event_type);
+pub fn get_schema_id(source: &EventSource, event_type: &EventType) -> Option<Ulid> {
+    let schema_name = format!("{}.{}", source.as_str(), event_type.as_str());
     let cache = SCHEMA_CACHE.read().unwrap();
     cache.get(&schema_name).cloned()
 }

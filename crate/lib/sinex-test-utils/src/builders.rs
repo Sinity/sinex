@@ -115,11 +115,16 @@ impl TestScenarioBuilder {
         self
     }
     /// Add multiple events from the same source
-    pub fn with_events_from_source(mut self, source: &str, event_type: &str, count: usize) -> Self {
+    pub fn with_events_from_source(
+        mut self,
+        source: &EventSource,
+        event_type: &EventType,
+        count: usize,
+    ) -> Self {
         for i in 0..count {
             let event = RawEvent::schemaless(
-                EventSource::from(source),
-                EventType::from(event_type),
+                source.clone(),
+                event_type.clone(),
                 json!({
                     "index": i,
                     "batch": true
@@ -172,15 +177,17 @@ impl DatabaseMetricsBuilder {
     }
 
     /// Add events by source (updates unique_sources automatically)
-    pub fn with_source_count(mut self, source: &str, count: u64) -> Self {
-        self.events_by_source.insert(source.to_string(), count);
+    pub fn with_source_count(mut self, source: &EventSource, count: u64) -> Self {
+        self.events_by_source
+            .insert(source.as_str().to_string(), count);
         self.unique_sources = self.events_by_source.len() as u32;
         self
     }
 
     /// Add events by type (updates unique_event_types automatically)  
-    pub fn with_type_count(mut self, event_type: &str, count: u64) -> Self {
-        self.events_by_type.insert(event_type.to_string(), count);
+    pub fn with_type_count(mut self, event_type: &EventType, count: u64) -> Self {
+        self.events_by_type
+            .insert(event_type.as_str().to_string(), count);
         self.unique_event_types = self.events_by_type.len() as u32;
         self
     }

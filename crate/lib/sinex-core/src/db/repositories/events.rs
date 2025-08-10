@@ -2009,13 +2009,13 @@ impl<'a> EventRepository<'a> {
     }
 
     /// Delete all events from a specific source (useful for test cleanup)
-    pub async fn delete_by_source(&self, source: &str) -> DbResult<u64> {
+    pub async fn delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
         let result = sqlx::query!(
             r#"
             DELETE FROM core.events
             WHERE source = $1
             "#,
-            source
+            source.as_str()
         )
         .execute(self.pool)
         .await

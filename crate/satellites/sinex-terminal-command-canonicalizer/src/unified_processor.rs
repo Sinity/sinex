@@ -7,7 +7,7 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value};
-use sinex_core::db::models::{RawEvent, Provenance};
+use sinex_core::db::models::{Provenance, RawEvent};
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::error::SinexError;
@@ -99,12 +99,7 @@ impl TerminalCommandCanonicalizer {
         let event_type = EventType::from_static("command.canonical");
         let events = pool
             .events()
-            .get_events_by_type_and_time_range(
-                &event_type,
-                start_time,
-                end_time,
-                Some(1000),
-            )
+            .get_events_by_type_and_time_range(&event_type, start_time, end_time, Some(1000))
             .await?;
 
         // Find matching command text
@@ -148,12 +143,18 @@ impl TerminalCommandCanonicalizer {
             user: payload.get_string("user"),
             session_id: payload.get_string("session_id"),
             environment_hash: payload.get_string("environment_hash"),
-            source_events: vec![event.id.map(|id| id.as_ulid()).unwrap_or_else(|| Ulid::new())],
+            source_events: vec![event
+                .id
+                .map(|id| id.as_ulid())
+                .unwrap_or_else(|| Ulid::new())],
         })
     }
 
     /// Create a canonical command synthesis event
-    async fn create_canonical_command(&self, command_data: &CommandData) -> SatelliteResult<RawEvent> {
+    async fn create_canonical_command(
+        &self,
+        command_data: &CommandData,
+    ) -> SatelliteResult<RawEvent> {
         let ctx = self
             .context
             .as_ref()
@@ -175,7 +176,7 @@ impl TerminalCommandCanonicalizer {
         });
 
         use sinex_core::types::{Id, Ulid as CoreUlid};
-        
+
         let event = RawEvent {
             id: None,
             source: EventSource::from_static("automaton.terminal_command_canonicalizer"),
@@ -187,7 +188,11 @@ impl TerminalCommandCanonicalizer {
             ingestor_version: Some("1.0.0".to_string()),
             payload_schema_id: None,
             provenance: Some(Provenance::Events(
-                command_data.source_events.iter().map(|ulid| Id::<RawEvent>::from_ulid(*ulid)).collect()
+                command_data
+                    .source_events
+                    .iter()
+                    .map(|ulid| Id::<RawEvent>::from_ulid(*ulid))
+                    .collect(),
             )),
             anchor_byte: None,
             associated_blob_ids: None,

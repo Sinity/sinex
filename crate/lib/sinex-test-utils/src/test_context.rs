@@ -258,11 +258,13 @@ impl TestContext {
     }
 
     /// Get events by source (convenience wrapper around repository)
-    pub async fn get_events_by_source(&self, source: &str) -> Result<Vec<RawEvent>> {
-        let event_source = sinex_core::types::domain::EventSource::from(source);
+    pub async fn get_events_by_source(
+        &self,
+        source: &sinex_core::types::domain::EventSource,
+    ) -> Result<Vec<RawEvent>> {
         self.pool
             .events()
-            .get_by_source(&event_source, Some(100), None)
+            .get_by_source(source, Some(100), None)
             .await
             .map_err(Into::into)
     }

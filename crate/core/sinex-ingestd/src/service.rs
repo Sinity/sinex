@@ -13,9 +13,9 @@ use crate::{
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
 use once_cell::sync::Lazy;
-use sinex_core::db::models::{RawEvent, Provenance};
-use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::models::{Provenance, RawEvent};
 use sinex_core::db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::{Id, Ulid};
@@ -232,7 +232,8 @@ impl IngestService {
         // Start outbox processor task
         if let Some(ref pool) = self.db_pool {
             if let Some(ref js) = self.jetstream {
-                self.start_outbox_processor_task(pool.clone(), js.clone()).await;
+                self.start_outbox_processor_task(pool.clone(), js.clone())
+                    .await;
             }
         }
 
@@ -420,9 +421,15 @@ impl IngestService {
             // Publish to NATS JetStream
             let event_data = serde_json::to_vec(&entry.payload)?;
             let mut headers = async_nats::HeaderMap::new();
-            headers.insert("Nats-Msg-Id", uuid_to_ulid(entry.event_id).to_string().as_str());
+            headers.insert(
+                "Nats-Msg-Id",
+                uuid_to_ulid(entry.event_id).to_string().as_str(),
+            );
 
-            match js.publish_with_headers(entry.subject, headers, event_data.into()).await {
+            match js
+                .publish_with_headers(entry.subject, headers, event_data.into())
+                .await
+            {
                 Ok(_) => {
                     // Delete from outbox after successful publish
                     match sqlx::query("DELETE FROM core.outbox WHERE id = $1")
@@ -559,9 +566,13 @@ impl IngestService {
 
         for event in events {
             // Generate ID if not present
-            let event_id = event.id.as_ref().map(|id| *id.as_ulid()).unwrap_or_else(|| Ulid::new());
+            let event_id = event
+                .id
+                .as_ref()
+                .map(|id| *id.as_ulid())
+                .unwrap_or_else(|| Ulid::new());
             let event_uuid = ulid_to_uuid(event_id);
-            
+
             event_ids.push(event_uuid);
             sources.push(event.source.as_str());
             event_types.push(event.event_type.as_str());
@@ -573,16 +584,24 @@ impl IngestService {
             payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
 
             // Extract provenance into separate database fields
-            let (source_event_ids_opt, source_material_id, offset_start, offset_end) = 
+            let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
                 match &event.provenance {
                     Some(Provenance::Events(ids)) => {
-                        let uuids: Vec<sqlx::types::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+                        let uuids: Vec<sqlx::types::Uuid> =
+                            ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
                         (Some(uuids), None, None, None)
                     }
-                    Some(Provenance::Material { id, offset_start, offset_end }) => {
-                        (None, Some(ulid_to_uuid(*id.as_ulid())), *offset_start, *offset_end)
-                    }
-                    None => (None, None, None, None)
+                    Some(Provenance::Material {
+                        id,
+                        offset_start,
+                        offset_end,
+                    }) => (
+                        None,
+                        Some(ulid_to_uuid(*id.as_ulid())),
+                        *offset_start,
+                        *offset_end,
+                    ),
+                    None => (None, None, None, None),
                 };
 
             source_event_id_arrays.push(source_event_ids_opt);
@@ -590,15 +609,19 @@ impl IngestService {
             source_material_offset_starts.push(offset_start);
             source_material_offset_ends.push(offset_end);
             anchor_bytes.push(event.anchor_byte);
-            
-            let blob_uuids = event.associated_blob_ids.as_ref()
+
+            let blob_uuids = event
+                .associated_blob_ids
+                .as_ref()
                 .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
             associated_blob_id_arrays.push(blob_uuids);
 
             // Prepare outbox entry for NATS publishing
-            let subject = format!("events.{}.{}", 
+            let subject = format!(
+                "events.{}.{}",
                 event.source.as_str().replace('.', "_"),
-                event.event_type.as_str().replace('.', "_"));
+                event.event_type.as_str().replace('.', "_")
+            );
             outbox_entries.push((event_id, subject, serde_json::to_value(event)?));
         }
 
@@ -635,8 +658,8 @@ impl IngestService {
             &anchor_bytes,
             &associated_blob_id_arrays as &[Option<Vec<uuid::Uuid>>],
             &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_name
-            &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_version  
-            &vec![None::<i32>; events.len()] as &[Option<i32>], // processor_manifest_id
+            &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_version
+            &vec![None::<i32>; events.len()] as &[Option<i32>],   // processor_manifest_id
         )
         .execute(&mut *tx)
         .await?;
@@ -656,10 +679,12 @@ impl IngestService {
         // Commit transaction
         tx.commit().await?;
 
-        debug!("Successfully wrote {} events to core.events with outbox entries", events.len());
+        debug!(
+            "Successfully wrote {} events to core.events with outbox entries",
+            events.len()
+        );
         Ok(())
     }
-
 
     /// Add event to buffer
     async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
@@ -940,16 +965,18 @@ impl IngestServiceImpl {
             .transpose()?;
 
         // Look up schema ID from our in-memory cache
+        let source = EventSource::new(proto.source);
+        let event_type = EventType::new(proto.event_type);
         let schema_id = {
             let validator = self.service.validator.lock().await;
             validator
-                .get_schema_id(&proto.source, &proto.event_type)
+                .get_schema_id(&source, &event_type)
                 .and_then(|id_arc| Ulid::from_str(&id_arc).ok())
         };
 
         let builder = RawEvent::builder()
-            .source(EventSource::new(proto.source))
-            .event_type(EventType::new(proto.event_type))
+            .source(source)
+            .event_type(event_type)
             .host(HostName::new(proto.host))
             .payload(payload)
             .ingestor_version(INGESTOR_VERSION.clone());
