@@ -147,11 +147,12 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use std::sync::atomic::{AtomicBool, Ordering};
     use tokio::time::{sleep, Duration};
 
-    #[tokio::test]
-    async fn test_resource_guard_cleanup_on_drop() {
+    #[sinex_test]
+    async fn test_resource_guard_cleanup_on_drop() -> color_eyre::eyre::Result<()> {
         let cleaned_up = Arc::new(AtomicBool::new(false));
         let cleaned_up_clone = cleaned_up.clone();
 
@@ -168,10 +169,11 @@ mod tests {
         // Give cleanup task time to run
         sleep(Duration::from_millis(50)).await;
         assert!(cleaned_up.load(Ordering::Relaxed));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_simple_guard_cleanup() {
+    #[sinex_test]
+    async fn test_simple_guard_cleanup() -> color_eyre::eyre::Result<()> {
         let cleaned_up = Arc::new(AtomicBool::new(false));
         let cleaned_up_clone = cleaned_up.clone();
 
@@ -182,5 +184,6 @@ mod tests {
         }
 
         assert!(cleaned_up.load(Ordering::Relaxed));
+        Ok(())
     }
 }

@@ -376,9 +376,10 @@ pub fn track_satellite_scan(processor_name: &str, processor_type: &str) -> Satel
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
-    async fn test_satellite_metrics() {
+    #[sinex_test]
+    async fn test_satellite_metrics() -> color_eyre::eyre::Result<()> {
         let metrics = get_satellite_metrics("test_satellite", "stream_processor", HashMap::new());
 
         let guard = SatelliteScanGuard::new(metrics.clone());
@@ -388,10 +389,11 @@ mod tests {
         // Verify metrics were recorded
         assert!(metrics.scans_completed.get() > 0.0);
         assert!(metrics.events_discovered.get() >= 5.0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_satellite_health_monitor() {
+    #[sinex_test]
+    async fn test_satellite_health_monitor() -> color_eyre::eyre::Result<()> {
         let metrics = get_satellite_metrics("health_test", "stream_processor", HashMap::new());
         let mut monitor = SatelliteHealthMonitor::new(metrics);
 
@@ -401,5 +403,6 @@ mod tests {
 
         // Health score should be calculated
         // Just verify it doesn't panic
+        Ok(())
     }
 }

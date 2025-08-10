@@ -154,10 +154,11 @@ impl DirectoryManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_directory_manager_create() {
+    #[sinex_test]
+    async fn test_directory_manager_create() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let config = DirectoryConfig {
             base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
@@ -176,10 +177,11 @@ mod tests {
         // Test ensure directory (doesn't exist)
         assert!(manager.ensure_directory("new_dir").await.is_ok());
         assert!(manager.directory_exists("new_dir").await.unwrap());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_directory_manager_list() {
+    #[sinex_test]
+    async fn test_directory_manager_list() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let config = DirectoryConfig {
             base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
@@ -205,10 +207,11 @@ mod tests {
 
         assert!(dir_names.contains(&"dir1".to_string()));
         assert!(dir_names.contains(&"dir2".to_string()));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_directory_manager_remove() {
+    #[sinex_test]
+    async fn test_directory_manager_remove() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let config = DirectoryConfig {
             base_path: Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap(),
@@ -223,5 +226,6 @@ mod tests {
 
         manager.remove_directory("temp_dir").await.unwrap();
         assert!(!manager.directory_exists("temp_dir").await.unwrap());
+        Ok(())
     }
 }

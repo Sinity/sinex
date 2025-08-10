@@ -302,15 +302,16 @@ mod tests {
     use super::*;
     use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
-    async fn test_heartbeat_emitter_creation() {
+    #[sinex_test]
+    async fn test_heartbeat_emitter_creation() -> color_eyre::eyre::Result<()> {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         assert_eq!(emitter.service_name, "test-service");
         assert_eq!(emitter.interval_seconds, 30);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_counter_handle() {
+    #[sinex_test]
+    async fn test_counter_handle() -> color_eyre::eyre::Result<()> {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         let handle = emitter.get_counter_handle();
 
@@ -319,6 +320,7 @@ mod tests {
 
         assert_eq!(handle.get_events_processed(), 5);
         assert_eq!(handle.get_errors_count(), 1);
+        Ok(())
     }
 
     #[sinex_test]

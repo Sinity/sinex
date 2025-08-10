@@ -276,20 +276,22 @@ impl NatsPublisher {
 mod tests {
     use super::*;
     use crate::nats::{client::NatsClient, config::NatsConfig};
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server
-    async fn test_publisher_creation() {
+    async fn test_publisher_creation() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config.clone()).await.unwrap();
         let jetstream = JetStream::new(&client, config.jetstream).await.unwrap();
 
         let publisher = NatsPublisher::new(jetstream);
         assert_eq!(publisher.buffer_size().await, 0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_publishing() {
+    #[sinex_test]
+    async fn test_metric_publishing() -> color_eyre::eyre::Result<()> {
         // This test doesn't require a real NATS server
         let metric = serde_json::json!({
             "component": "test",
@@ -302,5 +304,6 @@ mod tests {
         // Just verify serialization works
         let serialized = serde_json::to_vec(&metric).unwrap();
         assert!(!serialized.is_empty());
+        Ok(())
     }
 }

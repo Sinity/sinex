@@ -160,11 +160,12 @@ fn convert_notify_event(event: Event, allowed_kinds: &[FileChangeKind]) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use std::fs;
     use tempfile::TempDir;
 
-    #[tokio::test]
-    async fn test_file_watcher_builder() {
+    #[sinex_test]
+    async fn test_file_watcher_builder() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let watcher = FileWatcher::new(
             FileWatcherConfig::builder()
@@ -178,10 +179,11 @@ mod tests {
         );
 
         assert!(watcher.is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_file_watcher_events() {
+    #[sinex_test]
+    async fn test_file_watcher_events() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
 
@@ -217,5 +219,6 @@ mod tests {
 
         // Verify the event is for our test file
         assert!(events.iter().any(|e| e.path == test_file));
+        Ok(())
     }
 }

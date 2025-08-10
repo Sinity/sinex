@@ -214,21 +214,23 @@ impl NatsClient {
 mod tests {
     use super::*;
     use futures::StreamExt;
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server
-    async fn test_nats_client_connection() {
+    async fn test_nats_client_connection() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config).await;
         assert!(client.is_ok());
 
         let client = client.unwrap();
         assert!(client.is_connected().await);
+        Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server
-    async fn test_publish_subscribe() {
+    async fn test_publish_subscribe() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config).await.unwrap();
 
@@ -241,5 +243,6 @@ mod tests {
 
         let msg = sub.next().await.unwrap();
         assert_eq!(msg.payload.as_ref(), b"test message");
+        Ok(())
     }
 }

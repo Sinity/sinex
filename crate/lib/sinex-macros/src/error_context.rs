@@ -421,10 +421,11 @@ fn is_result_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use syn::parse_quote;
 
-    #[test]
-    fn test_result_type_detection() {
+    #[sinex_test]
+    fn test_result_type_detection() -> color_eyre::eyre::Result<()> {
         // Test valid Result types
         let result_unit: Type = parse_quote!(Result<(), SinexError>);
         assert!(is_result_type(&result_unit));
@@ -441,10 +442,11 @@ mod tests {
 
         let simple_type: Type = parse_quote!(String);
         assert!(!is_result_type(&simple_type));
+        Ok(())
     }
 
-    #[test]
-    fn test_return_type_detection() {
+    #[sinex_test]
+    fn test_return_type_detection() -> color_eyre::eyre::Result<()> {
         // Test valid return types
         let return_result: ReturnType = parse_quote!(-> Result<(), SinexError>);
         assert!(is_result_return_type(&return_result));
@@ -455,5 +457,6 @@ mod tests {
 
         let return_default = ReturnType::Default;
         assert!(!is_result_return_type(&return_default));
+        Ok(())
     }
 }

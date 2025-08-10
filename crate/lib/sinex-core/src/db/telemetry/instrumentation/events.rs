@@ -173,9 +173,10 @@ pub fn track_event_processing(event_type: &str) -> EventProcessingGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
-    async fn test_event_metrics() {
+    #[sinex_test]
+    async fn test_event_metrics() -> color_eyre::eyre::Result<()> {
         let metrics = get_event_metrics("test_event", HashMap::new());
 
         let guard = EventProcessingGuard::new(metrics.clone());
@@ -184,5 +185,6 @@ mod tests {
 
         // Verify metrics were recorded
         assert!(metrics.events_processed.get() > 0.0);
+        Ok(())
     }
 }

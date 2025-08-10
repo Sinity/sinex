@@ -396,8 +396,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_blake3_hash() {
+    #[sinex_test]
+    async fn test_blake3_hash() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
         tokio::fs::write(&test_file, b"hello world").await.unwrap();
@@ -406,5 +406,6 @@ mod tests {
         let hash = GitAnnex::compute_blake3_hash(test_file).await.unwrap();
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64); // BLAKE3 hex string length
+        Ok(())
     }
 }

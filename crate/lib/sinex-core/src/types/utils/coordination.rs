@@ -272,10 +272,11 @@ impl Clone for CoordinationPrimitive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use tokio::time::sleep;
 
-    #[tokio::test]
-    async fn test_event_counter_pattern() {
+    #[sinex_test]
+    async fn test_event_counter_pattern() -> color_eyre::eyre::Result<()> {
         let counter = CoordinationPrimitive::event_counter(3, "test_counter");
 
         assert_eq!(counter.get(), 0);
@@ -292,10 +293,11 @@ mod tests {
         let result = counter.wait_for_threshold(Duration::from_millis(10)).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), 3);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_synchronizer_pattern() {
+    #[sinex_test]
+    async fn test_synchronizer_pattern() -> color_eyre::eyre::Result<()> {
         let sync = CoordinationPrimitive::synchronizer("test_sync");
 
         assert!(!sync.is_ready());
@@ -310,10 +312,11 @@ mod tests {
         // Reset and test again
         sync.reset();
         assert!(!sync.is_ready());
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_barrier_pattern() {
+    #[sinex_test]
+    async fn test_barrier_pattern() -> color_eyre::eyre::Result<()> {
         let barrier = CoordinationPrimitive::barrier(3, "test_barrier");
         let barrier_clone = barrier.clone();
 
@@ -338,14 +341,16 @@ mod tests {
         // Generation should have incremented (barrier reset)
         assert!(barrier_clone.generation() > initial_generation);
         assert_eq!(barrier_clone.get(), 0); // Should be reset
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_timeout() {
+    #[sinex_test]
+    async fn test_timeout() -> color_eyre::eyre::Result<()> {
         let counter = CoordinationPrimitive::event_counter(5, "timeout_test");
 
         // Should timeout since target is never reached
         let result = counter.wait_for_threshold(Duration::from_millis(100)).await;
         assert!(result.is_err());
+        Ok(())
     }
 }
