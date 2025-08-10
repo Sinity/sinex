@@ -518,6 +518,7 @@ mod tests {
         register_collector, MetricEntry, MetricType, MetricValue, SummaryValue,
     };
     use color_eyre::eyre::Result;
+    use sinex_test_utils::sinex_test;
 
     fn setup_test_metrics() {
         // We can't clear metrics storage directly as it's private

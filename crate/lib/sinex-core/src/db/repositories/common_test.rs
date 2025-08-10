@@ -6,7 +6,6 @@ mod tests {
     use crate::repositories::{DbPoolExt, DbResult, EnhancedRepository, TableDef};
     use crate::types::ulid::Ulid;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
-    use sinex_test_utils::sinex_test;
     use sinex_test_utils::{sinex_test, TestContext};
 
     use color_eyre::eyre::Result;

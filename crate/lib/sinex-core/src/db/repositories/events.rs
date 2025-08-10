@@ -2031,7 +2031,6 @@ mod tests {
     use crate::prelude::*;
     use crate::types::domain::{EventSource, EventType, HostName};
     use serde_json::json;
-    use sinex_test_utils::sinex_test;
     use sinex_test_utils::{sinex_test, TestContext};
 
     use color_eyre::eyre::Result;

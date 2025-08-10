@@ -1170,7 +1170,6 @@ mod tests {
     use chrono::Utc;
     use color_eyre::eyre::Result;
     use serde_json::json;
-    use sinex_test_utils::sinex_test;
     use sinex_test_utils::{sinex_test, TestContext};
 
     #[sinex_test]
