@@ -336,8 +336,6 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // Use simplified logic without complex async wrapping
-    // Clone execution_logic since we need to use it in the quote! macro
-    let _final_logic = execution_logic.clone();
 
     let metrics_code = if enable_metrics {
         quote! {

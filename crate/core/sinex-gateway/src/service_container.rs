@@ -11,6 +11,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+const TELEMETRY_INTERVAL_SECS: u64 = 300;
+
 /// Container holding all service instances
 #[derive(Clone)]
 pub struct ServiceContainer {
@@ -95,7 +97,7 @@ impl ServiceContainer {
 
             let accumulator = TelemetryAccumulator::new("sinex-gateway")
                 .with_event_sender(tx.clone())
-                .with_interval(Duration::from_secs(300)); // 5 minutes
+                .with_interval(Duration::from_secs(TELEMETRY_INTERVAL_SECS));
 
             // Set global telemetry
             sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;

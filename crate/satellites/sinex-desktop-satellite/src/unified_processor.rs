@@ -111,6 +111,9 @@ pub struct DesktopProcessor {
 }
 
 impl DesktopProcessor {
+    const MS_PER_EVENT: u64 = 10;
+    const BYTES_PER_EVENT: u64 = 256;
+
     /// Create a new unified desktop processor
     pub fn new() -> Self {
         Self {
@@ -533,8 +536,8 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
-            estimated_duration: Duration::from_millis(adjusted_events * 10), // ~10ms per event
-            estimated_data_size: adjusted_events * 256,                      // ~256 bytes per event
+            estimated_duration: Duration::from_millis(adjusted_events * Self::MS_PER_EVENT),
+            estimated_data_size: adjusted_events * Self::BYTES_PER_EVENT,
             estimated_targets: 2, // clipboard + window manager
             warnings,
             confidence,

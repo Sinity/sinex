@@ -6,16 +6,12 @@ use sinex_satellite_sdk::annex::BlobManager;
 use std::sync::Arc;
 
 pub struct ContentService {
-    _pool: DbPool,
     blob_manager: Arc<BlobManager>,
 }
 
 impl ContentService {
-    pub fn new(pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
-        Self {
-            _pool: pool,
-            blob_manager,
-        }
+    pub fn new(_pool: DbPool, blob_manager: Arc<BlobManager>) -> Self {
+        Self { blob_manager }
     }
 
     /// Store large content as blob and return source material reference

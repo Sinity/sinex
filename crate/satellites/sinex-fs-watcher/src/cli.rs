@@ -58,7 +58,7 @@ pub async fn run() -> Result<()> {
             
             // Run traditional fs-watcher
             // This would use the existing FilesystemProcessor
-            todo!("Direct mode not fully implemented in CLI")
+            return Err(color_eyre::eyre::eyre!("Direct mode not yet supported in CLI"));
         }
         
         Commands::Sensd {

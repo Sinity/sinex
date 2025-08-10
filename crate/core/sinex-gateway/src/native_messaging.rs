@@ -10,6 +10,8 @@ use tracing::{debug, error, info};
 use crate::handlers::*;
 use crate::service_container::ServiceContainer;
 
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB
+
 #[derive(Debug, Clone, Deserialize)]
 struct NativeMessage {
     #[serde(rename = "type")]
@@ -64,7 +66,7 @@ fn read_message() -> Result<Option<NativeMessage>> {
     };
 
     // Validate length (Chrome/Firefox limit is 1MB)
-    if length > 1024 * 1024 {
+    if length > MAX_MESSAGE_SIZE {
         bail!("Message too large: {} bytes", length);
     }
 

@@ -275,6 +275,7 @@ impl FilesystemProcessor {
     }
 
     /// Take a snapshot of current filesystem state
+    #[must_use = "Snapshot result should be used or stored"]
     #[with_context(
         operation = "take_filesystem_snapshot",
         retry_count = 2,

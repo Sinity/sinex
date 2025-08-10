@@ -103,6 +103,9 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 
+const CACHE_CLEANUP_INTERVAL_SECS: u64 = 60;
+const CACHE_ENTRY_MAX_AGE_SECS: u64 = 30;
+
 /// Enhanced window information with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct WindowInfo {
@@ -251,13 +254,15 @@ impl WindowManagerWatcher {
         let cache = Arc::clone(&self.hyprctl_cache);
 
         tokio::spawn(async move {
-            let mut cleanup_interval = interval(Duration::from_secs(60));
+            let mut cleanup_interval = interval(Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS));
 
             loop {
                 cleanup_interval.tick().await;
 
                 let mut cache_guard = cache.lock().unwrap();
-                cache_guard.retain(|_, entry| entry.timestamp.elapsed() < Duration::from_secs(30));
+                cache_guard.retain(|_, entry| {
+                    entry.timestamp.elapsed() < Duration::from_secs(CACHE_ENTRY_MAX_AGE_SECS)
+                });
 
                 if !cache_guard.is_empty() {
                     debug!(

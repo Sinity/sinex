@@ -158,6 +158,7 @@ pub struct EventBatcher {
 
 impl EventBatcher {
     /// Create a new event batcher
+    #[inline]
     pub fn new(client: IngestClient, batch_size: usize, timeout_secs: u64) -> Self {
         Self {
             client,

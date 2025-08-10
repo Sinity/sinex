@@ -42,6 +42,10 @@ use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
+const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
+const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const DEFAULT_MAX_HISTORY_ENTRIES: usize = 1000;
+
 /// Rich clipboard content information
 #[derive(Debug, Clone)]
 struct ClipboardContent {
@@ -88,9 +92,9 @@ impl ClipboardWatcher {
             last_content: None,
             last_primary_content: None,
             clipboard_history: VecDeque::new(),
-            max_preview_length: 100,
-            max_content_size: 10 * 1024 * 1024, // 10MB
-            max_history_entries: 1000,
+            max_preview_length: DEFAULT_MAX_PREVIEW_LENGTH,
+            max_content_size: DEFAULT_MAX_CONTENT_SIZE,
+            max_history_entries: DEFAULT_MAX_HISTORY_ENTRIES,
             enable_primary_selection: true,
             enable_history: true,
             blob_manager: None,

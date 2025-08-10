@@ -63,11 +63,7 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
         let start_time = Utc::now();
 
         // Simplified implementation for now
-        let events_processed = match until {
-            TimeHorizon::Snapshot => 0,
-            TimeHorizon::Historical { .. } => 0,
-            TimeHorizon::Continuous => 0,
-        };
+        let events_processed = 0; // All modes unimplemented
 
         Ok(ScanReport {
             events_processed: events_processed as u64,

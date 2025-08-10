@@ -111,8 +111,6 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
-        let mut result = Vec::new();
-
         let commands = match (start_time, end_time) {
             (Some(start), Some(end)) => {
                 self.pool
@@ -128,11 +126,7 @@ impl AnalyticsService {
             }
         };
 
-        for cmd_count in commands {
-            result.push((cmd_count.command, cmd_count.count));
-        }
-
-        Ok(result)
+        Ok(commands.into_iter().map(|c| (c.command, c.count)).collect())
     }
 
     /// Get most active time periods

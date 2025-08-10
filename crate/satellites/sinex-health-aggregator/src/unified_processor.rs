@@ -34,7 +34,7 @@ pub struct SystemHealthSummary {
     pub missing_components: u32,
     pub total_components: u32,
     pub last_updated: DateTime<Utc>,
-    pub components: HashMap<String, ComponentHealth>}
+    pub components: HashMap<String, ComponentHealth>,}
 
 /// Health Aggregator as a unified StatefulStreamProcessor
 pub struct HealthAggregator {
@@ -42,7 +42,7 @@ pub struct HealthAggregator {
     expected_components: Vec<String>,
     aggregation_window: Duration,
     component_health: Arc<Mutex<HashMap<String, ComponentHealth>>>,
-    last_summary_time: DateTime<Utc>}
+    last_summary_time: DateTime<Utc>,}
 
 impl HealthAggregator {
     pub fn new() -> Self {
@@ -117,7 +117,7 @@ impl HealthAggregator {
             missing_components: 0,
             total_components: self.expected_components.len() as u32,
             last_updated: now,
-            components: health_map.clone()};
+            components: health_map.clone(),};
 
         // Check each expected component
         for expected in &self.expected_components {
