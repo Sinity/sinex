@@ -12,6 +12,7 @@ members = [
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
   "crate/core/sinex-rpc-dispatcher",
+  "crate/core/sinex-sensd",
   
   # Satellite crates
   "crate/satellites/sinex-fs-watcher",
