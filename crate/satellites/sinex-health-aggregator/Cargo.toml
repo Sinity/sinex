@@ -6,9 +6,6 @@ authors.workspace = true
 repository.workspace = true
 license.workspace = true
 
-[[bin]]
-name = "sinex-health-aggregator"
-path = "src/main.rs"
 
 [dependencies]
 mimalloc = { workspace = true }

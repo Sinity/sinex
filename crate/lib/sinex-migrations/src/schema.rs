@@ -6,8 +6,11 @@
 use sea_query::{Alias, PostgresQueryBuilder};
 use sea_query::{ColumnDef, Expr, Index, IndexOrder, IntoIden, Table};
 
-pub mod artifact_tables;
-pub use artifact_tables::*;
+// Note: artifact_tables module removed as part of Phase 1.3 cleanup
+// The artifact system has been replaced by the synthesis architecture
+
+pub mod event_embeddings;
+pub use event_embeddings::*;
 
 /// Trait for table definitions that can be used with generic repository operations
 pub trait TableDef: Copy + Clone {

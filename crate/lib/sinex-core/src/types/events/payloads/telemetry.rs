@@ -6,7 +6,7 @@ use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "events.processed")]
+#[event_payload(source = "sinex.telemetry", event_type = "events.processed")]
 pub struct EventsProcessedPayload {
     pub time_range_seconds: u64,
     pub total_events: u64,
@@ -16,7 +16,7 @@ pub struct EventsProcessedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "errors.summary")]
+#[event_payload(source = "sinex.telemetry", event_type = "errors.summary")]
 pub struct ErrorsSummaryPayload {
     pub time_range_seconds: u64,
     pub total_errors: u64,
@@ -26,7 +26,7 @@ pub struct ErrorsSummaryPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "system.resources")]
+#[event_payload(source = "sinex.telemetry", event_type = "system.resources")]
 pub struct SystemResourcesPayload {
     pub cpu_usage_percent: f64,
     pub memory_usage_bytes: u64,
@@ -39,7 +39,7 @@ pub struct SystemResourcesPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "operation.performance")]
+#[event_payload(source = "sinex.telemetry", event_type = "operation.performance")]
 pub struct OperationPerformancePayload {
     pub operation_name: String,
     pub duration_ms: u64,
@@ -50,7 +50,7 @@ pub struct OperationPerformancePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "resource.usage")]
+#[event_payload(source = "sinex.telemetry", event_type = "resource.usage")]
 pub struct ComponentResourceUsagePayload {
     pub component: String,
     pub period_seconds: u64,

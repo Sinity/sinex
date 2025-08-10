@@ -798,26 +798,28 @@ mod tests {
                 "events.processed" => {
                     let payload = &event.payload;
                     ctx.assert("events.processed payload")
-                        .eq(&payload["component"], &json!("test-component"))?
                         .that(
-                            payload["count"].as_u64().unwrap() == 3,
+                            payload["total_events"].as_u64().unwrap() == 3,
                             "Should have 3 events",
                         )?
                         .that(
-                            payload["by_type"]["file.created"].as_u64().unwrap() == 2,
+                            payload["events_per_type"]["file.created"].as_u64().unwrap() == 2,
                             "Should have 2 file.created",
                         )?
                         .that(
-                            payload["by_type"]["file.modified"].as_u64().unwrap() == 1,
+                            payload["events_per_type"]["file.modified"]
+                                .as_u64()
+                                .unwrap()
+                                == 1,
                             "Should have 1 file.modified",
                         )?;
                 }
                 "operation.performance" => {
                     let payload = &event.payload;
                     ctx.assert("operation.performance payload")
-                        .eq(&payload["operation"], &json!("scan_directory"))?
+                        .eq(&payload["operation_name"], &json!("scan_directory"))?
                         .that(
-                            payload["count"].as_u64().unwrap() == 2,
+                            payload["items_processed"].as_u64().unwrap() == 2,
                             "Should have 2 operations",
                         )?;
                 }
@@ -841,12 +843,8 @@ mod tests {
                             "Should have 3 total errors",
                         )?
                         .that(
-                            payload["by_type"]["io_error"].as_u64().unwrap() == 2,
-                            "Should have 2 io_errors",
-                        )?
-                        .that(
-                            payload["by_type"]["permission_denied"].as_u64().unwrap() == 1,
-                            "Should have 1 permission_denied",
+                            payload["errors_by_severity"]["error"].as_u64().unwrap() == 3,
+                            "Should have 3 errors by severity",
                         )?;
                 }
                 _ => {}
@@ -897,7 +895,7 @@ mod tests {
         for event in &second_batch {
             if event.event_type.as_str() == "events.processed" {
                 ctx.assert("events reset").that(
-                    !event.payload["by_type"]
+                    !event.payload["events_per_type"]
                         .as_object()
                         .unwrap()
                         .contains_key("event.one"),
@@ -905,7 +903,7 @@ mod tests {
                 )?;
             } else if event.event_type.as_str() == "errors.summary" {
                 ctx.assert("errors reset").that(
-                    !event.payload["by_type"]
+                    !event.payload["errors_by_severity"]
                         .as_object()
                         .unwrap()
                         .contains_key("error.one"),
@@ -997,8 +995,10 @@ mod tests {
         while let Ok(event) = rx.try_recv() {
             if event.event_type == EventType::new("events.processed") {
                 received = true;
-                ctx.assert("background emission")
-                    .eq(&event.payload["component"], &json!("background-test"))?;
+                ctx.assert("background emission").eq(
+                    &event.payload["events_per_source"]["background-test"],
+                    &json!(1),
+                )?;
             }
         }
 
@@ -1031,11 +1031,17 @@ mod tests {
 
         let payload = &event.payload;
         ctx.assert("system payload")
-            .that(payload["cpu"].is_object(), "Should have CPU metrics")?
-            .that(payload["memory"].is_object(), "Should have memory metrics")?
             .that(
-                payload["disk_io"].is_object(),
-                "Should have disk I/O metrics",
+                payload["cpu_usage_percent"].is_f64(),
+                "Should have CPU usage",
+            )?
+            .that(
+                payload["memory_usage_bytes"].is_u64(),
+                "Should have memory usage",
+            )?
+            .that(
+                payload["disk_usage_bytes"].is_u64(),
+                "Should have disk usage",
             )?;
 
         Ok(())
@@ -1067,7 +1073,7 @@ mod tests {
             if event.event_type == EventType::new("operation.performance") {
                 found_operation = true;
                 ctx.assert("global telemetry recording").eq(
-                    &event.payload["operation"],
+                    &event.payload["operation_name"],
                     &json!("test_module::test_function"),
                 )?;
             }
@@ -1149,7 +1155,7 @@ mod tests {
         for event in events {
             match event.event_type.as_str() {
                 "events.processed" => {
-                    let count = event.payload["count"].as_u64().unwrap();
+                    let count = event.payload["total_events"].as_u64().unwrap();
                     ctx.assert("concurrent event count").eq(&count, &1000u64)?; // 10 tasks * 100 events
                 }
                 "errors.summary" => {

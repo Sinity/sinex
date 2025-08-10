@@ -126,7 +126,6 @@ pub mod heartbeat;
 pub mod lifecycle;
 pub mod nats;
 pub mod nats_client;
-pub mod nats_stream_consumer;
 pub mod preflight;
 pub mod processor_runner;
 pub mod replay;
@@ -134,11 +133,6 @@ pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
-pub use crate::nats_stream_consumer::{
-    BatchProcessingResult as NatsBatchProcessingResult,
-    EventBatchProcessor as NatsEventBatchProcessor, EventFilter as NatsEventFilter,
-    NatsConsumerConfig, NatsStreamConsumer,
-};
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,

@@ -65,7 +65,7 @@ use std::collections::HashMap;
 /// # Tables Cleaned
 ///
 /// - All core event-related tables (events, annotations, relations, etc.)
-/// - Entity and artifact tables
+/// - Entity tables
 /// - Schema and manifest tables
 /// - Any other tables added to the core schema
 ///
@@ -96,18 +96,12 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         r#"
         TRUNCATE TABLE 
             core.event_annotations,
-            core.event_artifact_refs,
             core.event_relations,
             core.event_cluster_members,
-            core.artifact_event_sources,
             core.event_embeddings,
             core.entity_relations,
-            core.artifact_embeddings,
             core.revisions,
-            core.artifact_tags,
-            core.artifact_relations,
             core.entities,
-            core.artifacts,
             core.event_clusters,
             sinex_schemas.processor_manifests
         CASCADE
@@ -122,19 +116,13 @@ pub async fn reset_database(pool: &DbPool) -> Result<()> {
         // Fall back to DELETE in dependency order
         let delete_queries = [
             "DELETE FROM core.event_annotations",
-            "DELETE FROM core.event_artifact_refs",
             "DELETE FROM core.event_relations",
             "DELETE FROM core.event_cluster_members",
-            "DELETE FROM core.artifact_event_sources",
             "DELETE FROM core.event_embeddings",
             "DELETE FROM core.entity_relations",
-            "DELETE FROM core.artifact_embeddings",
             "DELETE FROM core.revisions",
-            "DELETE FROM core.artifact_tags",
-            "DELETE FROM core.artifact_relations",
             "DELETE FROM sinex_schemas.processor_manifests",
             "DELETE FROM core.entities",
-            "DELETE FROM core.artifacts",
             "DELETE FROM core.event_clusters",
         ];
 
@@ -297,8 +285,7 @@ pub async fn clear_pg_cache(pool: &DbPool) -> Result<()> {
 /// - core.event_annotations
 /// - core.entities
 /// - core.entity_relations
-/// - core.artifacts
-/// - core.artifact_relations
+/// Note: artifact-related tables removed in Phase 1.3 cleanup
 /// - core.revisions
 /// - core.event_clusters
 ///
