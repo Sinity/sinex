@@ -8,11 +8,10 @@ use crate::{
         RawEvent as ProtoRawEvent,
     },
     validator::EventValidator,
-    IngestdError, IngestdResult,
+    IngestdResult, SinexError,
 };
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
-use once_cell::sync::Lazy;
 use sinex_core::db::models::{Provenance, RawEvent};
 use sinex_core::db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use sinex_core::db::repositories::DbPoolExt;
@@ -36,8 +35,8 @@ use tokio::{
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 
-// Shared ingestor version to avoid repeated allocations
-static INGESTOR_VERSION: Lazy<String> = Lazy::new(|| "0.4.2".to_string());
+// Shared ingestor version as a compile-time constant
+const INGESTOR_VERSION: &str = "0.4.2";
 
 // Cache for NATS subject strings to avoid repeated allocations
 type SubjectCache = Mutex<AHashMap<(String, String), Arc<String>>>;
@@ -78,7 +77,9 @@ impl IngestService {
             (None, None)
         } else {
             let client = async_nats::connect(&config.nats_url).await.map_err(|e| {
-                IngestdError::Connection(format!("Failed to connect to NATS: {}", e))
+                SinexError::network(format!("Failed to connect to NATS: {}", e))
+                    .with_operation("service.connect_nats")
+                    .with_context("nats_url", config.nats_url.clone())
             })?;
             let js = jetstream::new(client.clone());
 
@@ -278,7 +279,9 @@ impl IngestService {
             .add_service(IngestServiceServer::new(grpc_service))
             .serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener))
             .await
-            .map_err(|e| IngestdError::Service(format!("gRPC server error: {}", e)))?;
+            .map_err(|e| SinexError::service(format!("gRPC server error: {}", e))
+                .with_operation("service.start_grpc_server")
+                .with_context("socket_path", config.socket_path.clone()))?;
 
         info!("Ingestion service stopped");
         Ok(())
@@ -954,13 +957,15 @@ impl IngestServiceImpl {
     async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
         // Validate and parse JSON payload
         let payload = sinex_core::types::validate_json(&proto.payload)
-            .map_err(|e| IngestdError::Validation(format!("Invalid JSON payload: {}", e)))?;
+            .map_err(|e| SinexError::validation(format!("Invalid JSON payload: {}", e))
+                .with_operation("service.parse_json_payload"))?;
 
         let _blob_id = proto
             .blob_id
             .map(|blob_id_str| {
                 Ulid::from_str(&blob_id_str)
-                    .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))
+                    .map_err(|e| SinexError::validation(format!("Invalid blob ID: {}", e))
+                        .with_operation("service.parse_blob_id"))
             })
             .transpose()?;
 
@@ -979,7 +984,7 @@ impl IngestServiceImpl {
             .event_type(event_type)
             .host(HostName::new(proto.host))
             .payload(payload)
-            .ingestor_version(INGESTOR_VERSION.clone());
+            .ingestor_version(INGESTOR_VERSION);
 
         Ok(if let Some(id) = schema_id {
             builder.payload_schema_id(id).build()

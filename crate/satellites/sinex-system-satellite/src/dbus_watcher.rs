@@ -606,7 +606,7 @@ impl DbusWatcher {
                 urgency: 1,
                 timeout: -1,
                 actions: vec![],
-                hints: HashMap::new(),
+                hints: HashMap::with_capacity(4), // Typical notification hints: urgency, category, desktop-entry, etc.
                 timestamp,
             }
         }

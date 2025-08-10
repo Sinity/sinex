@@ -11,7 +11,8 @@ use sinex_core::types::events::{
 };
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
-use std::fs;
+use std::fs::{self, File};
+use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
@@ -66,31 +67,55 @@ impl HistoryWatcher {
         Ok(())
     }
 
-    /// Read new lines from a file since last position
+    /// Read new lines from a file since last position using buffered reading
     fn read_new_lines(&mut self, file_path: &Utf8PathBuf) -> SatelliteResult<Vec<String>> {
         let current_pos = self.file_positions.get(file_path).copied().unwrap_or(0);
 
-        let content = match fs::read_to_string(file_path) {
-            Ok(content) => content,
+        // Open file and check its current size
+        let mut file = match File::open(file_path) {
+            Ok(file) => file,
             Err(e) => {
-                warn!("Failed to read {}: {}", file_path.as_str(), e);
+                warn!("Failed to open {}: {}", file_path.as_str(), e);
                 return Ok(vec![]);
             }
         };
 
-        let content_bytes = content.as_bytes();
-        if content_bytes.len() <= current_pos as usize {
+        let file_size = match file.metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(e) => {
+                warn!("Failed to get metadata for {}: {}", file_path.as_str(), e);
+                return Ok(vec![]);
+            }
+        };
+
+        if file_size <= current_pos {
             // File hasn't grown
             return Ok(vec![]);
         }
 
-        // Read new content
-        let new_content = &content_bytes[current_pos as usize..];
-        let new_text = String::from_utf8_lossy(new_content);
+        // Seek to the last known position
+        if let Err(e) = file.seek(SeekFrom::Start(current_pos)) {
+            warn!("Failed to seek in {}: {}", file_path.as_str(), e);
+            return Ok(vec![]);
+        }
 
-        // Update position
-        self.file_positions
-            .insert(file_path.clone(), content_bytes.len() as u64);
+        // Read new lines using buffered reader
+        let reader = BufReader::new(file);
+        let new_lines: Result<Vec<String>, io::Error> = reader.lines().collect();
+
+        let new_lines = match new_lines {
+            Ok(lines) => lines,
+            Err(e) => {
+                warn!("Failed to read lines from {}: {}", file_path.as_str(), e);
+                return Ok(vec![]);
+            }
+        };
+
+        // Update position to current file size
+        self.file_positions.insert(file_path.clone(), file_size);
+
+        // Join lines back into text for shell-specific parsing
+        let new_text = new_lines.join("\n");
 
         // Parse lines based on shell type
         let lines = self.parse_history_content(&new_text, file_path);

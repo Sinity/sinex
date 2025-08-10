@@ -5,8 +5,11 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{collections::HashMap, env, sync::RwLock};
 use tracing::info;
+
+/// Cache for command existence checks to avoid repeated which::which() calls
+static COMMAND_CACHE: RwLock<HashMap<String, bool>> = RwLock::new(HashMap::new());
 
 /// Supported shell types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -175,9 +178,24 @@ fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
     }
 }
 
-/// Check if a command exists in PATH
+/// Check if a command exists in PATH with caching
 fn check_command_exists(cmd: &str) -> bool {
-    which::which(cmd).is_ok()
+    // Check cache first (read lock)
+    if let Ok(cache) = COMMAND_CACHE.read() {
+        if let Some(&exists) = cache.get(cmd) {
+            return exists;
+        }
+    }
+
+    // Cache miss - check command existence
+    let exists = which::which(cmd).is_ok();
+
+    // Update cache (write lock)
+    if let Ok(mut cache) = COMMAND_CACHE.write() {
+        cache.insert(cmd.to_string(), exists);
+    }
+
+    exists
 }
 
 /// Get shell version

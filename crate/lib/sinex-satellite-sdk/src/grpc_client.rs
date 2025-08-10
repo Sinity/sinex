@@ -9,6 +9,9 @@ use sinex_core::db::models::RawEvent;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tracing::{debug, error, warn};
 
+/// Default schema version for events
+const DEFAULT_SCHEMA_VERSION: &str = "1.0.0";
+
 /// Client for communicating with sinex-ingestd via gRPC over Unix Domain Socket
 #[derive(Clone, Debug)]
 pub struct IngestClient {
@@ -19,7 +22,6 @@ impl IngestClient {
     /// Create a new client connected to the specified Unix Domain Socket
     pub async fn new(socket_path: &str) -> SatelliteResult<Self> {
         let socket_path_owned = socket_path.to_string();
-        let socket_path_for_log = socket_path_owned.clone();
         // Create a channel to the Unix Domain Socket
         let channel = Endpoint::try_from("http://[::]:50051")?
             .connect_with_connector(tower::service_fn(move |_: Uri| {
@@ -29,7 +31,7 @@ impl IngestClient {
 
         let client = IngestServiceClient::new(channel);
 
-        debug!("Connected to ingestd at {}", socket_path_for_log);
+        debug!("Connected to ingestd at {}", socket_path);
 
         Ok(Self { client })
     }
@@ -118,9 +120,9 @@ impl IngestClient {
         let payload_json = serde_json::to_string(&event.payload)?;
 
         Ok(ProtoRawEvent {
-            source: event.source.as_str().to_string(),
-            event_type: event.event_type.as_str().to_string(),
-            host: event.host.as_str().to_string(),
+            source: event.source.to_string(),
+            event_type: event.event_type.to_string(),
+            host: event.host.to_string(),
             payload: payload_json,
             schema_name: Some(
                 event
@@ -129,7 +131,7 @@ impl IngestClient {
                     .map(|id| id.to_string())
                     .unwrap_or_default(),
             ),
-            schema_version: Some("1.0.0".to_string()), // Default version since we only have schema_id
+            schema_version: Some(DEFAULT_SCHEMA_VERSION.to_string()),
             blob_id: None, // No blob_id field in current Event structure
         })
     }
