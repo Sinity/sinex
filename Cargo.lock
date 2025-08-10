@@ -4556,6 +4556,7 @@ dependencies = [
 name = "sinex-fs-watcher"
 version = "0.4.2"
 dependencies = [
+ "async-stream",
  "async-trait",
  "camino",
  "chrono",
@@ -4573,9 +4574,11 @@ dependencies = [
  "sinex-core",
  "sinex-satellite-sdk",
  "sinex-test-utils",
+ "sqlx",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
+ "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "walkdir",
