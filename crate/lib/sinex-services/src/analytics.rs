@@ -1,6 +1,6 @@
 //! Analytics service for event analysis and insights
 
-use crate::error::ServiceResult;
+use crate::error::Result as ServiceResult;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};

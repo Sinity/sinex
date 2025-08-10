@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod invariants;
+pub mod logging;
 
 // Re-export commonly used types
 pub use config::{BatchConfig, CascadeConfig, ReplayConfig};

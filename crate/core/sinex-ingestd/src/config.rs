@@ -1,6 +1,6 @@
 //! Configuration for the ingestion daemon
 
-use crate::{IngestdError, IngestdResult};
+use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use tracing::info;
@@ -107,14 +107,16 @@ impl IngestdConfig {
         use validator::Validate as ValidateTrait;
 
         // Run validator crate validation first
-        ValidateTrait::validate(self)
-            .map_err(|e| IngestdError::Config(format!("Validation failed: {}", e)))?;
+        ValidateTrait::validate(self).map_err(|e| {
+            SinexError::configuration(format!("Validation failed: {}", e))
+                .with_operation("config.validate_connection_strings")
+        })?;
 
         // Additional runtime validation - create directories if needed
         if let Some(parent) = Utf8PathBuf::from(&self.socket_path).parent() {
             if !parent.exists() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    IngestdError::Config(format!(
+                    SinexError::configuration(format!(
                         "Cannot create socket directory {}: {}",
                         parent.as_str(),
                         e
@@ -127,7 +129,7 @@ impl IngestdConfig {
             tokio::fs::create_dir_all(&self.work_dir)
                 .await
                 .map_err(|e| {
-                    IngestdError::Config(format!(
+                    SinexError::configuration(format!(
                         "Cannot create work directory {}: {}",
                         self.work_dir.as_str(),
                         e
@@ -158,7 +160,11 @@ impl IngestdConfig {
         sqlx::query("SELECT 1")
             .fetch_one(&pool)
             .await
-            .map_err(|e| IngestdError::Config(format!("Database connection test failed: {}", e)))?;
+            .map_err(|e| {
+                SinexError::configuration(format!("Database connection test failed: {}", e))
+                    .with_operation("config.test_database_connection")
+                    .with_context("database_url", self.database_url.clone())
+            })?;
 
         pool.close().await;
         info!("Database connection test passed");
@@ -173,7 +179,11 @@ impl IngestdConfig {
             .name("ingestd-test")
             .connect(&self.nats_url)
             .await
-            .map_err(|e| IngestdError::Config(format!("NATS connection test failed: {}", e)))?;
+            .map_err(|e| {
+                SinexError::configuration(format!("NATS connection test failed: {}", e))
+                    .with_operation("config.test_nats_connection")
+                    .with_context("nats_url", self.nats_url.clone())
+            })?;
 
         // Connection successful
         info!("NATS connection test passed");

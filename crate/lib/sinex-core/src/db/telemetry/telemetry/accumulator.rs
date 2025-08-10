@@ -433,7 +433,7 @@ impl TelemetryAccumulator {
                 let events_per_type = state.event_counts.clone();
 
                 events.push(
-                    Event::from_payload(EventsProcessedPayload {
+                    Event::new(EventsProcessedPayload {
                         time_range_seconds: period_seconds,
                         total_events,
                         events_per_source,
@@ -459,7 +459,7 @@ impl TelemetryAccumulator {
                     metrics.insert("duration_ms".to_string(), percentiles);
 
                     events.push(
-                        Event::from_payload(OperationPerformancePayload {
+                        Event::new(OperationPerformancePayload {
                             operation_name: operation.clone(),
                             duration_ms: avg_duration as u64,
                             items_processed: latencies.len() as u64,
@@ -486,7 +486,7 @@ impl TelemetryAccumulator {
                 });
 
                 events.push(
-                    Event::from_payload(ComponentResourceUsagePayload {
+                    Event::new(ComponentResourceUsagePayload {
                         component: self.component.clone(),
                         period_seconds,
                         memory_mb,
@@ -514,7 +514,7 @@ impl TelemetryAccumulator {
                 errors_by_component.insert(self.component.clone(), total_errors);
 
                 events.push(
-                    Event::from_payload(ErrorsSummaryPayload {
+                    Event::new(ErrorsSummaryPayload {
                         time_range_seconds: period_seconds,
                         total_errors,
                         errors_by_severity,
@@ -633,7 +633,7 @@ impl SystemTelemetryEmitter {
     pub async fn emit_system_resources(&self) -> Result<(), Box<dyn std::error::Error>> {
         // TODO: Implement actual system resource collection using sysinfo crate
         // For now, emit placeholder data
-        let event: RawEvent = Event::from_payload(SystemResourcesPayload {
+        let event: RawEvent = Event::new(SystemResourcesPayload {
             cpu_usage_percent: 0.0,
             memory_usage_bytes: 0,
             memory_total_bytes: 0,

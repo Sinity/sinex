@@ -1,6 +1,6 @@
 //! Content service for managing event content and source material
 
-use crate::error::{ServiceError, ServiceResult};
+use crate::error::{Result as ServiceResult, SinexError};
 use sinex_core::db::DbPool;
 use sinex_satellite_sdk::annex::BlobManager;
 use std::sync::Arc;
@@ -27,7 +27,12 @@ impl ContentService {
             .blob_manager
             .ingest_from_bytes(content, filename, content_type)
             .await
-            .map_err(|e| ServiceError::OperationFailed(format!("Blob storage failed: {}", e)))?;
+            .map_err(|e| {
+                SinexError::service(format!("Blob storage failed: {}", e))
+                    .with_operation("blob_manager.ingest_from_bytes")
+                    .with_context("filename", filename)
+                    .with_context("content_type", content_type)
+            })?;
 
         // The blob manager has already created the source material record
         // Return the annex key for referencing the stored content
@@ -52,7 +57,11 @@ impl ContentService {
         self.blob_manager
             .retrieve_content(annex_key)
             .await
-            .map_err(|e| ServiceError::OperationFailed(format!("Content retrieval failed: {}", e)))
+            .map_err(|e| {
+                SinexError::service(format!("Content retrieval failed: {}", e))
+                    .with_operation("blob_manager.retrieve_content")
+                    .with_context("annex_key", annex_key)
+            })
     }
 
     /// Get content metadata by blob ID
@@ -66,7 +75,9 @@ impl ContentService {
             .get_blob_metadata(&blob_id)
             .await
             .map_err(|e| {
-                ServiceError::OperationFailed(format!("Failed to get blob metadata: {}", e))
+                SinexError::service(format!("Failed to get blob metadata: {}", e))
+                    .with_operation("blob_manager.get_blob_metadata")
+                    .with_id("blob_id", blob_id)
             })?;
 
         Ok(blob_metadata)
@@ -79,7 +90,9 @@ impl ContentService {
     ) -> ServiceResult<bool> {
         // Use blob manager verification
         self.blob_manager.verify_blob(&blob_id).await.map_err(|e| {
-            ServiceError::OperationFailed(format!("Content verification failed: {}", e))
+            SinexError::service(format!("Content verification failed: {}", e))
+                .with_operation("blob_manager.verify_blob")
+                .with_id("blob_id", blob_id)
         })
     }
 }

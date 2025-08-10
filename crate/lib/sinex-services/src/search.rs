@@ -1,8 +1,9 @@
 //! Search service for querying events and content
 
 use crate::error::ServiceResult;
+use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::DbPool;
+use sinex_core::db::{schema::Events, seaquery_helpers::SeaQueryUlidExt, DbPool};
 use sinex_core::types::ulid::Ulid;
 use sqlx::types::chrono::{DateTime, Utc};
 
@@ -36,66 +37,120 @@ impl SearchService {
         Self { pool }
     }
 
-    /// Search events based on criteria
+    /// Search events based on criteria using SeaQuery for type safety
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
-        let mut sql = String::from(
-            r#"
-            SELECT 
-                id::text as event_id,
-                source,
-                event_type,
-                ts_ingest,
-                payload,
-                1.0 as score
-            FROM core.events
-            WHERE 1=1
-            "#,
-        );
+        // Build dynamic query using SeaQuery for type safety and SQL injection prevention
+        let mut select_query = Query::select()
+            .expr_as(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::ID),
+                ))
+                .cast_as(Alias::new("text")),
+                Alias::new("event_id"),
+            )
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::SOURCE),
+            ))
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::EVENT_TYPE),
+            ))
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::TS_INGEST),
+            ))
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::PAYLOAD),
+            ))
+            .expr_as(Expr::val(1.0_f64), Alias::new("score"))
+            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .to_owned();
 
-        let mut params: Vec<String> = Vec::new();
-        let mut param_count = 0;
-
-        // Add source filter
+        // Add source filter using proper parameterization
         if !query.sources.is_empty() {
-            param_count += 1;
-            sql.push_str(&format!(" AND source = ANY(${})", param_count));
-            params.push(format!("{{{}}}", query.sources.join(",")));
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::SOURCE),
+                ))
+                .is_in(query.sources.iter().cloned()),
+            );
         }
 
-        // Add event type filter
+        // Add event type filter using proper parameterization
         if !query.event_types.is_empty() {
-            param_count += 1;
-            sql.push_str(&format!(" AND event_type = ANY(${})", param_count));
-            params.push(format!("{{{}}}", query.event_types.join(",")));
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::EVENT_TYPE),
+                ))
+                .is_in(query.event_types.iter().cloned()),
+            );
         }
 
-        // Add time range filter
+        // Add time range filters with proper type handling
         if let Some(start) = query.start_time {
-            param_count += 1;
-            sql.push_str(&format!(" AND ts_ingest >= ${}", param_count));
-            params.push(start.to_rfc3339());
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::TS_INGEST),
+                ))
+                .gte(start),
+            );
         }
 
         if let Some(end) = query.end_time {
-            param_count += 1;
-            sql.push_str(&format!(" AND ts_ingest <= ${}", param_count));
-            params.push(end.to_rfc3339());
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::TS_INGEST),
+                ))
+                .lte(end),
+            );
         }
 
-        // Add text search if provided
+        // Add text search with proper parameterization (SeaQuery prevents SQL injection)
         if let Some(text) = &query.text {
-            param_count += 1;
-            sql.push_str(&format!(" AND payload::text ILIKE ${}", param_count));
-            params.push(format!("%{}%", text));
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::PAYLOAD),
+                ))
+                .cast_as(Alias::new("text"))
+                .ilike(format!("%{}%", text)),
+            );
         }
 
         // Add ordering and limits
-        sql.push_str(" ORDER BY ts_ingest DESC");
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", query.limit, query.offset));
+        select_query
+            .order_by(
+                (
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::TS_INGEST),
+                ),
+                sea_query::Order::Desc,
+            )
+            .limit(query.limit as u64)
+            .offset(query.offset as u64);
 
-        // Execute the dynamic query
-        // Note: This is a simplified version. In production, you'd use
-        // a query builder or more sophisticated full-text search
+        // Build the SQL query
+        let (sql, _values) = select_query.build(PostgresQueryBuilder);
+
+        // Execute the type-safe query
         let rows = sqlx::query_as::<
             _,
             (

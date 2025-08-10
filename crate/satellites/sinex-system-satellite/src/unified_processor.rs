@@ -523,11 +523,26 @@ impl StatefulStreamProcessor for SystemProcessor {
             )),
             processor_stats: {
                 let mut stats = HashMap::with_capacity(6);
-                stats.insert("dbus_enabled".to_string(), if self.config.dbus_enabled { 1 } else { 0 });
-                stats.insert("journal_enabled".to_string(), if self.config.journal_enabled { 1 } else { 0 });
-                stats.insert("udev_enabled".to_string(), if self.config.udev_enabled { 1 } else { 0 });
-                stats.insert("systemd_enabled".to_string(), if self.config.systemd_enabled { 1 } else { 0 });
-                stats.insert("successful_targets".to_string(), successful_targets.len() as u64);
+                stats.insert(
+                    "dbus_enabled".to_string(),
+                    if self.config.dbus_enabled { 1 } else { 0 },
+                );
+                stats.insert(
+                    "journal_enabled".to_string(),
+                    if self.config.journal_enabled { 1 } else { 0 },
+                );
+                stats.insert(
+                    "udev_enabled".to_string(),
+                    if self.config.udev_enabled { 1 } else { 0 },
+                );
+                stats.insert(
+                    "systemd_enabled".to_string(),
+                    if self.config.systemd_enabled { 1 } else { 0 },
+                );
+                stats.insert(
+                    "successful_targets".to_string(),
+                    successful_targets.len() as u64,
+                );
                 stats.insert("failed_targets".to_string(), failed_targets.len() as u64);
                 stats
             },
@@ -645,13 +660,34 @@ impl ExplorationProvider for SystemProcessor {
             total_items: Some(active_sources),
             metadata: {
                 let mut metadata = HashMap::with_capacity(7);
-                metadata.insert("dbus_enabled".to_string(), serde_json::to_value(self.config.dbus_enabled)?);
-                metadata.insert("journal_enabled".to_string(), serde_json::to_value(self.config.journal_enabled)?);
-                metadata.insert("udev_enabled".to_string(), serde_json::to_value(self.config.udev_enabled)?);
-                metadata.insert("systemd_enabled".to_string(), serde_json::to_value(self.config.systemd_enabled)?);
-                metadata.insert("dbus_buses".to_string(), serde_json::to_value(&self.config.dbus_buses)?);
-                metadata.insert("journal_timeout_secs".to_string(), serde_json::to_value(self.config.journal_timeout_secs)?);
-                metadata.insert("processor_type".to_string(), serde_json::Value::String("ingestor".to_string()));
+                metadata.insert(
+                    "dbus_enabled".to_string(),
+                    serde_json::to_value(self.config.dbus_enabled)?,
+                );
+                metadata.insert(
+                    "journal_enabled".to_string(),
+                    serde_json::to_value(self.config.journal_enabled)?,
+                );
+                metadata.insert(
+                    "udev_enabled".to_string(),
+                    serde_json::to_value(self.config.udev_enabled)?,
+                );
+                metadata.insert(
+                    "systemd_enabled".to_string(),
+                    serde_json::to_value(self.config.systemd_enabled)?,
+                );
+                metadata.insert(
+                    "dbus_buses".to_string(),
+                    serde_json::to_value(&self.config.dbus_buses)?,
+                );
+                metadata.insert(
+                    "journal_timeout_secs".to_string(),
+                    serde_json::to_value(self.config.journal_timeout_secs)?,
+                );
+                metadata.insert(
+                    "processor_type".to_string(),
+                    serde_json::Value::String("ingestor".to_string()),
+                );
                 metadata
             },
             healthy: true,

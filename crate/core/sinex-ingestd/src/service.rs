@@ -279,9 +279,11 @@ impl IngestService {
             .add_service(IngestServiceServer::new(grpc_service))
             .serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener))
             .await
-            .map_err(|e| SinexError::service(format!("gRPC server error: {}", e))
-                .with_operation("service.start_grpc_server")
-                .with_context("socket_path", config.socket_path.clone()))?;
+            .map_err(|e| {
+                SinexError::service(format!("gRPC server error: {}", e))
+                    .with_operation("service.start_grpc_server")
+                    .with_context("socket_path", config.socket_path.clone())
+            })?;
 
         info!("Ingestion service stopped");
         Ok(())
@@ -956,16 +958,18 @@ impl IngestServiceImpl {
     /// Convert protobuf event to RawEvent
     async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
         // Validate and parse JSON payload
-        let payload = sinex_core::types::validate_json(&proto.payload)
-            .map_err(|e| SinexError::validation(format!("Invalid JSON payload: {}", e))
-                .with_operation("service.parse_json_payload"))?;
+        let payload = sinex_core::types::validate_json(&proto.payload).map_err(|e| {
+            SinexError::validation(format!("Invalid JSON payload: {}", e))
+                .with_operation("service.parse_json_payload")
+        })?;
 
         let _blob_id = proto
             .blob_id
             .map(|blob_id_str| {
-                Ulid::from_str(&blob_id_str)
-                    .map_err(|e| SinexError::validation(format!("Invalid blob ID: {}", e))
-                        .with_operation("service.parse_blob_id"))
+                Ulid::from_str(&blob_id_str).map_err(|e| {
+                    SinexError::validation(format!("Invalid blob ID: {}", e))
+                        .with_operation("service.parse_blob_id")
+                })
             })
             .transpose()?;
 

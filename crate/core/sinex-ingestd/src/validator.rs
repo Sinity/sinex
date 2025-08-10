@@ -1,6 +1,6 @@
 //! Event validation for the ingestion daemon
 
-use crate::IngestdResult;
+use crate::{IngestdResult, SinexError};
 use ahash::AHashMap;
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::SqlxPgPool as PgPool;
@@ -82,7 +82,10 @@ impl EventValidator {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| crate::IngestdError::Database(e))?;
+        .map_err(|e| {
+            SinexError::database(format!("Failed to load event schemas: {}", e))
+                .with_operation("validator.load_schemas")
+        })?;
 
         // Process the loaded schemas and build cache
         let mut cache = AHashMap::new();
@@ -265,7 +268,10 @@ impl EventValidator {
         )
         .fetch_all(pool)
         .await
-        .map_err(|e| crate::IngestdError::Database(e))?;
+        .map_err(|e| {
+            SinexError::database(format!("Failed to load event schemas: {}", e))
+                .with_operation("validator.load_schemas")
+        })?;
 
         let mut cache = AHashMap::new();
         let mut compiled_count = 0;

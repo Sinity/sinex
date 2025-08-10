@@ -86,6 +86,15 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 impl<'a> StateRepository<'a> {
     // ===== Validation Methods =====
 
+    /// Validate an operation ID is not null/empty
+    pub fn validate_operation_id(id: &Id<Operation>) -> DbResult<()> {
+        // ULIDs are always valid once created, but we can check for zero ULID
+        if id.as_ulid().to_bytes() == [0u8; 16] {
+            return Err(SinexError::validation("Operation ID cannot be zero"));
+        }
+        Ok(())
+    }
+
     /// Validate a ReplayScope JSON object
     pub fn validate_replay_scope(scope: &JsonValue) -> DbResult<()> {
         // Required fields for replay scope
@@ -329,6 +338,7 @@ impl<'a> StateRepository<'a> {
 
     /// Get operation by ID
     pub async fn get_operation(&self, id: &Id<Operation>) -> DbResult<Option<OperationRecord>> {
+        Self::validate_operation_id(id)?;
         sqlx::query_as!(
             OperationRecord,
             r#"

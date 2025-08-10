@@ -213,6 +213,31 @@ impl RawEvent {
     }
 }
 
+/// Create RawEvent from typed payload - derives source and event_type automatically
+impl<T> From<T> for RawEvent
+where
+    T: crate::types::events::EventPayload + serde::Serialize,
+{
+    fn from(payload: T) -> Self {
+        let payload_json =
+            serde_json::to_value(&payload).expect("EventPayload serialization should never fail");
+
+        RawEvent {
+            id: None,
+            source: T::SOURCE,
+            event_type: T::EVENT_TYPE,
+            payload: payload_json,
+            ts_orig: None,
+            host: get_hostname(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            provenance: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        }
+    }
+}
+
 // Helper function to get hostname
 fn get_hostname() -> HostName {
     HostName::new(gethostname::gethostname().to_string_lossy().to_string())
@@ -227,12 +252,8 @@ mod tests {
 
     #[sinex_test]
     fn test_new_event_constructor() -> Result<()> {
-        let event = RawEvent::new(
-            EventSource::new("test"),
-            EventType::new("test.created"),
-            json!({"message": "hello"}),
-        )
-        .with_host(HostName::new("test-host"));
+        let event = RawEvent::new("test", "test.created", json!({"message": "hello"}))
+            .with_host(HostName::new("test-host"));
 
         assert_eq!(event.source.as_str(), "test");
         assert_eq!(event.event_type.as_str(), "test.created");
@@ -240,6 +261,28 @@ mod tests {
         assert!(event.id.is_none());
         assert!(event.is_raw_event());
         assert!(!event.is_persisted());
+        Ok(())
+    }
+
+    #[sinex_test]
+    fn test_from_typed_payload() -> Result<()> {
+        use crate::types::domain::SanitizedPath;
+        use crate::types::events::payloads::filesystem::FileCreatedPayload;
+        use chrono::Utc;
+
+        let payload = FileCreatedPayload {
+            path: SanitizedPath::new_unchecked("/test.txt"),
+            size: 1024,
+            created_at: Utc::now(),
+            permissions: Some(0o644),
+        };
+
+        let event: RawEvent = payload.into();
+
+        assert_eq!(event.source, FileCreatedPayload::SOURCE);
+        assert_eq!(event.event_type, FileCreatedPayload::EVENT_TYPE);
+        assert!(event.id.is_none());
+        assert!(event.is_raw_event());
         Ok(())
     }
 

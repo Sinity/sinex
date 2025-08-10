@@ -4,6 +4,7 @@
 //! including cascade analysis, batch processing, and depth limits.
 
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 
 /// Configuration for cascade analysis operations
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +60,36 @@ impl Default for BatchConfig {
     }
 }
 
+/// Database connection pool configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DatabasePoolConfig {
+    /// Maximum number of connections in the pool
+    pub max_connections: u32,
+    /// Minimum number of connections to maintain
+    pub min_connections: u32,
+    /// Connection timeout in seconds
+    pub connect_timeout_seconds: u64,
+    /// Idle timeout in seconds before closing connection
+    pub idle_timeout_seconds: u64,
+    /// Maximum lifetime of a connection in seconds
+    pub max_lifetime_seconds: u64,
+    /// Whether to test connections on checkout
+    pub test_before_acquire: bool,
+}
+
+impl Default for DatabasePoolConfig {
+    fn default() -> Self {
+        Self {
+            max_connections: 10,
+            min_connections: 2,
+            connect_timeout_seconds: 30,
+            idle_timeout_seconds: 600,  // 10 minutes
+            max_lifetime_seconds: 1800, // 30 minutes
+            test_before_acquire: true,
+        }
+    }
+}
+
 /// Configuration for the entire replay system
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayConfig {
@@ -66,6 +97,8 @@ pub struct ReplayConfig {
     pub cascade: CascadeConfig,
     /// Batch processing configuration
     pub batch: BatchConfig,
+    /// Database connection pool configuration
+    pub database_pool: DatabasePoolConfig,
     /// Whether to enforce invariants during replay
     pub enforce_invariants: bool,
     /// Whether to collect metrics during replay
@@ -79,6 +112,7 @@ impl Default for ReplayConfig {
         Self {
             cascade: CascadeConfig::default(),
             batch: BatchConfig::default(),
+            database_pool: DatabasePoolConfig::default(),
             enforce_invariants: true,
             collect_metrics: true,
             use_advisory_locks: true,
@@ -104,6 +138,14 @@ impl ReplayConfig {
                 max_retries: 1,
                 retry_delay_ms: 100,
             },
+            database_pool: DatabasePoolConfig {
+                max_connections: 5,
+                min_connections: 1,
+                connect_timeout_seconds: 10,
+                idle_timeout_seconds: 300,
+                max_lifetime_seconds: 900,
+                test_before_acquire: false,
+            },
             enforce_invariants: true,
             collect_metrics: false,
             use_advisory_locks: false,
@@ -127,6 +169,14 @@ impl ReplayConfig {
                 max_retries: 5,
                 retry_delay_ms: 5000,
             },
+            database_pool: DatabasePoolConfig {
+                max_connections: 20,
+                min_connections: 5,
+                connect_timeout_seconds: 60,
+                idle_timeout_seconds: 1200,
+                max_lifetime_seconds: 3600,
+                test_before_acquire: true,
+            },
             enforce_invariants: true,
             collect_metrics: true,
             use_advisory_locks: true,
@@ -149,6 +199,14 @@ impl ReplayConfig {
                 checkpoint_after_batch: false,
                 max_retries: 0,
                 retry_delay_ms: 0,
+            },
+            database_pool: DatabasePoolConfig {
+                max_connections: 2,
+                min_connections: 1,
+                connect_timeout_seconds: 5,
+                idle_timeout_seconds: 60,
+                max_lifetime_seconds: 120,
+                test_before_acquire: false,
             },
             enforce_invariants: false,
             collect_metrics: false,

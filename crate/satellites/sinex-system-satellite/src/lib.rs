@@ -70,20 +70,157 @@ impl Default for SystemConfig {
     }
 }
 
-/// Error types for system satellite
-#[derive(Debug, thiserror::Error)]
+/// Error types for system satellite with rich context support
+#[derive(Debug, thiserror::Error, Clone)]
 pub enum SystemSatelliteError {
     #[error("Processing error: {0}")]
-    Processing(String),
+    Processing(ErrorDetails),
 
     #[error("Configuration error: {0}")]
-    Configuration(String),
+    Configuration(ErrorDetails),
 
     #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(ErrorDetails),
 
     #[error("JSON error: {0}")]
-    Json(#[from] serde_json::Error),
+    Json(ErrorDetails),
+}
+
+/// Detailed error information with context and source chain
+#[derive(Debug, Clone)]
+pub struct ErrorDetails {
+    /// The primary error message
+    pub message: String,
+    /// Additional context as key-value pairs
+    pub context: indexmap::IndexMap<String, String>,
+    /// Chain of source errors
+    pub sources: Vec<String>,
+}
+
+impl std::fmt::Display for ErrorDetails {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)?;
+
+        if !self.context.is_empty() {
+            write!(f, " (")?;
+            for (i, (k, v)) in self.context.iter().enumerate() {
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                write!(f, "{}: {}", k, v)?;
+            }
+            write!(f, ")")?;
+        }
+
+        if !self.sources.is_empty() {
+            write!(f, "\nCaused by:")?;
+            for (i, source) in self.sources.iter().enumerate() {
+                write!(f, "\n  {}: {}", i + 1, source)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl ErrorDetails {
+    pub fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            context: indexmap::IndexMap::new(),
+            sources: Vec::new(),
+        }
+    }
+
+    pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        self.context.insert(key.into(), value.to_string());
+        self
+    }
+
+    pub fn with_source(mut self, source: impl ToString) -> Self {
+        self.sources.push(source.to_string());
+        self
+    }
+}
+
+impl SystemSatelliteError {
+    /// Create a new processing error
+    pub fn processing(msg: impl Into<String>) -> Self {
+        SystemSatelliteError::Processing(ErrorDetails::new(msg))
+    }
+
+    /// Create a new configuration error
+    pub fn configuration(msg: impl Into<String>) -> Self {
+        SystemSatelliteError::Configuration(ErrorDetails::new(msg))
+    }
+
+    /// Create a new IO error
+    pub fn io(msg: impl Into<String>) -> Self {
+        SystemSatelliteError::Io(ErrorDetails::new(msg))
+    }
+
+    /// Create a new JSON error
+    pub fn json(msg: impl Into<String>) -> Self {
+        SystemSatelliteError::Json(ErrorDetails::new(msg))
+    }
+
+    /// Add context key-value pair
+    pub fn with_context(mut self, key: impl Into<String>, value: impl ToString) -> Self {
+        let details = match &mut self {
+            SystemSatelliteError::Processing(d)
+            | SystemSatelliteError::Configuration(d)
+            | SystemSatelliteError::Io(d)
+            | SystemSatelliteError::Json(d) => d,
+        };
+        details.context.insert(key.into(), value.to_string());
+        self
+    }
+
+    /// Add operation context
+    pub fn with_operation(self, operation: impl ToString) -> Self {
+        self.with_context("operation", operation)
+    }
+
+    /// Add ID context
+    pub fn with_id(self, id_type: &str, id: impl ToString) -> Self {
+        self.with_context(id_type, id)
+    }
+
+    /// Add source error to the chain
+    pub fn with_source(mut self, source: impl ToString) -> Self {
+        let details = match &mut self {
+            SystemSatelliteError::Processing(d)
+            | SystemSatelliteError::Configuration(d)
+            | SystemSatelliteError::Io(d)
+            | SystemSatelliteError::Json(d) => d,
+        };
+        details.sources.push(source.to_string());
+        self
+    }
+
+    /// Add path context
+    pub fn with_path(self, path: impl AsRef<std::path::Path>) -> Self {
+        self.with_context("path", path.as_ref().display().to_string())
+    }
+
+    /// Add duration context
+    pub fn with_duration(self, duration: std::time::Duration) -> Self {
+        self.with_context("duration_ms", duration.as_millis())
+    }
+}
+
+impl From<std::io::Error> for SystemSatelliteError {
+    fn from(err: std::io::Error) -> Self {
+        SystemSatelliteError::Io(
+            ErrorDetails::new(err.to_string()).with_source(format!("{:?}", err.kind())),
+        )
+    }
+}
+
+impl From<serde_json::Error> for SystemSatelliteError {
+    fn from(err: serde_json::Error) -> Self {
+        SystemSatelliteError::Json(ErrorDetails::new(err.to_string()))
+    }
 }
 
 impl From<SystemSatelliteError> for sinex_satellite_sdk::SatelliteError {

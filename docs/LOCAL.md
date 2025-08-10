@@ -107,7 +107,7 @@ Based on my comprehensive analysis of the Sinex event-driven data capture system
 **PRIORITY: HIGH**
 **FINDINGS:**
 
-1. [Lines 41-111] **PATTERN: Manual SQL string construction with potential SQL injection risk**
+1. [✓ DONE] [Lines 41-111] **PATTERN: Manual SQL string construction with potential SQL injection risk**
    **CURRENT:** Dynamic SQL building with string concatenation and manual parameterization
    **SUGGESTION:** Use SeaQuery helpers available in project (seaquery_helpers::SeaQueryUlidExt) for type-safe query construction
    **IMPACT:** security|maintainability
@@ -177,7 +177,7 @@ Based on my comprehensive analysis of the Sinex event-driven data capture system
 
 **FOCUS PRIORITIES:**
 1. **HIGH**: Replace custom ServiceError with project's sophisticated SinexError system
-2. **HIGH**: Replace manual SQL construction in search.rs with SeaQuery builders  
+2. **HIGH**: [✓ DONE] Replace manual SQL construction in search.rs with SeaQuery builders  
 3. **MEDIUM**: Extract common patterns (PgInterval, JSON responses, metadata building)
 4. **LOW**: Clean up unused fields and duplicate methods
 
@@ -583,9 +583,10 @@ FINDINGS:
    IMPACT: performance|memory
    EFFORT: trivial
 
-2. [Line 628-686] PATTERN: Complex raw SQL with many binds
+2. [REVIEWED] [Line 628-686] PATTERN: Complex raw SQL with many binds
    CURRENT: 17 separate bind parameters for UNNEST query
    SUGGESTION: Extract to a reusable database helper with typed parameters
+   NOTE: Performance-critical bulk insert optimized for PostgreSQL arrays - kept as-is
    IMPACT: maintainability|readability
    EFFORT: moderate
 
@@ -2152,7 +2153,7 @@ Based on the analysis from all 10 agents, here is the complete action plan with 
 - **Lines 34-35, 58-59, 72-74**: Use `SinexError::processing().with_operation("blob_storage")`
 
 ### search.rs
-- **Lines 41-111**: Replace with SeaQuery builder pattern
+- **Lines 41-111**: [✓ DONE] Replace with SeaQuery builder pattern
 - **Line 62**: Use `query.bind(&query.sources[..])` 
 - **Lines 99-111**: Create SearchResult struct with FromRow derive
 - **Line 88**: Replace ILIKE with PostgreSQL full-text search

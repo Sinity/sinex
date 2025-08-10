@@ -16,6 +16,6 @@ pub mod search;
 
 pub use analytics::AnalyticsService;
 pub use content::ContentService;
-pub use error::{ServiceError, ServiceResult};
+pub use error::{Result, ServiceResult, SinexError};
 pub use pkm::PkmService;
 pub use search::{SearchQuery, SearchService};

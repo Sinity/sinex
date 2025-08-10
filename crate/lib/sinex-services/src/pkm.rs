@@ -1,6 +1,6 @@
 //! Personal Knowledge Management (PKM) service
 
-use crate::error::ServiceResult;
+use crate::error::{Result as ServiceResult, SinexError};
 use serde_json::json;
 use sinex_core::db::models::Entity as DbEntity;
 use sinex_core::db::models::RawEvent;
@@ -66,10 +66,11 @@ impl PkmService {
             .await?;
 
         if source_material.is_none() {
-            return Err(crate::error::ServiceError::NotFound(format!(
+            return Err(SinexError::not_found(format!(
                 "Source material {} not found",
                 source_material_id
-            )));
+            ))
+            .with_id("source_material_id", source_material_id));
         }
 
         let mut entity_ids = Vec::new();
