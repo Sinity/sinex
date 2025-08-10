@@ -133,15 +133,16 @@ impl ContentServiceProcessor {
         Ok(metadata)
     }
 
-    /// Get event filters for this automaton
-    fn event_filters() -> Vec<NatsEventFilter> {
-        vec![
-            StreamEventFilter::new(
-                Some("rpc.content".to_string()),
-                Some("request".to_string()),
-            ),
-        ]
-    }
+    // TODO: Remove event_filters after NatsStreamConsumer removal
+    // /// Get event filters for this automaton
+    // fn event_filters() -> Vec<NatsEventFilter> {
+    //     vec![
+    //         StreamEventFilter::new(
+    //             Some("rpc.content".to_string()),
+    //             Some("request".to_string()),
+    //         ),
+    //     ]
+    // }
 }
 
 #[async_trait]
@@ -242,15 +243,9 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                     SatelliteError::Processing("NATS JetStream not initialized".to_string())
                 })?;
                 
-                let mut nats_consumer = NatsStreamConsumer::from_context(
-                    jetstream.clone(),
-                    "content-service".to_string(),
-                    Self::event_filters(),
-                    ctx.checkpoint_manager.clone(),
-                );
-
-                let final_checkpoint = nats_consumer.consume_continuous(from, self, args.shutdown_signal)
-                    .await?;
+                // TODO: Implement content automaton continuous mode after NatsStreamConsumer removal
+                warn!("Content automaton continuous mode not yet implemented after NatsStreamConsumer removal");
+                let final_checkpoint = from;
 
                 Ok(ScanReport {
                     events_processed,
@@ -284,22 +279,9 @@ impl StatefulStreamProcessor for ContentServiceProcessor {
                     )
                     .await?;
 
-                // Process using batch processor
-                // Get JetStream client from context
-                let jetstream = ctx.nats_jetstream.as_ref().ok_or_else(|| {
-                    SatelliteError::Processing("NATS JetStream not initialized".to_string())
-                })?;
-                
-                let mut nats_consumer = NatsStreamConsumer::from_context(
-                    jetstream.clone(),
-                    "content-service".to_string(),
-                    Self::event_filters(),
-                    ctx.checkpoint_manager.clone(),
-                );
-
-                let final_checkpoint = redis_consumer
-                    .consume_historical(events, self, 100)
-                    .await?;
+                // TODO: Implement content automaton historical processing after NatsStreamConsumer removal
+                warn!("Content automaton historical processing not yet implemented after NatsStreamConsumer removal");
+                let final_checkpoint = from;
 
                 events_processed = events.len();
 

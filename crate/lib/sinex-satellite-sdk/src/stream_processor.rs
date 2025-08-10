@@ -38,7 +38,6 @@ use crate::{
     checkpoint::CheckpointManager,
     event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport},
     grpc_client::IngestClient,
-    nats_stream_consumer::{EventFilter, NatsConsumerConfig, NatsStreamConsumer},
     SatelliteError, SatelliteResult,
 };
 use async_trait::async_trait;
@@ -651,16 +650,13 @@ pub trait StatefulStreamProcessor: Send + Sync {
         )))
     }
 
-    /// Get event filters for NATS consumption (automata only)
-    ///
-    /// This method should return the event filters that define which events
-    /// this automaton is interested in processing. Used by the StreamProcessorRunner
-    /// when setting up NATS consumption.
-    ///
-    /// Default implementation returns empty filters.
-    fn event_filters(&self) -> Vec<EventFilter> {
-        Vec::new()
-    }
+    // TODO: Define event filtering after NatsStreamConsumer removal
+    // Event filtering should be integrated into the scan method per TARGET_canonical.md
+    //
+    // /// Get event filters for NATS consumption (automata only)
+    // fn event_filters(&self) -> Vec<EventFilter> {
+    //     Vec::new()
+    // }
 
     /// Graceful shutdown
     async fn shutdown(&mut self) -> SatelliteResult<()> {
@@ -1276,8 +1272,10 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 self.run_ingestor_startup_sequence().await
             }
             ProcessorType::Automaton => {
-                // Automata go directly to continuous mode with internal NATS management
-                self.run_automaton_continuous().await
+                // TODO: Implement automaton continuous mode after NatsStreamConsumer removal
+                // This functionality should be moved into the scan method per TARGET_canonical.md
+                warn!("Automaton continuous mode not yet implemented after NatsStreamConsumer removal");
+                Ok(())
             }
         }
     }
@@ -1344,102 +1342,28 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
-    /// Run automaton in continuous mode with internal NATS management
-    async fn run_automaton_continuous(&mut self) -> SatelliteResult<()> {
-        info!("Starting automaton continuous processing with internal NATS management");
+    // TODO: Implement automaton continuous mode after NatsStreamConsumer removal
+    // This functionality should be moved into the scan method per TARGET_canonical.md
+    //
+    // /// Run automaton in continuous mode with internal NATS management
+    // async fn run_automaton_continuous(&mut self) -> SatelliteResult<()> {
+    //     // REMOVED: This method used NatsStreamConsumer which has been deprecated
+    //     // The functionality should be integrated into the scan method instead
+    //     Err(SatelliteError::Processing(
+    //         "Automaton continuous mode not yet implemented after NatsStreamConsumer removal".to_string()
+    //     ))
+    // }
 
-        // Get event filters from the processor
-        let filters = self.processor.event_filters();
-        if filters.is_empty() {
-            warn!("Automaton has no event filters defined - will process all events");
-        }
-
-        // Create NATS consumer configuration
-        let processor_name = self.processor.processor_name().to_string();
-        let config = NatsConsumerConfig {
-            group_name: "automata".to_string(),
-            consumer_name: processor_name.clone(),
-            stream_name: "SINEX_EVENTS".to_string(),
-            batch_size: 100,
-            block_timeout: tokio::time::Duration::from_secs(5),
-            filters,
-            nats_servers: vec!["nats://localhost:4222".to_string()],
-        };
-
-        // Create and initialize NATS consumer
-        let mut nats_consumer = NatsStreamConsumer::new(config);
-        nats_consumer.initialize(None).await.map_err(|e| {
-            SatelliteError::General(eyre!("Failed to initialize NATS consumer: {}", e))
-        })?;
-
-        info!(
-            processor = %processor_name,
-            "NATS consumer initialized, starting event batch processing loop"
-        );
-
-        // Main processing loop - this runs indefinitely
-        loop {
-            // Read batch from NATS
-            match self.read_event_batch_from_nats(&mut nats_consumer).await {
-                Ok(events) => {
-                    if !events.is_empty() {
-                        debug!(
-                            processor = %processor_name,
-                            count = events.len(),
-                            "Received event batch from NATS"
-                        );
-
-                        // Process batch using the processor's implementation
-                        match self.processor.process_event_batch(events).await {
-                            Ok(stats) => {
-                                debug!(
-                                    processor = %processor_name,
-                                    processed = stats.processed,
-                                    skipped = stats.skipped,
-                                    failed = stats.failed,
-                                    duration_ms = stats.duration.as_millis(),
-                                    "Event batch processed successfully"
-                                );
-
-                                if stats.failed > 0 {
-                                    warn!(
-                                        processor = %processor_name,
-                                        failed = stats.failed,
-                                        errors = ?stats.errors,
-                                        "Some events failed processing"
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                warn!(
-                                    processor = %processor_name,
-                                    error = %e,
-                                    "Failed to process event batch"
-                                );
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        processor = %processor_name,
-                        error = %e,
-                        "Failed to read events from NATS, retrying after delay"
-                    );
-                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                }
-            }
-        }
-    }
-
-    /// Read a batch of events from NATS (internal helper)
-    async fn read_event_batch_from_nats(
-        &self,
-        nats_consumer: &mut NatsStreamConsumer,
-    ) -> SatelliteResult<Vec<RawEvent>> {
-        // Use the new read_single_batch method
-        nats_consumer.read_single_batch().await
-    }
+    // /// Read a batch of events from NATS (internal helper)
+    // async fn read_event_batch_from_nats(
+    //     &self,
+    //     nats_consumer: &mut NatsStreamConsumer,
+    // ) -> SatelliteResult<Vec<RawEvent>> {
+    //     // REMOVED: This method used NatsStreamConsumer which has been deprecated
+    //     Err(SatelliteError::Processing(
+    //         "NATS batch reading not yet implemented after NatsStreamConsumer removal".to_string()
+    //     ))
+    // }
 
     /// Get processor capabilities
     pub fn get_capabilities(&self) -> ProcessorCapabilities {

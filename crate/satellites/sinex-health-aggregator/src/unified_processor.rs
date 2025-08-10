@@ -12,11 +12,6 @@ use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
-    nats_stream_consumer::{
-        BatchProcessingResult as NatsBatchProcessingResult, 
-        EventBatchProcessor as NatsEventBatchProcessor,
-        EventFilter as NatsEventFilter, 
-        NatsStreamConsumer},
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -170,57 +165,25 @@ impl HealthAggregator {
         Ok(Some(event))
     }
 
-    /// Get event filters for this automaton
-    fn event_filters() -> Vec<NatsEventFilter> {
-        vec![
-            NatsEventFilter {
-                sources: vec!["journald".to_string()],
-                event_types: vec!["satellite.heartbeat".to_string()],
-            },
-        ]
-    }
+    // TODO: Remove event_filters after NatsStreamConsumer removal
+    // /// Get event filters for this automaton
+    // fn event_filters() -> Vec<NatsEventFilter> {
+    //     vec![
+    //         NatsEventFilter {
+    //             sources: vec!["journald".to_string()],
+    //             event_types: vec!["satellite.heartbeat".to_string()],
+    //         },
+    //     ]
+    // }
 }
 
-#[async_trait]
-impl NatsEventBatchProcessor for HealthAggregator {
-    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
-        let mut successful_ids = Vec::new();
-        let mut failed_ids = Vec::new();
-        
-        for event in events {
-            let event_id = event.id.to_string();
-            
-            match self.process_heartbeat(&event).await {
-                Ok(_) => successful_ids.push(event_id),
-                Err(e) => {
-                    warn!("Failed to process heartbeat event {}: {}", event_id, e);
-                    failed_ids.push((event_id, e.to_string()));
-                }
-            }
-        }
-
-        // Check if we should generate a summary
-        if let Some(summary_event) = self.maybe_generate_summary().await? {
-            if let Some(ctx) = &self.context {
-                ctx.send_event(summary_event).await?;
-            }
-        }
-
-        Ok(NatsBatchProcessingResult {
-            processed: successful_ids.len(),
-            skipped: 0,
-            failed: failed_ids.len(),
-            duration: std::time::Duration::from_millis(0),
-            errors: failed_ids.into_iter().map(|(_, e)| e).collect(),
-        })
-    }
-
-    async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "last_summary_time": self.last_summary_time.to_rfc3339(),
-            "component_count": self.component_health.lock().await.len()}))
-    }
-}
+// TODO: Remove NatsEventBatchProcessor implementation after NatsStreamConsumer removal
+// #[async_trait]
+// impl NatsEventBatchProcessor for HealthAggregator {
+//     async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
+//         // ... implementation removed
+//     }
+// }
 
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
@@ -241,37 +204,16 @@ impl StatefulStreamProcessor for HealthAggregator {
 
         match until {
             TimeHorizon::Continuous => {
-                // Real-time processing from NATS JetStream
-                info!("Starting continuous health monitoring from NATS JetStream");
+                // TODO: Implement continuous health monitoring after NatsStreamConsumer removal
+                warn!("Health aggregator continuous mode not yet implemented after NatsStreamConsumer removal");
                 
-                let ctx = self.context.as_ref().ok_or_else(|| {
-                    SatelliteError::Processing("Health aggregator context not initialized".to_string())
-                })?;
-                
-                // Get JetStream client from context
-                let jetstream = ctx.nats_jetstream.as_ref().ok_or_else(|| {
-                    SatelliteError::Processing("NATS JetStream not initialized".to_string())
-                })?;
-                
-                let mut nats_consumer = NatsStreamConsumer::from_context(
-                    jetstream.clone(),
-                    "health-aggregator".to_string(),
-                    Self::event_filters(),
-                    ctx.checkpoint_manager.clone(),
-                );
-
-                // This will run indefinitely for continuous mode
-                let final_checkpoint = nats_consumer
-                    .consume_continuous(from, self, args.shutdown_signal)
-                    .await?;
-
                 Ok(ScanReport {
                     events_processed,
-                    duration: Utc::now() - start_time,
-                    final_checkpoint: Some(final_checkpoint),
+                    duration: std::time::Duration::from_millis(0),
+                    final_checkpoint: from,
                     time_range: Some((start_time, Utc::now())),
                     processor_stats: HashMap::new(),
-                    successful_targets: vec!["nats-jetstream".to_string()],
+                    successful_targets: vec!["health-aggregator".to_string()],
                     failed_targets: HashMap::new(),
                     warnings: Vec::new()})
             }

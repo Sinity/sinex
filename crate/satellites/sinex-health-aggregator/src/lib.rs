@@ -6,10 +6,6 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
-    nats_stream_consumer::{
-        BatchProcessingResult as NatsBatchProcessingResult,
-        EventBatchProcessor as NatsEventBatchProcessor,
-    },
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
@@ -103,25 +99,6 @@ impl StatefulStreamProcessor for HealthAggregator {
 impl Default for HealthAggregator {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[async_trait]
-impl NatsEventBatchProcessor for HealthAggregator {
-    async fn process_batch(
-        &mut self,
-        events: Vec<sinex_core::db::models::RawEvent>,
-    ) -> SatelliteResult<NatsBatchProcessingResult> {
-        // Simple implementation that just acknowledges all events
-        info!("Health aggregator processed {} events", events.len());
-
-        Ok(NatsBatchProcessingResult {
-            processed: events.len(),
-            skipped: 0,
-            failed: 0,
-            duration: std::time::Duration::from_millis(0),
-            errors: vec![],
-        })
     }
 }
 
