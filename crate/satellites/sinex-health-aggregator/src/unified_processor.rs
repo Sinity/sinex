@@ -9,7 +9,8 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload};
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
     redis_stream_consumer::BatchProcessingResult,
@@ -22,8 +23,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-// Use HealthStatus and ComponentHealth from sinex_events
-use sinex_core::types::events::{HealthStatus, ComponentHealth};
 
 /// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,7 +143,7 @@ impl HealthAggregator {
         }
 
         // Create synthesis event
-        let event: RawEvent = Event::from_payload(SystemHealthSummaryPayload {
+        let event: RawEvent = Event::new(SystemHealthSummaryPayload {
             overall_status: summary.overall_status,
             healthy_components: summary.healthy_components,
             degraded_components: summary.degraded_components,
@@ -315,15 +314,45 @@ impl StatefulStreamProcessor for HealthAggregator {
     }
 
     async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<BatchProcessingResult> {
-        // TODO: Implement batch processing for health events
-        // Issue: #XXX - Process health-related events and update metrics
-        Ok(BatchProcessingResult::default())
+        let mut successful_ids = Vec::new();
+        let mut failed_ids = Vec::new();
+        let mut synthesis_events = Vec::new();
+
+        for event in events {
+            match self.process_heartbeat(&event).await {
+                Ok(_) => {
+                    successful_ids.push(event.event_id);
+                }
+                Err(e) => {
+                    warn!("Failed to process heartbeat event {}: {}", event.event_id, e);
+                    failed_ids.push((event.event_id, e.to_string()));
+                }
+            }
+        }
+
+        // Check if we should generate a health summary
+        if let Ok(Some(summary_event)) = self.maybe_generate_summary().await {
+            synthesis_events.push(summary_event);
+        }
+
+        Ok(BatchProcessingResult {
+            successful_ids,
+            failed_ids,
+            synthesis_events,
+        })
     }
 
     async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
-        // TODO: Return current health aggregation state as checkpoint
-        // Issue: #XXX - Serialize current health metrics for checkpointing
-        None
+        let health_map = self.component_health.try_lock().ok()?;
+        
+        let checkpoint_data = serde_json::json!({
+            "last_summary_time": self.last_summary_time,
+            "expected_components": self.expected_components,
+            "component_health": *health_map,
+            "aggregation_window_minutes": self.aggregation_window.num_minutes()
+        });
+        
+        Some(checkpoint_data)
     }
 }
 

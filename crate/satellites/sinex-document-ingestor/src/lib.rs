@@ -106,13 +106,24 @@ impl DocumentProcessor {
                 .register_in_flight(&material_type, Some(&source_uri), initial_metadata)
                 .await?;
 
+            // Detect encoding for text files
+            let detected_encoding = if mime_type.starts_with("text/") {
+                // For text files, try to detect encoding or default to UTF-8
+                match std::str::from_utf8(&content) {
+                    Ok(_) => Some("utf-8".to_string()),
+                    Err(_) => Some("binary".to_string()), // Non-UTF8 text files
+                }
+            } else {
+                None // Binary files don't have text encoding
+            };
+
             // Step 2: Create and emit document.ingested event with provenance
             let event: RawEvent = Event::from_payload(DocumentIngestedPayload {
                 file_path: file_path.to_string(),
                 source_material_id: source_material_id.to_string(),
                 size_bytes: content.len() as u64,
                 mime_type: Some(mime_type.clone()),
-                encoding: None, // TODO: Detect encoding
+                encoding: detected_encoding,
             })
             .into();
 
