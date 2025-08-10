@@ -252,7 +252,7 @@ impl<'a> EventRepository<'a> {
             EventRecord,
             r#"
             INSERT INTO core.events (
-                event_id, source, event_type, host, payload,
+                id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, source_material_offset_start, source_material_offset_end,
                 anchor_byte, associated_blob_ids,
@@ -928,7 +928,7 @@ impl<'a> EventRepository<'a> {
             EventRecord,
             r#"
             INSERT INTO core.events (
-                event_id, source, event_type, host, payload,
+                id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, source_material_offset_start, source_material_offset_end,
                 anchor_byte, associated_blob_ids,

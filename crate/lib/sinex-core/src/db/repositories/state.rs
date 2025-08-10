@@ -87,7 +87,6 @@ impl<'a> StateRepository<'a> {
 
     /// Save a checkpoint for a processor
     pub async fn save_checkpoint(&self, checkpoint: CheckpointInput) -> DbResult<CheckpointRecord> {
-        let id = Id::<CheckpointRecord>::new();
         let consumer_group = checkpoint
             .consumer_group
             .unwrap_or_else(|| "default".into());
@@ -97,10 +96,10 @@ impl<'a> StateRepository<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                manifest_id, processor_name, consumer_group, consumer_name,
+                processor_name, consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7
             )
             ON CONFLICT ON CONSTRAINT unique_processor_consumer DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
@@ -126,7 +125,6 @@ impl<'a> StateRepository<'a> {
                 created_at,
                 updated_at
             "#,
-            *id.as_ulid() as _,
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref(),
@@ -913,7 +911,6 @@ impl<'a> StateRepositoryTx<'a> {
         &mut self,
         checkpoint: CheckpointInput,
     ) -> DbResult<CheckpointRecord> {
-        let id = Id::<CheckpointRecord>::new();
         let consumer_group = checkpoint
             .consumer_group
             .unwrap_or_else(|| "default".into());
@@ -923,10 +920,10 @@ impl<'a> StateRepositoryTx<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                manifest_id, processor_name, consumer_group, consumer_name,
+                processor_name, consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7
             )
             ON CONFLICT ON CONSTRAINT unique_processor_consumer DO UPDATE SET
                 last_processed_id = EXCLUDED.last_processed_id,
@@ -952,7 +949,6 @@ impl<'a> StateRepositoryTx<'a> {
                 created_at,
                 updated_at
             "#,
-            *id.as_ulid() as _,
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref(),
