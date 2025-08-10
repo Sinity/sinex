@@ -16,6 +16,9 @@ sinex-services = { path = "../../lib/sinex-services" }
 # sinex-telemetry folded into sinex-core
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 
+# Database
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json"] }
+
 # Async runtime
 tokio = { workspace = true, features = ["full"] }
 

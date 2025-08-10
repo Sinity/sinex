@@ -22,8 +22,13 @@ pub struct Operation {
     pub operation_id: Id<Operation>,
     pub actor: String,
     pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
+    pub state: String, // planning|previewed|approved|executing|committing|completed|failed|cancelled
     pub preview_summary: Option<JsonValue>, // { counts, cascades, churn_percent, time_quality_flips }
-    pub started_at: DateTime<Utc>,
+    pub checkpoint: Option<JsonValue>,      // Execution checkpoint for resumable operations
+    pub approved_by: Option<String>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub executor_node: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
     pub error_details: Option<String>,
@@ -204,16 +209,21 @@ impl<'a> StateRepository<'a> {
             Operation,
             r#"
             INSERT INTO core.operations_log (
-                operation_id, actor, scope, preview_summary,
+                operation_id, actor, scope, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, 'planning', $4, $5, $6, $7, $8
             )
             RETURNING 
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
@@ -245,7 +255,12 @@ impl<'a> StateRepository<'a> {
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
@@ -270,14 +285,19 @@ impl<'a> StateRepository<'a> {
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
                 error_details,
                 created_at
             FROM core.operations_log 
-            ORDER BY started_at DESC
+            ORDER BY created_at DESC
             LIMIT $1
             "#,
             limit
@@ -297,7 +317,7 @@ impl<'a> StateRepository<'a> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT operation_id, actor, scope, preview_summary, started_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
+            "SELECT operation_id, actor, scope, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
         );
 
         if let Some(actor) = actor {
@@ -310,7 +330,7 @@ impl<'a> StateRepository<'a> {
             query_builder.push_bind(scope);
         }
 
-        query_builder.push(" ORDER BY started_at DESC LIMIT ");
+        query_builder.push(" ORDER BY created_at DESC LIMIT ");
         query_builder.push_bind(limit);
 
         let query = query_builder.build_query_as::<Operation>();
@@ -335,7 +355,12 @@ impl<'a> StateRepository<'a> {
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
@@ -343,7 +368,7 @@ impl<'a> StateRepository<'a> {
                 created_at
             FROM core.operations_log 
             WHERE scope @> $1
-            ORDER BY started_at DESC
+            ORDER BY created_at DESC
             LIMIT $2
             "#,
             scope_filter,
@@ -369,7 +394,12 @@ impl<'a> StateRepository<'a> {
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
@@ -377,7 +407,7 @@ impl<'a> StateRepository<'a> {
                 created_at
             FROM core.operations_log 
             WHERE actor = $1
-            ORDER BY started_at DESC
+            ORDER BY created_at DESC
             LIMIT $2
             "#,
             actor,
@@ -404,15 +434,20 @@ impl<'a> StateRepository<'a> {
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
                 error_details,
                 created_at
             FROM core.operations_log 
-            WHERE outcome = 'error' AND started_at > $1
-            ORDER BY started_at DESC
+            WHERE outcome = 'error' AND created_at > $1
+            ORDER BY created_at DESC
             LIMIT $2
             "#,
             since,
@@ -925,16 +960,21 @@ impl<'a> StateRepositoryTx<'a> {
             Operation,
             r#"
             INSERT INTO core.operations_log (
-                operation_id, actor, scope, preview_summary,
+                operation_id, actor, scope, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8
+                $1, $2, $3, 'planning', $4, $5, $6, $7, $8
             )
             RETURNING 
                 operation_id as "operation_id: Id<Operation>",
                 actor,
                 scope,
+                state,
                 preview_summary,
+                checkpoint,
+                approved_by,
+                approved_at,
+                executor_node,
                 started_at,
                 finished_at,
                 outcome,
