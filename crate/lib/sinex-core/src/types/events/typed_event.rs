@@ -242,6 +242,7 @@ fn get_ingestor_version() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::domain::SanitizedPath;
     use crate::types::events::payloads::filesystem::FileCreatedPayload;
     use sinex_test_utils::sinex_test;
 
