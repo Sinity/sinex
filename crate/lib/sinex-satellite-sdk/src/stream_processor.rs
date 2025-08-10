@@ -41,6 +41,7 @@ use crate::{
     nats::{
         client::NatsClient, config::NatsConfig, jetstream::JetStream, publisher::NatsPublisher,
     },
+    nats_stream_consumer::{EventFilter, NatsConsumerConfig, NatsStreamConsumer},
     SatelliteError, SatelliteResult,
 };
 use async_trait::async_trait;
@@ -54,6 +55,33 @@ use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
+
+/// Processing statistics for batch operations
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessingStats {
+    /// Number of events processed successfully
+    pub processed: usize,
+    /// Number of events skipped (filtered out)
+    pub skipped: usize,
+    /// Number of events that failed processing
+    pub failed: usize,
+    /// Processing duration
+    pub duration: std::time::Duration,
+    /// Any errors encountered
+    pub errors: Vec<String>,
+}
+
+impl Default for ProcessingStats {
+    fn default() -> Self {
+        Self {
+            processed: 0,
+            skipped: 0,
+            failed: 0,
+            duration: std::time::Duration::from_millis(0),
+            errors: Vec::new(),
+        }
+    }
+}
 
 /// Time horizon defines the scope and mode of scanning operations.
 ///
@@ -607,6 +635,34 @@ pub trait StatefulStreamProcessor: Send + Sync {
     /// Health check
     async fn health_check(&self) -> SatelliteResult<bool> {
         Ok(true)
+    }
+
+    /// Process a batch of events (for automata in continuous mode)
+    ///
+    /// This method is called by the StreamProcessorRunner when running automata
+    /// in continuous mode. The runner internally manages NATS consumption and
+    /// feeds batches of events to this method.
+    ///
+    /// Default implementation returns NotImplemented error for non-automata.
+    async fn process_event_batch(
+        &mut self,
+        events: Vec<RawEvent>,
+    ) -> SatelliteResult<ProcessingStats> {
+        let _ = events; // Suppress unused parameter warning
+        Err(SatelliteError::General(eyre!(
+            "This processor does not support event batch processing. Only automata should implement this method."
+        )))
+    }
+
+    /// Get event filters for NATS consumption (automata only)
+    ///
+    /// This method should return the event filters that define which events
+    /// this automaton is interested in processing. Used by the StreamProcessorRunner
+    /// when setting up NATS consumption.
+    ///
+    /// Default implementation returns empty filters.
+    fn event_filters(&self) -> Vec<EventFilter> {
+        Vec::new()
     }
 
     /// Graceful shutdown
@@ -1224,11 +1280,27 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             ));
         }
 
+        let processor_type = self.processor.processor_type();
         info!(
             processor = %self.processor.processor_name(),
+            processor_type = ?processor_type,
             "Starting service with startup sequence"
         );
 
+        match processor_type {
+            ProcessorType::Ingestor => {
+                // Ingestor startup sequence: Snapshot -> Gap-fill -> Continuous
+                self.run_ingestor_startup_sequence().await
+            }
+            ProcessorType::Automaton => {
+                // Automata go directly to continuous mode with internal NATS management
+                self.run_automaton_continuous().await
+            }
+        }
+    }
+
+    /// Run ingestor startup sequence (Snapshot -> Gap-fill -> Continuous)
+    async fn run_ingestor_startup_sequence(&mut self) -> SatelliteResult<()> {
         // Phase 1: Snapshot (if supported)
         if self.processor.capabilities().supports_snapshot {
             info!("Phase 1: Taking initial snapshot");
@@ -1268,7 +1340,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             }
         }
 
-        // Phase 3: Continuous processing
+        // Phase 3: Continuous processing (traditional scan method)
         if self.processor.capabilities().supports_continuous {
             info!("Phase 3: Starting continuous processing");
             let current_checkpoint = self.processor.current_checkpoint().await?;
@@ -1287,6 +1359,103 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         }
 
         Ok(())
+    }
+
+    /// Run automaton in continuous mode with internal NATS management
+    async fn run_automaton_continuous(&mut self) -> SatelliteResult<()> {
+        info!("Starting automaton continuous processing with internal NATS management");
+
+        // Get event filters from the processor
+        let filters = self.processor.event_filters();
+        if filters.is_empty() {
+            warn!("Automaton has no event filters defined - will process all events");
+        }
+
+        // Create NATS consumer configuration
+        let processor_name = self.processor.processor_name().to_string();
+        let config = NatsConsumerConfig {
+            group_name: "automata".to_string(),
+            consumer_name: processor_name.clone(),
+            stream_name: "SINEX_EVENTS".to_string(),
+            batch_size: 100,
+            block_timeout: tokio::time::Duration::from_secs(5),
+            filters,
+            nats_servers: vec!["nats://localhost:4222".to_string()],
+        };
+
+        // Create and initialize NATS consumer
+        let mut nats_consumer = NatsStreamConsumer::new(config);
+        nats_consumer.initialize(None).await.map_err(|e| {
+            SatelliteError::General(eyre!("Failed to initialize NATS consumer: {}", e))
+        })?;
+
+        info!(
+            processor = %processor_name,
+            "NATS consumer initialized, starting event batch processing loop"
+        );
+
+        // Main processing loop - this runs indefinitely
+        loop {
+            // Read batch from NATS
+            match self.read_event_batch_from_nats(&mut nats_consumer).await {
+                Ok(events) => {
+                    if !events.is_empty() {
+                        debug!(
+                            processor = %processor_name,
+                            count = events.len(),
+                            "Received event batch from NATS"
+                        );
+
+                        // Process batch using the processor's implementation
+                        match self.processor.process_event_batch(events).await {
+                            Ok(stats) => {
+                                debug!(
+                                    processor = %processor_name,
+                                    processed = stats.processed,
+                                    skipped = stats.skipped,
+                                    failed = stats.failed,
+                                    duration_ms = stats.duration.as_millis(),
+                                    "Event batch processed successfully"
+                                );
+
+                                if stats.failed > 0 {
+                                    warn!(
+                                        processor = %processor_name,
+                                        failed = stats.failed,
+                                        errors = ?stats.errors,
+                                        "Some events failed processing"
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                warn!(
+                                    processor = %processor_name,
+                                    error = %e,
+                                    "Failed to process event batch"
+                                );
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        processor = %processor_name,
+                        error = %e,
+                        "Failed to read events from NATS, retrying after delay"
+                    );
+                    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    /// Read a batch of events from NATS (internal helper)
+    async fn read_event_batch_from_nats(
+        &self,
+        nats_consumer: &mut NatsStreamConsumer,
+    ) -> SatelliteResult<Vec<RawEvent>> {
+        // Use the new read_single_batch method
+        nats_consumer.read_single_batch().await
     }
 
     /// Get processor capabilities

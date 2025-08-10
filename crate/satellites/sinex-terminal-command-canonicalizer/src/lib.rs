@@ -1,5 +1,7 @@
 //! Terminal Command Canonicalizer - Unified StatefulStreamProcessor implementation
 
+pub mod unified_processor;
+
 use camino::Utf8PathBuf;
 
 use async_trait::async_trait;
