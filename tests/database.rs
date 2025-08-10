@@ -12,7 +12,10 @@
 
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_core::types::domain::EventSource;
+use sinex_core::types::constants::{
+    SOURCE_FS_WATCHER, SOURCE_TERMINAL, TYPE_COMMAND_EXECUTED, TYPE_FILE_CREATED,
+    TYPE_FILE_MODIFIED,
+};
 use sinex_test_utils::prelude::*;
 use std::time::Duration as StdDuration;
 
@@ -29,8 +32,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> color_eyre::eyre::Resul
     for i in 0..10 {
         let event = ctx
             .create_test_event(
-                "fs-watcher",
-                "file.created",
+                SOURCE_FS_WATCHER.as_str(),
+                TYPE_FILE_CREATED.as_str(),
                 json!({
                     "path": format!("/test/file_{}.txt", i),
                     "size": 1024 * (i + 1)
@@ -65,24 +68,24 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
     // Create filesystem events
     let _fs_event1 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.created",
+            SOURCE_FS_WATCHER.as_str(),
+            TYPE_FILE_CREATED.as_str(),
             json!({"path": "/test/file1.txt", "size": 1024}),
         )
         .await?;
 
     let _fs_event2 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.modified",
+            SOURCE_FS_WATCHER.as_str(),
+            TYPE_FILE_MODIFIED.as_str(),
             json!({"path": "/test/file2.txt", "size": 2048}),
         )
         .await?;
 
     let _term_event = ctx
         .create_test_event(
-            "terminal",
-            "command.executed",
+            SOURCE_TERMINAL.as_str(),
+            TYPE_COMMAND_EXECUTED.as_str(),
             json!({"command": "ls -la", "exit_code": 0}),
         )
         .await?;
@@ -91,7 +94,7 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
     let filesystem_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("fs-watcher"), Some(100), None)
+        .get_by_source(&SOURCE_FS_WATCHER, Some(100), None)
         .await?;
     assert!(filesystem_events.len() >= 2);
 
@@ -119,8 +122,8 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> color_eyre::eyre::Result<(
     // Insert events with a small delay to ensure different timestamps
     let event1 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.created",
+            SOURCE_FS_WATCHER.as_str(),
+            TYPE_FILE_CREATED.as_str(),
             json!({"path": "/test/first.txt", "size": 100}),
         )
         .await?;
@@ -131,8 +134,8 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> color_eyre::eyre::Result<(
 
     let event2 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.created",
+            SOURCE_FS_WATCHER.as_str(),
+            TYPE_FILE_CREATED.as_str(),
             json!({"path": "/test/second.txt", "size": 200}),
         )
         .await?;
@@ -161,8 +164,8 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
     for i in 0..5 {
         let event = ctx
             .create_test_event(
-                "fs-watcher",
-                "file.created",
+                SOURCE_FS_WATCHER.as_str(),
+                TYPE_FILE_CREATED.as_str(),
                 json!({"path": format!("/test/file_{}.txt", i), "size": (i + 1) * 1024}),
             )
             .await?;
@@ -176,7 +179,7 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
     let filesystem_events = ctx
         .pool
         .events()
-        .get_by_source(&EventSource::from_static("fs-watcher"), Some(100), None)
+        .get_by_source(&SOURCE_FS_WATCHER, Some(100), None)
         .await?;
     assert!(filesystem_events.len() >= 5);
 

@@ -248,7 +248,6 @@ impl TestContext {
         Ok(inserted)
     }
 
-
     /// Assert similar values with detailed diff
     pub fn assert_similar<T>(&self, left: &T, right: &T, msg: &str) -> Result<()>
     where
