@@ -159,7 +159,7 @@ pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
         "none" | "start" => Ok(Checkpoint::None),
         _ => parse_checkpoint_json(checkpoint_str)
             .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
-            .unwrap_or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str))),
+            .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str))),
     }
 }
 

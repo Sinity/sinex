@@ -5,7 +5,7 @@ pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
-    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn up(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
         // NOTE: These functions are commented out as they use the old operations_log schema
         // The new operations_log has a completely different structure (actor, scope, state, etc.)
         // These test helpers need to be rewritten for the new schema
@@ -194,7 +194,7 @@ impl MigrationTrait for Migration {
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
         /*
         // Drop view
         manager

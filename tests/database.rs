@@ -10,10 +10,9 @@
 //! Uses #[sinex_test] for automatic transaction isolation and TestContext
 //! for unified database access patterns.
 
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::types::events::payloads::filesystem::{FileCreatedPayload, FileModifiedPayload};
-use sinex_core::types::events::payloads::shell::CommandExecutedPayload;
+use sinex_core::DbPoolExt;
 use sinex_test_utils::prelude::*;
 use std::time::Duration as StdDuration;
 
@@ -82,9 +81,9 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
 
     let _term_event = ctx
         .create_test_event(
-            CommandExecutedPayload::SOURCE.as_str(),
-            CommandExecutedPayload::EVENT_TYPE.as_str(),
-            json!({"command": "ls -la", "exit_code": 0}),
+            "shell.kitty",
+            "command.executed",
+            json!({"command": "ls -la", "exit_status": 0, "kitty_window_id": "test", "kitty_tab_id": "test"}),
         )
         .await?;
 

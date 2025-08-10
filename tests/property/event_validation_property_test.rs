@@ -5,7 +5,6 @@
 //! RawEvent::schemaless() builder pattern and updated validation architecture.
 
 use chrono::{Duration as ChronoDuration, Utc};
-use color_eyre::eyre::Result as EyreResult;
 use proptest::prelude::*;
 use serde_json::{json, Value};
 use sinex_core::db::models::RawEvent; // Use the Event type from satellite SDK

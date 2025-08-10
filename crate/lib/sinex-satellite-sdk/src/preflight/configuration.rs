@@ -9,7 +9,7 @@
  */
 
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{bail, Context, ContextCompat, Result};
+use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use tracing::{debug, info};

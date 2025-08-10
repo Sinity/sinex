@@ -645,7 +645,37 @@ impl ClipboardWatcher {
         &mut self,
         tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
-        // Check main clipboard
+        self.check_main_clipboard(tx).await?;
+        if self.enable_primary_selection {
+            self.check_primary_selection(tx).await?;
+        }
+        Ok(())
+    }
+
+    /// Start streaming events
+    pub async fn start_streaming(
+        &mut self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
+        info!("Starting clipboard event streaming");
+
+        let mut poll_interval = interval(self.poll_interval);
+
+        loop {
+            poll_interval.tick().await;
+
+            if let Err(e) = self.check_clipboard_changes(&tx).await {
+                error!("Error checking clipboard changes: {}", e);
+                // Continue polling even if there's an error
+            }
+        }
+    }
+
+    /// Check main clipboard for changes
+    async fn check_main_clipboard(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         if let Some(current_content) = self.get_clipboard_content().await {
             let content_changed = match &self.last_content {
                 Some(last) => last.hash != current_content.hash,
@@ -678,62 +708,46 @@ impl ClipboardWatcher {
                 self.last_content = Some(current_content);
             }
         }
-
-        // Check primary selection (Linux)
-        if self.enable_primary_selection {
-            if let Some(current_primary) = self.get_primary_selection_content().await {
-                let primary_changed = match &self.last_primary_content {
-                    Some(last) => last.hash != current_primary.hash,
-                    None => true,
-                };
-
-                if primary_changed {
-                    debug!(
-                        "Primary selection changed: {} bytes, hash: {}, type: {}, app: {:?}",
-                        current_primary.size_bytes,
-                        &current_primary.hash[..8],
-                        current_primary.content_type,
-                        current_primary.source_app
-                    );
-
-                    let event = self
-                        .create_primary_selection_event(&current_primary)
-                        .await?;
-
-                    if !self.send_event_or_warn(tx, event) {
-                        return Ok(());
-                    }
-
-                    // Update history
-                    self.update_history(
-                        current_primary.hash.clone(),
-                        current_primary.content_type.clone(),
-                    );
-
-                    self.last_primary_content = Some(current_primary);
-                }
-            }
-        }
-
         Ok(())
     }
 
-    /// Start streaming events
-    pub async fn start_streaming(
+    /// Check primary selection for changes
+    async fn check_primary_selection(
         &mut self,
-        tx: mpsc::UnboundedSender<RawEvent>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
-        info!("Starting clipboard event streaming");
+        if let Some(current_primary) = self.get_primary_selection_content().await {
+            let primary_changed = match &self.last_primary_content {
+                Some(last) => last.hash != current_primary.hash,
+                None => true,
+            };
 
-        let mut poll_interval = interval(self.poll_interval);
+            if primary_changed {
+                debug!(
+                    "Primary selection changed: {} bytes, hash: {}, type: {}, app: {:?}",
+                    current_primary.size_bytes,
+                    &current_primary.hash[..8],
+                    current_primary.content_type,
+                    current_primary.source_app
+                );
 
-        loop {
-            poll_interval.tick().await;
+                let event = self
+                    .create_primary_selection_event(&current_primary)
+                    .await?;
 
-            if let Err(e) = self.check_clipboard_changes(&tx).await {
-                error!("Error checking clipboard changes: {}", e);
-                // Continue polling even if there's an error
+                if !self.send_event_or_warn(tx, event) {
+                    return Ok(());
+                }
+
+                // Update history
+                self.update_history(
+                    current_primary.hash.clone(),
+                    current_primary.content_type.clone(),
+                );
+
+                self.last_primary_content = Some(current_primary);
             }
         }
+        Ok(())
     }
 }

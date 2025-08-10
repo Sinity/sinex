@@ -3,9 +3,7 @@
 //! This module bridges the gap between the event channel and the actual transport
 //! mechanism (NATS JetStream or gRPC to ingestd).
 
-use crate::{
-    grpc_client::IngestClient, nats::publisher::NatsPublisher, SatelliteError, SatelliteResult,
-};
+use crate::{grpc_client::IngestClient, nats::publisher::NatsPublisher, SatelliteResult};
 use sinex_core::db::models::RawEvent;
 use std::time::Duration;
 use tokio::sync::mpsc;

@@ -460,14 +460,24 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 Utc::now(),
             )),
             processor_stats: [
-                ("clipboard_enabled", if self.config.clipboard_enabled { 1 } else { 0 }),
-                ("window_manager_enabled", if self.config.window_manager_enabled { 1 } else { 0 }),
+                (
+                    "clipboard_enabled",
+                    if self.config.clipboard_enabled { 1 } else { 0 },
+                ),
+                (
+                    "window_manager_enabled",
+                    if self.config.window_manager_enabled {
+                        1
+                    } else {
+                        0
+                    },
+                ),
                 ("successful_targets", successful_targets.len() as u64),
                 ("failed_targets", failed_targets.len() as u64),
-            ].into_iter()
-             .map(|(k, v)| (k.to_string(), v))
-             .collect(),
-            ]),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
             successful_targets,
             failed_targets,
             warnings,
@@ -573,28 +583,31 @@ impl ExplorationProvider for DesktopProcessor {
                 .map(|s| s.captured_at)
                 .unwrap_or_else(Utc::now),
             total_items: Some(active_sources),
-            metadata: HashMap::from([
+            metadata: [
                 (
-                    "clipboard_enabled".to_string(),
+                    "clipboard_enabled",
                     serde_json::to_value(self.config.clipboard_enabled)?,
                 ),
                 (
-                    "window_manager_enabled".to_string(),
+                    "window_manager_enabled",
                     serde_json::to_value(self.config.window_manager_enabled)?,
                 ),
                 (
-                    "window_manager_type".to_string(),
+                    "window_manager_type",
                     serde_json::to_value(&self.config.window_manager_type)?,
                 ),
                 (
-                    "clipboard_poll_interval_secs".to_string(),
+                    "clipboard_poll_interval_secs",
                     serde_json::to_value(self.config.clipboard_poll_interval_secs)?,
                 ),
                 (
-                    "processor_type".to_string(),
+                    "processor_type",
                     serde_json::Value::String("ingestor".to_string()),
                 ),
-            ]),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
             healthy: true,
             recent_activity,
         })

@@ -1,4 +1,3 @@
-use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{json, Value};

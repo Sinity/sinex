@@ -7,7 +7,6 @@
 //! - Service lifecycle management
 //! - Cross-service resource coordination
 
-use color_eyre::eyre::Result;
 use sinex_core::types::utils::ResourceGuard;
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
@@ -76,7 +75,6 @@ async fn test_advisory_lock_management(ctx: TestContext) -> color_eyre::eyre::Re
 #[sinex_test]
 async fn test_file_handle_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test file handle resource management
-    use std::path::PathBuf;
 
     let cleanup_called = Arc::new(AtomicBool::new(false));
     let cleanup_flag = cleanup_called.clone();

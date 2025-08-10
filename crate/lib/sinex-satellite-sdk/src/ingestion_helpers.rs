@@ -13,7 +13,7 @@ use sinex_core::types::{
     domain::{EventSource, EventType},
     ulid::Ulid,
 };
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::VecDeque;
 use tracing::{debug, warn};
 
 /// SliceAssembler for record reassembly (e.g., line or JSON delimiter)

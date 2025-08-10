@@ -1,6 +1,5 @@
 // Preflight Unit Tests - Comprehensive verification phase testing
 
-use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 // Mock the preflight verification status since the actual module might not be available
