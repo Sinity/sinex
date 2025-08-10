@@ -4,6 +4,7 @@
 //! command events from multiple sources (kitty, atuin, shell history).
 
 use async_trait::async_trait;
+use camino::Utf8PathBuf;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value};
@@ -13,6 +14,10 @@ use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::error::SinexError;
 use sinex_core::types::ulid::Ulid;
 use sinex_satellite_sdk::{
+    cli::{
+        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
+        MissingItem, SourceState,
+    },
     nats_stream_consumer::{
         BatchProcessingResult as NatsBatchProcessingResult,
         EventBatchProcessor as NatsEventBatchProcessor, EventFilter as NatsEventFilter,
@@ -138,14 +143,15 @@ impl TerminalCommandCanonicalizer {
             working_directory: payload.get_string("working_directory"),
             exit_code: payload.get_i32("exit_code"),
             duration_ms: payload.get_i64("duration_ms"),
-            start_time: event.ts_orig,
+            start_time: event.ts_orig.unwrap_or_else(|| Utc::now()),
             end_time: payload.get_datetime("end_time"),
             user: payload.get_string("user"),
             session_id: payload.get_string("session_id"),
             environment_hash: payload.get_string("environment_hash"),
             source_events: vec![event
                 .id
-                .map(|id| id.as_ulid())
+                .as_ref()
+                .map(|id| id.as_ulid().clone())
                 .unwrap_or_else(|| Ulid::new())],
         })
     }
@@ -346,6 +352,7 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
 
             let event_id = event
                 .id
+                .as_ref()
                 .map(|id| id.as_ulid().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
@@ -454,5 +461,54 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
 impl Default for TerminalCommandCanonicalizer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl ExplorationProvider for TerminalCommandCanonicalizer {
+    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
+        Ok(SourceState {
+            description: "Terminal command canonicalizer - creates synthesis events".to_string(),
+            last_updated: Utc::now(),
+            total_items: None,
+            metadata: HashMap::new(),
+            healthy: true,
+            recent_activity: vec![],
+        })
+    }
+
+    fn get_ingestion_history(
+        &self,
+        _limit: u64,
+    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
+        // Automata don't ingest from external sources
+        Ok(vec![])
+    }
+
+    fn get_coverage_analysis(
+        &self,
+        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        let (start, end) = time_range.unwrap_or_else(|| {
+            let now = Utc::now();
+            (now - chrono::Duration::days(7), now)
+        });
+        Ok(CoverageAnalysis {
+            time_range: (start, end),
+            source_total: 0,
+            sinex_total: 0,
+            coverage_percentage: 100.0,
+            missing_count: 0,
+            missing_samples: vec![],
+            duplicate_count: 0,
+            recommendations: vec![],
+        })
+    }
+
+    fn export_data(
+        &self,
+        _path: &Utf8PathBuf,
+        _format: ExportFormat,
+    ) -> color_eyre::eyre::Result<()> {
+        Err(eyre!("Export not supported for automata"))
     }
 }

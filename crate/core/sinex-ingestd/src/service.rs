@@ -625,8 +625,8 @@ impl IngestService {
             outbox_entries.push((event_id, subject, serde_json::to_value(event)?));
         }
 
-        // Batch insert events using UNNEST
-        sqlx::query!(
+        // Batch insert events using UNNEST - use raw query to avoid SQLX type issues
+        sqlx::query(
             r#"
             INSERT INTO core.events (
                 event_id, source, event_type, host, payload,
@@ -643,32 +643,32 @@ impl IngestService {
                 $15::text[], $16::text[], $17::ulid[]
             )
             "#,
-            &event_ids,
-            &sources,
-            &event_types,
-            &hosts,
-            &payloads,
-            &ts_origs,
-            &ingestor_versions,
-            &payload_schema_ids,
-            &source_event_id_arrays as &[Option<Vec<uuid::Uuid>>],
-            &source_material_ids,
-            &source_material_offset_starts,
-            &source_material_offset_ends,
-            &anchor_bytes,
-            &associated_blob_id_arrays as &[Option<Vec<uuid::Uuid>>],
-            &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_name
-            &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_version
-            &vec![None::<i32>; events.len()] as &[Option<i32>],   // processor_manifest_id
         )
+        .bind(&event_ids)
+        .bind(&sources)
+        .bind(&event_types)
+        .bind(&hosts)
+        .bind(&payloads)
+        .bind(&ts_origs)
+        .bind(&ingestor_versions)
+        .bind(&payload_schema_ids)
+        .bind(serde_json::to_value(&source_event_id_arrays).unwrap())
+        .bind(&source_material_ids)
+        .bind(&source_material_offset_starts)
+        .bind(&source_material_offset_ends)
+        .bind(&anchor_bytes)
+        .bind(serde_json::to_value(&associated_blob_id_arrays).unwrap())
+        .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
+        .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
+        .bind(&vec![None::<i32>; events.len()]) // processor_manifest_id
         .execute(&mut *tx)
         .await?;
 
         // Insert outbox entries for NATS publishing
         for (event_id, subject, payload) in outbox_entries {
             sqlx::query!(
-                "INSERT INTO core.outbox (event_id, subject, payload) VALUES ($1, $2, $3)",
-                ulid_to_uuid(event_id),
+                "INSERT INTO core.outbox (event_id, subject, payload) VALUES ($1::ulid, $2, $3)",
+                ulid_to_uuid(event_id) as sqlx::types::Uuid,
                 subject,
                 payload
             )
