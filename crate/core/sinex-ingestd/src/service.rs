@@ -13,12 +13,13 @@ use crate::{
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
 use once_cell::sync::Lazy;
-use sinex_core::db::models::RawEvent;
+use sinex_core::db::models::{RawEvent, Provenance};
 use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::ulid::Ulid;
-use sqlx::PgPool;
+use sinex_core::types::{Id, Ulid};
+use sqlx::{PgPool, Postgres, Transaction};
 use std::{
     str::FromStr,
     sync::{
@@ -228,6 +229,13 @@ impl IngestService {
         let stats = self.stats.clone();
         let shutdown_flag = self.shutdown_flag.clone();
 
+        // Start outbox processor task
+        if let Some(ref pool) = self.db_pool {
+            if let Some(ref js) = self.jetstream {
+                self.start_outbox_processor_task(pool.clone(), js.clone()).await;
+            }
+        }
+
         // Stats logging task
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(60));
@@ -338,6 +346,104 @@ impl IngestService {
         });
     }
 
+    /// Start outbox processor task for transactional outbox pattern
+    async fn start_outbox_processor_task(&self, pool: PgPool, js: jetstream::Context) {
+        let shutdown_flag = self.shutdown_flag.clone();
+        let stats = self.stats.clone();
+
+        tokio::spawn(async move {
+            let mut interval = interval(Duration::from_millis(100));
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        match Self::process_outbox(&pool, &js).await {
+                            Ok(processed) => {
+                                if processed > 0 {
+                                    debug!("Processed {} outbox entries", processed);
+                                }
+                            }
+                            Err(e) => {
+                                error!("Failed to process outbox: {}", e);
+                                stats.nats_errors.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    _ = async {
+                        loop {
+                            if shutdown_flag.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    } => {
+                        // Final outbox processing on shutdown
+                        match Self::process_outbox(&pool, &js).await {
+                            Ok(processed) => {
+                                if processed > 0 {
+                                    info!("Final outbox processing: {} entries", processed);
+                                }
+                            }
+                            Err(e) => error!("Failed final outbox processing: {}", e),
+                        }
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
+    /// Process outbox entries: read, publish to NATS, delete
+    async fn process_outbox(pool: &PgPool, js: &jetstream::Context) -> IngestdResult<u32> {
+        #[derive(sqlx::FromRow)]
+        struct OutboxEntry {
+            id: sqlx::types::Uuid,
+            event_id: sqlx::types::Uuid,
+            subject: String,
+            payload: serde_json::Value,
+            created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
+        }
+
+        // Read pending outbox entries (limit 100 for batching)
+        let pending = sqlx::query_as::<_, OutboxEntry>(
+            "SELECT id, event_id, subject, payload, created_at FROM core.outbox ORDER BY created_at LIMIT 100"
+        )
+        .fetch_all(pool)
+        .await?;
+
+        if pending.is_empty() {
+            return Ok(0);
+        }
+
+        let mut processed = 0;
+        for entry in pending {
+            // Publish to NATS JetStream
+            let event_data = serde_json::to_vec(&entry.payload)?;
+            let mut headers = async_nats::HeaderMap::new();
+            headers.insert("Nats-Msg-Id", uuid_to_ulid(entry.event_id).to_string().as_str());
+
+            match js.publish_with_headers(entry.subject, headers, event_data.into()).await {
+                Ok(_) => {
+                    // Delete from outbox after successful publish
+                    match sqlx::query("DELETE FROM core.outbox WHERE id = $1")
+                        .bind(entry.id)
+                        .execute(pool)
+                        .await
+                    {
+                        Ok(_) => processed += 1,
+                        Err(e) => error!("Failed to delete outbox entry {}: {}", entry.id, e),
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to publish outbox entry {} to NATS: {}", entry.id, e);
+                    // Keep entry in outbox for retry
+                }
+            }
+        }
+
+        Ok(processed)
+    }
+
     /// Start schema reload task
     async fn start_schema_reload_task(&self, pool: PgPool) {
         let validator = self.validator.clone();
@@ -369,15 +475,15 @@ impl IngestService {
         });
     }
 
-    /// Flush events to database and NATS (static version for use in tasks)
+    /// Flush events to database using transactional outbox pattern
     async fn flush_events_static(
         event_buffer: &Arc<Mutex<Vec<RawEvent>>>,
         last_flush: &Arc<Mutex<SystemTime>>,
         config: &IngestdConfig,
         db_pool: Option<&PgPool>,
-        jetstream: Option<&jetstream::Context>,
+        _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
-        subject_cache: &Arc<SubjectCache>,
+        _subject_cache: &Arc<SubjectCache>, // No longer used - subjects handled in outbox
     ) {
         // Take events from buffer
         let events = {
@@ -400,20 +506,12 @@ impl IngestService {
             return;
         }
 
-        // Write to database
+        // Write to database with transactional outbox pattern
+        // This handles both event insertion and outbox entries for NATS publishing
         if let Some(pool) = db_pool {
             if let Err(e) = Self::batch_write_to_db(pool, &events).await {
                 error!("Failed to write events to database: {}", e);
                 stats.db_errors.fetch_add(1, Ordering::Relaxed);
-                return;
-            }
-        }
-
-        // Publish to NATS JetStream
-        if let Some(js) = jetstream {
-            if let Err(e) = Self::batch_publish_to_nats(js, config, &events, subject_cache).await {
-                error!("Failed to publish events to NATS: {}", e);
-                stats.nats_errors.fetch_add(1, Ordering::Relaxed);
                 return;
             }
         }
@@ -427,87 +525,141 @@ impl IngestService {
         debug!("Successfully flushed {} events", event_count);
     }
 
-    /// Batch write events to database with unified architecture
+    /// Batch write events to database using UNNEST for true batching
     ///
-    /// This implements the unified events table architecture:
-    /// - All events go to core.events
-    /// - Raw events have source_event_ids = NULL, synthesis events have source_event_ids populated
+    /// This implements:
+    /// - True batch insert using UNNEST instead of N+1 pattern
+    /// - Transactional outbox pattern: INSERT events and outbox entries in same transaction
     async fn batch_write_to_db(pool: &PgPool, events: &[RawEvent]) -> IngestdResult<()> {
         if events.is_empty() {
             return Ok(());
         }
 
-        // Insert all events into core.events table
+        // Begin transaction for atomicity
+        let mut tx = pool.begin().await?;
+
+        // Prepare arrays for UNNEST batch insert
+        let mut event_ids = Vec::new();
+        let mut sources = Vec::new();
+        let mut event_types = Vec::new();
+        let mut hosts = Vec::new();
+        let mut payloads = Vec::new();
+        let mut ts_origs = Vec::new();
+        let mut ingestor_versions = Vec::new();
+        let mut payload_schema_ids = Vec::new();
+        let mut source_event_id_arrays = Vec::new();
+        let mut source_material_ids = Vec::new();
+        let mut source_material_offset_starts = Vec::new();
+        let mut source_material_offset_ends = Vec::new();
+        let mut anchor_bytes = Vec::new();
+        let mut associated_blob_id_arrays = Vec::new();
+
+        // Outbox entries for NATS publishing
+        let mut outbox_entries = Vec::new();
 
         for event in events {
-            // Events are already in the correct format, just clone and insert
-            pool.events().insert(event.clone()).await?;
+            // Generate ID if not present
+            let event_id = event.id.as_ref().map(|id| *id.as_ulid()).unwrap_or_else(|| Ulid::new());
+            let event_uuid = ulid_to_uuid(event_id);
+            
+            event_ids.push(event_uuid);
+            sources.push(event.source.as_str());
+            event_types.push(event.event_type.as_str());
+            hosts.push(event.host.as_str());
+            payloads.push(&event.payload);
+            ts_origs.push(event.ts_orig);
+            ingestor_versions.push(event.ingestor_version.as_deref());
+
+            payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
+
+            // Extract provenance into separate database fields
+            let (source_event_ids_opt, source_material_id, offset_start, offset_end) = 
+                match &event.provenance {
+                    Some(Provenance::Events(ids)) => {
+                        let uuids: Vec<sqlx::types::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+                        (Some(uuids), None, None, None)
+                    }
+                    Some(Provenance::Material { id, offset_start, offset_end }) => {
+                        (None, Some(ulid_to_uuid(*id.as_ulid())), *offset_start, *offset_end)
+                    }
+                    None => (None, None, None, None)
+                };
+
+            source_event_id_arrays.push(source_event_ids_opt);
+            source_material_ids.push(source_material_id);
+            source_material_offset_starts.push(offset_start);
+            source_material_offset_ends.push(offset_end);
+            anchor_bytes.push(event.anchor_byte);
+            
+            let blob_uuids = event.associated_blob_ids.as_ref()
+                .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
+            associated_blob_id_arrays.push(blob_uuids);
+
+            // Prepare outbox entry for NATS publishing
+            let subject = format!("events.{}.{}", 
+                event.source.as_str().replace('.', "_"),
+                event.event_type.as_str().replace('.', "_"));
+            outbox_entries.push((event_id, subject, serde_json::to_value(event)?));
         }
 
-        debug!("Successfully wrote {} events to core.events", events.len());
+        // Batch insert events using UNNEST
+        sqlx::query!(
+            r#"
+            INSERT INTO core.events (
+                event_id, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                source_material_id, source_material_offset_start, source_material_offset_end,
+                anchor_byte, associated_blob_ids,
+                payload_schema_name, payload_schema_version, processor_manifest_id
+            )
+            SELECT * FROM UNNEST(
+                $1::ulid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
+                $6::timestamptz[], $7::text[], $8::ulid[], $9::ulid[][],
+                $10::ulid[], $11::bigint[], $12::bigint[],
+                $13::bigint[], $14::ulid[][],
+                $15::text[], $16::text[], $17::ulid[]
+            )
+            "#,
+            &event_ids,
+            &sources,
+            &event_types,
+            &hosts,
+            &payloads,
+            &ts_origs,
+            &ingestor_versions,
+            &payload_schema_ids,
+            &source_event_id_arrays as &[Option<Vec<uuid::Uuid>>],
+            &source_material_ids,
+            &source_material_offset_starts,
+            &source_material_offset_ends,
+            &anchor_bytes,
+            &associated_blob_id_arrays as &[Option<Vec<uuid::Uuid>>],
+            &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_name
+            &vec![None::<&str>; events.len()] as &[Option<&str>], // payload_schema_version  
+            &vec![None::<i32>; events.len()] as &[Option<i32>], // processor_manifest_id
+        )
+        .execute(&mut *tx)
+        .await?;
+
+        // Insert outbox entries for NATS publishing
+        for (event_id, subject, payload) in outbox_entries {
+            sqlx::query!(
+                "INSERT INTO core.outbox (event_id, subject, payload) VALUES ($1, $2, $3)",
+                ulid_to_uuid(event_id),
+                subject,
+                payload
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+
+        // Commit transaction
+        tx.commit().await?;
+
+        debug!("Successfully wrote {} events to core.events with outbox entries", events.len());
         Ok(())
     }
 
-    /// Batch publish events to NATS JetStream
-    ///
-    /// This implements the NATS JetStream pattern from ADR-009:
-    /// All events go to subjects based on their source and event type.
-    async fn batch_publish_to_nats(
-        js: &jetstream::Context,
-        _config: &IngestdConfig,
-        events: &[RawEvent],
-        subject_cache: &Arc<SubjectCache>,
-    ) -> IngestdResult<()> {
-        if events.is_empty() {
-            return Ok(());
-        }
-
-        // Publish all events to JetStream with appropriate subjects
-        for event in events {
-            // Create subject based on source and event type
-            // Format: events.<source>.<event_type>
-            let cache_key = (event.source.to_string(), event.event_type.to_string());
-
-            // Check cache first
-            let subject = {
-                let mut cache = subject_cache.lock().await;
-                if let Some(cached) = cache.get(&cache_key) {
-                    cached.clone()
-                } else {
-                    // Build new subject
-                    let subject = Arc::new(format!(
-                        "events.{}.{}",
-                        cache_key.0.replace('.', "_"),
-                        cache_key.1.replace('.', "_")
-                    ));
-                    cache.insert(cache_key, subject.clone());
-                    subject
-                }
-            };
-
-            // Serialize event data
-            let event_data = serde_json::to_vec(event)?;
-
-            // Publish to JetStream with deduplication ID
-            let mut headers = async_nats::HeaderMap::new();
-            if let Some(id) = &event.id {
-                headers.insert("Nats-Msg-Id", id.to_string().as_str());
-            }
-
-            let subject_str = subject.to_string();
-            js.publish_with_headers(subject_str, headers, event_data.into())
-                .await
-                .map_err(|e| {
-                    IngestdError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to publish to NATS: {}", e),
-                    ))
-                })?;
-        }
-
-        debug!("Published {} events to NATS JetStream", events.len());
-        Ok(())
-    }
 
     /// Add event to buffer
     async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {

@@ -422,11 +422,11 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     nats_config.client_name = format!("sinex-{}", service_name);
 
                     runner
-                        .initialize_with_nats(
+                        .initialize_with_grpc_legacy(
                             service_name.clone(),
                             processor_config,
                             db_pool.clone(),
-                            nats_config,
+                            "/run/sinex/ingest.sock".to_string(),
                             work_dir.into(),
                             dry_run,
                         )
@@ -557,11 +557,11 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     nats_config.client_name = format!("sinex-{}-scan", service_name);
 
                     runner
-                        .initialize_with_nats(
+                        .initialize_with_grpc_legacy(
                             service_name,
                             processor_config,
                             db_pool,
-                            nats_config,
+                            "/run/sinex/ingest.sock".to_string(),
                             work_dir.into(),
                             dry_run,
                         )

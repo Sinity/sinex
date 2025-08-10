@@ -7,8 +7,9 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use color_eyre::eyre::eyre;
 use serde_json::{json, Value};
-use sinex_core::db::models::{CanonicalCommandPayload, Event, EventSource, EventType, RawEvent};
+use sinex_core::db::models::{RawEvent, Provenance};
 use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::error::SinexError;
 use sinex_core::types::ulid::Ulid;
 use sinex_satellite_sdk::{
@@ -95,15 +96,14 @@ impl TerminalCommandCanonicalizer {
         let end_time = timestamp + chrono::Duration::seconds(window_secs);
 
         // Search for canonical command events within the time window
+        let event_type = EventType::from_static("command.canonical");
         let events = pool
             .events()
             .get_events_by_type_and_time_range(
-                "automaton.terminal_command_canonicalizer",
-                "command.canonical",
+                &event_type,
                 start_time,
                 end_time,
                 Some(1000),
-                None,
             )
             .await?;
 
@@ -111,7 +111,7 @@ impl TerminalCommandCanonicalizer {
         for event in events {
             if let Some(cmd) = event.payload.get("command").and_then(|v| v.as_str()) {
                 if cmd == command_text {
-                    return Ok(event.id.map(|id| id.to_string()));
+                    return Ok(event.id.map(|id| id.as_ulid().to_string()));
                 }
             }
         }
@@ -120,7 +120,7 @@ impl TerminalCommandCanonicalizer {
     }
 
     /// Extract command data from a terminal event
-    fn extract_command_data(&self, event: &Event) -> Option<CommandData> {
+    fn extract_command_data(&self, event: &RawEvent) -> Option<CommandData> {
         let payload = &event.payload;
 
         // Extract command text based on source
@@ -148,12 +148,12 @@ impl TerminalCommandCanonicalizer {
             user: payload.get_string("user"),
             session_id: payload.get_string("session_id"),
             environment_hash: payload.get_string("environment_hash"),
-            source_events: vec![event.id.unwrap_or_else(|| Ulid::new())],
+            source_events: vec![event.id.map(|id| id.as_ulid()).unwrap_or_else(|| Ulid::new())],
         })
     }
 
     /// Create a canonical command synthesis event
-    async fn create_canonical_command(&self, command_data: &CommandData) -> SatelliteResult<Event> {
+    async fn create_canonical_command(&self, command_data: &CommandData) -> SatelliteResult<RawEvent> {
         let ctx = self
             .context
             .as_ref()
@@ -174,17 +174,23 @@ impl TerminalCommandCanonicalizer {
             "enrichment_history": Vec::<String>::new(),
         });
 
-        let event = Event {
+        use sinex_core::types::{Id, Ulid as CoreUlid};
+        
+        let event = RawEvent {
             id: None,
             source: EventSource::from_static("automaton.terminal_command_canonicalizer"),
             event_type: EventType::from_static("command.canonical"),
             payload,
-            ts_orig: command_data.start_time,
+            ts_orig: Some(command_data.start_time),
             ts_ingest: Utc::now(),
-            source_event_ids: Some(command_data.source_events.clone()),
-            host: sinex_core::db::models::HostName::current(),
-            ingestor_version: "1.0.0".to_string(),
-            schema_id: None,
+            host: HostName::new("localhost"), // Will be set by builder default
+            ingestor_version: Some("1.0.0".to_string()),
+            payload_schema_id: None,
+            provenance: Some(Provenance::Events(
+                command_data.source_events.iter().map(|ulid| Id::<RawEvent>::from_ulid(*ulid)).collect()
+            )),
+            anchor_byte: None,
+            associated_blob_ids: None,
         };
 
         Ok(event)
@@ -255,33 +261,20 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
                     "shell.history.zsh",
                     "shell.history.fish",
                 ] {
+                    let event_type = EventType::from_static("command.executed");
                     let events = ctx
                         .db_pool
                         .events()
                         .get_events_by_type_and_time_range(
-                            source,
-                            "command.executed",
+                            &event_type,
                             start_time,
                             end_time,
                             Some(10000),
-                            None,
                         )
                         .await?;
 
-                    // Convert Event to RawEvent for processing
-                    for event in events {
-                        let raw_event = RawEvent {
-                            id: event.id,
-                            source: event.source,
-                            event_type: event.event_type,
-                            payload: event.payload,
-                            ts_orig: event.ts_orig,
-                            ts_ingest: event.ts_ingest,
-                            source_event_ids: event.source_event_ids,
-                            host: event.host,
-                            ingestor_version: event.ingestor_version,
-                            schema_id: event.schema_id,
-                        };
+                    // Events are already RawEvent type
+                    for raw_event in events {
                         all_raw_events.push(raw_event);
                     }
                 }
@@ -343,24 +336,12 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         let mut failed = 0;
         let mut errors = Vec::new();
 
-        for raw_event in events {
-            // Convert RawEvent back to Event for processing
-            let event = Event {
-                id: raw_event.id,
-                source: raw_event.source,
-                event_type: raw_event.event_type,
-                payload: raw_event.payload,
-                ts_orig: raw_event.ts_orig,
-                ts_ingest: raw_event.ts_ingest,
-                source_event_ids: raw_event.source_event_ids,
-                host: raw_event.host,
-                ingestor_version: raw_event.ingestor_version,
-                schema_id: raw_event.schema_id,
-            };
+        for event in events {
+            // Work directly with RawEvent
 
             let event_id = event
                 .id
-                .map(|id| id.to_string())
+                .map(|id| id.as_ulid().to_string())
                 .unwrap_or_else(|| "unknown".to_string());
 
             // Extract command data

@@ -11,6 +11,7 @@ mod m20240108_000008_add_schema_content_hash;
 mod m20240109_000009_add_payload_validation_function;
 mod m20240110_000010_add_event_payload_check_constraint;
 mod m20250103_000001_source_material_refactor;
+mod m20250810_000001_create_outbox_table;
 pub mod schema;
 
 pub struct Migrator;
@@ -30,6 +31,7 @@ impl MigratorTrait for Migrator {
             Box::new(m20240109_000009_add_payload_validation_function::Migration),
             Box::new(m20240110_000010_add_event_payload_check_constraint::Migration),
             Box::new(m20250103_000001_source_material_refactor::Migration),
+            Box::new(m20250810_000001_create_outbox_table::Migration),
         ]
     }
 }

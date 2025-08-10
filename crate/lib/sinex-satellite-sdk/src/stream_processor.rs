@@ -38,9 +38,6 @@ use crate::{
     checkpoint::CheckpointManager,
     event_processor::{spawn_event_processor, EventProcessorConfig, EventTransport},
     grpc_client::IngestClient,
-    nats::{
-        client::NatsClient, config::NatsConfig, jetstream::JetStream, publisher::NatsPublisher,
-    },
     nats_stream_consumer::{EventFilter, NatsConsumerConfig, NatsStreamConsumer},
     SatelliteError, SatelliteResult,
 };
@@ -990,13 +987,13 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
-    /// Initialize the processor with NATS and typed configuration
-    pub async fn initialize_with_nats_config(
+    /// Initialize the processor with gRPC transport and typed configuration
+    pub async fn initialize_with_grpc_config(
         &mut self,
         service_name: String,
         config: T::Config,
         db_pool: PgPool,
-        nats_config: NatsConfig,
+        socket_path: String,
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
@@ -1073,19 +1070,12 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Initialize the processor with typed config
         self.processor.initialize(context, config).await?;
 
-        // Create NATS client and publisher
-        let nats_client = NatsClient::new(nats_config.clone())
+        // Create ingest client for gRPC transport
+        let ingest_client = IngestClient::new(&socket_path)
             .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to NATS: {}", e)))?;
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
 
-        let jetstream = JetStream::new(&nats_client, nats_config.jetstream)
-            .await
-            .map_err(|e| {
-                SatelliteError::General(eyre!("Failed to create JetStream context: {}", e))
-            })?;
-
-        let publisher = NatsPublisher::new(jetstream);
-        let transport = EventTransport::Nats(publisher);
+        let transport = EventTransport::Grpc(ingest_client);
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();
@@ -1100,21 +1090,21 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             service = %service_name,
             processor = %self.processor.processor_name(),
             processor_type = ?self.processor.processor_type(),
-            transport = "NATS",
-            servers = ?nats_config.servers,
-            "Stream processor initialized with NATS and typed config"
+            transport = "gRPC",
+            socket_path = &socket_path,
+            "Stream processor initialized with gRPC transport"
         );
 
         Ok(())
     }
 
-    /// Initialize the processor with NATS configuration (legacy)
-    pub async fn initialize_with_nats(
+    /// Initialize the processor with gRPC transport (legacy)
+    pub async fn initialize_with_grpc_legacy(
         &mut self,
         service_name: String,
         config: HashMap<String, serde_json::Value>,
         db_pool: PgPool,
-        nats_config: NatsConfig,
+        socket_path: String,
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
@@ -1191,19 +1181,12 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         // Initialize the processor with legacy config conversion
         self.processor.initialize_legacy(context).await?;
 
-        // Create NATS client and publisher
-        let nats_client = NatsClient::new(nats_config.clone())
+        // Create ingest client for gRPC transport
+        let ingest_client = IngestClient::new(&socket_path)
             .await
-            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to NATS: {}", e)))?;
+            .map_err(|e| SatelliteError::General(eyre!("Failed to connect to ingestd: {}", e)))?;
 
-        let jetstream = JetStream::new(&nats_client, nats_config.jetstream)
-            .await
-            .map_err(|e| {
-                SatelliteError::General(eyre!("Failed to create JetStream context: {}", e))
-            })?;
-
-        let publisher = NatsPublisher::new(jetstream);
-        let transport = EventTransport::Nats(publisher);
+        let transport = EventTransport::Grpc(ingest_client);
 
         // Spawn event processor
         let processor_config = EventProcessorConfig::default();
@@ -1218,9 +1201,9 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
             service = %service_name,
             processor = %self.processor.processor_name(),
             processor_type = ?self.processor.processor_type(),
-            transport = "NATS",
-            servers = ?nats_config.servers,
-            "Stream processor initialized with NATS"
+            transport = "gRPC",
+            socket_path = &socket_path,
+            "Stream processor initialized with gRPC transport"
         );
 
         Ok(())
