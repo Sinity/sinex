@@ -4,8 +4,9 @@
 // memory pressure, connection pool exhaustion, disk space limits,
 // and CPU saturation. Critical for understanding system failure modes.
 
+use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -370,7 +371,7 @@ async fn test_memory_pressure_scenarios(ctx: TestContext) -> color_eyre::eyre::R
                 }),
             );
 
-            match sinex_db::insert_event_with_validator(pool, &event, None).await {
+            match sinex_core::db::insert_event_with_validator(pool, &event, None).await {
                 Ok(_) => {
                     let operation_duration = operation_start.elapsed();
                     metrics.record_operation(
@@ -768,7 +769,7 @@ async fn test_concurrent_resource_exhaustion(ctx: TestContext) -> color_eyre::ey
                         }),
                     );
 
-                    sinex_db::insert_event_with_validator(&pool_clone, &event, None)
+                    sinex_core::db::insert_event_with_validator(&pool_clone, &event, None)
                         .await
                         .map(|_| vec![]) // Convert to same type as query result
                 };

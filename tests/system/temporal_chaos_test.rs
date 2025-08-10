@@ -44,9 +44,10 @@
 // 3. **Ordering Resilience**: System must cope with impossible event sequences
 // 4. **Concurrency Safety**: No race conditions under maximum contention
 
+use color_eyre::eyre::Result;
 use chrono::{Duration as ChronoDuration, Utc};
 use sinex_test_utils::prelude::*;
-use sinex_test_utils::{events, get_events_by_source, worker_test_utils};
+use sinex_test_utils::{events, worker_test_utils};
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -245,7 +246,7 @@ async fn test_thundering_herd_1000_events_100ms(ctx: TestContext) -> color_eyre:
                 let event =
                     events::test_event_batch("thundering_herd", "burst.event", 1)[0].clone();
 
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(_) => {
                         metrics_clone.record_event_sent();
                     }
@@ -368,7 +369,7 @@ async fn test_collector_backpressure_extreme_load(ctx: TestContext) -> color_eyr
                 );
 
                 let insert_start = std::time::Instant::now();
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(_) => {
                         metrics_clone.record_event_sent();
 
@@ -749,7 +750,7 @@ async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre
             event.ts_orig
         );
 
-        match sinex_db::insert_event_with_validator(ctx.pool(), event, None).await {
+        match sinex_core::db::insert_event_with_validator(ctx.pool(), event, None).await {
             Ok(_) => {
                 metrics.record_event_sent();
 
@@ -776,7 +777,11 @@ async fn test_causality_violation_handling(ctx: TestContext) -> color_eyre::eyre
     // Phase 3: Verify events were stored with correct ULID ordering
     ctx.wait_for_processing().await?;
 
-    let stored_events = get_events_by_source(ctx.pool(), "fs", 10).await?;
+    let stored_events = ctx.pool.events().get_by_source(
+        &sinex_core::types::domain::EventSource::from_static("fs"),
+        Some(10),
+        None
+    ).await?;
 
     // Events should be ordered by ingestion time (ULID), not by ts_orig
     for window in stored_events.windows(2) {
@@ -861,7 +866,7 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
                     0, // No artificial delay
                 );
 
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(inserted) => {
                         local_ids.push(inserted.id);
                         metrics_clone.record_event_sent();
@@ -923,8 +928,11 @@ async fn test_ulid_ordering_under_extreme_timing(ctx: TestContext) -> color_eyre
     // Phase 4: Verify database ordering matches ULID ordering
     ctx.wait_for_processing().await?;
 
-    let stored_events =
-        get_events_by_source(ctx.pool(), "timing_test", all_ids.len() as i64).await?;
+    let stored_events = ctx.pool.events().get_by_source(
+        &sinex_core::types::domain::EventSource::from_static("timing_test"),
+        Some(all_ids.len() as i64),
+        None
+    ).await?;
 
     // Database should maintain ULID ordering
     for window in stored_events.windows(2) {
@@ -1009,7 +1017,7 @@ async fn test_comprehensive_temporal_chaos_scenario(ctx: TestContext) -> color_e
                 let mut event = events::test_event_batch("chaos", "temporal.chaos", 1)[0].clone();
                 event.ts_orig = Some(impossible_timestamp);
 
-                match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+                match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
                     Ok(_) => {
                         metrics_clone.record_event_sent();
 

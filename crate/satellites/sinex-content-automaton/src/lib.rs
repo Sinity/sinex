@@ -46,7 +46,11 @@ impl ContentProcessor {
 impl StatefulStreamProcessor for ContentProcessor {
     type Config = ContentProcessorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing content processor");
         self.context = Some(ctx);
         Ok(())

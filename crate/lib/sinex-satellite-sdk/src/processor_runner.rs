@@ -332,9 +332,12 @@ mod tests {
 
     #[async_trait]
     impl StatefulStreamProcessor for MockProcessor {
+        type Config = ();
+
         async fn initialize(
             &mut self,
             _ctx: crate::stream_processor::StreamProcessorContext,
+            _config: Self::Config,
         ) -> SatelliteResult<()> {
             Ok(())
         }
@@ -355,7 +358,7 @@ mod tests {
                 events_processed: events_processed as u64,
                 duration: std::time::Duration::from_secs(1),
                 final_checkpoint: Checkpoint::Internal {
-                    event_id: sinex_types::ulid::Ulid::new(),
+                    event_id: sinex_core::ulid::Ulid::new(),
                     message_count: events_processed as u64,
                 },
                 time_range: None,

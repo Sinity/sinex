@@ -12,6 +12,7 @@
 //! - No duplicate processing under high contention
 //! - Checkpoint-based recovery and progress tracking
 
+use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use sinex_test_utils::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -19,12 +20,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 use tracing::{debug, info, warn};
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_satellite_sdk::{
     nats::{config::NatsConfig, streams::StreamManager},
     checkpoint::{CheckpointManager, CheckpointState},
 };
-use sinex_types::{
+use sinex_core::types::{
     domain::{ConsumerGroup, ConsumerName, ProcessorName},
     ulid::Ulid,
 };
@@ -210,8 +211,6 @@ async fn nats_consumer_with_crashes(
     if let Some(ref mgr) = checkpoint_mgr {
         let _ = mgr.save_checkpoint(&checkpoint_state).await;
     }
-
-    Ok(())
 }
 
 /// Test that NATS JetStream prevents duplicate processing even with crashes
@@ -901,8 +900,8 @@ async fn test_checkpoint_recovery_properties(ctx: TestContext) -> color_eyre::ey
 mod unit_tests {
     use super::*;
 
-    #[test]
-    fn test_processing_tracker() {
+    #[sinex_test]
+fn test_processing_tracker() -> color_eyre::eyre::Result<()> {
         let tracker = ProcessingTracker::new();
         let id1 = "test-msg-1";
         let id2 = "test-msg-2";
@@ -957,8 +956,8 @@ mod unit_tests {
         Ok(())
     }
 
-    #[test]
-    fn test_crash_simulation_deterministic() {
+    #[sinex_test]
+fn test_crash_simulation_deterministic() -> color_eyre::eyre::Result<()> {
         // Test that crash simulation is deterministic with same seed
         let seed = 12345u64;
         let consumer_name = "test_consumer";
@@ -995,8 +994,8 @@ mod unit_tests {
         assert_ne!(consumer_hash, different_consumer_hash);
     }
 
-    #[test]
-    fn test_processing_tracker_thread_safety() {
+    #[sinex_test]
+fn test_processing_tracker_thread_safety() -> color_eyre::eyre::Result<()> {
         // Test that ProcessingTracker works correctly under concurrent access
         let tracker = ProcessingTracker::new();
         let tracker_clone = tracker.clone();
@@ -1034,11 +1033,10 @@ mod unit_tests {
 
 proptest! {
     /// Test JetStream consumer retry behavior with exponential backoff
-    #[test]
-    fn test_consumer_retry_timing_boundaries(
+fn test_consumer_retry_timing_boundaries(
         attempts in 0i32..20,
         base_delay in 1.0f64..300.0,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         // Calculate exponential backoff for JetStream consumer failures
         let delay = base_delay * (2.0_f64.powi(attempts));
         let with_jitter = delay * 1.1; // Max jitter
@@ -1062,11 +1060,11 @@ proptest! {
     }
 
     /// Test JetStream consumer retry patterns with realistic scenarios
-    #[test]
-    fn test_jetstream_consumer_retry_patterns(
+    #[sinex_test]
+fn test_jetstream_consumer_retry_patterns(
         failure_count in 0usize..10,
         base_retry_ms in 100u64..5000,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         let mut retry_delays = Vec::new();
 
         for attempt in 0..failure_count {
@@ -1090,11 +1088,11 @@ proptest! {
     }
 
     /// Test JetStream sequence number monotonicity properties
-    #[test]
-    fn test_sequence_number_monotonicity(
+    #[sinex_test]
+fn test_sequence_number_monotonicity(
         base_sequence in 1u64..1000,
         sequence_increment in 1u64..100,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         // Simulate JetStream sequence number generation
         let seq1 = base_sequence;
         let seq2 = base_sequence + sequence_increment;
@@ -1111,11 +1109,11 @@ proptest! {
     }
 
     /// Test JetStream message timestamp ordering properties
-    #[test] 
-    fn test_message_timestamp_ordering(
+    #[sinex_test]
+fn test_message_timestamp_ordering(
         base_timestamp_ms in 1600000000000u64..1700000000000u64,
         time_increment_ms in 1u64..10000,
-    ) {
+    ) -> color_eyre::eyre::Result<()> {
         // Simulate message timestamp ordering in JetStream
         let ts1 = base_timestamp_ms;
         let ts2 = base_timestamp_ms + time_increment_ms;

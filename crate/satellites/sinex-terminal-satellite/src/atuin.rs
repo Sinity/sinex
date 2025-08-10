@@ -8,7 +8,9 @@ use chrono::DateTime;
 use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rusqlite::{Connection, Row};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::{CommandText, HostName, SanitizedPath};
+use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -149,7 +151,7 @@ impl AtuinWatcher {
     }
 
     /// Query new commands since last timestamp with proper async handling
-    async fn query_new_commands(&mut self) -> SatelliteResult<Vec<Event>> {
+    async fn query_new_commands(&mut self) -> SatelliteResult<Vec<RawEvent>> {
         let db_path = self.config.db_path.clone();
         let last_timestamp = self.last_timestamp;
         let batch_size = self.config.batch_size;
@@ -264,7 +266,7 @@ impl AtuinWatcher {
     fn create_event_from_entry(
         &self,
         entry: &AtuinHistoryEntry,
-    ) -> Result<Event, sinex_satellite_sdk::SatelliteError> {
+    ) -> Result<RawEvent, sinex_satellite_sdk::SatelliteError> {
         // Convert nanosecond timestamp to UTC datetime for proper timestamps
         let ts_end = DateTime::from_timestamp_nanos(entry.timestamp_ns);
 
@@ -272,19 +274,21 @@ impl AtuinWatcher {
         let duration_secs = entry.duration_ns as f64 / 1_000_000_000.0;
         let ts_start = ts_end - chrono::Duration::milliseconds((duration_secs * 1000.0) as i64);
 
-        let event = Event::from_payload(sinex_types::events::AtuinCommandExecutedPayload {
-            command_string: entry.command.clone(),
-            cwd: entry.cwd.clone(),
-            exit_code: entry.exit_code,
-            duration_ns: entry.duration_ns,
-            atuin_history_id: entry.id.clone(),
-            atuin_session_id: entry.session.clone(),
-            timestamp: entry.timestamp_ns,
-            ts_start_orig: ts_start,
-            ts_end_orig: ts_end,
-            hostname: entry.hostname.clone(),
-            terminal_session_ulid: None, // Could be enhanced later
-        });
+        let event: RawEvent =
+            Event::from_payload(sinex_core::types::events::AtuinCommandExecutedPayload {
+                command_string: CommandText::from(entry.command.clone()),
+                cwd: SanitizedPath::from(entry.cwd.clone()),
+                exit_code: entry.exit_code,
+                duration_ns: entry.duration_ns,
+                atuin_history_id: entry.id.clone(),
+                atuin_session_id: entry.session.clone(),
+                timestamp: entry.timestamp_ns,
+                ts_start_orig: ts_start,
+                ts_end_orig: ts_end,
+                hostname: HostName::from(entry.hostname.clone()),
+                terminal_session_ulid: None, // Could be enhanced later
+            })
+            .into();
 
         Ok(event)
     }
@@ -292,7 +296,7 @@ impl AtuinWatcher {
     /// Start streaming events with file watching or polling mode
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!(
             db_path = ?self.config.db_path,
@@ -323,7 +327,7 @@ impl AtuinWatcher {
     }
 
     /// File watching mode with event-driven polling
-    async fn watch_mode(&mut self, tx: mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
+    async fn watch_mode(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
         let (notify_tx, mut notify_rx) = mpsc::channel(100);
         let db_path = self.config.db_path.clone();
 
@@ -387,7 +391,7 @@ impl AtuinWatcher {
     }
 
     /// Simple polling mode without file watching
-    async fn poll_mode(&mut self, tx: mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
+    async fn poll_mode(&mut self, tx: mpsc::UnboundedSender<RawEvent>) -> SatelliteResult<()> {
         let mut interval = time::interval(Duration::from_secs(self.config.polling_interval_secs));
 
         loop {
@@ -401,7 +405,7 @@ impl AtuinWatcher {
     /// Poll Atuin history and send events
     async fn poll_atuin_history(
         &mut self,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         match self.query_new_commands().await {
             Ok(events) => {

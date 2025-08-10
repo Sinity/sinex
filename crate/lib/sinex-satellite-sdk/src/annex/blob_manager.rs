@@ -43,20 +43,20 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use color_eyre::eyre::{bail, eyre, Context, Result};
-use sinex_db::models::{Blob, Event};
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::DbPool;
-use sinex_types::events::{
-    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, StorageStatisticsPayload,
+use sinex_core::db::models::{Blob, RawEvent};
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::DbPool;
+use sinex_core::types::events::{
+    BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, Event, StorageStatisticsPayload,
 };
-use sinex_types::{ulid::Ulid, Id};
+use sinex_core::types::{ulid::Ulid, Id};
 use std::time::Instant;
 use tracing::{debug, info};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
 
 // Re-export Blob type for compatibility
-pub use sinex_db::models::Blob as BlobMetadata;
+pub use sinex_core::db::models::Blob as BlobMetadata;
 
 #[derive(Debug)]
 pub struct BlobManager {
@@ -77,7 +77,7 @@ impl BlobManager {
         original_filename: Option<&str>,
     ) -> Result<BlobMetadata> {
         info!("Ingesting file: {:?}", file_path);
-        let start = Instant::now();
+        let _start = Instant::now();
 
         // Compute BLAKE3 hash for deduplication
         let blake3_hash = GitAnnex::compute_blake3_hash(file_path).await?;
@@ -98,7 +98,7 @@ impl BlobManager {
             }
 
             // Emit deduplication event
-            let event = Event::from_payload(BlobIngestedPayload {
+            let event: RawEvent = Event::from_payload(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
                 mime_type: existing.mime_type.clone(),
@@ -108,7 +108,8 @@ impl BlobManager {
                     .unwrap_or(&existing.original_filename)
                     .to_string(),
             })
-            .with_ts_orig(Some(chrono::Utc::now()));
+            .with_ts_orig(Some(chrono::Utc::now()))
+            .into();
 
             self.db_pool
                 .events()
@@ -156,7 +157,7 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event
-        let event = Event::from_payload(BlobIngestedPayload {
+        let event: RawEvent = Event::from_payload(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
             mime_type: Some(mime_type),
@@ -164,7 +165,8 @@ impl BlobManager {
             deduplicated: false,
             original_filename: filename.to_string(),
         })
-        .with_ts_orig(Some(chrono::Utc::now()));
+        .with_ts_orig(Some(chrono::Utc::now()))
+        .into();
 
         self.db_pool
             .events()
@@ -205,7 +207,7 @@ impl BlobManager {
             self.add_original_filename(&existing_id, filename).await?;
 
             // Emit deduplication event
-            let event = Event::from_payload(BlobIngestedPayload {
+            let event: RawEvent = Event::from_payload(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
                 mime_type: existing.mime_type.clone(),
@@ -213,7 +215,8 @@ impl BlobManager {
                 deduplicated: true,
                 original_filename: filename.to_string(),
             })
-            .with_ts_orig(Some(chrono::Utc::now()));
+            .with_ts_orig(Some(chrono::Utc::now()))
+            .into();
 
             self.db_pool
                 .events()
@@ -266,7 +269,7 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event
-        let event = Event::from_payload(BlobIngestedPayload {
+        let event: RawEvent = Event::from_payload(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
             mime_type: Some(content_type.to_string()),
@@ -274,7 +277,8 @@ impl BlobManager {
             deduplicated: false,
             original_filename: filename.to_string(),
         })
-        .with_ts_orig(Some(chrono::Utc::now()));
+        .with_ts_orig(Some(chrono::Utc::now()))
+        .into();
 
         self.db_pool
             .events()
@@ -301,12 +305,13 @@ impl BlobManager {
             .wrap_err("Failed to read blob content")?;
 
         // Emit blob retrieved event
-        let event = Event::from_payload(BlobRetrievedPayload {
+        let event: RawEvent = Event::from_payload(BlobRetrievedPayload {
             blob_id: annex_key.to_string(), // Using annex_key as blob identifier
             retrieval_time_ms: start.elapsed().as_millis() as u64,
             cache_hit: true, // git-annex get ensures it's local
         })
-        .with_ts_orig(Some(chrono::Utc::now()));
+        .with_ts_orig(Some(chrono::Utc::now()))
+        .into();
 
         self.db_pool
             .events()
@@ -326,12 +331,13 @@ impl BlobManager {
         self.annex.get_content(&blob.annex_key).await?;
 
         // Emit blob retrieved event
-        let event = Event::from_payload(BlobRetrievedPayload {
+        let event: RawEvent = Event::from_payload(BlobRetrievedPayload {
             blob_id: blob_id.to_string(),
             retrieval_time_ms: start.elapsed().as_millis() as u64,
             cache_hit: true, // git-annex get ensures it's local
         })
-        .with_ts_orig(Some(chrono::Utc::now()));
+        .with_ts_orig(Some(chrono::Utc::now()))
+        .into();
 
         self.db_pool
             .events()
@@ -346,7 +352,7 @@ impl BlobManager {
     /// Verify blob integrity
     pub async fn verify_blob(&self, blob_id: &Ulid) -> Result<bool> {
         let start = Instant::now();
-        let blob = self.get_blob_metadata(blob_id).await?;
+        let _blob = self.get_blob_metadata(blob_id).await?;
 
         // Run git-annex fsck on specific key
         let fsck_output = self.annex.fsck(false, false).await?;
@@ -359,12 +365,13 @@ impl BlobManager {
         self.update_verification_status(blob_id, status).await?;
 
         // Emit blob verified event
-        let event = Event::from_payload(BlobVerifiedPayload {
+        let event: RawEvent = Event::from_payload(BlobVerifiedPayload {
             blob_id: blob_id.to_string(),
             verification_status: status.to_string(),
             checksum_matched: is_verified,
         })
-        .with_ts_orig(Some(chrono::Utc::now()));
+        .with_ts_orig(Some(chrono::Utc::now()))
+        .into();
 
         self.db_pool
             .events()
@@ -490,13 +497,14 @@ impl BlobManager {
         let failed_count = 0i64; // TODO: Track failed verifications
 
         // Insert metric event using EventRepository
-        let new_event = Event::from_payload(StorageStatisticsPayload {
+        let new_event: RawEvent = Event::from_payload(StorageStatisticsPayload {
             total_blobs: blob_count,
             total_size_bytes: total_size,
             failed_verifications: failed_count,
             storage_backend: "git-annex".to_string(),
         })
-        .with_ts_orig(Some(Utc::now()));
+        .with_ts_orig(Some(Utc::now()))
+        .into();
 
         self.db_pool
             .events()
@@ -511,9 +519,10 @@ impl BlobManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_mime_type_detection() {
+    #[sinex_test]
+    fn test_mime_type_detection() -> color_eyre::eyre::Result<()> {
         let path = Utf8Path::new("test.txt");
         let mime = BlobManager::detect_mime_type(path).unwrap();
         assert_eq!(mime, "text/plain");
@@ -521,5 +530,6 @@ mod tests {
         let path = Utf8Path::new("image.jpg");
         let mime = BlobManager::detect_mime_type(path).unwrap();
         assert_eq!(mime, "image/jpeg");
+        Ok(())
     }
 }

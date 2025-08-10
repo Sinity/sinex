@@ -120,9 +120,10 @@ pub static FIXTURE_CONFIG: Lazy<FixtureConfig> = Lazy::new(FixtureConfig::from_e
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[test]
-    fn test_default_config() {
+    #[sinex_test]
+    fn test_default_config() -> color_eyre::eyre::Result<()> {
         let config = FixtureConfig::default();
         assert_eq!(config.small_dataset_size, 100);
         assert_eq!(config.medium_dataset_size, 1_000);
@@ -130,13 +131,15 @@ mod tests {
         assert_eq!(config.user_session_event_count, 30);
         assert_eq!(config.checkpoint_interval, 10);
         assert!(!config.verbose);
+        Ok(())
     }
 
-    #[test]
-    fn test_dataset_size_selection() {
+    #[sinex_test]
+    fn test_dataset_size_selection() -> color_eyre::eyre::Result<()> {
         let config = FixtureConfig::default();
         assert_eq!(config.get_dataset_size(50), 100);
         assert_eq!(config.get_dataset_size(500), 1_000);
         assert_eq!(config.get_dataset_size(5000), 10_000);
+        Ok(())
     }
 }

@@ -248,9 +248,10 @@ fn generate_event_envelope_impl(events: &[EventCategory]) -> proc_macro2::TokenS
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_event_registry_parsing() {
+    #[sinex_test]
+    fn test_event_registry_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             sources {
                 FILESYSTEM => "fs",
@@ -269,5 +270,6 @@ mod tests {
         assert_eq!(parsed.sources.len(), 2);
         assert_eq!(parsed.events.len(), 1);
         assert_eq!(parsed.events[0].events.len(), 2);
+        Ok(())
     }
 }

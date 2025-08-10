@@ -10,7 +10,10 @@
 //! Uses #[sinex_test] for automatic transaction isolation and TestContext
 //! for unified database access patterns.
 
+use color_eyre::eyre::Result;
 use serde_json::json;
+use sinex_core::types::events::payloads::filesystem::{FileCreatedPayload, FileModifiedPayload};
+use sinex_core::types::events::payloads::shell::CommandExecutedPayload;
 use sinex_test_utils::prelude::*;
 use std::time::Duration as StdDuration;
 
@@ -27,8 +30,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> color_eyre::eyre::Resul
     for i in 0..10 {
         let event = ctx
             .create_test_event(
-                "fs-watcher",
-                "file.created",
+                FileCreatedPayload::SOURCE.as_str(),
+                FileCreatedPayload::EVENT_TYPE.as_str(),
                 json!({
                     "path": format!("/test/file_{}.txt", i),
                     "size": 1024 * (i + 1)
@@ -39,8 +42,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> color_eyre::eyre::Resul
         inserted_events.push(event);
     }
 
-    // Verify all events were inserted
-    let recent_events = ctx.get_recent_events(20).await?;
+    // Verify all events were inserted using direct repository access
+    let recent_events = ctx.pool.events().get_recent(20).await?;
     assert!(recent_events.len() >= 10);
 
     // Verify specific events exist
@@ -63,30 +66,34 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
     // Create filesystem events
     let _fs_event1 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.created",
+            FileCreatedPayload::SOURCE.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/file1.txt", "size": 1024}),
         )
         .await?;
 
     let _fs_event2 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.modified",
+            FileModifiedPayload::SOURCE.as_str(),
+            FileModifiedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/file2.txt", "size": 2048}),
         )
         .await?;
 
     let _term_event = ctx
         .create_test_event(
-            "terminal",
-            "command.executed",
+            CommandExecutedPayload::SOURCE.as_str(),
+            CommandExecutedPayload::EVENT_TYPE.as_str(),
             json!({"command": "ls -la", "exit_code": 0}),
         )
         .await?;
 
-    // Query filesystem events using TestContext helpers
-    let filesystem_events = ctx.get_events_by_source("fs-watcher").await?;
+    // Query filesystem events using direct repository access
+    let filesystem_events = ctx
+        .pool
+        .events()
+        .get_by_source(&FileCreatedPayload::SOURCE, Some(100), None)
+        .await?;
     assert!(filesystem_events.len() >= 2);
 
     for event in &filesystem_events {
@@ -113,8 +120,8 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> color_eyre::eyre::Result<(
     // Insert events with a small delay to ensure different timestamps
     let event1 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.created",
+            FileCreatedPayload::SOURCE.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/first.txt", "size": 100}),
         )
         .await?;
@@ -125,8 +132,8 @@ async fn test_ulid_time_ordering(ctx: TestContext) -> color_eyre::eyre::Result<(
 
     let event2 = ctx
         .create_test_event(
-            "fs-watcher",
-            "file.created",
+            FileCreatedPayload::SOURCE.as_str(),
+            FileCreatedPayload::EVENT_TYPE.as_str(),
             json!({"path": "/test/second.txt", "size": 200}),
         )
         .await?;
@@ -155,8 +162,8 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
     for i in 0..5 {
         let event = ctx
             .create_test_event(
-                "fs-watcher",
-                "file.created",
+                FileCreatedPayload::SOURCE.as_str(),
+                FileCreatedPayload::EVENT_TYPE.as_str(),
                 json!({"path": format!("/test/file_{}.txt", i), "size": (i + 1) * 1024}),
             )
             .await?;
@@ -166,8 +173,12 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
         tokio::time::sleep(StdDuration::from_millis(1)).await;
     }
 
-    // Query filesystem events to verify they exist
-    let filesystem_events = ctx.get_events_by_source("fs-watcher").await?;
+    // Query filesystem events to verify they exist using direct repository access
+    let filesystem_events = ctx
+        .pool
+        .events()
+        .get_by_source(&FileCreatedPayload::SOURCE, Some(100), None)
+        .await?;
     assert!(filesystem_events.len() >= 5);
 
     // Verify ULIDs are in chronological order by converting to strings

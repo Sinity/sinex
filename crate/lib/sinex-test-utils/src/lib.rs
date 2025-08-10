@@ -42,7 +42,7 @@
 //! - Timing utilities
 //!
 //! ## The `#[sinex_test]` Macro
-//! **Always use `#[sinex_test]` instead of `#[tokio::test]`**. This macro:
+//! **Always use `#[sinex_test]` instead of `#[sinex_test]`**. This macro:
 //! - Creates and injects TestContext
 //! - Manages database lifecycle
 //! - Handles timeouts intelligently
@@ -79,13 +79,11 @@
 //! ```rust
 //! // Direct repository calls - no wrapper query builders
 //! let recent = ctx.pool.events().get_recent(5).await?;
-//! let by_source = ctx.pool.events().get_by_source(&EventSource::from("fs-watcher"), Some(10), None).await?;
+//! let by_source = ctx.pool.events().get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None).await?;
 //! let count = ctx.pool.events().count_by_event_type(&EventType::from("file.created")).await?;
 //! let single = ctx.pool.events().get_by_id(&event_id).await?;
 //!
-//! // Convenience helpers for common test patterns
-//! let events = ctx.get_recent_events(10).await?;
-//! let fs_events = ctx.get_events_by_source("fs-watcher").await?;
+//! // Use repository methods directly - no wrapper helpers
 //! ```
 //!
 //! ## Fixtures
@@ -342,7 +340,7 @@ pub use sinex_test_utils_macros::sinex_test;
 pub use color_eyre::eyre::{anyhow, bail, ensure, Context};
 
 // Re-export SinexError
-pub use sinex_types::error::SinexError;
+pub use sinex_core::types::error::SinexError;
 
 // Library Result type using SinexError
 pub type Result<T> = std::result::Result<T, SinexError>;
@@ -403,12 +401,12 @@ pub mod prelude {
     };
 
     // Common imports that tests need
-    pub use crate::builders::*;
-    pub use sinex_db::models::*;
-    pub use sinex_types::domain::*;
-    pub use sinex_types::error::*;
-    pub use sinex_types::events::*;
-    pub use sinex_types::{Id, Ulid};
+
+    pub use sinex_core::db::models::*;
+    pub use sinex_core::types::domain::*;
+    pub use sinex_core::types::error::*;
+    pub use sinex_core::types::events::*;
+    pub use sinex_core::types::{Id, Ulid};
     pub use std::time::Duration;
 
     // Path handling
@@ -456,12 +454,12 @@ pub fn test_event_types() -> Vec<(&'static str, &'static str)> {
 }
 
 #[fixture]
-pub fn test_event_sources() -> Vec<sinex_types::domain::EventSource> {
+pub fn test_event_sources() -> Vec<sinex_core::types::domain::EventSource> {
     vec![
-        sinex_types::domain::EventSource::from_static("fs-watcher"),
-        sinex_types::domain::EventSource::from_static("terminal"),
-        sinex_types::domain::EventSource::from_static("desktop"),
-        sinex_types::domain::EventSource::from_static("system"),
+        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
+        sinex_core::types::domain::EventSource::from_static("terminal"),
+        sinex_core::types::domain::EventSource::from_static("desktop"),
+        sinex_core::types::domain::EventSource::from_static("system"),
     ]
 }
 
@@ -506,13 +504,15 @@ pub use test_context::TestContext;
 #[cfg(test)]
 mod tests {
     use super::prelude::*;
+    use crate::sinex_test;
+    use rstest::rstest;
     use serde_json::json;
-    use sinex_db::models::*;
-    use sinex_db::repositories::DbPoolExt;
-    use sinex_types::domain::*;
-    use sinex_types::error::*;
-    use sinex_types::events::*;
-    use sinex_types::{Id, Ulid};
+    use sinex_core::db::models::*;
+    use sinex_core::db::repositories::DbPoolExt;
+    use sinex_core::types::domain::*;
+    use sinex_core::types::error::*;
+    use sinex_core::types::events::*;
+    use sinex_core::types::{Id, Ulid};
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
     //
@@ -562,7 +562,7 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("fs-watcher"), Some(10), None)
+            .get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None)
             .await?;
         assert!(!events.is_empty());
 
@@ -611,7 +611,7 @@ mod tests {
         let source_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from(source), Some(10), None)
+            .get_by_source(&EventSource::new(source.to_string()), Some(10), None)
             .await?;
         let type_events = ctx
             .pool
@@ -625,11 +625,10 @@ mod tests {
         Ok(())
     }
 
-    #[rstest]
+    #[sinex_test]
     #[case("short", 5)]
     #[case("medium", 50)]
     #[case("long", 200)]
-    #[tokio::test]
     async fn test_string_length_variations(
         #[case] name: &str,
         #[case] length: usize,
@@ -918,11 +917,11 @@ mod tests {
         // Batch insert and verify
         let batch_events = (0..10)
             .map(|i| {
-                Event::schemaless()
-                    .source(EventSource::from("count-test"))
-                    .event_type(EventType::from("batch"))
-                    .payload(json!({"batch_index": i}))
-                    .build()
+                RawEvent::schemaless(
+                    EventSource::from("count-test"),
+                    EventType::from("batch"),
+                    json!({"batch_index": i}),
+                )
             })
             .collect::<Vec<_>>();
 

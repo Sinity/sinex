@@ -384,18 +384,20 @@ impl GitAnnex {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use tempfile::TempDir;
 
-    #[test]
-    fn test_annex_key_parsing() {
+    #[sinex_test]
+    fn test_annex_key_parsing() -> color_eyre::eyre::Result<()> {
         let key = AnnexKey::parse("SHA256E-s12345--abcdef123456.dat").unwrap();
         assert_eq!(key.backend, "SHA256E");
         assert_eq!(key.size, 12345);
         assert!(key.hash.contains("abcdef123456"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_blake3_hash() {
+    #[sinex_test]
+    async fn test_blake3_hash() -> color_eyre::eyre::Result<()> {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("test.txt");
         tokio::fs::write(&test_file, b"hello world").await.unwrap();
@@ -404,5 +406,6 @@ mod tests {
         let hash = GitAnnex::compute_blake3_hash(test_file).await.unwrap();
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64); // BLAKE3 hex string length
+        Ok(())
     }
 }

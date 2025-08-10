@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use sinex_macros::{EventHandler, PayloadExtractor, SatelliteConfig, SatelliteProcessor};
+use sinex_test_utils::sinex_test;
 
 /// Test struct for SatelliteProcessor derive macro
 #[derive(Debug, Default, SatelliteProcessor)]
@@ -44,8 +45,8 @@ pub struct TestPayload {
     pub timestamp: chrono::DateTime<chrono::Utc>,
 }
 
-#[test]
-fn test_satellite_processor_basic_functionality() {
+#[sinex_test]
+async fn test_satellite_processor_basic_functionality() -> Result<(), Box<dyn std::error::Error>> {
     let processor = TestProcessor::new();
 
     // Test basic methods
@@ -56,10 +57,11 @@ fn test_satellite_processor_basic_functionality() {
     assert_eq!(processor.config.debounce_ms, 0);
     assert_eq!(processor.config.enabled, false);
     assert_eq!(processor.processed_count, 0);
+    Ok(())
 }
 
-#[test]
-fn test_event_handler_basic_functionality() {
+#[sinex_test]
+async fn test_event_handler_basic_functionality() -> Result<(), Box<dyn std::error::Error>> {
     let handler = TestEventHandler::default();
 
     // Test batch size method
@@ -68,10 +70,11 @@ fn test_event_handler_basic_functionality() {
     // Test that the handler was created with defaults
     assert_eq!(handler.batch_size, 0);
     assert_eq!(handler.max_retries, 0);
+    Ok(())
 }
 
-#[test]
-fn test_satellite_config_basic_functionality() {
+#[sinex_test]
+async fn test_satellite_config_basic_functionality() -> Result<(), Box<dyn std::error::Error>> {
     let config = TestConfig::default();
 
     // Test default values (from Default trait)
@@ -83,29 +86,32 @@ fn test_satellite_config_basic_functionality() {
     // Test validation
     assert!(config.validate().is_ok());
     assert!(config.is_valid());
+    Ok(())
 }
 
-#[test]
-fn test_satellite_config_environment_loading() {
+#[sinex_test]
+async fn test_satellite_config_environment_loading() -> Result<(), Box<dyn std::error::Error>> {
     let config = TestConfig::from_env();
 
     // Test that environment loading works (uses defaults when no env vars set)
     assert_eq!(config.debounce_ms, 0);
     assert_eq!(config.enabled, false);
     assert_eq!(config.batch_size, 0);
+    Ok(())
 }
 
-#[test]
-fn test_satellite_config_hierarchical_loading() {
+#[sinex_test]
+async fn test_satellite_config_hierarchical_loading() -> Result<(), Box<dyn std::error::Error>> {
     let result = TestConfig::load();
     assert!(result.is_ok());
 
     let config = result.unwrap();
     assert!(config.is_valid());
+    Ok(())
 }
 
-#[test]
-fn test_satellite_config_json_serialization() {
+#[sinex_test]
+async fn test_satellite_config_json_serialization() -> Result<(), Box<dyn std::error::Error>> {
     let config = TestConfig::default();
 
     // Test JSON serialization
@@ -123,10 +129,11 @@ fn test_satellite_config_json_serialization() {
     let from_json_config = from_json_result.unwrap();
     assert_eq!(from_json_config.debounce_ms, config.debounce_ms);
     assert_eq!(from_json_config.enabled, config.enabled);
+    Ok(())
 }
 
-#[test]
-fn test_payload_extractor_basic_functionality() {
+#[sinex_test]
+async fn test_payload_extractor_basic_functionality() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
 
     // Create test payload
@@ -145,10 +152,11 @@ fn test_payload_extractor_basic_functionality() {
     let extracted = extracted_result.unwrap();
     assert_eq!(extracted.path, test_payload.path);
     assert_eq!(extracted.size, test_payload.size);
+    Ok(())
 }
 
-#[test]
-fn test_payload_extractor_validation() {
+#[sinex_test]
+async fn test_payload_extractor_validation() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
 
     let test_payload = TestPayload {
@@ -166,10 +174,11 @@ fn test_payload_extractor_validation() {
     let validated = validated_result.unwrap();
     assert_eq!(validated.path, test_payload.path);
     assert_eq!(validated.size, test_payload.size);
+    Ok(())
 }
 
-#[test]
-fn test_payload_extractor_can_extract() {
+#[sinex_test]
+async fn test_payload_extractor_can_extract() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
 
     let test_payload = TestPayload {
@@ -187,10 +196,11 @@ fn test_payload_extractor_can_extract() {
     let invalid_payload = serde_json::json!({"invalid": "data"});
     // This should still return true for generic serde_json::Value extraction
     assert!(extractor.can_extract(&invalid_payload));
+    Ok(())
 }
 
-#[test]
-fn test_payload_extractor_type_coercion() {
+#[sinex_test]
+async fn test_payload_extractor_type_coercion() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
 
     let test_payload = TestPayload {
@@ -208,10 +218,11 @@ fn test_payload_extractor_type_coercion() {
     let coerced = coerced_result.unwrap();
     assert_eq!(coerced.path, test_payload.path);
     assert_eq!(coerced.size, test_payload.size);
+    Ok(())
 }
 
-#[test]
-fn test_integration_all_macros() {
+#[sinex_test]
+async fn test_integration_all_macros() -> Result<(), Box<dyn std::error::Error>> {
     // Test that all macros work together in a realistic scenario
     let processor = TestProcessor::new();
     let handler = TestEventHandler::default();
@@ -238,10 +249,11 @@ fn test_integration_all_macros() {
 
     // Test batch size
     assert_eq!(handler.get_batch_size(), 100);
+    Ok(())
 }
 
-#[test]
-fn test_error_handling_scenarios() {
+#[sinex_test]
+async fn test_error_handling_scenarios() -> Result<(), Box<dyn std::error::Error>> {
     let extractor = TestPayloadExtractor::default();
 
     // Test with malformed JSON
@@ -253,19 +265,21 @@ fn test_error_handling_scenarios() {
     let incomplete_json = serde_json::json!({"path": "/test"});
     let result2 = extractor.extract_payload::<TestPayload>(&incomplete_json);
     assert!(result2.is_err());
+    Ok(())
 }
 
-#[test]
-fn test_empty_collections() {
+#[sinex_test]
+async fn test_empty_collections() -> Result<(), Box<dyn std::error::Error>> {
     let config = TestConfig::default();
 
     // Test with empty collections
     assert_eq!(config.watch_patterns.len(), 0);
     assert!(config.is_valid());
+    Ok(())
 }
 
-#[test]
-fn test_configuration_field_access() {
+#[sinex_test]
+async fn test_configuration_field_access() -> Result<(), Box<dyn std::error::Error>> {
     let config = TestConfig::default();
 
     // Test field access (would return None in basic implementation)
@@ -276,10 +290,11 @@ fn test_configuration_field_access() {
     let mut config_mut = config.clone();
     let set_result = config_mut.set_field("debounce_ms", serde_json::json!(1000));
     assert!(set_result.is_err()); // Expected with current implementation
+    Ok(())
 }
 
-#[test]
-fn test_macro_generated_methods_exist() {
+#[sinex_test]
+async fn test_macro_generated_methods_exist() -> Result<(), Box<dyn std::error::Error>> {
     // Test that all expected methods are generated and callable
     let processor = TestProcessor::new();
     let handler = TestEventHandler::default();
@@ -300,4 +315,5 @@ fn test_macro_generated_methods_exist() {
     // Test PayloadExtractor methods
     let test_json = serde_json::json!({"test": "value"});
     assert!(extractor.can_extract(&test_json));
+    Ok(())
 }

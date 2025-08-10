@@ -11,10 +11,12 @@
 use chrono::Utc;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
-use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
-use sinex_types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
-use sinex_types::Id;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{
+    ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName,
+};
+use sinex_core::types::Id;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::time::Instant;
@@ -244,7 +246,7 @@ async fn test_crud_operations(pool: &PgPool, messages: &mut Vec<String>) -> Resu
 }
 
 /// Test transaction operations
-async fn test_transactions(pool: &PgPool, messages: &mut Vec<String>) -> Result<Value> {
+async fn test_transactions(pool: &PgPool, _messages: &mut Vec<String>) -> Result<Value> {
     // Test committed transaction
     let tx = pool.begin().await.wrap_err("Failed to begin transaction")?;
 
@@ -266,7 +268,7 @@ async fn test_transactions(pool: &PgPool, messages: &mut Vec<String>) -> Result<
         .wrap_err("Committed event should have an ID")?;
     let verify_commit = pool
         .events()
-        .get_by_id(Id::<Event>::from(committed_id))
+        .get_by_id(Id::<RawEvent>::from(committed_id))
         .await?
         .is_some();
 

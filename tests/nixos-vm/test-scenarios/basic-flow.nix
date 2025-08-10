@@ -1,5 +1,5 @@
 # Basic E2E flow test for Sinex - Optimized version
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 let
   inherit (pkgs) lib;
@@ -13,7 +13,7 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [ 
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-collector sinex-promo-worker pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
       })
     ];
 
@@ -132,8 +132,8 @@ EOF
     # Simple helper functions embedded in test
     def wait_for_sinex_ready():
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-unified-collector.service", timeout=60)
-        machine.wait_until_succeeds("systemctl is-active sinex-unified-collector", timeout=30)
+        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
+        machine.wait_until_succeeds("systemctl is-active sinex-ingestd", timeout=30)
     
     def get_event_count():
         result = machine.succeed(
@@ -158,7 +158,7 @@ EOF
         
         # Basic service check
         machine.succeed("systemctl is-active postgresql")
-        machine.succeed("systemctl is-active sinex-unified-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
 
     # Test 1: Database schema validation
     with subtest("Database schema validation"):
@@ -295,7 +295,7 @@ EOF
         
         # Always test that collector continues working
         # Check service is still running
-        machine.succeed("systemctl is-active sinex-unified-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         
     # Test 7: D-Bus monitoring
     with subtest("D-Bus event monitoring"):
@@ -331,11 +331,11 @@ EOF
         pre_restart_count = get_event_count()
         
         # Restart collector
-        machine.systemctl("restart sinex-unified-collector")
-        machine.wait_for_unit("sinex-unified-collector.service")
+        machine.systemctl("restart sinex-ingestd")
+        machine.wait_for_unit("sinex-ingestd.service")
         
         # Verify service recovered
-        machine.succeed("systemctl is-active sinex-unified-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         
         # Generate events after restart
         events_after_restart = generate_events(5, "restart")

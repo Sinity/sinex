@@ -1,4 +1,6 @@
+use color_eyre::eyre::Result;
 use async_trait::async_trait;
+use color_eyre::eyre::Result;
 use sinex_satellite_sdk::{EventSourceConfig, StatefulStreamProcessor};
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
@@ -137,7 +139,7 @@ async fn test_event_factory_basic_generation(ctx: TestContext) -> color_eyre::ey
 
     // Insert events and verify persistence
     for event in &events {
-        let stored_event = sinex_db::insert_event_with_validator(&pool, event, None).await?;
+        let stored_event = sinex_core::db::insert_event_with_validator(&pool, event, None).await?;
         assert_eq!(stored_event.id, event.id);
         assert_eq!(stored_event.source, event.source);
         assert_eq!(stored_event.event_type, event.event_type);
@@ -201,13 +203,13 @@ async fn test_event_generation_payload_varieties(ctx: TestContext) -> color_eyre
     // Insert all events and verify they can be stored with different payload types
     let mut stored_ids = Vec::new();
     for event in &events {
-        let stored_event = sinex_db::insert_event_with_validator(&pool, event, None).await?;
+        let stored_event = sinex_core::db::insert_event_with_validator(&pool, event, None).await?;
         stored_ids.push(stored_event.id);
     }
 
     // Retrieve and verify payload integrity
     for (original, stored_id) in events.iter().zip(stored_ids.iter()) {
-        let retrieved = sinex_db::get_event_by_id(&pool, *stored_id).await?;
+        let retrieved = sinex_core::db::get_event_by_id(&pool, *stored_id).await?;
         assert_eq!(retrieved.payload, original.payload);
     }
 
@@ -370,7 +372,7 @@ async fn test_concurrent_satellite_generation(ctx: TestContext) -> color_eyre::e
 
     // Store all events in database
     for event in &all_events {
-        let _ = sinex_db::insert_event_with_validator(&pool, event, None).await?;
+        let _ = sinex_core::db::insert_event_with_validator(&pool, event, None).await?;
     }
 
     println!("✓ Concurrent satellite generation verified");
@@ -491,8 +493,8 @@ async fn test_event_generation_payload_sizes(ctx: TestContext) -> color_eyre::ey
 
     // Verify all events can be stored regardless of payload size
     for event in &events {
-        let stored_event = sinex_db::insert_event_with_validator(&pool, event, None).await?;
-        let retrieved_event = sinex_db::get_event_by_id(&pool, stored_event.id).await?;
+        let stored_event = sinex_core::db::insert_event_with_validator(&pool, event, None).await?;
+        let retrieved_event = sinex_core::db::get_event_by_id(&pool, stored_event.id).await?;
         
         // Verify payload integrity across different sizes
         assert_eq!(retrieved_event.payload, event.payload);
@@ -520,7 +522,7 @@ async fn test_event_generation_error_handling(ctx: TestContext) -> color_eyre::e
     );
     
     // Should be able to create and store event even with empty source
-    let stored_event = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+    let stored_event = sinex_core::db::insert_event_with_validator(&pool, &event, None).await?;
     assert_eq!(stored_event.source, "");
 
     // Test with very long source name
@@ -531,7 +533,7 @@ async fn test_event_generation_error_handling(ctx: TestContext) -> color_eyre::e
         serde_json::json!({"test": "long source"}),
     );
     
-    let stored_long = sinex_db::insert_event_with_validator(&pool, &long_event, None).await?;
+    let stored_long = sinex_core::db::insert_event_with_validator(&pool, &long_event, None).await?;
     assert_eq!(stored_long.source, long_source);
 
     // Test with special characters in event type
@@ -540,7 +542,7 @@ async fn test_event_generation_error_handling(ctx: TestContext) -> color_eyre::e
         serde_json::json!({"test": "special characters"}),
     );
     
-    let stored_special = sinex_db::insert_event_with_validator(&pool, &special_event, None).await?;
+    let stored_special = sinex_core::db::insert_event_with_validator(&pool, &special_event, None).await?;
     assert_eq!(stored_special.event_type, "test.special!@#$%^&*()_+-=[]{}|;':\",./<>?");
 
     println!("✓ Event generation error handling verified");

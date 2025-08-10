@@ -97,7 +97,11 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::SanitizedPath;
+use sinex_core::types::error::with_context;
+use sinex_core::types::events::Event;
+use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -111,8 +115,6 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use sinex_types::error::with_context;
-use sinex_types::validate_path;
 use std::collections::{HashMap, HashSet};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -120,7 +122,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tracing::{debug, error, info, warn};
 use walkdir::WalkDir;
-// use sinex_types::events::constants::{sources}; // already imported above
+// use sinex_core::types::events::constants::{sources}; // already imported above
 
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -522,7 +524,7 @@ impl FilesystemProcessor {
         &self,
         path: &Utf8Path,
         metadata: &std::fs::Metadata,
-    ) -> SatelliteResult<Vec<Event>> {
+    ) -> SatelliteResult<Vec<RawEvent>> {
         // Validate path before processing
         let path_str = path.as_str();
 
@@ -533,18 +535,22 @@ impl FilesystemProcessor {
         let mut events = Vec::new();
 
         if metadata.is_file() {
-            let event = Event::from_payload(sinex_types::events::FileDiscoveredPayload {
-                path: path_str.to_string(),
-                size: metadata.len(),
-                modified_at: Utc::now(),
-                permissions: Self::get_permissions(metadata),
-            });
+            let event: RawEvent =
+                Event::from_payload(sinex_core::types::events::FileDiscoveredPayload {
+                    path: SanitizedPath::new_unchecked(path_str),
+                    size: metadata.len(),
+                    modified_at: Utc::now(),
+                    permissions: Self::get_permissions(metadata),
+                })
+                .into();
             events.push(event);
         } else if metadata.is_dir() {
-            let event = Event::from_payload(sinex_types::events::DirDiscoveredPayload {
-                path: path_str.to_string(),
-                modified_at: Utc::now(),
-            });
+            let event: RawEvent =
+                Event::from_payload(sinex_core::types::events::DirDiscoveredPayload {
+                    path: SanitizedPath::new_unchecked(path_str),
+                    modified_at: Utc::now(),
+                })
+                .into();
             events.push(event);
         }
 
@@ -649,7 +655,7 @@ impl FilesystemProcessor {
             let cleanup_tracker = self.rename_tracker.clone();
             let cleanup_task = tokio::task::spawn(async move {
                 let mut cleanup_interval =
-                    tokio::time::interval(sinex_types::filesystem::CLEANUP_INTERVAL);
+                    tokio::time::interval(sinex_core::types::filesystem::CLEANUP_INTERVAL);
                 loop {
                     cleanup_interval.tick().await;
                     Self::cleanup_old_rename_operations(&cleanup_tracker);
@@ -778,7 +784,7 @@ impl FilesystemProcessor {
     }
 
     /// Convert notify event to RawEvent with rich metadata (placeholder for full implementation)
-    fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<Event>> {
+    fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<RawEvent>> {
         // This would contain the full event conversion logic from the original implementation
         // For now, return empty to focus on the architectural changes
         Ok(vec![])
@@ -796,7 +802,11 @@ impl Default for FilesystemProcessor {
 impl StatefulStreamProcessor for FilesystemProcessor {
     type Config = FilesystemConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,

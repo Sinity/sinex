@@ -12,6 +12,7 @@
 //! - Queue cleanup and cascading deletions
 //! - Worker coordination and load balancing
 
+use color_eyre::eyre::Result;
 use async_nats::jetstream::{
     consumer::{pull::Config as ConsumerConfig, AckPolicy, DeliverPolicy},
     stream::{Config as StreamConfig, RetentionPolicy},
@@ -19,9 +20,9 @@ use async_nats::jetstream::{
 };
 use futures::StreamExt;
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
-use sinex_types::{
+use sinex_core::types::{
     domain::{ConsumerGroup, ConsumerName, ProcessorName},
     ulid::Ulid,
 };
@@ -666,8 +667,8 @@ async fn test_work_priority_and_targeting(ctx: TestContext) -> Result<(), color_
 mod unit_tests {
     use super::*;
 
-    #[test]
-    fn test_work_tracker_basic_operations() {
+    #[sinex_test]
+fn test_work_tracker_basic_operations() -> color_eyre::eyre::Result<()> {
         let tracker = WorkTracker::new();
         
         // Test work item claiming
@@ -690,8 +691,8 @@ mod unit_tests {
         assert_eq!(tracker.get_assigned_worker("nonexistent"), None);
     }
     
-    #[test]
-    fn test_work_tracker_concurrent_claiming() {
+    #[sinex_test]
+fn test_work_tracker_concurrent_claiming() -> color_eyre::eyre::Result<()> {
         let tracker = WorkTracker::new();
         let tracker_clone = tracker.clone();
         
@@ -704,8 +705,8 @@ mod unit_tests {
         assert_eq!(tracker.get_processed_count(), 1);
     }
     
-    #[test]
-    fn test_work_tracker_multiple_workers() {
+    #[sinex_test]
+fn test_work_tracker_multiple_workers() -> color_eyre::eyre::Result<()> {
         let tracker = WorkTracker::new();
         
         let work_items = vec!["work1", "work2", "work3", "work4", "work5"];
@@ -737,4 +738,5 @@ mod unit_tests {
         let total_assigned: usize = worker_counts.values().sum();
         assert_eq!(total_assigned, work_items.len());
     }
+    Ok(())
 }

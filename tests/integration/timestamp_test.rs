@@ -6,8 +6,9 @@
 //! - Timestamp precision and accuracy
 //! - Cross-timezone compatibility
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use chrono::{DateTime, Utc, TimeZone};
 use serde_json::json;
 

@@ -13,9 +13,8 @@ path = "src/main.rs"
 [dependencies]
 mimalloc = { workspace = true }
 # Core Sinex dependencies
-sinex-types = { path = "../../lib/sinex-types" }
+sinex-core = { path = "../../lib/sinex-core" }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
-sinex-db = { path = "../../lib/sinex-db" }
 
 # CLI parsing
 clap = { version = "4.0", features = ["derive", "env"] }

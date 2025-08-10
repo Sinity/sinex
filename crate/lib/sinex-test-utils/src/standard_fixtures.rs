@@ -152,8 +152,9 @@ pub static OPERATIONS_FIXTURE: Lazy<FixtureSet> = Lazy::new(|| {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[test]
+    #[sinex_test]
     fn test_standard_fixtures_have_unique_seeds() {
         // Ensure each fixture uses different seeds to avoid correlation
         let fixtures = vec![
@@ -173,7 +174,7 @@ mod tests {
         }
     }
 
-    #[test]
+    #[sinex_test]
     fn test_standard_fixtures_have_appropriate_sizes() {
         // Smoke test should be small
         assert!(SMOKE_TEST_FIXTURE

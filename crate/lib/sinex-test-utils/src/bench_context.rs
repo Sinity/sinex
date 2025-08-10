@@ -44,7 +44,7 @@ use std::time::{Duration, Instant};
 
 #[cfg(feature = "bench")]
 use crate::bench_results::BenchmarkResult;
-use sinex_db::DbPool;
+use sinex_core::db::DbPool;
 
 /// Global benchmark context for all benchmarks
 #[cfg(feature = "bench")]
@@ -86,7 +86,7 @@ impl BenchContext {
             .await?;
 
         // Run migrations if needed
-        sinex_db::run_migrations(&pool)
+        sinex_core::db::run_migrations(&pool)
             .await
             .map_err(|e| eyre!("Migration failed: {}", e))?;
 
@@ -290,17 +290,19 @@ impl DualMeasurement {
 mod tests {
     use super::*;
     use crate::prelude::DatasetSize;
+    use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_dataset_size() {
+    #[sinex_test]
+    async fn test_dataset_size() -> color_eyre::eyre::Result<()> {
         assert_eq!(DatasetSize::Small.fixture_name(), "small");
         assert_eq!(DatasetSize::Small.event_count(), 1_000);
         assert_eq!(DatasetSize::Large.fixture_name(), "large");
         assert_eq!(DatasetSize::Large.event_count(), 10_000_000);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_dual_measurement() {
+    #[sinex_test]
+    async fn test_dual_measurement() -> color_eyre::eyre::Result<()> {
         let measurement = DualMeasurement {
             cold_cache: Duration::from_millis(100),
             warm_cache: Duration::from_millis(25),
@@ -308,11 +310,12 @@ mod tests {
 
         assert_eq!(measurement.cache_speedup(), 4.0);
         assert_eq!(measurement.cache_penalty_ms(), 75.0);
+        Ok(())
     }
 
     #[cfg(feature = "bench")]
-    #[tokio::test]
-    async fn test_bench_context_creation() -> Result<()> {
+    #[sinex_test]
+    async fn test_bench_context_creation() -> color_eyre::eyre::Result<()> {
         // This will fail if database isn't available, which is OK for tests
         if std::env::var("BENCH_DATABASE_URL").is_ok() {
             let ctx = BenchContext::new().await?;

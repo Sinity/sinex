@@ -100,10 +100,11 @@ impl MessageBusClient for NatsMessageBus {
 mod tests {
     use super::*;
     use crate::nats::config::NatsConfig;
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server
-    async fn test_nats_message_bus() {
+    async fn test_nats_message_bus() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config).await.unwrap();
         let bus = NatsMessageBus::new(client, "TEST_EVENTS".to_string())
@@ -114,5 +115,6 @@ mod tests {
 
         // Test publishing
         bus.publish_event("test.event", b"test data").await.unwrap();
+        Ok(())
     }
 }

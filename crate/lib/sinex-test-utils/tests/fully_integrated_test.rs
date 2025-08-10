@@ -7,9 +7,9 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
 
 // Example 1: Basic rstest integration with automatic TestContext
 #[sinex_test]
@@ -143,7 +143,7 @@ async fn test_all_features_combined(
     }
 
     // Verify all were created
-    let source_ref = sinex_types::domain::EventSource::from("bulk-test");
+    let source_ref = sinex_core::types::domain::EventSource::from("bulk-test");
     let events = ctx
         .pool
         .events()
@@ -212,7 +212,7 @@ async fn test_with_fixtures(
         }
     }
 
-    let type_ref = sinex_types::domain::EventType::from(format!("file.{}", operation));
+    let type_ref = sinex_core::types::domain::EventType::from(format!("file.{}", operation));
     let events = ctx
         .pool
         .events()

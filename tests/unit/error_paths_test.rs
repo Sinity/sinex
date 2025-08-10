@@ -3,7 +3,9 @@
 //! This module tests all error conditions that could trigger unwrap() or expect()
 //! failures in production code, ensuring graceful error handling.
 
-use sinex_db::query_helpers::ulid_to_uuid;
+use color_eyre::eyre::Result;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_test_utils::prelude::*;
 use std::str::FromStr;
 
@@ -11,8 +13,8 @@ use std::str::FromStr;
 // ULID Parsing Error Tests
 // =============================================================================
 
-#[test]
-fn test_checkpoint_invalid_ulid_parsing() {
+#[sinex_test]
+fn test_checkpoint_invalid_ulid_parsing() -> color_eyre::eyre::Result<()> {
     // Test various invalid ULID formats that could cause parsing errors
     let invalid_ulids = vec![
         ("not-a-ulid", "Non-ULID string"),
@@ -67,10 +69,11 @@ fn test_checkpoint_invalid_ulid_parsing() {
             );
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_ulid_uuid_conversion_errors() {
+#[sinex_test]
+fn test_ulid_uuid_conversion_errors() -> color_eyre::eyre::Result<()> {
     // Test ULID to UUID conversion edge cases
     let edge_cases = vec![
         // Test with well-known valid ULIDs
@@ -95,14 +98,15 @@ fn test_ulid_uuid_conversion_errors() {
         println!("  ULID bytes: {:?}", &ulid_bytes[..8]);
         println!("  UUID bytes: {:?}", &uuid_bytes[..8]);
     }
+    Ok(())
 }
 
 // =============================================================================
 // Timestamp Conversion Error Tests
 // =============================================================================
 
-#[test]
-fn test_timestamp_conversion_boundaries() {
+#[sinex_test]
+fn test_timestamp_conversion_boundaries() -> color_eyre::eyre::Result<()> {
     // Test timestamp values that could cause conversion errors
     let edge_timestamps = vec![
         (0i64, "Unix epoch"),
@@ -135,10 +139,11 @@ fn test_timestamp_conversion_boundaries() {
             }
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_timestamp_overflow_in_calculations() {
+#[sinex_test]
+fn test_timestamp_overflow_in_calculations() -> color_eyre::eyre::Result<()> {
     // Test timestamp arithmetic that could overflow
     let base_time = chrono::Utc::now();
 
@@ -162,14 +167,15 @@ fn test_timestamp_overflow_in_calculations() {
             }
         }
     }
+    Ok(())
 }
 
 // =============================================================================
 // JSON Parsing Error Tests
 // =============================================================================
 
-#[test]
-fn test_json_parsing_edge_cases() {
+#[sinex_test]
+fn test_json_parsing_edge_cases() -> color_eyre::eyre::Result<()> {
     use serde_json::{json, Value};
 
     // Test JSON values that could cause parsing errors
@@ -224,6 +230,7 @@ fn test_json_parsing_edge_cases() {
             }
         }
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -234,8 +241,8 @@ fn test_json_parsing_edge_cases() {
 // Query Builder Error Tests
 // =============================================================================
 
-#[test]
-fn test_query_builder_invalid_operations() {
+#[sinex_test]
+fn test_query_builder_invalid_operations() -> color_eyre::eyre::Result<()> {
     // NOTE: This test focuses on SQL injection prevention and basic query validation.
 
     println!("Testing query security and validation...");
@@ -265,20 +272,21 @@ fn test_query_builder_invalid_operations() {
     }
 
     println!("  ✓ Query security patterns validated");
+    Ok(())
 }
 
-#[test]
-fn test_event_creation_validation_errors() {
+#[sinex_test]
+fn test_event_creation_validation_errors() -> color_eyre::eyre::Result<()> {
     // Test synchronous event creation errors without database
     println!("Testing event creation validation...");
 
     // Test empty source validation
     let result = std::panic::catch_unwind(|| {
-        Event::schemaless()
-            .source(EventSource::from(""))
-            .event_type(EventType::from("test.event"))
-            .payload(json!({}))
-            .build()
+        RawEvent::schemaless(
+            EventSource::from(""),
+            EventType::from("test.event"),
+            json!({}),
+        )
     });
 
     // Note: Depending on validation implementation, this might panic or return an error
@@ -286,23 +294,24 @@ fn test_event_creation_validation_errors() {
     println!("  Event with empty source: {:?}", result.is_err());
 
     // Test invalid JSON payload (this should work as JSON can represent most values)
-    let event_with_complex_json = Event::schemaless()
-        .source(EventSource::from("test"))
-        .event_type(EventType::from("test.event"))
-        .payload(json!({
+    let event_with_complex_json = RawEvent::schemaless(
+        EventSource::from("test"),
+        EventType::from("test.event"),
+        json!({
             "null_value": null,
             "empty_array": [],
             "nested": {"deep": {"value": 42}},
             "unicode": "🦀🔥"
-        }))
-        .build();
+        }),
+    );
 
     assert_eq!(event_with_complex_json.source.as_str(), "test");
     println!("  ✓ Complex JSON payload handled correctly");
+    Ok(())
 }
 
-#[test]
-fn test_ulid_generation_properties() {
+#[sinex_test]
+fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
     // Test ULID generation properties (synchronous)
     println!("Testing ULID generation properties...");
 
@@ -339,4 +348,5 @@ fn test_ulid_generation_properties() {
         ulids.len(),
         ordering_ratio * 100.0
     );
+    Ok(())
 }

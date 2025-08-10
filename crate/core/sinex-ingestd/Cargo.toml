@@ -64,9 +64,11 @@ hex.workspace = true
 sd-notify.workspace = true
 
 # Local dependencies
-sinex-types = { path = "../../lib/sinex-types" }
-sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
+
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }
 
 [build-dependencies]
 tonic-build.workspace = true

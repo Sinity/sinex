@@ -9,8 +9,8 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use proptest::strategy::{BoxedStrategy, Strategy};
 use serde_json::{json, Value};
-use sinex_db::repositories::DbPoolExt;
-use sinex_types::error::SinexError;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::error::SinexError;
 
 /// Property test strategies for common Sinex types
 pub struct SinexStrategies;
@@ -290,7 +290,7 @@ impl<'ctx> PropertyTester<'ctx> {
                 assert!(by_id.is_some());
 
                 // Should be findable by source
-                let source_ref = sinex_types::domain::EventSource::from(source.as_str());
+                let source_ref = sinex_core::types::domain::EventSource::from(source.as_str());
                 let by_source = self
                     .ctx
                     .pool
@@ -301,7 +301,7 @@ impl<'ctx> PropertyTester<'ctx> {
             }
 
             // Should be findable by type
-            let type_ref = sinex_types::domain::EventType::from(event_type.as_str());
+            let type_ref = sinex_core::types::domain::EventType::from(event_type.as_str());
             let by_type = self
                 .ctx
                 .pool
@@ -365,6 +365,7 @@ impl PropertyTestExt for TestContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     async fn test_event_source_strategy(ctx: TestContext) -> Result<()> {
@@ -563,7 +564,7 @@ mod tests {
 
         // Property: querying by source should return exactly those events
         for source in &sources {
-            let source_ref = sinex_types::domain::EventSource::from(*source);
+            let source_ref = sinex_core::types::domain::EventSource::from(*source);
             let events = ctx
                 .pool
                 .events()
@@ -590,8 +591,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_strategy_determinism() {
+    #[sinex_test]
+    fn test_strategy_determinism() -> color_eyre::eyre::Result<()> {
         let mut runner1 = proptest::test_runner::TestRunner::deterministic();
         let mut runner2 = proptest::test_runner::TestRunner::deterministic();
 
@@ -604,10 +605,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(tree1.current(), tree2.current());
+        Ok(())
     }
 
-    #[test]
-    fn test_malicious_payload_generation() {
+    #[sinex_test]
+    fn test_malicious_payload_generation() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Should generate various malicious payloads
@@ -634,6 +636,7 @@ mod tests {
 
         // Should generate at least some malicious patterns
         assert!(has_sql || has_xss || has_path);
+        Ok(())
     }
 
     #[sinex_test]

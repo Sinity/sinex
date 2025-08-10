@@ -4,11 +4,12 @@
 
 use camino::Utf8PathBuf;
 use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use sinex_db::models::Event;
-use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
+use sinex_core::types::events::{
     BashHistoricalCommandPayload, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::fs;
 use tokio::sync::mpsc;
@@ -160,24 +161,27 @@ impl HistoryWatcher {
         &self,
         command: String,
         source_file: &Utf8PathBuf,
-    ) -> SatelliteResult<Event> {
+    ) -> SatelliteResult<RawEvent> {
         let source_file_str = source_file.to_string();
 
-        let event = if source_file_str.contains("fish") {
+        let event: RawEvent = if source_file_str.contains("fish") {
             Event::from_payload(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
+            .into()
         } else if source_file_str.contains("zsh") {
             Event::from_payload(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
+            .into()
         } else {
             Event::from_payload(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
+            .into()
         };
 
         Ok(event.with_ts_orig(Some(chrono::Utc::now())))
@@ -186,7 +190,7 @@ impl HistoryWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!(
             "Starting shell history event streaming for {} files",

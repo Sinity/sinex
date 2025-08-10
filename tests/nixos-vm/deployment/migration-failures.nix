@@ -82,8 +82,8 @@
     
     # Initial setup
     sinex.wait_for_unit("postgresql.service")
-    sinex.wait_for_unit("sinex-unified-collector.service")
-    sinex.wait_for_unit("sinex-promo-worker.service")
+    sinex.wait_for_unit("sinex-ingestd.service")
+    sinex.wait_for_unit("sinex-gateway.service")
     
     # Test safe migration practices
     with subtest("Safe migration execution"):
@@ -113,8 +113,8 @@
         sinex.succeed("apply-migration /tmp/safe_migration.sql")
         
         # Verify services stayed up
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
-        sinex.succeed("systemctl is-active sinex-promo-worker.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
+        sinex.succeed("systemctl is-active sinex-gateway.service")
     
     # Test migration with syntax errors
     with subtest("Migration syntax error handling"):
@@ -137,7 +137,7 @@
         )
         
         # Services should remain operational
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
     
     # Test migration with constraint violations
     with subtest("Constraint violation handling"):
@@ -189,7 +189,7 @@
         time.sleep(5)
         
         # Service should detect lock and handle gracefully
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
         
         # Migration should timeout
         time.sleep(35)

@@ -2,6 +2,7 @@
 //
 // Tests system behavior at boundaries, limits, and edge cases
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use proptest::prelude::*;
 use std::sync::Arc;

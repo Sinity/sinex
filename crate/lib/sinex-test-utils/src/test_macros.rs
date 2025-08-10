@@ -1,7 +1,6 @@
 // Test Macros - TestContext Integration Helpers
 
 // Re-export rstest macros for convenience
-pub use rstest::{fixture, rstest};
 
 // Helper macro to create rstest case with TestContext
 // This allows using rstest with our async TestContext pattern
@@ -14,7 +13,7 @@ macro_rules! rstest_async {
         #[rstest]
         #[case($($param = $value),*)]
         $(#[case($($more_param = $more_value),*)])*
-        #[tokio::test]
+        #[sinex_test]
         async fn $name($($arg: $arg_ty),*) -> Result<()> {
             let ctx = TestContext::new().await?;
             $body

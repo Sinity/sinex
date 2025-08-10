@@ -1,9 +1,8 @@
 [workspace]
 members = [
-  # Library crates
-  "crate/lib/sinex-db",
-  "crate/lib/sinex-db/migration",
-  "crate/lib/sinex-types",
+  # Library crates  
+  "crate/lib/sinex-core",
+  "crate/lib/sinex-migrations",
   "crate/lib/sinex-macros",
   "crate/lib/sinex-satellite-sdk",
   "crate/lib/sinex-services",
@@ -13,6 +12,7 @@ members = [
   "crate/core/sinex-ingestd",
   "crate/core/sinex-gateway",
   "crate/core/sinex-rpc-dispatcher",
+  "crate/core/sinex-sensd",
   
   # Satellite crates
   "crate/satellites/sinex-fs-watcher",
@@ -36,8 +36,8 @@ members = [
   # "crate/sinex-annex", # Folded into sinex-satellite-sdk
   # "crate/sinex-preflight", # Folded into sinex-satellite-sdk
   # "crate/sinex-nats", # Folded into sinex-satellite-sdk
-  # "crate/sinex-telemetry", # Folded into sinex-db
-  # "crate/sinex-schema-manager", # Folded into sinex-types
+  # "crate/sinex-telemetry", # Folded into sinex-core
+  # "crate/sinex-schema-manager", # Folded into sinex-core
 ]
 resolver = "2"
 
@@ -188,8 +188,7 @@ publish = false
 [dependencies]
 # Test utilities and dependencies for workspace-level integration tests
 sinex-test-utils = { path = "crate/lib/sinex-test-utils" }
-sinex-db = { path = "crate/lib/sinex-db" }
-sinex-types = { path = "crate/lib/sinex-types" }
+sinex-core = { path = "crate/lib/sinex-core" }
 sinex-satellite-sdk = { path = "crate/lib/sinex-satellite-sdk" } # Needed for checkpoint property tests
 
 # Core dependencies for tests

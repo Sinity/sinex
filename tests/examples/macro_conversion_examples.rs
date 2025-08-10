@@ -3,6 +3,7 @@
 //! This file demonstrates before/after examples of converting verbose
 //! test implementations to use the powerful test macro system.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::test_macros::*;
 
@@ -16,7 +17,7 @@ async fn test_file_created_event_old(ctx: TestContext) -> color_eyre::eyre::Resu
     let event = EventFactory::new("fs")
         .create_event("file.created", json!({"path": "/test/file.txt", "size": 1024}));
     
-    let inserted_id = sinex_db::insert_event_with_validator(ctx.pool(), &event, None)
+    let inserted_id = sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None)
         .await?
         .id;
     
@@ -54,7 +55,7 @@ async fn test_bulk_import_old(ctx: TestContext) -> color_eyre::eyre::Result<()> 
         let handle = tokio::spawn(async move {
             let event = EventFactory::new("import")
                 .create_event("item.imported", json!({"index": i, "data": format!("item_{}", i)}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await
         });
         handles.push(handle);
     }
@@ -222,7 +223,7 @@ async fn test_event_time_filtering_old(ctx: TestContext) -> color_eyre::eyre::Re
             .create_event("test.event", json!({"index": i}));
         let time_offset = Duration::hours(i as i64 - 10); // -10 to +9 hours
         // Would need custom insertion with timestamp here...
-        sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
+        sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None).await?;
     }
     
     // Query specific range
@@ -397,7 +398,7 @@ async fn test_source_filtering_old(ctx: TestContext) -> color_eyre::eyre::Result
         for i in 0..events_per_source {
             let event = EventFactory::new(source)
                 .create_event("test.event", json!({"index": i}));
-            sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?;
+            sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None).await?;
         }
     }
     
@@ -432,23 +433,23 @@ test_event_filter!(
 async fn test_event_type_validation_old(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test case 1: Valid event type
     let event1 = EventFactory::new("test").create_event("valid.event.type", json!({}));
-    let result1 = sinex_db::insert_event_with_validator(ctx.pool(), &event1, None).await;
+    let result1 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event1, None).await;
     assert!(result1.is_ok());
     
     // Test case 2: Empty event type
     let event2 = EventFactory::new("test").create_event("", json!({}));
-    let result2 = sinex_db::insert_event_with_validator(ctx.pool(), &event2, None).await;
+    let result2 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event2, None).await;
     assert!(result2.is_err());
     
     // Test case 3: Invalid characters
     let event3 = EventFactory::new("test").create_event("invalid@type!", json!({}));
-    let result3 = sinex_db::insert_event_with_validator(ctx.pool(), &event3, None).await;
+    let result3 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event3, None).await;
     assert!(result3.is_err());
     
     // Test case 4: Too long
     let long_type = "a".repeat(256);
     let event4 = EventFactory::new("test").create_event(&long_type, json!({}));
-    let result4 = sinex_db::insert_event_with_validator(ctx.pool(), &event4, None).await;
+    let result4 = sinex_core::db::insert_event_with_validator(ctx.pool(), &event4, None).await;
     assert!(result4.is_err());
     
     Ok(())
@@ -465,7 +466,7 @@ parameterized_test!(
     ],
     |pool, (event_type, should_pass)| async move {
         let event = EventFactory::new("test").create_event(event_type, json!({}));
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         assert_eq!(result.is_ok(), *should_pass);
         Ok(())
     }
@@ -481,7 +482,7 @@ async fn test_event_processing_flow_old(ctx: TestContext) -> color_eyre::eyre::R
     // Insert event
     let event = EventFactory::new("workflow")
         .create_event("task.created", json!({"task_id": "123", "priority": "high"}));
-    let event_id = sinex_db::insert_event_with_validator(ctx.pool(), &event, None).await?.id;
+    let event_id = sinex_core::db::insert_event_with_validator(ctx.pool(), &event, None).await?.id;
     
     // Simulate processor checkpoint
     let checkpoint_id = Ulid::new();

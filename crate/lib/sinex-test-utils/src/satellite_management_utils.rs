@@ -3,7 +3,7 @@
 
 use crate::Result;
 
-use sinex_db::DbPool;
+use sinex_core::db::DbPool;
 use tokio::process::Child;
 
 // Re-export StreamMessage for convenience
@@ -177,6 +177,7 @@ pub fn build_test_satellite_config(service_name: &str, socket_path: &str) -> ser
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use crate::sinex_test;
 
     #[sinex_test]
     async fn test_ingestd_config_default(_ctx: TestContext) -> Result<()> {
@@ -395,8 +396,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_ingestd_handle_drop() {
+    #[sinex_test]
+    fn test_ingestd_handle_drop() -> color_eyre::eyre::Result<()> {
         // Test that drop doesn't panic even with no process
         let handle = TestIngestdHandle {
             socket_path: "/tmp/drop-test.sock".to_string(),
@@ -404,10 +405,11 @@ mod tests {
         };
 
         drop(handle); // Should not panic
+        Ok(())
     }
 
-    #[test]
-    fn test_orchestrator_thread_safety() {
+    #[sinex_test]
+    fn test_orchestrator_thread_safety() -> color_eyre::eyre::Result<()> {
         use std::sync::Arc;
         use std::thread;
 
@@ -434,5 +436,6 @@ mod tests {
 
         // Should have all satellites
         assert_eq!(orchestrator.satellites.lock().unwrap().len(), 10);
+        Ok(())
     }
 }

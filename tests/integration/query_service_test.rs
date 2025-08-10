@@ -3,11 +3,12 @@
 //! This module tests the query functionality of the SearchService with a focus on
 //! different query patterns, time-based queries, and filtering capabilities.
 
+use color_eyre::eyre::Result;
 use chrono::{Duration, Utc};
 use serde_json::json;
 use sinex_services::{SearchQuery, SearchService};
 use sinex_test_utils::prelude::*;
-use sinex_types::{events::EventFactory, ulid::Ulid};
+use sinex_core::types::{events::EventFactory, ulid::Ulid};
 
 /// Helper to create test events for query testing
 async fn create_query_test_event(

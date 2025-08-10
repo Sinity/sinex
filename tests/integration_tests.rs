@@ -5,7 +5,7 @@
 //! inter-component interactions using the current architecture:
 //! - Repository pattern with `DbPoolExt`
 //! - Generic `Id<T>` types
-//! - `DbEvent::schemaless()` builder
+//! - `RawEvent::schemaless()` direct constructor
 //! - `#[sinex_test]` macro for async tests
 //! - Modern test infrastructure (rstest, insta, tracing-test, similar-asserts)
 
@@ -17,11 +17,11 @@ mod integration {
 // Import test utilities with proper prelude for consistent testing
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_db::models::{Blob, Event as DbEvent};
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::models::{Blob, RawEvent as DbEvent};
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::Id;
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
-use sinex_types::Id;
 
 // =============================================================================
 // BASIC DATABASE OPERATIONS - Core functionality tests
@@ -197,11 +197,11 @@ async fn test_generic_id_type_safety(ctx: TestContext) -> color_eyre::eyre::Resu
     assert_ne!(event_id.to_string(), blob_id.to_string());
 
     // Create an event with a specific ID
-    let event = DbEvent::schemaless()
-        .source(EventSource::from_static("id-test"))
-        .event_type(EventType::from_static("id.safety.test"))
-        .payload(json!({"event_id": event_id.to_string()}))
-        .build();
+    let event = DbEvent::schemaless(
+        EventSource::from_static("id-test"),
+        EventType::from_static("id.safety.test"),
+        json!({"event_id": event_id.to_string()}),
+    );
 
     // Insert and verify
     ctx.pool.events().insert(event.into()).await?;
@@ -417,10 +417,10 @@ async fn test_json_schema_validation_integration(ctx: TestContext) -> color_eyre
     });
 
     // Register schema - using repository directly
-    use sinex_db::repositories::events::NewSchema;
+    use sinex_core::db::repositories::events::NewSchema;
     let new_schema = NewSchema {
-        schema_name: sinex_types::domain::SchemaName::new("filesystem"),
-        schema_version: sinex_types::domain::SchemaVersion::new("1.0.0"),
+        schema_name: sinex_core::types::domain::SchemaName::new("filesystem"),
+        schema_version: sinex_core::types::domain::SchemaVersion::new("1.0.0"),
         schema_content: schema,
         is_active: true,
         event_types: vec!["file.created".to_string()],

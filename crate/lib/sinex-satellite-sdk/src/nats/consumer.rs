@@ -14,7 +14,7 @@ use async_nats::jetstream::{
 };
 use futures::StreamExt;
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info};
@@ -164,7 +164,7 @@ impl NatsConsumer {
     /// Start consuming messages
     pub async fn start<F, Fut>(&mut self, handler: F) -> Result<()>
     where
-        F: Fn(Event, Message) -> Fut + Send + Sync + 'static,
+        F: Fn(RawEvent, Message) -> Fut + Send + Sync + 'static,
         Fut: std::future::Future<Output = Result<()>> + Send,
     {
         let consumer = self
@@ -217,7 +217,7 @@ impl NatsConsumer {
                                 .map(|v| v.as_str());
 
                             // Deserialize event
-                            match serde_json::from_slice::<Event>(&msg.payload) {
+                            match serde_json::from_slice::<RawEvent>(&msg.payload) {
                                 Ok(event) => {
                                     // Process the event
                                     match handler(event, msg.clone()).await {
@@ -294,9 +294,9 @@ impl NatsConsumer {
         &mut self,
         batch_size: usize,
         handler: F,
-    ) -> Result<Vec<Event>>
+    ) -> Result<Vec<RawEvent>>
     where
-        F: Fn(Vec<Event>) -> Fut,
+        F: Fn(Vec<RawEvent>) -> Fut,
         Fut: std::future::Future<Output = Result<()>>,
     {
         let consumer = self
@@ -319,7 +319,7 @@ impl NatsConsumer {
         while let Some(msg) = messages.next().await {
             match msg {
                 Ok(message) => {
-                    match serde_json::from_slice::<Event>(&message.payload) {
+                    match serde_json::from_slice::<RawEvent>(&message.payload) {
                         Ok(event) => {
                             events.push(event);
                             jet_messages.push(message);
@@ -414,19 +414,21 @@ impl NatsConsumer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_consumer_config() {
+    #[sinex_test]
+    fn test_consumer_config() -> color_eyre::eyre::Result<()> {
         let config = ConsumerConfig::default();
         assert_eq!(config.name, "default-consumer");
         assert_eq!(config.stream, "SINEX_RAW_EVENTS");
 
         let js_config = config.to_jetstream_config();
         assert_eq!(js_config.ack_policy, AckPolicy::Explicit);
+        Ok(())
     }
 
-    #[test]
-    fn test_consumer_config_serialization() {
+    #[sinex_test]
+    fn test_consumer_config_serialization() -> color_eyre::eyre::Result<()> {
         let config = ConsumerConfig {
             name: "test-consumer".to_string(),
             group: "test-group".to_string(),
@@ -440,5 +442,6 @@ mod tests {
 
         assert_eq!(config.name, deserialized.name);
         assert_eq!(config.filter_subject, deserialized.filter_subject);
+        Ok(())
     }
 }

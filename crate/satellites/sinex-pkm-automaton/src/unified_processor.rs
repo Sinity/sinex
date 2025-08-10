@@ -4,8 +4,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::models::{Event, RpcPkmResponsePayload, RpcError};
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::models::{RawEvent, RpcPkmResponsePayload, RpcError};
 use sinex_satellite_sdk::{
     nats_stream_consumer::{
         BatchProcessingResult as NatsBatchProcessingResult, EventBatchProcessor as NatsEventBatchProcessor, NatsStreamConsumer,
@@ -15,7 +15,7 @@ use sinex_satellite_sdk::{
         StreamProcessorContext, TimeHorizon},
     SatelliteError, SatelliteResult};
 use sinex_services::PkmService;
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -255,7 +255,7 @@ impl NatsEventBatchProcessor for PkmServiceProcessor {
                         // Submit response as synthesis event
                         if let Some(ctx) = &self.context {
                             // Create response event
-                            let synthesis_event = Event::from_payload(RpcPkmResponsePayload {
+                            let synthesis_event: RawEvent = Event::from_payload(RpcPkmResponsePayload {
                                 request_id: event.payload.get("request_id").cloned(),
                                 response: Some(response),
                                 error: None,
@@ -271,7 +271,7 @@ impl NatsEventBatchProcessor for PkmServiceProcessor {
                         
                         // Submit error response
                         if let Some(ctx) = &self.context {
-                            let synthesis_event = Event::from_payload(RpcPkmResponsePayload {
+                            let synthesis_event: RawEvent = Event::from_payload(RpcPkmResponsePayload {
                                 request_id: event.payload.get("request_id").cloned(),
                                 response: None,
                                 error: Some(RpcError {

@@ -4,6 +4,7 @@
 // consumer group behavior, and stream processing latency.
 // Focuses on the event streaming backbone of the Sinex system.
 
+use color_eyre::eyre::Result;
 use redis::cmd;
 use serde_json::json;
 use sinex_satellite_sdk::RedisStreamClient;

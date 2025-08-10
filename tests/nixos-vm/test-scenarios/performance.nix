@@ -1,5 +1,5 @@
 # Performance validation test for Sinex - Optimized version
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 let
   inherit (pkgs) lib;
@@ -468,7 +468,7 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-collector sinex-promo-worker pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
       })
     ];
 
@@ -552,11 +552,11 @@ pkgs.nixosTest {
     with subtest("System initialization for performance testing"):
         machine.wait_for_unit("multi-user.target")
         helpers.wait_for_sinex_ready(timeout=90)
-        machine.wait_for_unit("sinex-promo-worker.service")
+        machine.wait_for_unit("sinex-gateway.service")
         
         # Verify services
-        assert helpers.check_service_health("sinex-unified-collector"), "Collector not healthy"
-        assert helpers.check_service_health("sinex-promo-worker"), "Worker not healthy"
+        assert helpers.check_service_health("sinex-ingestd"), "Collector not healthy"
+        assert helpers.check_service_health("sinex-gateway"), "Worker not healthy"
         
         print("✓ Performance test environment ready")
 
@@ -851,8 +851,8 @@ pkgs.nixosTest {
         
         # Service health check
         services_healthy = (
-            helpers.check_service_health("sinex-unified-collector") and
-            helpers.check_service_health("sinex-promo-worker") and
+            helpers.check_service_health("sinex-ingestd") and
+            helpers.check_service_health("sinex-gateway") and
             helpers.check_service_health("postgresql")
         )
         print(f"All services healthy: {services_healthy}")

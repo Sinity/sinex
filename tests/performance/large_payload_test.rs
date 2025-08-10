@@ -6,6 +6,7 @@
 //! - Large array and object handling
 //! - Memory usage and performance characteristics
 
+use color_eyre::eyre::Result;
 use serde_json::{json, Value};
 use sinex_test_utils::prelude::*;
 use std::time::Instant;

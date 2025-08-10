@@ -30,10 +30,11 @@
 use camino::Utf8PathBuf;
 use chrono::Utc;
 use copypasta::{ClipboardContext, ClipboardProvider};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
+use sinex_core::types::Timestamp;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::Timestamp;
 use std::collections::VecDeque;
 use std::time::Duration;
 use tokio::process::Command;
@@ -234,7 +235,7 @@ impl ClipboardWatcher {
                                 if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                                     // Use sanitization but fall back to original if it fails
                                     let sanitized_name =
-                                        sinex_types::sanitize_filename_component(filename)
+                                        sinex_core::types::sanitize_filename_component(filename)
                                             .unwrap_or_else(|_| filename.to_string());
                                     path.parent()
                                         .map(|parent| {
@@ -261,8 +262,9 @@ impl ClipboardWatcher {
                         let path = std::path::Path::new(l);
                         if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
                             // Use sanitization but fall back to original if it fails
-                            let sanitized_name = sinex_types::sanitize_filename_component(filename)
-                                .unwrap_or_else(|_| filename.to_string());
+                            let sanitized_name =
+                                sinex_core::types::sanitize_filename_component(filename)
+                                    .unwrap_or_else(|_| filename.to_string());
                             path.parent()
                                 .map(|parent| {
                                     parent.join(&sanitized_name).to_string_lossy().to_string()
@@ -547,7 +549,7 @@ impl ClipboardWatcher {
         &self,
         content: &ClipboardContent,
         operation: &str,
-    ) -> Result<Event, sinex_types::error::SinexError> {
+    ) -> Result<RawEvent, sinex_core::types::error::SinexError> {
         // Check if this is a re-copy
         let original_hash = if self.enable_history {
             self.find_original_hash(&content.hash)
@@ -584,21 +586,23 @@ impl ClipboardWatcher {
 
         let file_count = content.file_paths.as_ref().map(|paths| paths.len());
 
-        let event = Event::from_payload(sinex_types::events::ClipboardCopiedPayload {
-            operation: operation.to_string(),
-            content_type: content.content_type.clone(),
-            content_size: content.size_bytes,
-            text_preview,
-            file_count,
-            file_paths: content.file_paths.clone(),
-            source_app: content.source_app.clone(),
-            window_title: content.window_title.clone(),
-            content_hash: content.hash.clone(),
-            original_hash,
-            annex_key,
-            blob_id,
-        })
-        .with_ts_orig(Some(content.timestamp));
+        let event: RawEvent =
+            Event::from_payload(sinex_core::types::events::ClipboardCopiedPayload {
+                operation: operation.to_string(),
+                content_type: content.content_type.clone(),
+                content_size: content.size_bytes,
+                text_preview,
+                file_count,
+                file_paths: content.file_paths.clone(),
+                source_app: content.source_app.clone(),
+                window_title: content.window_title.clone(),
+                content_hash: content.hash.clone(),
+                original_hash,
+                annex_key,
+                blob_id,
+            })
+            .with_ts_orig(Some(content.timestamp))
+            .into();
 
         Ok(event)
     }
@@ -607,7 +611,7 @@ impl ClipboardWatcher {
     async fn create_primary_selection_event(
         &self,
         content: &ClipboardContent,
-    ) -> Result<Event, sinex_types::error::SinexError> {
+    ) -> Result<RawEvent, sinex_core::types::error::SinexError> {
         // Check if this is a re-selection
         let original_hash = if self.enable_history {
             self.find_original_hash(&content.hash)
@@ -645,18 +649,20 @@ impl ClipboardWatcher {
             (content.text_preview.clone(), None, None)
         };
 
-        let event = Event::from_payload(sinex_types::events::ClipboardSelectedPayload {
-            selection_type: "primary".to_string(),
-            content_type: content.content_type.clone(),
-            content_size: content.size_bytes,
-            text_preview,
-            source_app: content.source_app.clone(),
-            content_hash: content.hash.clone(),
-            original_hash,
-            annex_key,
-            blob_id,
-        })
-        .with_ts_orig(Some(content.timestamp));
+        let event: RawEvent =
+            Event::from_payload(sinex_core::types::events::ClipboardSelectedPayload {
+                selection_type: "primary".to_string(),
+                content_type: content.content_type.clone(),
+                content_size: content.size_bytes,
+                text_preview,
+                source_app: content.source_app.clone(),
+                content_hash: content.hash.clone(),
+                original_hash,
+                annex_key,
+                blob_id,
+            })
+            .with_ts_orig(Some(content.timestamp))
+            .into();
 
         Ok(event)
     }
@@ -664,7 +670,7 @@ impl ClipboardWatcher {
     /// Check for clipboard changes with enhanced monitoring
     async fn check_clipboard_changes(
         &mut self,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         // Check main clipboard
         if let Some(current_content) = self.get_clipboard_content().await {
@@ -744,7 +750,7 @@ impl ClipboardWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting clipboard event streaming");
 

@@ -5,8 +5,8 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde_json::{json, Value};
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::models::{Event, RawEvent, RpcContentResponsePayload, RpcError};
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::models::{RawEvent, RpcContentResponsePayload, RpcError};
 use sinex_satellite_sdk::{
     redis_stream_consumer::{
         BatchProcessingResult, EventBatchProcessor, RedisStreamConsumer,
@@ -16,7 +16,7 @@ use sinex_satellite_sdk::{
         StreamProcessorContext, TimeHorizon},
     SatelliteError, SatelliteResult};
 use sinex_services::ContentService;
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -159,12 +159,12 @@ impl EventBatchProcessor for ContentServiceProcessor {
                         // Submit response as synthesis event
                         if let Some(ctx) = &self.context {
                             // Create response event
-                            let synthesis_event = Event::from_payload(RpcContentResponsePayload {
+                            let synthesis_event: RawEvent = Event::from_payload(RpcContentResponsePayload {
                                 request_id: event.payload.get("request_id").cloned(),
                                 response: Some(response),
                                 error: None,
                                 service: "content".to_string(),
-                            });
+                            }).into();
 
                             ctx.send_event(synthesis_event).await?;
                         }
@@ -175,7 +175,7 @@ impl EventBatchProcessor for ContentServiceProcessor {
                         
                         // Submit error response
                         if let Some(ctx) = &self.context {
-                            let synthesis_event = Event::from_payload(RpcContentResponsePayload {
+                            let synthesis_event: RawEvent = Event::from_payload(RpcContentResponsePayload {
                                 request_id: event.payload.get("request_id").cloned(),
                                 response: None,
                                 error: Some(RpcError {
@@ -183,7 +183,7 @@ impl EventBatchProcessor for ContentServiceProcessor {
                                     message: format!("Content service error: {}", e),
                                 }),
                                 service: "content".to_string(),
-                            });
+                            }).into();
 
                             ctx.send_event(synthesis_event).await?;
                         }

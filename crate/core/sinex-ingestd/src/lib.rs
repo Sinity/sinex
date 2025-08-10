@@ -44,7 +44,7 @@ pub enum IngestdError {
     Serialization(#[from] serde_json::Error),
 
     #[error("Sinex error: {0}")]
-    Sinex(#[from] sinex_types::SinexError),
+    Sinex(#[from] sinex_core::types::SinexError),
 
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),

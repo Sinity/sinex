@@ -10,7 +10,7 @@
 
 use crate::Result;
 use async_trait::async_trait;
-use sinex_types::error::SinexError;
+use sinex_core::types::error::SinexError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::RwLock;
 use std::time::Duration;
@@ -281,9 +281,10 @@ impl BackpressureManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_channel_sender_ext() {
+    #[sinex_test]
+    async fn test_channel_sender_ext() -> color_eyre::eyre::Result<()> {
         let (tx, mut rx) = mpsc::channel::<String>(2);
 
         // Test send_or_log
@@ -299,10 +300,11 @@ mod tests {
             .await
             .is_ok());
         assert_eq!(rx.recv().await, Some("test2".to_string()));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_channel_receiver_ext() {
+    #[sinex_test]
+    async fn test_channel_receiver_ext() -> color_eyre::eyre::Result<()> {
         let (tx, mut rx) = mpsc::channel::<i32>(10);
 
         // Send some test data
@@ -318,10 +320,11 @@ mod tests {
         // Test drain_all
         let remaining = rx.drain_all().await;
         assert_eq!(remaining, vec![3, 4]);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_backpressure_manager() {
+    #[sinex_test]
+    async fn test_backpressure_manager() -> color_eyre::eyre::Result<()> {
         let mut manager = BackpressureManager::new(100, 50);
 
         // No delay when under low watermark
@@ -332,5 +335,6 @@ mod tests {
         // Delay increases when over high watermark
         manager.check_and_wait(150).await;
         assert!(manager.current_delay > Duration::from_millis(0));
+        Ok(())
     }
 }

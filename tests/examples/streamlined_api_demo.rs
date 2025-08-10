@@ -3,6 +3,7 @@
 //! This showcases how the consolidated TestContext provides a clean, unified API
 //! for all test operations while maintaining access to all advanced functionality.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]

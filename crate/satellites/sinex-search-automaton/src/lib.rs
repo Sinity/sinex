@@ -46,7 +46,11 @@ impl SearchProcessor {
 impl StatefulStreamProcessor for SearchProcessor {
     type Config = SearchProcessorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing search processor");
         self.context = Some(ctx);
         Ok(())

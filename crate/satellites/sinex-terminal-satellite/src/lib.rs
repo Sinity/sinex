@@ -98,4 +98,4 @@ pub use recording::RecordingWatcher;
 pub use scrollback::ScrollbackWatcher;
 
 // Re-export for convenience
-pub use sinex_db::models::Event;
+pub use sinex_core::db::models::RawEvent;

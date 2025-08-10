@@ -46,9 +46,8 @@
 use crate::Result;
 
 use camino::Utf8PathBuf;
-use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
-use sinex_db::DbPool;
-use sinex_types::error::SinexError;
+use sinex_core::db::DbPool;
+use sinex_core::types::error::SinexError;
 use std::collections::HashMap;
 
 /// Reset database to clean state by truncating all tables
@@ -414,18 +413,19 @@ pub async fn apply_test_optimizations(pool: &DbPool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::database_pool::acquire_test_database;
+    use crate::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_reset_database() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
 
         // Insert some test data
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
-        let new_event = Event::builder()
+        let new_event = RawEvent::builder()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test.event"))
             .host(HostName::new("test-host"))
@@ -446,7 +446,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_verify_clean_state() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -455,11 +455,11 @@ mod tests {
         verify_clean_state(pool).await?;
 
         // Add data
-        use sinex_db::models::*;
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::models::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
-        let new_event = Event::builder()
+        let new_event = RawEvent::builder()
             .source(EventSource::new("test"))
             .event_type(EventType::new("test"))
             .host(HostName::new("test"))
@@ -473,7 +473,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_get_row_counts() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -488,7 +488,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_clear_pg_cache() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -499,7 +499,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_apply_optimizations() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -533,7 +533,7 @@ mod benches {
     // #[sinex_bench]
     // fn bench_reset_populated_database() -> color_eyre::eyre::Result<()> {
     //     // Setup: Insert some data
-    //     use sinex_types::*;
+    //     use sinex_core::types::*;
     //     for i in 0..10 {
     //         let event = EventQueries::insert_event(
     //             "bench".to_string(),
@@ -545,7 +545,7 @@ mod benches {
     //             None,
     //             None,
     //         )
-    //         .fetch_one::<sinex_types::RawEvent>(ctx.pool())
+    //         .fetch_one::<sinex_core::types::RawEvent>(ctx.pool())
     //         .await?;
 
     //         // Add annotation
@@ -553,7 +553,7 @@ mod benches {
     //             "INSERT INTO core.event_annotations (id, event_id, annotation_type, content, annotator)
     //              VALUES ($1, $2, 'test', '{}'::jsonb, 'bench')"
     //         )
-    //         .bind(sinex_types::ulid::Ulid::new().to_uuid())
+    //         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
     //         .bind(event.id.to_uuid())
     //         .execute(ctx.pool())
     //         .await?;
@@ -580,7 +580,7 @@ mod benches {
     //     reset_database(ctx.pool()).await?;
 
     //     // Insert some events
-    //     use sinex_types::*;
+    //     use sinex_core::types::*;
     //     for i in 0..50 {
     //         EventQueries::insert_event(
     //             format!("source_{}", i % 5),
@@ -603,7 +603,7 @@ mod benches {
     //              VALUES ($1, $2, $3, '{}'::jsonb)"
     //         )
     //         .bind(format!("satellite_{}", i % 3))
-    //         .bind(sinex_types::ulid::Ulid::new().to_uuid())
+    //         .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
     //         .bind(i as i64 * 10)
     //         .execute(ctx.pool())
     //         .await?;

@@ -57,16 +57,16 @@
     sinex.succeed("sudo -u postgres psql -d sinex -c 'SELECT 1'")
     
     # Wait for services to start
-    sinex.wait_for_unit("sinex-unified-collector.service")
-    sinex.wait_for_unit("sinex-promo-worker.service")
+    sinex.wait_for_unit("sinex-ingestd.service")
+    sinex.wait_for_unit("sinex-gateway.service")
     
     # Verify health endpoints
     with subtest("Health monitoring active"):
         sinex.wait_until_succeeds(
-            "systemctl is-active sinex-unified-collector.service"
+            "systemctl is-active sinex-ingestd.service"
         )
         sinex.wait_until_succeeds(
-            "systemctl is-active sinex-promo-worker.service"
+            "systemctl is-active sinex-gateway.service"
         )
     
     # Check for event flow
@@ -103,33 +103,33 @@
     with subtest("SystemD integration"):
         # Verify notify type services
         sinex.succeed(
-            "systemctl show -p Type sinex-unified-collector.service | "
+            "systemctl show -p Type sinex-ingestd.service | "
             "grep -q 'Type=notify'"
         )
         
         # Check service states
-        sinex.succeed("systemctl status sinex-unified-collector.service")
-        sinex.succeed("systemctl status sinex-promo-worker.service")
+        sinex.succeed("systemctl status sinex-ingestd.service")
+        sinex.succeed("systemctl status sinex-gateway.service")
     
     # Verify resource limits
     with subtest("Resource limits applied"):
         limits = sinex.succeed(
-            "systemctl show -p MemoryMax sinex-unified-collector.service"
+            "systemctl show -p MemoryMax sinex-ingestd.service"
         )
         assert "MemoryMax=" in limits, "Memory limits not set"
     
     # Test graceful shutdown
     with subtest("Graceful shutdown"):
-        sinex.execute("systemctl stop sinex-unified-collector.service")
+        sinex.execute("systemctl stop sinex-ingestd.service")
         
         # Service should stop cleanly
         sinex.wait_until_fails(
-            "systemctl is-active sinex-unified-collector.service"
+            "systemctl is-active sinex-ingestd.service"
         )
         
         # Check for clean shutdown in logs
         sinex.succeed(
-            "journalctl -u sinex-unified-collector.service | "
+            "journalctl -u sinex-ingestd.service | "
             "grep -q 'Shutting down gracefully'"
         )
   '';

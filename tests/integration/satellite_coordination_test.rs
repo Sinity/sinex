@@ -8,7 +8,7 @@
 
 use sinex_satellite_sdk::coordination::{SatelliteCoordination, InstanceMode};
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
-use sinex_db::distributed_locking::DistributedCoordination;
+use sinex_core::db::distributed_locking::DistributedCoordination;
 use sinex_test_utils::TestContext;
 use sinex_test_utils::sinex_test;
 use color_eyre::eyre::Result;

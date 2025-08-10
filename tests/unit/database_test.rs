@@ -7,7 +7,11 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use sinex_db::repositories::DbPoolExt;
+use color_eyre::eyre::Result;
+use serde_json::json;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 use std::str::FromStr;
@@ -20,15 +24,15 @@ use std::sync::Arc;
 #[sinex_test]
 async fn test_event_persistence_basics(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Test basic event creation using modern patterns
-    let event = Event::schemaless()
-        .source(EventSource::from("fs-watcher"))
-        .event_type(EventType::from("file.created"))
-        .payload(json!({
+    let event = RawEvent::schemaless(
+        EventSource::from("fs-watcher"),
+        EventType::from("file.created"),
+        json!({
             "path": "/tmp/test.txt",
             "size": 1024,
             "permissions": "0o644"
-        }))
-        .build();
+        }),
+    );
 
     // Verify event structure
     assert_eq!(event.source.as_str(), "fs-watcher");
@@ -52,17 +56,17 @@ async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Note: Actual database queries skipped due to operator resolution issue
 
     // Demonstrate event creation patterns for different sources
-    let fs_event = Event::schemaless()
-        .source(EventSource::from("fs-watcher"))
-        .event_type(EventType::from("file.created"))
-        .payload(json!({"path": "/tmp/1.txt"}))
-        .build();
+    let fs_event = RawEvent::schemaless(
+        EventSource::from("fs-watcher"),
+        EventType::from("file.created"),
+        json!({"path": "/tmp/1.txt"}),
+    );
 
-    let terminal_event = Event::schemaless()
-        .source(EventSource::from("terminal"))
-        .event_type(EventType::from("command.executed"))
-        .payload(json!({"cmd": "ls"}))
-        .build();
+    let terminal_event = RawEvent::schemaless(
+        EventSource::from("terminal"),
+        EventType::from("command.executed"),
+        json!({"cmd": "ls"}),
+    );
 
     // Verify event properties
     assert_eq!(fs_event.source.as_str(), "fs-watcher");
@@ -82,38 +86,45 @@ async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
 // EDGE CASES AND SPECIAL CHARACTERS
 // =============================================================================
 
-#[rstest]
-#[case("empty_payload", json!({}))]
-#[case("null_values", json!({"value": null, "data": null}))]
-#[case("unicode_text", json!({"text": "Hello 世界 🌍", "path": "/tmp/test-α-β-γ.txt"}))]
-#[case("special_chars", json!({"text": "quotes: \"double\" 'single'", "newlines": "line1\nline2\ttab"}))]
-#[case("large_payload", json!({"data": "x".repeat(100_000)}))]
-#[case("deep_nesting", {
-    let mut nested = json!("value");
-    for _ in 0..10 {
-        nested = json!({"nested": nested});
+#[sinex_test]
+async fn test_edge_case_payloads() -> color_eyre::eyre::Result<()> {
+    let test_cases = vec![
+        ("empty_payload", json!({})),
+        ("null_values", json!({"value": null, "data": null})),
+        (
+            "unicode_text",
+            json!({"text": "Hello 世界 🌍", "path": "/tmp/test-α-β-γ.txt"}),
+        ),
+        (
+            "special_chars",
+            json!({"text": "quotes: \"double\" 'single'", "newlines": "line1\nline2\ttab"}),
+        ),
+        ("large_payload", json!({"data": "x".repeat(100_000)})),
+        ("deep_nesting", {
+            let mut nested = json!("value");
+            for _ in 0..10 {
+                nested = json!({"nested": nested});
+            }
+            nested
+        }),
+    ];
+
+    for (test_name, payload) in test_cases {
+        let ctx = TestContext::new().await?;
+
+        // Each edge case should persist correctly
+        let event = ctx
+            .create_test_event("edge-test", test_name, payload.clone())
+            .await?;
+
+        // Verify payload preserved exactly
+        assert_eq!(event.payload, payload);
+
+        // Retrieve and verify
+        let event_id = event.id.unwrap();
+        let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
+        assert_eq!(retrieved.payload, payload);
     }
-    nested
-})]
-#[tokio::test]
-async fn test_edge_case_payloads(
-    #[case] test_name: &str,
-    #[case] payload: serde_json::Value,
-) -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-
-    // Each edge case should persist correctly
-    let event = ctx
-        .create_test_event("edge-test", test_name, payload.clone())
-        .await?;
-
-    // Verify payload preserved exactly
-    assert_eq!(event.payload, payload);
-
-    // Retrieve and verify
-    let event_id = event.id.unwrap();
-    let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
-    assert_eq!(retrieved.payload, payload);
 
     Ok(())
 }
@@ -171,7 +182,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
                 .await?;
             assert_eq!(events.len(), events_per_task);
 
-            Ok::<Vec<Id<Event>>, SinexError>(task_ids)
+            Ok::<Vec<Id<RawEvent>>, SinexError>(task_ids)
         });
 
         handles.push(handle);
@@ -304,14 +315,14 @@ async fn test_bulk_insert_performance(ctx: TestContext) -> color_eyre::eyre::Res
     // Create batch of events
     let mut events = Vec::new();
     for i in 0..batch_size {
-        let event = Event::schemaless()
-            .source(EventSource::from("performance-test"))
-            .event_type(EventType::from("bulk.insert"))
-            .payload(json!({
+        let event = RawEvent::schemaless(
+            EventSource::from("performance-test"),
+            EventType::from("bulk.insert"),
+            json!({
                 "batch_index": i,
                 "data": format!("event_{}", i)
-            }))
-            .build();
+            }),
+        );
         events.push(event);
     }
 
@@ -348,14 +359,14 @@ async fn test_query_performance(ctx: TestContext) -> color_eyre::eyre::Result<()
 
     for i in 0..num_events {
         let source = format!("query-perf-{}", i % 10); // 10 different sources
-        let event = Event::schemaless()
-            .source(EventSource::from(source))
-            .event_type(EventType::from("query.test"))
-            .payload(json!({
+        let event = RawEvent::schemaless(
+            EventSource::from(source),
+            EventType::from("query.test"),
+            json!({
                 "index": i,
                 "category": i % 5  // 5 different categories
-            }))
-            .build();
+            }),
+        );
         events.push(event);
     }
 
@@ -405,11 +416,11 @@ async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()>
     // Test specific ULID edge cases
     let test_ulid = Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV")?;
 
-    let event = Event::schemaless()
-        .source(EventSource::from("ulid-test"))
-        .event_type(EventType::from("regression.test"))
-        .payload(json!({"ulid": test_ulid.to_string()}))
-        .build();
+    let event = RawEvent::schemaless(
+        EventSource::from("ulid-test"),
+        EventType::from("regression.test"),
+        json!({"ulid": test_ulid.to_string()}),
+    );
 
     let inserted_event = ctx.insert_event(&event).await?;
 
@@ -438,7 +449,7 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
     // Test with specific original timestamp
     let original_time = Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap();
 
-    let event = Event::schemaless()
+    let event = RawEvent::builder()
         .source(EventSource::from("timestamp-test"))
         .event_type(EventType::from("time.test"))
         .ts_orig(Some(original_time))

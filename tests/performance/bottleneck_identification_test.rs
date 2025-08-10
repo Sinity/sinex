@@ -4,8 +4,9 @@
 // connection limits, memory constraints, CPU saturation, and I/O limitations.
 // Provides automated bottleneck detection and performance optimization guidance.
 
+use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
@@ -557,7 +558,7 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> color_eyre
             }),
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         detector.record_operation("database_insert", duration, result.is_ok());
@@ -603,7 +604,7 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> color_eyre
         // Set timeout to avoid hanging
         let result = tokio::time::timeout(
             StdDuration::from_millis(200),
-            sinex_db::insert_event_with_validator(pool, &event, None),
+            sinex_core::db::insert_event_with_validator(pool, &event, None),
         )
         .await;
 
@@ -635,7 +636,7 @@ async fn test_database_bottleneck_identification(ctx: TestContext) -> color_eyre
             }),
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         detector.record_operation("database_insert", duration, result.is_ok());
@@ -718,7 +719,7 @@ async fn test_memory_bottleneck_identification(ctx: TestContext) -> color_eyre::
                 }),
             );
 
-            let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+            let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
             let duration = start.elapsed();
 
             detector.record_operation("memory_operation", duration, result.is_ok());
@@ -925,7 +926,7 @@ async fn test_concurrent_bottleneck_identification(ctx: TestContext) -> color_ey
                     );
 
                     let result =
-                        sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                        sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                     let duration = start.elapsed();
 
                     {

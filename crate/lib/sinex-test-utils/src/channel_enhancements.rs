@@ -5,9 +5,8 @@
 
 use crate::channel_helpers::{ChannelMonitor, ChannelStats};
 use crate::Result;
-use sinex_db::models::*;
-
-use sinex_types::error::SinexError;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::error::SinexError;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -80,7 +79,7 @@ pub struct PerformanceMetrics {
 
 /// Enhanced event sender with comprehensive monitoring and error reporting
 pub struct EnhancedEventSender {
-    inner: mpsc::Sender<Event>,
+    inner: mpsc::Sender<RawEvent>,
     monitor: Arc<ChannelMonitor>,
     source_name: String,
     performance_tracker: Arc<PerformanceTracker>,
@@ -88,7 +87,7 @@ pub struct EnhancedEventSender {
 
 impl EnhancedEventSender {
     /// Create a new enhanced event sender
-    pub fn new(sender: mpsc::Sender<Event>, source_name: String) -> Self {
+    pub fn new(sender: mpsc::Sender<RawEvent>, source_name: String) -> Self {
         Self {
             inner: sender,
             monitor: Arc::new(ChannelMonitor::new()),
@@ -98,7 +97,7 @@ impl EnhancedEventSender {
     }
 
     /// Send an event with enhanced monitoring and error reporting
-    pub async fn send_event(&self, event: Event, context: &str) -> Result<()> {
+    pub async fn send_event(&self, event: RawEvent, context: &str) -> Result<()> {
         let start_time = Instant::now();
         let event_type = event.event_type.clone();
 
@@ -140,7 +139,7 @@ impl EnhancedEventSender {
     /// Send event with timeout and enhanced error reporting
     pub async fn send_event_timeout(
         &self,
-        event: Event,
+        event: RawEvent,
         timeout_duration: Duration,
         context: &str,
     ) -> Result<()> {
@@ -184,7 +183,7 @@ impl EnhancedEventSender {
 
 /// Create an enhanced event sender
 pub fn create_enhanced_event_sender(
-    sender: mpsc::Sender<Event>,
+    sender: mpsc::Sender<RawEvent>,
     source_name: String,
 ) -> EnhancedEventSender {
     EnhancedEventSender::new(sender, source_name)
@@ -224,18 +223,19 @@ pub struct DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_db::models::*;
+    use crate::sinex_test;
+    use sinex_core::db::models::RawEvent;
 
-    #[tokio::test]
-    async fn test_enhanced_event_sender() {
-        let (tx, mut rx) = mpsc::channel::<Event>(10);
+    #[sinex_test]
+    async fn test_enhanced_event_sender() -> color_eyre::eyre::Result<()> {
+        let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
-        let event = Event::schemaless()
-            .source(sinex_types::domain::EventSource::new("test_source"))
-            .event_type(sinex_types::domain::EventType::new("test_event"))
-            .payload(serde_json::json!({}))
-            .build();
+        let event = RawEvent::schemaless(
+            sinex_core::types::domain::EventSource::new("test_source"),
+            sinex_core::types::domain::EventType::new("test_event"),
+            serde_json::json!({}),
+        );
 
         // Test successful send
         assert!(sender.send_event(event, "test context").await.is_ok());
@@ -255,27 +255,28 @@ mod tests {
         assert_eq!(metrics.send_successes, 1);
         assert_eq!(metrics.send_failures, 0);
         assert_eq!(metrics.success_rate, 1.0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_enhanced_sender_timeout() {
-        let (tx, _rx) = mpsc::channel::<Event>(1);
+    #[sinex_test]
+    async fn test_enhanced_sender_timeout() -> color_eyre::eyre::Result<()> {
+        let (tx, _rx) = mpsc::channel::<RawEvent>(1);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
         // Fill the channel
-        let event1 = Event::schemaless()
-            .source(sinex_types::domain::EventSource::new("test_source"))
-            .event_type(sinex_types::domain::EventType::new("test_event"))
-            .payload(serde_json::json!({}))
-            .build();
+        let event1 = RawEvent::schemaless(
+            sinex_core::types::domain::EventSource::new("test_source"),
+            sinex_core::types::domain::EventType::new("test_event"),
+            serde_json::json!({}),
+        );
         let _ = sender.send_event(event1, "fill channel").await;
 
         // This should timeout
-        let event2 = Event::schemaless()
-            .source(sinex_types::domain::EventSource::new("test_source"))
-            .event_type(sinex_types::domain::EventType::new("test_event"))
-            .payload(serde_json::json!({}))
-            .build();
+        let event2 = RawEvent::schemaless(
+            sinex_core::types::domain::EventSource::new("test_source"),
+            sinex_core::types::domain::EventType::new("test_event"),
+            serde_json::json!({}),
+        );
 
         let result = sender
             .send_event_timeout(event2, Duration::from_millis(10), "timeout test")
@@ -286,5 +287,6 @@ mod tests {
         // Check that failure was recorded
         let metrics = sender.get_performance_metrics();
         assert!(metrics.send_failures > 0);
+        Ok(())
     }
 }

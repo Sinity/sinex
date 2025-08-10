@@ -4,15 +4,16 @@
 // establishment, regression detection, and bottleneck identification.
 // Provides unified reporting and performance tracking capabilities.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use super::baseline_performance_test::{BaselineTracker, EnvironmentInfo};
 use super::regression_detection_test::RegressionDetector;
 use super::bottleneck_identification_test::BottleneckDetector;
 use redis::cmd;
 use serde_json::json;
-use sinex_db::queries::{EventQueries, CheckpointQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_db::models::{EventFactory, services, event_types};
+use sinex_core::db::queries::{EventQueries, CheckpointQueries};
+use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
+use sinex_core::db::models::{EventFactory, services, event_types};
 use sinex_satellite_sdk::RedisStreamClient;
 use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
@@ -376,7 +377,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> color_eyre::e
             })
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         runner.record_operation("database_insert", duration, result.is_ok());
@@ -476,7 +477,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> color_eyre::e
                         })
                     );
 
-                    let result = sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                    let result = sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                     let duration = start.elapsed();
 
                     operations.push((duration, result.is_ok()));
@@ -525,7 +526,7 @@ async fn test_comprehensive_performance_suite(ctx: TestContext) -> color_eyre::e
                 })
             );
 
-            let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+            let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
             let duration = start.elapsed();
 
             runner.record_operation("resource_operation", duration, result.is_ok());
@@ -600,7 +601,7 @@ async fn test_focused_performance_regression_suite(ctx: TestContext) -> color_ey
             })
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         runner.record_operation("regression_operation", duration, result.is_ok());
@@ -624,7 +625,7 @@ async fn test_focused_performance_regression_suite(ctx: TestContext) -> color_ey
             })
         );
 
-        let result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
         let duration = start.elapsed();
 
         runner.record_operation("regression_operation", duration, result.is_ok());

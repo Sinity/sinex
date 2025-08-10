@@ -42,8 +42,7 @@ similar-asserts = { workspace = true }
 bon = { workspace = true }
 
 # Sinex dependencies
-sinex-types = { path = "../sinex-types" }
-sinex-db = { path = "../sinex-db" }
+sinex-core = { path = "../sinex-core" }
 sinex-satellite-sdk = { path = "../sinex-satellite-sdk" }
 # Internal macro crate (implementation detail)
 sinex-test-utils-macros = { path = "macros" }

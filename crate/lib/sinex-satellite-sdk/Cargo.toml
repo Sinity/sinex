@@ -60,8 +60,7 @@ url = "2.5"
 which = "6.0"
 
 # Local dependencies
-sinex-types = { path = "../sinex-types" }
-sinex-db = { path = "../sinex-db", features = ["telemetry"] }
+sinex-core = { path = "../sinex-core", features = ["telemetry"] }
 sinex-macros = { path = "../sinex-macros", optional = true }
 # Removed sinex-preflight - now part of this crate
 # Removed sinex-nats - now part of this crate
@@ -79,6 +78,7 @@ preflight = []
 
 [dev-dependencies]
 tempfile = "3.13"
+sinex-test-utils = { path = "../sinex-test-utils" }
 
 [[bin]]
 name = "sinex-preflight"

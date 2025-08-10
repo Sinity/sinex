@@ -7,8 +7,7 @@ edition = "2021"
 mimalloc = { workspace = true }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 sinex-services = { path = "../../lib/sinex-services" }
-sinex-db = { path = "../../lib/sinex-db" }
-sinex-types = { path = "../../lib/sinex-types" }
+sinex-core = { path = "../../lib/sinex-core" }
 # sinex-annex folded into sinex-satellite-sdk
 
 tokio = { version = "1.0", features = ["full"] }

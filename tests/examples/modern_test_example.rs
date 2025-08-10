@@ -3,6 +3,7 @@
 //! This file shows best practices for using rstest, insta, tracing-test, and similar-asserts
 //! with the TestContext infrastructure.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 // ===== Basic rstest parameterized tests =====
@@ -11,7 +12,7 @@ use sinex_test_utils::prelude::*;
 #[case("fs-watcher", "file.created", json!({"path": "/tmp/test.txt", "size": 1024}))]
 #[case("terminal", "command.executed", json!({"command": "ls -la", "exit_code": 0}))]
 #[case("desktop", "window.focused", json!({"window_id": "123", "title": "Editor"}))]
-#[tokio::test]
+#[sinex_test]
 async fn test_event_creation_parameterized(
     #[case] source: &str,
     #[case] event_type: &str,
@@ -31,7 +32,7 @@ async fn test_event_creation_parameterized(
 // ===== Using fixtures with rstest =====
 
 #[rstest]
-#[tokio::test]
+#[sinex_test]
 async fn test_with_fixtures(
     test_sources: Vec<&'static str>,
     test_paths: Vec<Utf8PathBuf>,
@@ -167,7 +168,7 @@ async fn test_similar_assertions(ctx: TestContext) -> Result<()> {
 #[case("modify", "file.modified")]
 #[case("delete", "file.deleted")]
 #[traced_test]
-#[tokio::test]
+#[sinex_test]
 async fn test_modern_infrastructure_combined(
     #[case] operation: &str,
     #[case] expected_type: &str,
@@ -237,7 +238,7 @@ async fn test_property_based_with_snapshots(ctx: TestContext) -> Result<()> {
 // ===== Advanced fixture usage =====
 
 #[rstest]
-#[tokio::test]
+#[sinex_test]
 async fn test_advanced_fixtures(
     #[future] test_context_with_tracing: TestContext,
 ) -> Result<()> {
@@ -269,8 +270,9 @@ mod tests {
     use super::*;
     
     // This ensures all examples compile and can run
-    #[test]
-    fn examples_compile() {
+    #[sinex_test]
+fn examples_compile() -> color_eyre::eyre::Result<()> {
         // The examples above serve as both documentation and tests
     }
+    Ok(())
 }

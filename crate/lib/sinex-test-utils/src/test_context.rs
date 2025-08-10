@@ -1,7 +1,7 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
-//! without wrapping production APIs. Tests use production `Event::from_payload()`
+//! without wrapping production APIs. Tests use production `RawEvent::from_payload()`
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
@@ -18,7 +18,7 @@
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> Result<()> {
 //!     // Direct production API - no wrapper
-//!     let event = Event::from_payload(FileCreatedPayload {
+//!     let event = RawEvent::from_payload(FileCreatedPayload {
 //!         path: "/test/file.txt".into(),
 //!         size: 1024,
 //!     })?;
@@ -27,7 +27,7 @@
 //!     ctx.pool.events().insert(event).await?;
 //!     
 //!     // Direct repository queries
-//!     let events = ctx.pool.events().list_recent(10).await?;
+//!     let events = ctx.pool.events().get_recent(10).await?;
 //!     
 //!     // Test utilities that add value (not wrappers)
 //!     ctx.assert("validation")
@@ -42,9 +42,9 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_db::models::Event;
-use sinex_db::repositories::{DbPoolExt, EnhancedRepository, Repository};
-use sinex_types::{DbPool, Ulid};
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::{DbPoolExt, EnhancedRepository};
+use sinex_core::types::{DbPool, Ulid};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -95,7 +95,7 @@ impl TestContext {
     }
 
     /// Insert single event
-    pub async fn insert_event(&self, event: &Event) -> Result<Event> {
+    pub async fn insert_event(&self, event: &RawEvent) -> Result<RawEvent> {
         let inserted = self.pool.events().insert(event.clone()).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
@@ -104,7 +104,7 @@ impl TestContext {
     }
 
     /// Insert multiple events (batch operation)
-    pub async fn insert_events(&self, events: &[Event]) -> Result<()> {
+    pub async fn insert_events(&self, events: &[RawEvent]) -> Result<()> {
         for event in events {
             self.pool.events().insert(event.clone()).await?;
             if let Some(id) = &event.id {
@@ -156,7 +156,7 @@ impl TestContext {
     }
 
     /// Assert that two events are equal with detailed comparison
-    pub fn assert_event_eq(&self, actual: &Event, expected: &Event) -> Result<()> {
+    pub fn assert_event_eq(&self, actual: &RawEvent, expected: &RawEvent) -> Result<()> {
         if actual.source != expected.source {
             color_eyre::eyre::bail!(
                 "Event sources differ: actual='{}' expected='{}'",
@@ -228,43 +228,24 @@ impl TestContext {
     /// Create a basic test event with source and type (temporary convenience method)
     ///
     /// This is a lightweight helper for tests that don't need specific payload types.
-    /// For real payload testing, use Event::from_payload() with actual payload structs.
+    /// For real payload testing, use RawEvent::from_payload() with actual payload structs.
     pub async fn create_test_event(
         &self,
         source: &str,
         event_type: &str,
         payload: JsonValue,
-    ) -> Result<Event> {
-        let event = Event::schemaless()
-            .source(sinex_types::domain::EventSource::from(source))
-            .event_type(sinex_types::domain::EventType::from(event_type))
-            .payload(payload)
-            .build();
+    ) -> Result<RawEvent> {
+        let event = RawEvent::schemaless(
+            sinex_core::types::domain::EventSource::from(source),
+            sinex_core::types::domain::EventType::from(event_type),
+            payload,
+        );
 
         let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
         }
         Ok(inserted)
-    }
-
-    /// Get recent events (convenience wrapper around repository)
-    pub async fn get_recent_events(&self, limit: i64) -> Result<Vec<Event>> {
-        self.pool
-            .events()
-            .get_recent(limit)
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Get events by source (convenience wrapper around repository)
-    pub async fn get_events_by_source(&self, source: &str) -> Result<Vec<Event>> {
-        let event_source = sinex_types::domain::EventSource::from(source);
-        self.pool
-            .events()
-            .get_by_source(&event_source, Some(100), None)
-            .await
-            .map_err(Into::into)
     }
 
     /// Assert similar values with detailed diff
@@ -400,6 +381,7 @@ impl<'ctx> ContextualAssert<'ctx> {
 mod tests {
     use super::*;
     use crate::prelude::*;
+    use crate::sinex_test;
     use serde_json::json;
 
     #[sinex_test]

@@ -46,8 +46,8 @@ use crate::fixture_generator::{DatasetConfig, FixtureGenerator};
 use chrono::{DateTime, Utc};
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
-use sinex_db::DbPool;
-use sinex_types::error::SinexError;
+use sinex_core::db::DbPool;
+use sinex_core::types::error::SinexError;
 
 use camino::Utf8PathBuf;
 use std::collections::HashMap;
@@ -414,6 +414,7 @@ pub async fn ensure_fixture(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use crate::sinex_test;
 
     #[sinex_test]

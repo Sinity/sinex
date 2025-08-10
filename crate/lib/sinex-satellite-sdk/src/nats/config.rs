@@ -325,17 +325,20 @@ fn default_replay() -> ReplayPolicy {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_default_config() {
+    #[sinex_test]
+    fn test_default_config() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::default();
         assert_eq!(config.servers, vec!["nats://localhost:4222"]);
         assert!(config.jetstream.enabled);
+        Ok(())
     }
 
-    #[test]
-    fn test_test_config() {
+    #[sinex_test]
+    fn test_test_config() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         assert_eq!(config.client_name, "sinex-test");
+        Ok(())
     }
 }

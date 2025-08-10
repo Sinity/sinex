@@ -16,7 +16,7 @@
 //! ## Basic usage (adds function name and module path):
 //! ```rust
 //! use sinex_macros::with_context;
-//! use sinex_types::error::{SinexError, Result};
+//! use sinex_core::types::error::{SinexError, Result};
 //!
 //! #[with_context]
 //! fn read_config() -> Result<String> {

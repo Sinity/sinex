@@ -2,18 +2,18 @@
 //!
 //! Migrated from test/property/event_validation_property_test.rs to modern infrastructure.
 //! This module contains property-based tests for event validation using the modern
-//! Event::schemaless() builder pattern and updated validation architecture.
+//! RawEvent::schemaless() builder pattern and updated validation architecture.
 
 use chrono::{Duration as ChronoDuration, Utc};
 use color_eyre::eyre::Result as EyreResult;
 use proptest::prelude::*;
 use serde_json::{json, Value};
-use sinex_satellite_sdk::Event; // Use the Event type from satellite SDK
-use sinex_test_utils::prelude::*;
-use sinex_types::{
+use sinex_core::db::models::RawEvent; // Use the Event type from satellite SDK
+use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
     Ulid,
 };
+use sinex_test_utils::prelude::*;
 
 // =============================================================================
 // Property Test Helpers
@@ -35,7 +35,7 @@ fn event_payloads() -> impl Strategy<Value = Value> {
 }
 
 /// Strategy for generating arbitrary valid events
-fn arbitrary_event() -> impl Strategy<Value = Event> {
+fn arbitrary_event() -> impl Strategy<Value = RawEvent> {
     (
         "[a-z][a-z0-9_]{2,49}",  // source
         "[a-z][a-z0-9_.]{2,99}", // event_type
@@ -44,12 +44,12 @@ fn arbitrary_event() -> impl Strategy<Value = Event> {
         prop::bool::ANY,         // random bool for ts_orig
     )
         .prop_map(|(source, event_type, host, payload, has_ts_orig)| {
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source))
-                .event_type(EventType::new(event_type))
-                .host(HostName::new(host))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source),
+                EventType::new(event_type),
+                payload,
+            );
+            event.host = HostName::new(host);
 
             // Set required timestamp
             event.ts_ingest = Utc::now();
@@ -65,18 +65,18 @@ fn arbitrary_event() -> impl Strategy<Value = Event> {
 }
 
 /// Strategy for generating events with empty source
-fn empty_source_event() -> impl Strategy<Value = Event> {
+fn empty_source_event() -> impl Strategy<Value = RawEvent> {
     (
         Just("".to_string()),    // empty source
         "[a-z][a-z0-9_.]{2,99}", // event_type
         event_payloads(),        // payload
     )
         .prop_map(|(source, event_type, payload)| {
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source))
-                .event_type(EventType::new(event_type))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source),
+                EventType::new(event_type),
+                payload,
+            );
 
             event.ts_ingest = Utc::now();
             event
@@ -84,7 +84,7 @@ fn empty_source_event() -> impl Strategy<Value = Event> {
 }
 
 /// Strategy for generating events with metadata
-fn metadata_rich_events() -> impl Strategy<Value = Event> {
+fn metadata_rich_events() -> impl Strategy<Value = RawEvent> {
     (
         "[a-z][a-z0-9_]{2,49}",  // source
         "[a-z][a-z0-9_.]{2,99}", // event_type
@@ -98,11 +98,11 @@ fn metadata_rich_events() -> impl Strategy<Value = Event> {
                 }
             });
 
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source))
-                .event_type(EventType::new(event_type))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source),
+                EventType::new(event_type),
+                payload,
+            );
 
             event.ts_ingest = Utc::now();
 
@@ -111,7 +111,7 @@ fn metadata_rich_events() -> impl Strategy<Value = Event> {
 }
 
 /// Strategy for generating boundary condition events
-fn boundary_condition_events() -> impl Strategy<Value = Event> {
+fn boundary_condition_events() -> impl Strategy<Value = RawEvent> {
     let edge_cases = vec![
         // Very short fields
         ("a".to_string(), "b.c".to_string(), json!(null)),
@@ -147,11 +147,11 @@ fn boundary_condition_events() -> impl Strategy<Value = Event> {
     ];
 
     proptest::sample::select(edge_cases).prop_map(|(source, event_type, payload)| {
-        let mut event = Event::schemaless()
-            .source(EventSource::new(source))
-            .event_type(EventType::new(event_type))
-            .payload(payload)
-            .build();
+        let mut event = RawEvent::schemaless(
+            EventSource::new(source),
+            EventType::new(event_type),
+            payload,
+        );
 
         event.ts_ingest = Utc::now();
         event
@@ -160,7 +160,7 @@ fn boundary_condition_events() -> impl Strategy<Value = Event> {
 
 /// Strategy for generating concurrent operation events
 #[cfg(feature = "concurrent_tests")]
-fn concurrent_operation_events() -> impl Strategy<Value = Vec<Event>> {
+fn concurrent_operation_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(
         (0usize..10, 0u64..1000).prop_map(|(worker_id, operation_id)| {
             let payload = json!({
@@ -169,11 +169,11 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<Event>> {
                 "timestamp": Utc::now().timestamp_millis()
             });
 
-            let mut event = Event::schemaless()
-                .source(EventSource::new("concurrent_test"))
-                .event_type(EventType::new("worker.operation"))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new("concurrent_test"),
+                EventType::new("worker.operation"),
+                payload,
+            );
 
             event.ts_ingest = Utc::now();
             event
@@ -184,12 +184,12 @@ fn concurrent_operation_events() -> impl Strategy<Value = Vec<Event>> {
 
 /// Strategy for performance characteristic events
 #[cfg(feature = "performance_tests")]
-fn performance_characteristic_events() -> impl Strategy<Value = Vec<Event>> {
+fn performance_characteristic_events() -> impl Strategy<Value = Vec<RawEvent>> {
     prop::collection::vec(arbitrary_event(), 10..1000)
 }
 
 /// Simple validation function for events (replaces ValidationChain)
-fn validate_event(event: &Event) -> std::result::Result<(), String> {
+fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
     if event.source.is_empty() {
         return Err("Empty source".to_string());
     }
@@ -207,11 +207,10 @@ fn validate_event(event: &Event) -> std::result::Result<(), String> {
 // =============================================================================
 
 #[sinex_test]
-fn test_valid_events_pass_validation() -> Result<()> {
+fn test_valid_events_pass_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         #![proptest_config(ProptestConfig::with_cases(1000))]
 
-        #[test]
         fn property_valid_events_pass_validation(
             event in arbitrary_event()
         ) {
@@ -225,9 +224,8 @@ fn test_valid_events_pass_validation() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_empty_source_fails_validation() -> Result<()> {
+fn test_empty_source_fails_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_empty_source_fails_validation(
             event in empty_source_event()
         ) {
@@ -245,9 +243,8 @@ fn test_empty_source_fails_validation() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_event_field_constraints() -> Result<()> {
+fn test_event_field_constraints() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_event_field_constraints(
             source in "[a-z][a-z0-9_]{0,49}",
             event_type in "[a-z][a-z0-9_.]{0,99}",
@@ -255,12 +252,12 @@ fn test_event_field_constraints() -> Result<()> {
             payload in event_payloads()
         ) {
             // Property: Events with valid field constraints should be constructible
-            let mut event = Event::schemaless()
-                .source(EventSource::new(source.clone()))
-                .event_type(EventType::new(event_type.clone()))
-                .host(HostName::new(host.clone()))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new(source.clone()),
+                EventType::new(event_type.clone()),
+                payload,
+            );
+            event.host = HostName::new(host.clone());
 
             event.ts_ingest = Utc::now();
 
@@ -275,9 +272,8 @@ fn test_event_field_constraints() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_payload_size_validation() -> Result<()> {
+fn test_payload_size_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_payload_size_validation(
             size_kb in 1usize..=1000usize // Reduced size for faster tests
         ) {
@@ -288,11 +284,11 @@ fn test_payload_size_validation() -> Result<()> {
                 "size_kb": size_kb
             });
 
-            let mut event = Event::schemaless()
-                .source(EventSource::new("test"))
-                .event_type(EventType::new("payload.size.test"))
-                .payload(payload)
-                .build();
+            let mut event = RawEvent::schemaless(
+                EventSource::new("test"),
+                EventType::new("payload.size.test"),
+                payload,
+            );
 
             event.ts_ingest = Utc::now();
 
@@ -310,9 +306,8 @@ fn test_payload_size_validation() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_event_timestamp_consistency() -> Result<()> {
+fn test_event_timestamp_consistency() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_event_timestamp_consistency(
             event in arbitrary_event()
         ) {
@@ -332,9 +327,8 @@ fn test_event_timestamp_consistency() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_event_uniqueness_properties() -> Result<()> {
+fn test_event_uniqueness_properties() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_event_uniqueness(
             events in proptest::collection::vec(arbitrary_event(), 2..100)
         ) {
@@ -356,9 +350,8 @@ fn test_event_uniqueness_properties() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_source_event_id_validation() -> Result<()> {
+fn test_source_event_id_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_source_event_id_validation(
             parent_events in proptest::collection::vec(Just(()).prop_map(|_| Ulid::new()), 0..10),
             event in arbitrary_event()
@@ -376,9 +369,8 @@ fn test_source_event_id_validation() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_json_schema_compatibility() -> Result<()> {
+fn test_json_schema_compatibility() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_json_schema_compatibility(
             event in arbitrary_event()
         ) {
@@ -396,9 +388,8 @@ fn test_json_schema_compatibility() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_event_metadata_fields() -> Result<()> {
+fn test_event_metadata_fields() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_event_metadata_fields(
             event in metadata_rich_events()
         ) {
@@ -417,9 +408,8 @@ fn test_event_metadata_fields() -> Result<()> {
 }
 
 #[sinex_test]
-fn test_boundary_condition_handling() -> Result<()> {
+fn test_boundary_condition_handling() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
-        #[test]
         fn property_boundary_condition_handling(
             event in boundary_condition_events()
         ) {
@@ -449,9 +439,8 @@ mod concurrent_tests {
     use std::sync::Arc;
 
     #[sinex_test]
-    fn test_concurrent_event_ordering() -> Result<()> {
+    fn test_concurrent_event_ordering() {
         proptest::proptest! {
-            #[test]
             fn property_concurrent_event_ordering(
                 events in concurrent_operation_events()
             ) {
@@ -493,9 +482,8 @@ mod performance_tests {
     use std::time::Instant;
 
     #[sinex_test]
-    fn test_event_creation_performance() -> Result<()> {
+    fn test_event_creation_performance() {
         proptest::proptest! {
-            #[test]
             fn property_event_creation_performance(
                 events in performance_characteristic_events()
             ) {
@@ -516,9 +504,8 @@ mod performance_tests {
     }
 
     #[sinex_test]
-    fn test_validation_errors_are_deterministic() -> Result<()> {
+    fn test_validation_errors_are_deterministic() {
         proptest::proptest! {
-            #[test]
             fn property_validation_errors_deterministic(
                 source in "[a-z]*", // May be empty
                 event_type in "[a-z]*", // May be empty
@@ -526,18 +513,18 @@ mod performance_tests {
             ) {
                 // Property: Same invalid input should always produce same error
                 if source.is_empty() || event_type.is_empty() {
-                    let mut event1 = Event::schemaless()
-                        .source(EventSource::new(source.clone()))
-                        .event_type(EventType::new(event_type.clone()))
-                        .payload(payload.clone())
-                        .build();
+                    let mut event1 = RawEvent::schemaless(
+                        EventSource::new(source.clone()),
+                        EventType::new(event_type.clone()),
+                        payload.clone(),
+                    );
                     event1.ts_ingest = Utc::now();
 
-                    let mut event2 = Event::schemaless()
-                        .source(EventSource::new(source))
-                        .event_type(EventType::new(event_type))
-                        .payload(payload)
-                        .build();
+                    let mut event2 = RawEvent::schemaless(
+                        EventSource::new(source),
+                        EventType::new(event_type),
+                        payload,
+                    );
                     event2.ts_ingest = Utc::now();
 
                     let result1 = validate_event(&event1);
@@ -559,9 +546,8 @@ mod performance_tests {
     }
 
     #[sinex_test]
-    fn test_validation_preserves_error_hierarchy() -> Result<()> {
+    fn test_validation_preserves_error_hierarchy() {
         proptest::proptest! {
-            #[test]
             fn property_validation_error_hierarchy(
                 event in arbitrary_event()
             ) {

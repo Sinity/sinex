@@ -46,5 +46,4 @@ futures-util = "0.3"
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
-sinex-types = { path = "../../lib/sinex-types" }
-sinex-db = { path = "../../lib/sinex-db", features = ["telemetry"] }
+sinex-core = { path = "../../lib/sinex-core", features = ["telemetry"] }
