@@ -36,7 +36,7 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 /// between the database and the domain model.
 #[derive(Debug, FromRow)]
 pub struct EventRecord {
-    pub event_id: uuid::Uuid,
+    pub id: uuid::Uuid,
     pub source: String,
     pub event_type: String,
     pub host: String,
@@ -82,7 +82,7 @@ impl EventRecord {
             .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
 
         RawEvent {
-            id: Some(Id::<RawEvent>::from_uuid(self.event_id)),
+            id: Some(Id::<RawEvent>::from_uuid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
@@ -266,7 +266,7 @@ impl<'a> EventRepository<'a> {
                 $13, $14::uuid[], $15, $16, $17
             )
             RETURNING 
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
@@ -314,7 +314,7 @@ impl<'a> EventRepository<'a> {
         let record = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -333,7 +333,7 @@ impl<'a> EventRepository<'a> {
                 payload_schema_version,
                 processor_manifest_id
             FROM core.events 
-            WHERE event_id = $1
+            WHERE id = $1
             "#,
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
@@ -357,7 +357,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -400,7 +400,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -446,7 +446,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -517,7 +517,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -600,7 +600,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -644,7 +644,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -942,7 +942,7 @@ impl<'a> EventRepository<'a> {
                 $13, $14::uuid[], $15, $16, $17
             )
             RETURNING 
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
@@ -1349,7 +1349,7 @@ impl<'a> EventRepository<'a> {
             )
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1376,7 +1376,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1384,7 +1384,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.event_annotations
-            WHERE event_id = $1
+            WHERE id = $1
             ORDER BY created_at DESC
             "#,
             *id.as_ulid() as _
@@ -1407,7 +1407,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1441,7 +1441,7 @@ impl<'a> EventRepository<'a> {
             WHERE id = $1
             RETURNING 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1486,7 +1486,7 @@ impl<'a> EventRepository<'a> {
             r#"
             SELECT 
                 id as "id: Id<EventAnnotation>",
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 annotation_type as "annotation_type!",
                 content as "content!",
                 metadata as "metadata!",
@@ -1513,7 +1513,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query!(
             r#"
             SELECT
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
@@ -1531,7 +1531,7 @@ impl<'a> EventRepository<'a> {
         .map(|rows| {
             rows.into_iter()
                 .map(|row| InvalidPayloadEvent {
-                    event_id: Id::<RawEvent>::from_uuid(row.event_id),
+                    event_id: Id::<RawEvent>::from_uuid(row.id),
                     source: row.source,
                     event_type: row.event_type,
                     ts_ingest: row.ts_ingest,
@@ -1550,15 +1550,15 @@ impl<'a> EventRepository<'a> {
             r#"
             WITH ordered_events AS (
                 SELECT 
-                    event_id,
+                    id,
                     ts_orig,
-                    LAG(event_id) OVER (PARTITION BY source ORDER BY event_id) as prev_id,
-                    LAG(ts_orig) OVER (PARTITION BY source ORDER BY event_id) as prev_ts
+                    LAG(id) OVER (PARTITION BY source ORDER BY id) as prev_id,
+                    LAG(ts_orig) OVER (PARTITION BY source ORDER BY id) as prev_ts
                 FROM core.events
                 WHERE ts_orig IS NOT NULL
             )
             SELECT 
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 prev_id::uuid as "prev_id!",
                 ts_orig as "ts_orig!",
                 prev_ts as "prev_ts!"
@@ -1576,7 +1576,7 @@ impl<'a> EventRepository<'a> {
             .into_iter()
             .map(|r| {
                 (
-                    Id::<RawEvent>::from_uuid(r.event_id),
+                    Id::<RawEvent>::from_uuid(r.id),
                     Id::<RawEvent>::from_uuid(r.prev_id),
                     r.ts_orig,
                     r.prev_ts,
@@ -1598,19 +1598,19 @@ impl<'a> EventRepository<'a> {
             r#"
             WITH event_batches AS (
                 SELECT 
-                    event_id,
+                    id,
                     ts_orig,
                     source,
-                    ROW_NUMBER() OVER (ORDER BY event_id) as row_num,
-                    LAG(event_id) OVER (ORDER BY event_id) as prev_event_id,
-                    LAG(ts_orig) OVER (ORDER BY event_id) as prev_ts_orig
+                    ROW_NUMBER() OVER (ORDER BY id) as row_num,
+                    LAG(id) OVER (ORDER BY id) as prev_event_id,
+                    LAG(ts_orig) OVER (ORDER by id) as prev_ts_orig
                 FROM core.events
                 WHERE ts_ingest > NOW() - INTERVAL '1 day' * $1
-                ORDER BY event_id DESC
+                ORDER BY id DESC
                 LIMIT 10000
             )
             SELECT 
-                event_id as "event_id?: Id<RawEvent>",
+                id as "event_id?: Id<RawEvent>",
                 prev_event_id as "prev_event_id?: Id<RawEvent>",
                 ts_orig,
                 prev_ts_orig,
@@ -1618,7 +1618,7 @@ impl<'a> EventRepository<'a> {
                 row_num
             FROM event_batches
             WHERE prev_event_id IS NOT NULL
-              AND (ts_orig < prev_ts_orig OR event_id < prev_event_id)
+              AND (ts_orig < prev_ts_orig OR id < prev_event_id)
             LIMIT $2
             "#,
             days_back as f64,
@@ -1641,7 +1641,7 @@ impl<'a> EventRepository<'a> {
             SuspiciousEvent,
             r#"
             SELECT 
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 source as "source!",
                 event_type as "event_type!",
                 payload as "payload!",
@@ -1674,7 +1674,7 @@ impl<'a> EventRepository<'a> {
             InvalidTimestamp,
             r#"
             SELECT 
-                event_id as "event_id: Id<RawEvent>", 
+                id as "event_id: Id<RawEvent>", 
                 ts_orig, 
                 ts_ingest as "ts_ingest!"
             FROM core.events
@@ -1726,7 +1726,7 @@ impl<'a> EventRepository<'a> {
             r#"
             UPDATE core.events
             SET payload = $2
-            WHERE event_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _,
             payload
@@ -1743,7 +1743,7 @@ impl<'a> EventRepository<'a> {
         let result = sqlx::query!(
             r#"
             DELETE FROM core.events
-            WHERE event_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _
         )

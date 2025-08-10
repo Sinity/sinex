@@ -221,13 +221,13 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                operation_id, actor, scope, state, preview_summary,
+                id, actor, scope, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9
             )
             RETURNING 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -265,7 +265,7 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -280,7 +280,7 @@ impl<'a> StateRepository<'a> {
                 error_details,
                 created_at
             FROM core.operations_log 
-            WHERE operation_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _
         )
@@ -295,7 +295,7 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -330,7 +330,7 @@ impl<'a> StateRepository<'a> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
-            "SELECT operation_id, actor, scope, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
+            "SELECT id, actor, scope, state, preview_summary, checkpoint, approved_by, approved_at, executor_node, started_at, finished_at, outcome, error_details, created_at FROM core.operations_log WHERE 1=1"
         );
 
         if let Some(actor) = actor {
@@ -365,7 +365,7 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -404,7 +404,7 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -444,7 +444,7 @@ impl<'a> StateRepository<'a> {
             OperationRecord,
             r#"
             SELECT 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -526,7 +526,7 @@ impl<'a> StateRepository<'a> {
                 $1, $2, $3, $4
             )
             RETURNING 
-                manifest_id,
+                id,
                 processor_name,
                 processor_version,
                 processor_type,
@@ -553,7 +553,7 @@ impl<'a> StateRepository<'a> {
             ProcessorManifest,
             r#"
             SELECT 
-                manifest_id,
+                id,
                 processor_name,
                 processor_version,
                 processor_type,
@@ -582,7 +582,7 @@ impl<'a> StateRepository<'a> {
             ProcessorManifest,
             r#"
             SELECT 
-                manifest_id,
+                id,
                 processor_name,
                 processor_version,
                 processor_type,
@@ -761,7 +761,7 @@ impl<'a> StateRepository<'a> {
 
         sqlx::query!(
             r#"
-            INSERT INTO core.events (event_id, source, event_type, host, payload)
+            INSERT INTO core.events (id, source, event_type, host, payload)
             VALUES ($1, $2, $3, $4, $5)
             "#,
             *id.as_ulid() as _,
@@ -972,13 +972,13 @@ impl<'a> StateRepositoryTx<'a> {
             OperationRecord,
             r#"
             INSERT INTO core.operations_log (
-                operation_id, actor, scope, state, preview_summary,
+                id, actor, scope, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9
             )
             RETURNING 
-                operation_id as "id: Id<Operation>",
+                id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -1014,7 +1014,7 @@ impl<'a> StateRepositoryTx<'a> {
 /// Processor manifest record
 #[derive(Debug, sqlx::FromRow)]
 pub struct ProcessorManifest {
-    pub manifest_id: i32,
+    pub id: i32,
     pub processor_name: String,
     pub processor_version: String,
     pub processor_type: String,

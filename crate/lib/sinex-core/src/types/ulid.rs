@@ -206,11 +206,11 @@ lazy_static! {
 /// let events = sqlx::query!(
 ///     r#"
 ///     SELECT
-///         event_id::uuid as "event_id!",
+///         id::uuid as "event_id!",
 ///         source,
 ///         event_type
 ///     FROM core.events
-///     WHERE event_id = $1::uuid
+///     WHERE id = $1::uuid
 ///     "#,
 ///     event_id.to_uuid()  // ULID provides to_uuid() method
 /// )
@@ -224,7 +224,7 @@ lazy_static! {
 /// ALTER TABLE core.event_relations
 ///     ADD CONSTRAINT fk_event_relations_from_event
 ///     FOREIGN KEY (from_event_id)
-///     REFERENCES core.events(event_id::uuid);
+///     REFERENCES core.events(id::uuid);
 /// ```
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
