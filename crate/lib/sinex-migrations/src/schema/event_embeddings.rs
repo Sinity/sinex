@@ -101,7 +101,7 @@ impl EventEmbeddings {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_embeddings_event FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_embeddings_model FOREIGN KEY ({}) REFERENCES {}.{}({})",
