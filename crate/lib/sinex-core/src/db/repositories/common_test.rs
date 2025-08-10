@@ -69,7 +69,7 @@ mod tests {
 
         // Build a query using SeaQuery and TableDef
         let query = Query::select()
-            .column(Alias::new(Events::EVENT_ID))
+            .column(Alias::new(Events::ID))
             .column(Alias::new(Events::SOURCE))
             .column(Alias::new(Events::EVENT_TYPE))
             .from(Events::table_iden())

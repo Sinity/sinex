@@ -32,25 +32,19 @@ pub use unified_processor::{
 };
 
 /// Configuration for system satellite
-#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SystemConfig {
     /// Enable D-Bus monitoring
-    #[default = true]
     pub dbus_enabled: bool,
     /// Enable systemd journal monitoring
-    #[default = true]
     pub journal_enabled: bool,
     /// Enable udev hardware monitoring
-    #[default = true]
     pub udev_enabled: bool,
     /// Enable systemd unit monitoring
-    #[default = true]
     pub systemd_enabled: bool,
     /// D-Bus buses to monitor ("session", "system", or "both")
-    #[default = "both".to_string()]
     pub dbus_buses: String,
     /// Journal follow timeout in seconds
-    #[default = 5]
     pub journal_timeout_secs: u64,
     /// systemd configuration
     pub systemd_config: SystemdConfig,
@@ -58,6 +52,22 @@ pub struct SystemConfig {
     pub dbus_config: DbusConfig,
     /// Journal configuration
     pub journal_config: JournalConfig,
+}
+
+impl Default for SystemConfig {
+    fn default() -> Self {
+        Self {
+            dbus_enabled: true,
+            journal_enabled: true,
+            udev_enabled: true,
+            systemd_enabled: true,
+            dbus_buses: "both".to_string(),
+            journal_timeout_secs: 5,
+            systemd_config: SystemdConfig::default(),
+            dbus_config: DbusConfig::default(),
+            journal_config: JournalConfig::default(),
+        }
+    }
 }
 
 /// Error types for system satellite
