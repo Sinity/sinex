@@ -167,7 +167,7 @@ impl Events {
     pub const TABLE: &'static str = "events";
     pub const SCHEMA: &'static str = "core";
 
-    pub const EVENT_ID: &'static str = "id";
+    pub const ID: &'static str = "id";
     pub const SOURCE: &'static str = "source";
     pub const EVENT_TYPE: &'static str = "event_type";
     pub const HOST: &'static str = "host";
@@ -192,7 +192,7 @@ impl Events {
             .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
             .if_not_exists()
             .col(
-                ColumnDef::new(Alias::new(Self::EVENT_ID))
+                ColumnDef::new(Alias::new(Self::ID))
                     .custom(Alias::new("ULID"))
                     .not_null()
                     .primary_key()
@@ -1209,7 +1209,7 @@ impl EventAnnotations {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_annotations_event FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
         ]
     }
@@ -1748,13 +1748,13 @@ impl EventRelations {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_relations_from FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::FROM_EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
             // Foreign key to_event_id to events
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_relations_to FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::TO_EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
             // Unique constraint on from_event_id, to_event_id, relation_type
             format!(
@@ -1942,7 +1942,7 @@ impl EventClusterMembers {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_cluster_members_event FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
         ]
     }

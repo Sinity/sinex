@@ -692,7 +692,7 @@ impl<'a> EventRepository<'a> {
             .column((
                 Alias::new(Events::SCHEMA),
                 Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_ID),
+                Alias::new(Events::ID),
             ))
             .column((
                 Alias::new(Events::SCHEMA),
@@ -871,7 +871,7 @@ impl<'a> EventRepository<'a> {
                 Func::count(Expr::col((
                     Alias::new(Events::SCHEMA),
                     Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_ID),
+                    Alias::new(Events::ID),
                 ))),
                 Alias::new("count"),
             )
