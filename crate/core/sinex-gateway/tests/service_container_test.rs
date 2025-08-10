@@ -90,7 +90,7 @@ async fn test_service_container_env_database_url() -> Result<()> {
 
 /// Test initialization fails gracefully with invalid database URL
 #[sinex_test]
-async fn test_service_container_invalid_database_url() {
+async fn test_service_container_invalid_database_url() -> color_eyre::eyre::Result<()> {
     // Use an invalid database URL
     let invalid_url = "postgresql://invalid:invalid@nonexistent:5432/invalid".to_string();
 
@@ -114,11 +114,12 @@ async fn test_service_container_invalid_database_url() {
         }
         Ok(_) => panic!("Expected error but got success"),
     }
+    Ok(())
 }
 
 /// Test initialization fails when no database URL is provided
 #[sinex_test]
-async fn test_service_container_no_database_url() {
+async fn test_service_container_no_database_url() -> color_eyre::eyre::Result<()> {
     // Save and clear DATABASE_URL from environment
     let original_db_url = env::var("DATABASE_URL").ok();
     env::remove_var("DATABASE_URL");
@@ -150,6 +151,7 @@ async fn test_service_container_no_database_url() {
     if let Some(url) = original_db_url {
         env::set_var("DATABASE_URL", url);
     }
+    Ok(())
 }
 
 /// Test service container cloning

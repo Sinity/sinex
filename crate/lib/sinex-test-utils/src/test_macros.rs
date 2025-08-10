@@ -13,7 +13,7 @@ macro_rules! rstest_async {
         #[rstest]
         #[case($($param = $value),*)]
         $(#[case($($more_param = $more_value),*)])*
-        #[tokio::test]
+        #[sinex_test]
         async fn $name($($arg: $arg_ty),*) -> Result<()> {
             let ctx = TestContext::new().await?;
             $body

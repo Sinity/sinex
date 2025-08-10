@@ -413,8 +413,9 @@ pub async fn apply_test_optimizations(pool: &DbPool) -> Result<()> {
 mod tests {
     use super::*;
     use crate::database_pool::acquire_test_database;
+    use crate::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_reset_database() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -445,7 +446,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_verify_clean_state() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -472,7 +473,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_get_row_counts() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -487,7 +488,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_clear_pg_cache() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();
@@ -498,7 +499,7 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     async fn test_apply_optimizations() -> Result<()> {
         let db = acquire_test_database().await?;
         let pool = db.pool();

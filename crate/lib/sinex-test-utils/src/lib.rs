@@ -42,7 +42,7 @@
 //! - Timing utilities
 //!
 //! ## The `#[sinex_test]` Macro
-//! **Always use `#[sinex_test]` instead of `#[tokio::test]`**. This macro:
+//! **Always use `#[sinex_test]` instead of `#[sinex_test]`**. This macro:
 //! - Creates and injects TestContext
 //! - Manages database lifecycle
 //! - Handles timeouts intelligently
@@ -507,6 +507,7 @@ pub use test_context::TestContext;
 mod tests {
     use super::prelude::*;
     use crate::sinex_test;
+    use rstest::rstest;
     use serde_json::json;
     use sinex_core::db::models::*;
     use sinex_core::db::repositories::DbPoolExt;
@@ -626,11 +627,10 @@ mod tests {
         Ok(())
     }
 
-    #[rstest]
+    #[sinex_test]
     #[case("short", 5)]
     #[case("medium", 50)]
     #[case("long", 200)]
-    #[tokio::test]
     async fn test_string_length_variations(
         #[case] name: &str,
         #[case] length: usize,

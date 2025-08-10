@@ -55,6 +55,9 @@ regex = "1.10"
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }
 sinex-core = { path = "../../lib/sinex-core", features = ["macros", "telemetry"] }
 
+[dev-dependencies]
+sinex-test-utils = { path = "../../lib/sinex-test-utils" }
+
 [features]
 default = []
 metrics = []

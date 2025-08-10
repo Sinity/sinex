@@ -223,10 +223,11 @@ pub struct DiagnosticsReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use sinex_core::db::models::RawEvent;
 
-    #[tokio::test]
-    async fn test_enhanced_event_sender() {
+    #[sinex_test]
+    async fn test_enhanced_event_sender() -> color_eyre::eyre::Result<()> {
         let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
@@ -254,10 +255,11 @@ mod tests {
         assert_eq!(metrics.send_successes, 1);
         assert_eq!(metrics.send_failures, 0);
         assert_eq!(metrics.success_rate, 1.0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_enhanced_sender_timeout() {
+    #[sinex_test]
+    async fn test_enhanced_sender_timeout() -> color_eyre::eyre::Result<()> {
         let (tx, _rx) = mpsc::channel::<RawEvent>(1);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
@@ -285,5 +287,6 @@ mod tests {
         // Check that failure was recorded
         let metrics = sender.get_performance_metrics();
         assert!(metrics.send_failures > 0);
+        Ok(())
     }
 }

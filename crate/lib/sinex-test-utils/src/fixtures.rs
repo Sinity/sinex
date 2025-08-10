@@ -1482,12 +1482,13 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_fixture_registry_singleton() {
+    #[sinex_test]
+    async fn test_fixture_registry_singleton() -> color_eyre::eyre::Result<()> {
         // Registry should be singleton
         let registry1 = get_registry().await;
         let registry2 = get_registry().await;
 
         assert!(Arc::ptr_eq(&registry1, &registry2));
+        Ok(())
     }
 }

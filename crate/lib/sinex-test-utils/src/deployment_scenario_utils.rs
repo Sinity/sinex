@@ -1182,18 +1182,19 @@ mod tests {
     use super::*;
     use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_compatibility_tester_creation() {
+    #[sinex_test]
+    async fn test_compatibility_tester_creation() -> color_eyre::eyre::Result<()> {
         let tester = ConfigCompatibilityTester::new().await.unwrap();
         assert!(!tester.test_scenarios.is_empty());
 
         let scenario_names = tester.list_scenarios();
         assert!(scenario_names.contains(&"development_environment"));
         assert!(scenario_names.contains(&"production_environment"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_development_scenario() {
+    #[sinex_test]
+    async fn test_development_scenario() -> color_eyre::eyre::Result<()> {
         let tester = ConfigCompatibilityTester::new().await.unwrap();
         let scenario = tester.get_scenario("development_environment").unwrap();
 
@@ -1203,6 +1204,7 @@ mod tests {
         );
         assert!(scenario.expected_outcome.should_succeed);
         assert!(!scenario.validation_steps.is_empty());
+        Ok(())
     }
 }
 
