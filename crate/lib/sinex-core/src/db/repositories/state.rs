@@ -1166,8 +1166,8 @@ pub struct SystemHealthReport {
 mod tests {
     use super::*;
     use crate::repositories::DbPoolExt;
-
     use crate::types::{Id, Ulid};
+    use sinex_test_utils::sinex_test;
     use chrono::Utc;
     use color_eyre::eyre::Result;
     use serde_json::json;

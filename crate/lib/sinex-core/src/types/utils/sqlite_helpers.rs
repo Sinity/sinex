@@ -124,6 +124,7 @@ impl<T, E: std::fmt::Display> QueryResultExt<T> for std::result::Result<T, E> {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_sqlite_connection_helpers() -> Result<()> {

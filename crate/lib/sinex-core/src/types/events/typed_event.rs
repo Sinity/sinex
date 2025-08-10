@@ -243,6 +243,7 @@ fn get_ingestor_version() -> Option<String> {
 mod tests {
     use super::*;
     use crate::types::events::payloads::filesystem::FileCreatedPayload;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_event_creation() {

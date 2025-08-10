@@ -80,6 +80,7 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
 mod tests {
     use super::*;
     use color_eyre::eyre::Result;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_timestamp_conversions() -> Result<()> {

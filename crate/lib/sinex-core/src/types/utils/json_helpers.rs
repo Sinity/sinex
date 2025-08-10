@@ -116,6 +116,7 @@ pub fn to_json_value<T: serde::Serialize>(
 mod tests {
     use super::*;
     use serde::{Deserialize, Serialize};
+    use sinex_test_utils::sinex_test;
 
     #[derive(Debug, Serialize, Deserialize, PartialEq)]
     struct TestStruct {

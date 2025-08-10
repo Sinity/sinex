@@ -190,6 +190,7 @@ pub fn format_validation_errors_with_context(errors: &ValidationErrors, context:
 mod tests {
     use super::*;
     use color_eyre::eyre::Result;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_database_config_validation() -> Result<()> {

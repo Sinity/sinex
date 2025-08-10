@@ -368,6 +368,7 @@ pub fn check_json_expansion(value: &Value) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_path_validation() -> Result<()> {

@@ -83,6 +83,7 @@ impl SeaQueryUlidExt for Expr {
 mod tests {
     use super::*;
     use sea_query::{Alias, PostgresQueryBuilder, Query};
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_eq_ulid() {

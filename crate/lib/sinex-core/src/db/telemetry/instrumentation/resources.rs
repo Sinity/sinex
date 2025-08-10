@@ -298,6 +298,7 @@ pub fn create_system_metrics() -> Arc<ResourceMetrics> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_resource_metrics_creation() {

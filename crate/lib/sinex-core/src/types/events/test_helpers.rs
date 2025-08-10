@@ -183,6 +183,7 @@ mod tests {
     use schemars::JsonSchema;
     use serde::{Deserialize, Serialize};
     use serde_json::json;
+    use sinex_test_utils::sinex_test;
     use sinex_macros::EventPayload;
 
     #[derive(Debug, Serialize, Deserialize, JsonSchema, EventPayload)]
