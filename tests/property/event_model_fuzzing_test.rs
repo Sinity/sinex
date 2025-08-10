@@ -887,7 +887,7 @@ mod additional_tests {
     }
 
     #[sinex_test]
-    fn test_panic_safety_with_catch_unwind() {
+    fn test_panic_safety_with_catch_unwind() -> color_eyre::eyre::Result<()> {
         // Test that even if there were a panic, it would be caught
         let result = panic::catch_unwind(|| {
             let mut event = RawEvent::schemaless(
@@ -916,5 +916,6 @@ mod additional_tests {
 
         // This should not panic
         assert!(result.is_ok());
+        Ok(())
     }
 }

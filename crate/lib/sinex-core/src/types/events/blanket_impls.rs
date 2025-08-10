@@ -191,8 +191,8 @@ macro_rules! wrapped_payload {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sinex_test_utils::sinex_test;
     use crate::events::payloads::filesystem::FileCreatedPayload;
+    use sinex_test_utils::sinex_test;
 
     #[sinex_test]
     fn test_option_payload() -> Result<(), SinexError> {

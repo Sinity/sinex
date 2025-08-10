@@ -21,7 +21,7 @@ use sinex_test_utils::{sinex_test, TestContext};
 // =============================================================================
 
 #[sinex_test]
-fn test_ulid_generation_properties() {
+fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         count in 1..1000usize
     )| {
@@ -42,10 +42,11 @@ fn test_ulid_generation_properties() {
             prop_assert!(window[0] <= window[1]);
         }
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_ulid_string_properties() {
+fn test_ulid_string_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         ulid_str in "[0-9A-Z]{26}"
     )| {
@@ -57,10 +58,11 @@ fn test_ulid_string_properties() {
             prop_assert_eq!(ulid.to_string(), ulid_str);
         }
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_ulid_ordering_transitivity() {
+fn test_ulid_ordering_transitivity() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         count in 3..100usize,
         delay_ms in 0..10u64
@@ -80,6 +82,7 @@ fn test_ulid_ordering_transitivity() {
             }
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -123,7 +126,7 @@ prop_compose! {
 }
 
 #[sinex_test]
-fn test_event_creation_properties() {
+fn test_event_creation_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         source in arb_event_source(),
         event_type in arb_event_type(),
@@ -148,10 +151,11 @@ fn test_event_creation_properties() {
         prop_assert!(event.ts_ingest <= now);
         prop_assert!(event.ts_ingest > now - chrono::Duration::minutes(1));
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_json_serialization_properties() {
+fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         source in "[a-zA-Z0-9_-]{1,20}",
         event_type in "[a-zA-Z0-9_.]{1,30}",
@@ -189,6 +193,7 @@ fn test_event_json_serialization_properties() {
         prop_assert_eq!(deserialized_event.payload, original_event.payload);
         prop_assert_eq!(deserialized_event.id, original_event.id);
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -196,7 +201,7 @@ fn test_event_json_serialization_properties() {
 // =============================================================================
 
 #[sinex_test]
-fn test_event_source_properties() {
+fn test_event_source_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         source_str in ".*"
     )| {
@@ -213,10 +218,11 @@ fn test_event_source_properties() {
         let static_source = EventSource::new(&source_str);
         prop_assert_eq!(source.clone(), static_source);
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_type_properties() {
+fn test_event_type_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         type_str in ".*"
     )| {
@@ -229,10 +235,11 @@ fn test_event_type_properties() {
         let cloned = event_type.clone();
         prop_assert_eq!(event_type, cloned);
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_hostname_properties() {
+fn test_hostname_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         hostname_str in "[a-zA-Z0-9._-]{1,100}"
     )| {
@@ -245,6 +252,7 @@ fn test_hostname_properties() {
         let cloned = hostname.clone();
         prop_assert_eq!(hostname, cloned);
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -252,7 +260,7 @@ fn test_hostname_properties() {
 // =============================================================================
 
 #[sinex_test]
-fn test_generic_id_properties() {
+fn test_generic_id_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         count in 1..1000usize
     )| {
@@ -284,10 +292,11 @@ fn test_generic_id_properties() {
             prop_assert!(window[0] <= window[1]);
         }
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_id_ulid_conversion_properties() {
+fn test_id_ulid_conversion_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         count in 1..100usize
     )| {
@@ -303,6 +312,7 @@ fn test_id_ulid_conversion_properties() {
             prop_assert_eq!(original_id.to_string(), ulid.to_string());
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -363,7 +373,7 @@ async fn test_batch_insertion_properties(ctx: TestContext) -> color_eyre::eyre::
 // =============================================================================
 
 #[sinex_test]
-fn test_unicode_handling_properties() {
+fn test_unicode_handling_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         unicode_source in "\\PC*",  // Any valid Unicode except control characters
         unicode_type in "\\PC*",
@@ -395,10 +405,11 @@ fn test_unicode_handling_properties() {
         prop_assert_eq!(deserialized.source.as_str(), unicode_source.as_str());
         prop_assert_eq!(deserialized.event_type.as_str(), unicode_type.as_str());
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_large_payload_properties() {
+fn test_large_payload_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         string_size in 1000..100000usize,
         array_size in 100..10000usize
@@ -441,10 +452,11 @@ fn test_large_payload_properties() {
         let deserialize_result = serde_json::from_str::<DbEvent>(&json_str);
         prop_assert!(deserialize_result.is_ok());
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_concurrent_operation_properties() {
+fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         thread_count in 2..10usize,
         operations_per_thread in 10..100usize
@@ -485,6 +497,7 @@ fn test_concurrent_operation_properties() {
             }
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -492,7 +505,7 @@ fn test_concurrent_operation_properties() {
 // =============================================================================
 
 #[sinex_test]
-fn test_validation_properties() {
+fn test_validation_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         source_len in 0..1000usize,
         type_len in 0..1000usize
@@ -517,6 +530,7 @@ fn test_validation_properties() {
         prop_assert_eq!(event.source.as_str().len(), source_len);
         prop_assert_eq!(event.event_type.as_str().len(), type_len);
     });
+    Ok(())
 }
 
 // =============================================================================

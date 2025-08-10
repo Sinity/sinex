@@ -246,7 +246,7 @@ mod tests {
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_event_creation() {
+    fn test_event_creation() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
@@ -260,10 +260,11 @@ mod tests {
         assert_eq!(event.event_type, FileCreatedPayload::EVENT_TYPE);
         assert_eq!(event.payload, payload);
         assert!(event.id.is_none());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_event_to_raw_conversion() {
+    fn test_event_to_raw_conversion() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
@@ -280,10 +281,11 @@ mod tests {
         // Verify payload is correctly serialized
         let payload_json = serde_json::to_value(&payload).unwrap();
         assert_eq!(raw_event.payload, payload_json);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_raw_to_event_conversion() {
+    fn test_raw_to_event_conversion() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
@@ -298,10 +300,11 @@ mod tests {
         assert_eq!(converted_event.payload, payload);
         assert_eq!(converted_event.source, event.source);
         assert_eq!(converted_event.event_type, event.event_type);
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_raw_to_event_conversion_type_mismatch() {
+    fn test_raw_to_event_conversion_type_mismatch() -> color_eyre::eyre::Result<()> {
         use crate::types::events::payloads::filesystem::FileDeletedPayload;
 
         let payload = FileCreatedPayload {
@@ -317,10 +320,11 @@ mod tests {
         // Try to convert to wrong type
         let result: Result<Event<FileDeletedPayload>, _> = Event::try_from(raw_event);
         assert!(result.is_err());
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_builder_methods() {
+    fn test_builder_methods() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
             path: "/test/file.txt".into(),
             size: 1024,
@@ -342,5 +346,6 @@ mod tests {
         assert_eq!(event.payload_schema_id, Some(schema_id));
         assert_eq!(event.associated_blob_ids, Some(vec![blob_id]));
         assert_eq!(event.anchor_byte, Some(42));
+        Ok(())
     }
 }

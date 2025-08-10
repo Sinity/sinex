@@ -3,8 +3,7 @@
 //! Tests that verify automaton processing, state management, and event handling properties
 //! for the modern NATS-based StatefulStreamProcessor implementations.
 
-use chrono::{DateTime, Utc};
-use color_eyre::eyre::Result;
+use chrono::Utc;
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
@@ -78,12 +77,12 @@ fn create_test_event(source: &str, event_type: &str, payload: serde_json::Value)
 }
 
 /// Test checkpoint handling properties
-proptest! {
-    #[sinex_test]
-    fn test_checkpoint_properties(
+#[sinex_test]
+fn test_checkpoint_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         message_count in 0u64..10000u64,
         timestamp_offset in 0i64..86400i64,
-    ) {
+    )| {
         // Test different checkpoint types
         let checkpoints = vec![
             Checkpoint::None,
@@ -111,18 +110,19 @@ proptest! {
             // Property: Checkpoint descriptions should be non-empty
             prop_assert!(!checkpoint.description().is_empty());
         }
-    }
+    });
+    Ok(())
 }
 
 /// Test scan args validation properties
-proptest! {
-    #[sinex_test]
-    fn test_scan_args_properties(
+#[sinex_test]
+fn test_scan_args_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         max_events in 0u64..10000u64,
         dry_run in any::<bool>(),
         interactive in any::<bool>(),
         skip_duplicates in any::<bool>(),
-    ) {
+    )| {
         let args = ScanArgs {
             targets: vec!["test-target".to_string()],
             dry_run,
@@ -144,12 +144,13 @@ proptest! {
 
         // Property: Validation should be consistent
         prop_assert!(args.max_events >= 0);
-    }
+    });
+    Ok(())
 }
 
 /// Test processor type consistency
 #[sinex_test]
-fn test_processor_type_properties() {
+fn test_processor_type_properties() -> color_eyre::eyre::Result<()> {
     let types = vec![ProcessorType::Ingestor, ProcessorType::Automaton];
 
     for processor_type in types {
@@ -163,14 +164,15 @@ fn test_processor_type_properties() {
         let debug2 = format!("{:?}", processor_type);
         assert_eq!(debug1, debug2);
     }
+    Ok(())
 }
 
 /// Test event processing determinism (without actual scan)
-proptest! {
-    #[sinex_test]
-    fn test_event_creation_determinism(
+#[sinex_test]
+fn test_event_creation_determinism() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         events in proptest::collection::vec(arb_event_data(), 1..=20),
-    ) {
+    )| {
         // Property: Same event data should produce equivalent events
         for (source, event_type, payload) in events.iter() {
             let event1 = create_test_event(source, event_type, payload.clone());
@@ -184,13 +186,14 @@ proptest! {
             // Properties that should be the same (schemaless events have None ID)
             prop_assert_eq!(event1.id, event2.id); // Both should be None
         }
-    }
+    });
+    Ok(())
 }
 
 /// Test error handling with malformed data
-proptest! {
-    #[sinex_test]
-    fn test_error_handling_robustness(
+#[sinex_test]
+fn test_error_handling_robustness() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         malformed_payloads in proptest::collection::vec(
             prop_oneof![
                 Just(json!(null)),
@@ -202,7 +205,7 @@ proptest! {
             ],
             1..=5
         ),
-    ) {
+    )| {
         // Property: Event creation should handle malformed payloads gracefully
         for payload in malformed_payloads.iter() {
             let event = create_test_event("test-source", "test.event", payload.clone());
@@ -216,15 +219,16 @@ proptest! {
             let serialized = serde_json::to_string(&event);
             prop_assert!(serialized.is_ok());
         }
-    }
+    });
+    Ok(())
 }
 
 /// Test checkpoint description consistency
-proptest! {
-    #[sinex_test]
-fn test_checkpoint_description_properties(
+#[sinex_test]
+fn test_checkpoint_description_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         message_count in 0u64..1000u64,
-    ) {
+    )| {
         let checkpoint1 = Checkpoint::Internal {
             event_id: sinex_core::types::ulid::Ulid::new(),
             message_count,
@@ -252,15 +256,16 @@ fn test_checkpoint_description_properties(
         let desc1 = checkpoint1.description().to_lowercase();
         let desc4 = checkpoint4.description().to_lowercase();
         prop_assert!(desc1.contains("internal") == desc4.contains("internal"));
-    }
+    });
+    Ok(())
 }
 
 /// Test time horizon property consistency
-proptest! {
-    #[sinex_test]
-fn test_time_horizon_behavior_properties(
+#[sinex_test]
+fn test_time_horizon_behavior_properties() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         hours_forward in 1u32..24u32, // 1 hour to 1 day
-    ) {
+    )| {
         let end_time = Utc::now() + chrono::Duration::hours(hours_forward as i64);
 
         let horizons = vec![
@@ -299,16 +304,17 @@ fn test_time_horizon_behavior_properties(
                 // Note: Can't test equality directly due to potential precision issues
             }
         }
-    }
+    });
+    Ok(())
 }
 
 /// Test automation-related data structure consistency
-proptest! {
-    #[sinex_test]
-fn test_automation_data_structure_consistency(
+#[sinex_test]
+fn test_automation_data_structure_consistency() -> color_eyre::eyre::Result<()> {
+    proptest!(|(
         event_count in 1..100usize,
         batch_size in 1..50usize,
-    ) {
+    )| {
         // Property: Event batches should be processable
         let mut events = Vec::new();
 
@@ -341,5 +347,6 @@ fn test_automation_data_structure_consistency(
             prop_assert_eq!(event.event_type.as_str(), "batch.test");
             prop_assert!(event.payload.is_object());
         }
-    }
+    });
+    Ok(())
 }

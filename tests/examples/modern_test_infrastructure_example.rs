@@ -13,7 +13,7 @@ use tracing_test::traced_test;
 #[case("fs-watcher", "file.deleted", "/tmp/test.txt")]
 #[case("terminal", "command.executed", "ls -la")]
 #[case("desktop", "window.focused", "Firefox")]
-#[tokio::test]
+#[sinex_test]
 #[traced_test]
 async fn test_event_creation_parameterized(
     #[case] source: &str,
@@ -59,7 +59,7 @@ async fn test_event_creation_parameterized(
 
 /// Example of fixture-based testing
 #[rstest]
-#[tokio::test]
+#[sinex_test]
 async fn test_with_fixtures(
     test_sources: Vec<&'static str>,
     test_event_types: Vec<(&'static str, &'static str)>,
@@ -85,7 +85,7 @@ async fn test_with_fixtures(
 }
 
 /// Example of snapshot testing with insta
-#[tokio::test]
+#[sinex_test]
 async fn test_complex_event_snapshot() {
     let ctx = TestContext::new().await.expect("Failed to create test context");
     
@@ -119,7 +119,7 @@ async fn test_complex_event_snapshot() {
 #[case::created("file.created", true)]
 #[case::modified("file.modified", false)]
 #[case::deleted("file.deleted", true)]
-#[tokio::test]
+#[sinex_test]
 #[traced_test]
 async fn test_filesystem_event_handling(
     #[case] event_type: &str,
@@ -159,7 +159,7 @@ mod snapshot_organization {
     use super::*;
     
     /// Example showing how to organize snapshots by feature
-    #[tokio::test]
+    #[sinex_test]
     async fn test_terminal_command_snapshots() {
         let ctx = TestContext::new().await.expect("Failed to create test context");
         

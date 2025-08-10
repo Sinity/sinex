@@ -149,7 +149,7 @@ fn arb_event_source_type() -> impl Strategy<Value = (String, String)> {
 }
 
 #[sinex_test]
-fn test_json_validation_normal_payloads() {
+fn test_json_validation_normal_payloads() -> color_eyre::eyre::Result<()> {
     proptest!(|(payload in arb_event_payload())| {
         // Validation should not panic and should return a consistent result
         let json_str = payload.to_string();
@@ -171,10 +171,11 @@ fn test_json_validation_normal_payloads() {
             }
         }
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_json_validation_security_payloads() {
+fn test_json_validation_security_payloads() -> color_eyre::eyre::Result<()> {
     proptest!(|(payload in arb_problematic_payload())| {
         // Validation should handle problematic payloads safely
         let json_str = payload.to_string();
@@ -188,10 +189,11 @@ fn test_json_validation_security_payloads() {
             }
         }
     });
+    Ok(())
 }
 
 #[sinex_test]
-fn test_json_validation_consistency() {
+fn test_json_validation_consistency() -> color_eyre::eyre::Result<()> {
     proptest!(|(payload in arb_event_payload())| {
         // Validation should be deterministic - same payload should always get same result
         let json_str = payload.to_string();
@@ -211,6 +213,7 @@ fn test_json_validation_consistency() {
             }
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -219,7 +222,7 @@ fn test_json_validation_consistency() {
 
 /// Test schema evolution and backward compatibility
 #[sinex_test]
-fn test_schema_evolution_properties() {
+fn test_schema_evolution_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         base_payload in arb_event_payload(),
         additional_fields in prop::collection::hash_map(
@@ -279,6 +282,7 @@ fn test_schema_evolution_properties() {
             }
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -287,7 +291,7 @@ fn test_schema_evolution_properties() {
 
 /// Test validation chain behavior with various inputs
 #[sinex_test]
-fn test_validation_chain_properties() {
+fn test_validation_chain_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         test_strings in prop::collection::vec(".*", 1..=10)
     )| {
@@ -313,11 +317,12 @@ fn test_validation_chain_properties() {
             }
         }
     });
+    Ok(())
 }
 
 /// Test validation chain with numeric values  
 #[sinex_test]
-fn test_validation_chain_numeric_properties() {
+fn test_validation_chain_numeric_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         test_numbers in prop::collection::vec(any::<i64>(), 1..=10)
     )| {
@@ -339,6 +344,7 @@ fn test_validation_chain_numeric_properties() {
             }
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -422,7 +428,7 @@ async fn test_schema_persistence_properties(ctx: TestContext) -> color_eyre::eyr
 // =============================================================================
 
 #[sinex_test]
-fn test_json_validation_edge_cases() {
+fn test_json_validation_edge_cases() -> color_eyre::eyre::Result<()> {
     let long_field = "x".repeat(1000);
 
     let edge_cases = vec![
@@ -451,6 +457,7 @@ fn test_json_validation_edge_cases() {
         // The main property we're testing is that it doesn't crash
         assert!(true);
     }
+    Ok(())
 }
 
 // =============================================================================
@@ -494,7 +501,7 @@ async fn test_json_validation_database_integration(
 // =============================================================================
 
 #[sinex_test]
-fn test_validation_performance_properties() {
+fn test_validation_performance_properties() -> color_eyre::eyre::Result<()> {
     proptest!(|(
         payload_sizes in prop::collection::vec(100usize..=10000, 1..=10),
         validation_count in 10usize..=100
@@ -535,6 +542,7 @@ fn test_validation_performance_properties() {
             }
         }
     });
+    Ok(())
 }
 
 // =============================================================================
@@ -546,7 +554,7 @@ mod unit_tests {
     use super::*;
 
     #[sinex_test]
-    fn test_validator_with_real_events() {
+    fn test_validator_with_real_events() -> color_eyre::eyre::Result<()> {
         // Test JSON validation with realistic event payloads
 
         let valid_payload = json!({
@@ -576,10 +584,11 @@ mod unit_tests {
         match invalid_result {
             Ok(_) | Err(_) => {} // Any result is acceptable for testing
         }
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_payload_generators() {
+    fn test_payload_generators() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
 
         // Test normal payload generator
@@ -598,10 +607,11 @@ mod unit_tests {
             .unwrap()
             .current();
         assert!(problematic.is_object()); // All problematic payloads are objects
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_source_type_generator() {
+    fn test_source_type_generator() -> color_eyre::eyre::Result<()> {
         let mut runner = proptest::test_runner::TestRunner::deterministic();
         let (source, event_type) = arb_event_source_type()
             .new_tree(&mut runner)
@@ -612,10 +622,11 @@ mod unit_tests {
         assert!(!event_type.is_empty());
         assert!(source.len() >= 3); // 1 + 2 minimum
         assert!(event_type.len() >= 3); // 1 + 2 minimum
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_modern_validation_basic_functionality() {
+    fn test_modern_validation_basic_functionality() -> color_eyre::eyre::Result<()> {
         // Test basic validation concepts using simple logic
         let valid_name = "Alice";
         let valid_age = 30u32;
@@ -632,10 +643,11 @@ mod unit_tests {
 
         assert!(invalid_name.is_empty()); // Should fail length check
         assert!(invalid_age < 18); // Should fail age check
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_validation_error_types() {
+    fn test_validation_error_types() -> color_eyre::eyre::Result<()> {
         // Test different validation scenarios
         let empty_value = "";
         let valid_value = "test";
@@ -644,5 +656,6 @@ mod unit_tests {
         assert!(empty_value.is_empty()); // Should fail validation
         assert!(!valid_value.is_empty()); // Should pass validation
         assert!(valid_value.len() >= 1); // Should meet minimum length
+        Ok(())
     }
 }

@@ -86,38 +86,45 @@ async fn test_event_queries(_ctx: TestContext) -> color_eyre::eyre::Result<()> {
 // EDGE CASES AND SPECIAL CHARACTERS
 // =============================================================================
 
-#[rstest]
-#[case("empty_payload", json!({}))]
-#[case("null_values", json!({"value": null, "data": null}))]
-#[case("unicode_text", json!({"text": "Hello 世界 🌍", "path": "/tmp/test-α-β-γ.txt"}))]
-#[case("special_chars", json!({"text": "quotes: \"double\" 'single'", "newlines": "line1\nline2\ttab"}))]
-#[case("large_payload", json!({"data": "x".repeat(100_000)}))]
-#[case("deep_nesting", {
-    let mut nested = json!("value");
-    for _ in 0..10 {
-        nested = json!({"nested": nested});
+#[sinex_test]
+async fn test_edge_case_payloads() -> color_eyre::eyre::Result<()> {
+    let test_cases = vec![
+        ("empty_payload", json!({})),
+        ("null_values", json!({"value": null, "data": null})),
+        (
+            "unicode_text",
+            json!({"text": "Hello 世界 🌍", "path": "/tmp/test-α-β-γ.txt"}),
+        ),
+        (
+            "special_chars",
+            json!({"text": "quotes: \"double\" 'single'", "newlines": "line1\nline2\ttab"}),
+        ),
+        ("large_payload", json!({"data": "x".repeat(100_000)})),
+        ("deep_nesting", {
+            let mut nested = json!("value");
+            for _ in 0..10 {
+                nested = json!({"nested": nested});
+            }
+            nested
+        }),
+    ];
+
+    for (test_name, payload) in test_cases {
+        let ctx = TestContext::new().await?;
+
+        // Each edge case should persist correctly
+        let event = ctx
+            .create_test_event("edge-test", test_name, payload.clone())
+            .await?;
+
+        // Verify payload preserved exactly
+        assert_eq!(event.payload, payload);
+
+        // Retrieve and verify
+        let event_id = event.id.unwrap();
+        let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
+        assert_eq!(retrieved.payload, payload);
     }
-    nested
-})]
-#[tokio::test]
-async fn test_edge_case_payloads(
-    #[case] test_name: &str,
-    #[case] payload: serde_json::Value,
-) -> color_eyre::eyre::Result<()> {
-    let ctx = TestContext::new().await?;
-
-    // Each edge case should persist correctly
-    let event = ctx
-        .create_test_event("edge-test", test_name, payload.clone())
-        .await?;
-
-    // Verify payload preserved exactly
-    assert_eq!(event.payload, payload);
-
-    // Retrieve and verify
-    let event_id = event.id.unwrap();
-    let retrieved = ctx.pool.events().get_by_id(event_id).await?.unwrap();
-    assert_eq!(retrieved.payload, payload);
 
     Ok(())
 }

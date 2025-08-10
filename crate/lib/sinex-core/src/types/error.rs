@@ -1134,8 +1134,8 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_channel_error_conversions() {
+    #[sinex_test]
+    async fn test_channel_error_conversions() -> color_eyre::eyre::Result<()> {
         use tokio::sync::mpsc;
         use tokio::sync::oneshot;
 
@@ -1156,6 +1156,7 @@ mod tests {
         fn test_conversion(err: oneshot::error::RecvError) -> SinexError {
             err.into()
         }
+        Ok(())
     }
 
     #[sinex_test]

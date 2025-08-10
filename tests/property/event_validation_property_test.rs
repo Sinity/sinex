@@ -207,7 +207,7 @@ fn validate_event(event: &RawEvent) -> std::result::Result<(), String> {
 // =============================================================================
 
 #[sinex_test]
-fn test_valid_events_pass_validation() {
+fn test_valid_events_pass_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         #![proptest_config(ProptestConfig::with_cases(1000))]
 
@@ -220,10 +220,11 @@ fn test_valid_events_pass_validation() {
             prop_assert!(result.is_ok(), "Generated event should pass validation: {:?}", result);
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_empty_source_fails_validation() {
+fn test_empty_source_fails_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_empty_source_fails_validation(
             event in empty_source_event()
@@ -238,10 +239,11 @@ fn test_empty_source_fails_validation() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_field_constraints() {
+fn test_event_field_constraints() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_event_field_constraints(
             source in "[a-z][a-z0-9_]{0,49}",
@@ -266,10 +268,11 @@ fn test_event_field_constraints() {
             prop_assert!(event.host.len() <= 255);
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_payload_size_validation() {
+fn test_payload_size_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_payload_size_validation(
             size_kb in 1usize..=1000usize // Reduced size for faster tests
@@ -299,10 +302,11 @@ fn test_payload_size_validation() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_timestamp_consistency() {
+fn test_event_timestamp_consistency() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_event_timestamp_consistency(
             event in arbitrary_event()
@@ -319,10 +323,11 @@ fn test_event_timestamp_consistency() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_uniqueness_properties() {
+fn test_event_uniqueness_properties() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_event_uniqueness(
             events in proptest::collection::vec(arbitrary_event(), 2..100)
@@ -341,10 +346,11 @@ fn test_event_uniqueness_properties() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_source_event_id_validation() {
+fn test_source_event_id_validation() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_source_event_id_validation(
             parent_events in proptest::collection::vec(Just(()).prop_map(|_| Ulid::new()), 0..10),
@@ -359,10 +365,11 @@ fn test_source_event_id_validation() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_json_schema_compatibility() {
+fn test_json_schema_compatibility() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_json_schema_compatibility(
             event in arbitrary_event()
@@ -377,10 +384,11 @@ fn test_json_schema_compatibility() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_event_metadata_fields() {
+fn test_event_metadata_fields() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_event_metadata_fields(
             event in metadata_rich_events()
@@ -396,10 +404,11 @@ fn test_event_metadata_fields() {
             }
         }
     }
+    Ok(())
 }
 
 #[sinex_test]
-fn test_boundary_condition_handling() {
+fn test_boundary_condition_handling() -> color_eyre::eyre::Result<()> {
     proptest::proptest! {
         fn property_boundary_condition_handling(
             event in boundary_condition_events()
@@ -417,6 +426,7 @@ fn test_boundary_condition_handling() {
                 .expect("Boundary payload should be serializable");
         }
     }
+    Ok(())
 }
 
 // =============================================================================

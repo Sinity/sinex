@@ -86,7 +86,7 @@ mod tests {
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_eq_ulid() {
+    fn test_eq_ulid() -> color_eyre::eyre::Result<()> {
         let ulid = Ulid::new();
         let query = Query::select()
             .from(Alias::new("events"))
@@ -95,10 +95,11 @@ mod tests {
 
         let (sql, _) = query.build(PostgresQueryBuilder);
         assert!(sql.contains("WHERE"));
+        Ok(())
     }
 
     #[sinex_test]
-    fn test_in_ulids() {
+    fn test_in_ulids() -> color_eyre::eyre::Result<()> {
         let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
         let query = Query::select()
             .from(Alias::new("events"))
@@ -107,5 +108,6 @@ mod tests {
 
         let (sql, _) = query.build(PostgresQueryBuilder);
         assert!(sql.contains("IN"));
+        Ok(())
     }
 }
