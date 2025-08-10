@@ -4,8 +4,8 @@
 //! with the database schema registry.
 
 use crate::IngestdResult;
-use sinex_types::events::schema_registry::{generate_all_schemas, get_all_payloads};
-use sinex_types::ulid::Ulid;
+use sinex_core::types::events::schema_registry::{generate_all_schemas, get_all_payloads};
+use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use tracing::{debug, info};
@@ -261,9 +261,10 @@ pub fn list_discovered_payloads() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_content_hash() {
+    #[sinex_test]
+    fn test_content_hash() -> color_eyre::eyre::Result<()> {
         let schema = serde_json::json!({
             "type": "object",
             "properties": {
@@ -274,5 +275,6 @@ mod tests {
         let hash = compute_content_hash(&schema);
         assert!(!hash.is_empty());
         assert_eq!(hash.len(), 64); // SHA-256 produces 32 bytes = 64 hex chars
+        Ok(())
     }
 }

@@ -63,7 +63,7 @@ pub struct BenchmarkRun {
 pub struct BenchmarkResult {
     /// Benchmark name (e.g., "bench_insert_event")
     pub name: String,
-    /// Suite/module name (e.g., "sinex_db::events")
+    /// Suite/module name (e.g., "sinex_core::db::events")
     pub suite: String,
     /// Dataset used (e.g., "small", "medium", "large")
     pub dataset: String,
@@ -456,6 +456,7 @@ fn read_divan_results() -> Result<Vec<BenchmarkResult>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use crate::sinex_test;
 
     #[sinex_test]

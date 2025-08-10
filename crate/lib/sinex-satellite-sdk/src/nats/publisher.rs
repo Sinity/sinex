@@ -8,8 +8,9 @@ use super::{
 use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
-use sinex_db::models::{Event, Provenance};
-use sinex_types::ulid::Ulid;
+use sinex_core::db::models::{Provenance, RawEvent};
+use sinex_core::types::domain::ServiceName;
+use sinex_core::types::ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, error, warn};
@@ -51,9 +52,8 @@ impl NatsPublisher {
     }
 
     /// Publish a raw event
-    pub async fn publish_event(&self, event: &Event) -> Result<PublishAck> {
-        let subject =
-            StreamManager::event_subject(event.source.as_str(), event.event_type.as_str());
+    pub async fn publish_event(&self, event: &RawEvent) -> Result<PublishAck> {
+        let subject = StreamManager::event_subject(&event.source, &event.event_type);
 
         // Create headers
         let mut headers = HeaderMap::new();
@@ -154,7 +154,8 @@ impl NatsPublisher {
         value: f64,
         labels: Option<serde_json::Value>,
     ) -> Result<PublishAck> {
-        let subject = StreamManager::metrics_subject(component, metric_type);
+        let service_name = ServiceName::from(component);
+        let subject = StreamManager::metrics_subject(&service_name, metric_type);
 
         let metric = serde_json::json!({
             "component": component,
@@ -276,20 +277,22 @@ impl NatsPublisher {
 mod tests {
     use super::*;
     use crate::nats::{client::NatsClient, config::NatsConfig};
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server
-    async fn test_publisher_creation() {
+    async fn test_publisher_creation() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config.clone()).await.unwrap();
         let jetstream = JetStream::new(&client, config.jetstream).await.unwrap();
 
         let publisher = NatsPublisher::new(jetstream);
         assert_eq!(publisher.buffer_size().await, 0);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_metric_publishing() {
+    #[sinex_test]
+    async fn test_metric_publishing() -> color_eyre::eyre::Result<()> {
         // This test doesn't require a real NATS server
         let metric = serde_json::json!({
             "component": "test",
@@ -302,5 +305,6 @@ mod tests {
         // Just verify serialization works
         let serialized = serde_json::to_vec(&metric).unwrap();
         assert!(!serialized.is_empty());
+        Ok(())
     }
 }

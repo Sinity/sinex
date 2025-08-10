@@ -2,12 +2,12 @@
 
 use crate::error::ServiceResult;
 use serde_json::json;
-use sinex_db::models::Entity as DbEntity;
-use sinex_db::models::Event;
-use sinex_db::repositories::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
-use sinex_db::DbPool;
-use sinex_types::ulid::Ulid;
-use sinex_types::Id;
+use sinex_core::db::models::Entity as DbEntity;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
+use sinex_core::db::DbPool;
+use sinex_core::types::ulid::Ulid;
+use sinex_core::types::Id;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -23,7 +23,7 @@ impl PkmService {
     /// Create a note annotation on an event with source material tracking
     pub async fn create_note(
         &self,
-        event_id: Id<Event>,
+        event_id: Id<RawEvent>,
         content: &str,
         tags: Vec<String>,
         created_by: &str,
@@ -251,7 +251,7 @@ impl PkmService {
         mime_type: Option<&str>,
     ) -> ServiceResult<()> {
         use sha2::{Digest, Sha256};
-        use sinex_db::models::Blob;
+        use sinex_core::db::models::Blob;
 
         let blake3_checksum = blake3::hash(content).to_hex().to_string();
         let sha256_checksum = format!("{:x}", Sha256::digest(content));

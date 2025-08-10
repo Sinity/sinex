@@ -11,12 +11,13 @@
 //! This test suite verifies complete data flows from event capture through
 //! final processing, ensuring data integrity and correct processing semantics.
 
+use color_eyre::eyre::Result;
 use chrono::{Duration, Utc};
 use futures::future::join_all;
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};

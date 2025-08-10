@@ -1,7 +1,6 @@
 //! RPC Dispatcher - Unified StatefulStreamProcessor implementation
 
 use async_trait::async_trait;
-use camino::Utf8PathBuf;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
@@ -45,7 +44,11 @@ impl RpcDispatcherProcessor {
 impl StatefulStreamProcessor for RpcDispatcherProcessor {
     type Config = RpcDispatcherConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing RPC dispatcher processor");
         self.context = Some(ctx);
         Ok(())

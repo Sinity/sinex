@@ -6,12 +6,13 @@
 //! - System health monitoring
 //! - Processor lifecycle management
 
+use color_eyre::eyre::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
-use sinex_db::repositories::{DbPoolExt, checkpoints::CheckpointInput, state::{NewOperation, OperationType, OperationResult}};
+use sinex_core::db::repositories::{DbPoolExt, checkpoints::CheckpointInput, state::{NewOperation, OperationType, OperationResult}};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::ProcessorName;
-use sinex_types::Id;
+use sinex_core::types::domain::ProcessorName;
+use sinex_core::types::Id;
 
 #[sinex_test]
 async fn test_checkpoint_operation_consistency(ctx: TestContext) -> Result<()> {

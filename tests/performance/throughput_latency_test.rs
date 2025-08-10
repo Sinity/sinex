@@ -4,11 +4,12 @@
 // under various conditions. These tests establish performance baselines and verify
 // that the system meets performance requirements.
 
+use color_eyre::eyre::Result;
 use chrono::{Duration, Utc};
 use redis::cmd;
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -131,7 +132,7 @@ async fn test_event_ingestion_throughput(ctx: TestContext) -> color_eyre::eyre::
 
             let operation_start = Instant::now();
 
-            match sinex_db::insert_event_with_validator(pool, &event, None).await {
+            match sinex_core::db::insert_event_with_validator(pool, &event, None).await {
                 Ok(_) => {
                     batch_success += 1;
                     metrics.record_operation(operation_start.elapsed(), true);
@@ -206,7 +207,7 @@ async fn test_event_ingestion_latency_scaling(ctx: TestContext) -> color_eyre::e
 
             let operation_start = Instant::now();
 
-            match sinex_db::insert_event_with_validator(pool, &event, None).await {
+            match sinex_core::db::insert_event_with_validator(pool, &event, None).await {
                 Ok(_) => {
                     metrics.record_operation(operation_start.elapsed(), true);
                 }
@@ -273,7 +274,7 @@ async fn test_database_query_performance(ctx: TestContext) -> color_eyre::eyre::
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
         );
-        sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
     }
 
     // Test different query patterns
@@ -442,7 +443,7 @@ async fn test_concurrent_access_performance(ctx: TestContext) -> color_eyre::eyr
                                 })
                             );
 
-                            match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+                            match sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await {
                                 Ok(_) => true,
                                 Err(e) => {
                                     println!("Worker {} insert failed: {}", worker_id, e);
@@ -701,7 +702,7 @@ async fn test_end_to_end_performance(ctx: TestContext) -> color_eyre::eyre::Resu
         );
 
         // Step 2: Event ingestion
-        let ingestion_result = sinex_db::insert_event_with_validator(pool, &event, None).await;
+        let ingestion_result = sinex_core::db::insert_event_with_validator(pool, &event, None).await;
 
         // Step 3: Event verification (simulate processing)
         let verification_result = if ingestion_result.is_ok() {

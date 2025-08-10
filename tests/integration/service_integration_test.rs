@@ -13,10 +13,10 @@
 use chrono::{Duration, Utc};
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::types::domain::{EventSource, EventType};
 
 // =============================================================================
 // SERVICE INTEGRATION PATTERNS
@@ -29,10 +29,10 @@ async fn create_test_event_with_timestamp(
     event_type: &str,
     payload: serde_json::Value,
     timestamp: chrono::DateTime<Utc>,
-) -> Result<sinex_db::models::Event> {
-    let event = sinex_db::models::Event::schemaless()
-        .source(sinex_types::domain::EventSource::from(source))
-        .event_type(sinex_types::domain::EventType::from(event_type))
+) -> Result<sinex_core::db::models::Event> {
+    let event = sinex_core::db::models::Event::schemaless()
+        .source(sinex_core::types::domain::EventSource::from(source))
+        .event_type(sinex_core::types::domain::EventType::from(event_type))
         .payload(payload)
         .build()
         .with_ts_orig(Some(timestamp));

@@ -68,7 +68,7 @@
       echo "Hostname: $(hostname)"
       echo "Uptime: $(uptime)"
       echo "PostgreSQL status: $(systemctl is-active postgresql || echo 'inactive')"
-      echo "Sinex collector status: $(systemctl is-active sinex-unified-collector || echo 'inactive')"
+      echo "Sinex collector status: $(systemctl is-active sinex-ingestd || echo 'inactive')"
       
       if systemctl is-active postgresql > /dev/null; then
         echo "Database connection: $(sudo -u postgres psql -d sinex -t -c 'SELECT 1' 2>/dev/null || echo 'failed')"
@@ -103,7 +103,7 @@
   systemd.services.snapshot-readiness = {
     description = "Indicate when system is ready for snapshot";
     wantedBy = [ "multi-user.target" ];
-    after = [ "postgresql.service" "sinex-unified-collector.service" ];
+    after = [ "postgresql.service" "sinex-ingestd.service" ];
     serviceConfig = {
       Type = "oneshot";
       RemainAfterExit = true;

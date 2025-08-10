@@ -12,7 +12,7 @@
       case "$FAILURE_TYPE" in
         "kill")
           # Random service kill
-          SERVICES=("sinex-collector" "sinex-worker" "postgresql")
+          SERVICES=("sinex-ingestd" "sinex-worker" "postgresql")
           SERVICE="''${SERVICES[''$RANDOM % ''${#SERVICES[@]}]}"
           echo "Killing ''$SERVICE for ''$DURATION seconds..."
           systemctl stop "''$SERVICE"
@@ -112,7 +112,7 @@ for fd in fds:
       set -e
       
       # Check services
-      systemctl is-active sinex-collector >/dev/null
+      systemctl is-active sinex-ingestd >/dev/null
       systemctl is-active sinex-worker >/dev/null
       systemctl is-active postgresql >/dev/null
       

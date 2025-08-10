@@ -3,12 +3,16 @@
 //! This module implements the system satellite processor supporting snapshot, historical, and
 //! continuous scanning modes for system events.
 
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
 
 use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use sinex_core::types::events::{
+    Event, JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
+    SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -20,10 +24,6 @@ use sinex_satellite_sdk::{
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
     },
     SatelliteResult,
-};
-use sinex_types::events::{
-    JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
-    SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -249,13 +249,14 @@ impl SystemProcessor {
             info!("System monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event = Event::from_payload(SystemMonitoringStartedPayload {
+            let sample_event: RawEvent = Event::from_payload(SystemMonitoringStartedPayload {
                 dbus_enabled: self.config.dbus_enabled,
                 journal_enabled: self.config.journal_enabled,
                 udev_enabled: self.config.udev_enabled,
                 systemd_enabled: self.config.systemd_enabled,
                 start_time: Utc::now(),
-            });
+            })
+            .into();
 
             context.emit_event(sample_event).await?;
         }
@@ -278,11 +279,12 @@ impl SystemProcessor {
         if let Some(ref context) = self.context {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
-                let event = Event::from_payload(JournaldHistoricalPayload {
+                let event: RawEvent = Event::from_payload(JournaldHistoricalPayload {
                     source: "journal".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Journal can provide historical entries".to_string(),
-                });
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -290,11 +292,12 @@ impl SystemProcessor {
 
             // systemd can provide unit state history
             if self.config.systemd_enabled && emit_events {
-                let event = Event::from_payload(SystemdUnitsHistoricalPayload {
+                let event: RawEvent = Event::from_payload(SystemdUnitsHistoricalPayload {
                     source: "systemd".to_string(),
                     scan_type: "historical".to_string(),
                     note: "systemd can provide unit state history".to_string(),
-                });
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -302,11 +305,11 @@ impl SystemProcessor {
 
             // D-Bus and udev are typically real-time only
             if (self.config.dbus_enabled || self.config.udev_enabled) && emit_events {
-                let event = Event::from_payload(UdevDeviceHistoricalPayload {
+                let event: RawEvent = Event::from_payload(UdevDeviceHistoricalPayload {
                     sources: vec!["dbus".to_string(), "udev".to_string()],
                     scan_type: "historical".to_string(),
                     note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
-                });
+                }).into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -328,7 +331,11 @@ impl Default for SystemProcessor {
 impl StatefulStreamProcessor for SystemProcessor {
     type Config = SystemConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
@@ -449,14 +456,15 @@ impl StatefulStreamProcessor for SystemProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = Event::from_payload(SystemSnapshotPayload {
+                        let snapshot_event: RawEvent = Event::from_payload(SystemSnapshotPayload {
                             active_watchers,
                             dbus_enabled: self.config.dbus_enabled,
                             journal_enabled: self.config.journal_enabled,
                             udev_enabled: self.config.udev_enabled,
                             systemd_enabled: self.config.systemd_enabled,
                             snapshot_time: Utc::now(),
-                        });
+                        })
+                        .into();
 
                         context.emit_event(snapshot_event).await?;
                     }

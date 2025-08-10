@@ -33,8 +33,7 @@ sqlx.workspace = true
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
-sinex-types = { path = "../../lib/sinex-types" }
-sinex-db = { path = "../../lib/sinex-db" }
+sinex-core = { path = "../../lib/sinex-core" }
 
 [features]
 default = []

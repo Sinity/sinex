@@ -1,5 +1,5 @@
 # Minimal base configuration for VM tests
-{ config, pkgs, lib, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ config, pkgs, lib, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 {
   imports = [
     ./test-helpers.nix
@@ -10,7 +10,7 @@
   # Basic Sinex configuration
   services.sinex = {
     enable = true;
-    package = sinex-collector;
+    package = sinex-ingestd;
     targetUser = "test";
     
     # Disable promo worker by default (tests can enable if needed)
@@ -106,8 +106,8 @@
 
   # Package overlays
   nixpkgs.overlays = [(final: prev: {
-    sinex-unified-collector = sinex-collector;
-    sinex-promo-worker = sinex-promo-worker;
+    sinex-ingestd = sinex-ingestd;
+    sinex-gateway = sinex-gateway;
     postgresql16Packages = prev.postgresql16Packages // {
       pg_jsonschema = pg_jsonschema;
     };

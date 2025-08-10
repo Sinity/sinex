@@ -7,7 +7,11 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::{
+    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload, Event,
+    WindowManagerHistoricalPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -19,10 +23,6 @@ use sinex_satellite_sdk::{
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
     },
     SatelliteResult,
-};
-use sinex_types::events::{
-    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
-    WindowManagerHistoricalPayload,
 };
 use std::collections::HashMap;
 use std::time::Duration;
@@ -150,7 +150,8 @@ impl DesktopProcessor {
                 monitoring_active: self.clipboard_watcher.is_some(),
                 last_clipboard_change: None,  // Would need to track this
                 clipboard_content_hash: None, // Would need to hash current clipboard
-            });
+            })
+            .into();
         }
 
         if self.config.window_manager_enabled {
@@ -163,7 +164,8 @@ impl DesktopProcessor {
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
                 total_windows: 0,        // Would need to query WM
-            });
+            })
+            .into();
         }
 
         let state = DesktopState {
@@ -214,11 +216,12 @@ impl DesktopProcessor {
             info!("Desktop monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event = Event::from_payload(DesktopMonitoringStartedPayload {
+            let sample_event: RawEvent = Event::from_payload(DesktopMonitoringStartedPayload {
                 clipboard_enabled: self.config.clipboard_enabled,
                 window_manager_enabled: self.config.window_manager_enabled,
                 start_time: Utc::now(),
-            });
+            })
+            .into();
 
             context.emit_event(sample_event).await?;
         }
@@ -242,23 +245,25 @@ impl DesktopProcessor {
         if let Some(ref context) = self.context {
             // Example: emit historical desktop state events
             if self.config.clipboard_enabled && emit_events {
-                let event = Event::from_payload(ClipboardHistoricalPayload {
+                let event: RawEvent = Event::from_payload(ClipboardHistoricalPayload {
                     source: "clipboard".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for desktop events".to_string(),
-                });
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
             }
 
             if self.config.window_manager_enabled && emit_events {
-                let event = Event::from_payload(WindowManagerHistoricalPayload {
+                let event: RawEvent = Event::from_payload(WindowManagerHistoricalPayload {
                     source: "window_manager".to_string(),
                     wm_type: self.config.window_manager_type.clone(),
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for window manager events".to_string(),
-                });
+                })
+                .into();
 
                 context.emit_event(event).await?;
                 event_count += 1;
@@ -280,7 +285,11 @@ impl Default for DesktopProcessor {
 impl StatefulStreamProcessor for DesktopProcessor {
     type Config = DesktopConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
@@ -385,12 +394,14 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = Event::from_payload(DesktopSnapshotPayload {
-                            active_watchers,
-                            clipboard_enabled: self.config.clipboard_enabled,
-                            window_manager_enabled: self.config.window_manager_enabled,
-                            snapshot_time: Utc::now(),
-                        });
+                        let snapshot_event: RawEvent =
+                            Event::from_payload(DesktopSnapshotPayload {
+                                active_watchers,
+                                clipboard_enabled: self.config.clipboard_enabled,
+                                window_manager_enabled: self.config.window_manager_enabled,
+                                snapshot_time: Utc::now(),
+                            })
+                            .into();
 
                         context.emit_event(snapshot_event).await?;
                     }
@@ -606,11 +617,13 @@ impl ExplorationProvider for DesktopProcessor {
         time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
         // In a real implementation, this would compare desktop state with Sinex events
-        let (start_time, end_time) = time_range.unwrap_or_else(|| {
-            let now = Utc::now();
-            let hour_ago = now - chrono::Duration::hours(1);
-            (hour_ago, now)
-        });
+        let (start_time, end_time) = time_range
+            .unwrap_or_else(|| {
+                let now = Utc::now();
+                let hour_ago = now - chrono::Duration::hours(1);
+                (hour_ago, now)
+            })
+            .into();
 
         let source_total = [
             self.config.clipboard_enabled,

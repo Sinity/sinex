@@ -9,9 +9,9 @@
 
 use crate::version::{SatelliteInstance, SatelliteVersion};
 use serde::{Deserialize, Serialize};
-use sinex_db::distributed_locking::{DistributedCoordination, LeadershipGuard};
-use sinex_types::utils::CoordinationPrimitive;
-use sinex_types::{DbPool, Result, SinexError};
+use sinex_core::db::distributed_locking::{DistributedCoordination, LeadershipGuard};
+use sinex_core::types::utils::CoordinationPrimitive;
+use sinex_core::types::{DbPool, Result, SinexError};
 use std::time::{Duration, SystemTime};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, instrument, warn};

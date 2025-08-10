@@ -1,4 +1,4 @@
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 {
   name = "sinex-chaos-engineering";
@@ -34,7 +34,7 @@
     import json
 
     machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("sinex-collector.service")
+    machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-worker.service")
     machine.wait_for_unit("chaos-monitor.service")
     
@@ -110,7 +110,7 @@
         start_events = int(machine.succeed("sinex-query --format csv 2>/dev/null | wc -l || echo '0'").strip())
         
         # Restart services multiple times
-        services = ["sinex-collector", "sinex-worker"]
+        services = ["sinex-ingestd", "sinex-worker"]
         for service in services:
             print(f"Restarting {service}")
             machine.succeed(f"systemctl restart {service}")
@@ -128,7 +128,7 @@
         time.sleep(30)
         
         # All services should be healthy
-        machine.succeed("systemctl is-active sinex-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         machine.succeed("systemctl is-active sinex-worker")
         machine.succeed("systemctl is-active postgresql")
         

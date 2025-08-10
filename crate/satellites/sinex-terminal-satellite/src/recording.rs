@@ -31,9 +31,10 @@
 
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
+use sinex_core::types::events::{AsciinemaSessionEndedPayload, AsciinemaSessionStartedPayload};
 use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{AsciinemaSessionEndedPayload, AsciinemaSessionStartedPayload};
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};
 use tokio::fs;
@@ -304,7 +305,10 @@ end
         Ok(integration_code)
     }
 
-    async fn scan_recordings(&mut self, tx: &mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
+    async fn scan_recordings(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         let pattern = self.recordings_dir.join(&self.file_pattern);
         let pattern_str = pattern.to_string();
 
@@ -340,7 +344,7 @@ end
     async fn process_recording_file(
         &mut self,
         path: &Utf8PathBuf,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let metadata = fs::metadata(path).await.map_err(|e| {
             sinex_satellite_sdk::SatelliteError::Processing(format!(
@@ -360,7 +364,7 @@ end
             }
 
             // New active recording
-            let session_id = sinex_types::ulid::Ulid::new().to_string();
+            let session_id = sinex_core::types::ulid::Ulid::new().to_string();
             self.active_sessions.insert(
                 path.clone(),
                 RecordingSession {
@@ -388,7 +392,7 @@ end
                     }
                 };
 
-                let event = Event::from_payload(AsciinemaSessionStartedPayload {
+                let event: RawEvent = Event::from_payload(AsciinemaSessionStartedPayload {
                     session_id: session_id.clone(),
                     terminal_type: "asciinema".to_string(),
                     terminal_id: path.to_string(),
@@ -414,7 +418,8 @@ end
                         chrono::Utc::now().to_rfc3339()
                     },
                     recording_file: path.to_string(),
-                });
+                })
+                .into();
 
                 if tx.send(event).is_err() {
                     warn!("Event channel closed");
@@ -445,7 +450,7 @@ end
                         // Emit session ended event
                         let duration = chrono::Utc::now().signed_duration_since(start_time);
 
-                        let event = Event::from_payload(AsciinemaSessionEndedPayload {
+                        let event: RawEvent = Event::from_payload(AsciinemaSessionEndedPayload {
                             session_id: session_id.clone(),
                             terminal_type: "asciinema".to_string(),
                             terminal_id: path.to_string(),
@@ -456,7 +461,8 @@ end
                             file_size_bytes: Some(file_size),
                             git_annex_path: None,
                             git_annex_key: None,
-                        });
+                        })
+                        .into();
 
                         if tx.send(event).is_err() {
                             warn!("Event channel closed");
@@ -542,7 +548,7 @@ end
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting recording event streaming");
 

@@ -8,8 +8,8 @@ use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
-use sinex_db::models::{Event, RawEvent, SystemHealthSummaryPayload};
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
     nats_stream_consumer::{
@@ -27,7 +27,7 @@ use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 // Use HealthStatus and ComponentHealth from sinex_events
-use sinex_types::events::{HealthStatus, ComponentHealth};
+use sinex_core::types::events::{HealthStatus, ComponentHealth};
 
 /// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -148,7 +148,7 @@ impl HealthAggregator {
         }
 
         // Create synthesis event
-        let event = Event::from_payload(SystemHealthSummaryPayload {
+        let event: RawEvent = Event::from_payload(SystemHealthSummaryPayload {
             overall_status: summary.overall_status,
             healthy_components: summary.healthy_components,
             degraded_components: summary.degraded_components,
@@ -157,7 +157,7 @@ impl HealthAggregator {
             total_components: summary.total_components,
             last_updated: summary.last_updated,
             components: summary.components,
-        });
+        }).into();
 
         info!(
             healthy = summary.healthy_components,

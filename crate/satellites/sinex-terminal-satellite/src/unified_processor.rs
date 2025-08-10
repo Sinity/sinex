@@ -7,7 +7,12 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::error::with_context;
+use sinex_core::types::events::{
+    Event, TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
+    TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -20,17 +25,12 @@ use sinex_satellite_sdk::{
     },
     SatelliteResult,
 };
-use sinex_types::error::with_context;
-use sinex_types::events::{
-    TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
-    TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
-};
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
-// use sinex_types::events::constants::{event_types, services}; // already imported above
+// use sinex_core::types::events::constants::{event_types, services}; // already imported above
 
 /// Terminal monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,10 +384,12 @@ impl TerminalProcessor {
             info!("Terminal monitoring context available");
 
             // Emit monitoring started event with shell info
-            let mut monitoring_event = Event::from_payload(TerminalMonitoringStartedPayload {
-                enabled_sources: self.config.enabled_sources.clone(),
-                start_time: Utc::now(),
-            });
+            let mut monitoring_event: RawEvent =
+                Event::from_payload(TerminalMonitoringStartedPayload {
+                    enabled_sources: self.config.enabled_sources.clone(),
+                    start_time: Utc::now(),
+                })
+                .into();
 
             // Add shell info to the event payload if available
             if let Some(ref shell_info) = self.shell_info {
@@ -439,12 +441,14 @@ impl TerminalProcessor {
                 if let Some(ref atuin_path) = self.config.atuin_db_path {
                     if atuin_path.exists() && emit_events {
                         // Create a sample historical event
-                        let event = Event::from_payload(TerminalCommandHistoricalPayload {
-                            source: "atuin".to_string(),
-                            db_path: Some(atuin_path.clone().into()),
-                            file_path: None,
-                            scan_type: "historical".to_string(),
-                        });
+                        let event: RawEvent =
+                            Event::from_payload(TerminalCommandHistoricalPayload {
+                                source: "atuin".to_string(),
+                                db_path: Some(atuin_path.clone().into()),
+                                file_path: None,
+                                scan_type: "historical".to_string(),
+                            })
+                            .into();
 
                         context.emit_event(event).await?;
                         event_count += 1;
@@ -462,11 +466,13 @@ impl TerminalProcessor {
             {
                 for history_file in &self.config.history_files {
                     if history_file.exists() && emit_events {
-                        let event = Event::from_payload(TerminalHistoryHistoricalPayload {
-                            source: "history_file".to_string(),
-                            file_path: history_file.clone().into(),
-                            scan_type: "historical".to_string(),
-                        });
+                        let event: RawEvent =
+                            Event::from_payload(TerminalHistoryHistoricalPayload {
+                                source: "history_file".to_string(),
+                                file_path: history_file.clone().into(),
+                                scan_type: "historical".to_string(),
+                            })
+                            .into();
 
                         context.emit_event(event).await?;
                         event_count += 1;
@@ -490,7 +496,11 @@ impl Default for TerminalProcessor {
 impl StatefulStreamProcessor for TerminalProcessor {
     type Config = TerminalConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!(
             processor = self.processor_name(),
             service = %ctx.service_name,
@@ -633,11 +643,13 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event = Event::from_payload(TerminalSnapshotPayload {
-                            active_watchers,
-                            enabled_sources: self.config.enabled_sources.clone(),
-                            snapshot_time: Utc::now(),
-                        });
+                        let snapshot_event: RawEvent =
+                            Event::from_payload(TerminalSnapshotPayload {
+                                active_watchers,
+                                enabled_sources: self.config.enabled_sources.clone(),
+                                snapshot_time: Utc::now(),
+                            })
+                            .into();
 
                         context.emit_event(snapshot_event).await?;
                     }

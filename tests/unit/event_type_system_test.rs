@@ -7,16 +7,17 @@
 //! - TestContext instead of custom fixtures
 //! - Modern Event API with Event::from_payload()
 //! - Direct repository access via ctx.pool.*()
-//! - Modern payload types from sinex_types::events::payloads
+//! - Modern payload types from sinex_core::types::events::payloads
 //! - color_eyre for error handling
 
-use sinex_db::models::Event;
-use sinex_db::repositories::DbPoolExt;
-use sinex_test_utils::prelude::*;
-use sinex_types::events::payloads::{
+use color_eyre::eyre::Result;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
+use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 
 // =============================================================================
@@ -175,13 +176,13 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
         .with_permissions(0o644);
 
     let file_event = Event::from_payload(file_payload);
-    ctx.pool.events().insert(file_event.clone()).await?;
+    ctx.pool.events().insert(file_event.clone().into()).await?;
 
     // Verify the event was stored correctly
     assert_eq!(file_event.source.as_str(), "fs-watcher");
     assert_eq!(file_event.event_type.as_str(), "file.created");
-    assert!(file_event.payload["size"] == json!(1024));
-    assert!(file_event.payload["path"] == json!("/test/file.txt"));
+    assert_eq!(file_event.payload.size, 1024);
+    assert_eq!(file_event.payload.path, "/test/file.txt");
 
     // Test FileModifiedPayload
     let modified_payload = FileModifiedPayload::test_default("/test/modified.txt")
@@ -189,7 +190,10 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
         .with_modification_type("content");
 
     let modified_event = Event::from_payload(modified_payload);
-    ctx.pool.events().insert(modified_event.clone()).await?;
+    ctx.pool
+        .events()
+        .insert(modified_event.clone().into())
+        .await?;
 
     assert_eq!(modified_event.source.as_str(), "fs-watcher");
     assert_eq!(modified_event.event_type.as_str(), "file.modified");
@@ -217,11 +221,11 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
         .with_shell_type("bash");
 
     let kitty_event = Event::from_payload(kitty_payload);
-    ctx.pool.events().insert(kitty_event.clone()).await?;
+    ctx.pool.events().insert(kitty_event.clone().into()).await?;
 
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");
     assert_eq!(kitty_event.event_type.as_str(), "command.executed");
-    assert!(kitty_event.payload["command"] == json!("ls -la"));
+    assert_eq!(kitty_event.payload.command, "ls -la");
 
     // Test AtuinCommandExecutedPayload
     let atuin_payload = AtuinCommandExecutedPayload::test_default("git status", "/repo")
@@ -230,7 +234,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
         .with_hostname("dev-machine");
 
     let atuin_event = Event::from_payload(atuin_payload);
-    ctx.pool.events().insert(atuin_event.clone()).await?;
+    ctx.pool.events().insert(atuin_event.clone().into()).await?;
 
     assert_eq!(atuin_event.source.as_str(), "shell.atuin");
     assert_eq!(atuin_event.event_type.as_str(), "command.executed");
@@ -249,7 +253,10 @@ async fn test_clipboard_payload_system(ctx: TestContext) -> color_eyre::eyre::Re
     let clipboard_payload = ClipboardCopiedPayload::test_default("test-hash");
 
     let clipboard_event = Event::from_payload(clipboard_payload);
-    ctx.pool.events().insert(clipboard_event.clone()).await?;
+    ctx.pool
+        .events()
+        .insert(clipboard_event.clone().into())
+        .await?;
 
     assert_eq!(clipboard_event.source.as_str(), "clipboard");
     assert_eq!(clipboard_event.event_type.as_str(), "clipboard.copied");
@@ -377,24 +384,24 @@ async fn test_concurrent_event_creation(ctx: TestContext) -> color_eyre::eyre::R
     for i in 0..5 {
         let ctx_clone = Arc::clone(&ctx);
         let handle = task::spawn(async move {
-            let mut events = Vec::new();
+            let mut events: Vec<RawEvent> = Vec::new();
 
             // Create filesystem event
             let fs_payload = FileCreatedPayload::test_default(&format!("/test/file{}.txt", i))
                 .with_size((i as u64) * 1024);
-            events.push(Event::from_payload(fs_payload));
+            events.push(Event::from_payload(fs_payload).into());
 
             // Create shell event
             let shell_payload = KittyCommandExecutedPayload::test_default(&format!("cmd{}", i))
                 .with_kitty_ids(&format!("win{}", i), &format!("tab{}", i));
-            events.push(Event::from_payload(shell_payload));
+            events.push(Event::from_payload(shell_payload).into());
 
             // Insert all events
             for event in &events {
                 ctx_clone.pool.events().insert(event.clone()).await?;
             }
 
-            Ok::<(Vec<Event>, usize), color_eyre::eyre::Error>((events, i))
+            Ok::<(Vec<RawEvent>, usize), color_eyre::eyre::Error>((events, i))
         });
         handles.push(handle);
     }
@@ -453,7 +460,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
                 let payload =
                     FileCreatedPayload::test_default(&format!("/test/file{}_{}.txt", i, j));
                 let event = Event::from_payload(payload);
-                ctx_clone.pool.events().insert(event.clone()).await?;
+                ctx_clone.pool.events().insert(event.clone().into()).await?;
 
                 // Get the ID after insertion (should be set by repository)
                 let inserted_events = ctx_clone
@@ -472,7 +479,7 @@ async fn test_event_id_uniqueness_concurrent(ctx: TestContext) -> color_eyre::ey
                 }
             }
 
-            Ok::<Vec<Id<Event>>, color_eyre::eyre::Error>(event_ids)
+            Ok::<Vec<Id<RawEvent>>, color_eyre::eyre::Error>(event_ids)
         });
         handles.push(handle);
     }
@@ -517,25 +524,18 @@ async fn test_payload_validation_system(ctx: TestContext) -> color_eyre::eyre::R
         .with_permissions(0o644);
 
     let valid_event = Event::from_payload(valid_payload);
-    ctx.pool.events().insert(valid_event.clone()).await?;
+    ctx.pool.events().insert(valid_event.clone().into()).await?;
 
     // Verify the event was stored and has expected structure
     assert_eq!(valid_event.source.as_str(), "fs-watcher");
     assert_eq!(valid_event.event_type.as_str(), "file.created");
 
-    // Verify payload structure matches expected schema
+    // Verify payload structure matches expected schema - with typed payloads we access fields directly
     assert!(
-        valid_event.payload.is_object(),
-        "Payload should be an object"
+        !valid_event.payload.path.is_empty(),
+        "Path should not be empty"
     );
-    assert!(
-        valid_event.payload["path"].is_string(),
-        "Path should be string"
-    );
-    assert!(
-        valid_event.payload["size"].is_number(),
-        "Size should be number"
-    );
+    assert!(valid_event.payload.size > 0, "Size should be positive");
 
     Ok(())
 }

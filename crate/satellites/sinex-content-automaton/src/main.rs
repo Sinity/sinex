@@ -38,7 +38,7 @@ impl NatsEventBatchProcessor for SimpleContentAutomaton {
 
     async fn process_batch(
         &mut self,
-        events: Vec<sinex_db::models::Event>,
+        events: Vec<sinex_core::db::models::RawEvent>,
     ) -> SatelliteResult<NatsBatchProcessingResult> {
         info!("Content automaton processed {} events", events.len());
 

@@ -151,7 +151,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_optional(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "query")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -160,7 +160,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_all(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "query")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -169,7 +169,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
                 quote! {
                     OperationQueries::query_one(pool, #sql, &[#(#param_names),*])
                         .await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "query")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -180,7 +180,7 @@ fn generate_query_function(query: &DbQuery) -> proc_macro2::TokenStream {
             quote! {
                 OperationQueries::execute(pool, #sql, &[#(#param_names),*])
                     .await
-                    .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                    .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                         .wrap_err_with("operation", "query")
                         .wrap_err_with("function", stringify!(#fn_name))
                         .build())
@@ -211,7 +211,7 @@ fn generate_transaction_function(transaction: &DbTransaction) -> proc_macro2::To
         #[sinex_macros::with_context(operation = "database_transaction")]
         pub #signature {
             let mut tx = #pool_param.begin().await
-                .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                     .wrap_err_with("operation", "transaction_begin")
                     .wrap_err_with("function", stringify!(#fn_name))
                     .build())?;
@@ -224,7 +224,7 @@ fn generate_transaction_function(transaction: &DbTransaction) -> proc_macro2::To
             match result {
                 Ok(_) => {
                     tx.commit().await
-                        .map_err(|e| sinex_types::SinexError::database(e.to_string())
+                        .map_err(|e| sinex_core::types::SinexError::database(e.to_string())
                             .wrap_err_with("operation", "transaction_commit")
                             .wrap_err_with("function", stringify!(#fn_name))
                             .build())
@@ -343,10 +343,11 @@ fn is_ulid_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use syn::parse_quote;
 
-    #[test]
-    fn test_db_query_parsing() {
+    #[sinex_test]
+    fn test_db_query_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             async fn get_event_by_id(pool: &PgPool, id: Ulid) -> Option<RawEvent> {
                 "SELECT * FROM raw.events WHERE id = $1::uuid"
@@ -361,10 +362,11 @@ mod tests {
         assert_eq!(parsed.queries.len(), 2);
         assert_eq!(parsed.queries[0].signature.ident, "get_event_by_id");
         assert_eq!(parsed.queries[1].signature.ident, "get_events_by_source");
+        Ok(())
     }
 
-    #[test]
-    fn test_db_transaction_parsing() {
+    #[sinex_test]
+    fn test_db_transaction_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             async fn insert_multiple_events(pool: &PgPool, events: Vec<RawEvent>) -> Result<(), SinexError> {
                 for event in events {
@@ -380,10 +382,11 @@ mod tests {
             parsed.transactions[0].signature.ident,
             "insert_multiple_events"
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_type_detection() {
+    #[sinex_test]
+    fn test_type_detection() -> color_eyre::eyre::Result<()> {
         let option_type: Type = parse_quote!(Option<RawEvent>);
         assert!(is_option_type(&option_type));
 
@@ -397,5 +400,6 @@ mod tests {
         assert!(!is_option_type(&string_type));
         assert!(!is_vec_type(&string_type));
         assert!(!is_ulid_type(&string_type));
+        Ok(())
     }
 }

@@ -1,4 +1,4 @@
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 {
   name = "sinex-production-scale";
@@ -31,7 +31,7 @@
     };
 
     # Increase system limits
-    systemd.services.sinex-collector.serviceConfig = {
+    systemd.services.sinex-ingestd.serviceConfig = {
       LimitNOFILE = 65536;
       LimitNPROC = 4096;
     };
@@ -43,7 +43,7 @@
     import time
 
     machine.wait_for_unit("multi-user.target")
-    machine.wait_for_unit("sinex-collector.service")
+    machine.wait_for_unit("sinex-ingestd.service")
     machine.wait_for_unit("sinex-worker.service")
     
     # Test 1: Scale up filesystem watchers
@@ -53,8 +53,8 @@
             machine.succeed(f"mkdir -p /watched/dir{i}")
         
         # Restart collector to pick up new directories
-        machine.succeed("systemctl restart sinex-collector")
-        machine.wait_for_unit("sinex-collector.service")
+        machine.succeed("systemctl restart sinex-ingestd")
+        machine.wait_for_unit("sinex-ingestd.service")
         
         # Verify directories are being watched
         time.sleep(10)
@@ -205,7 +205,7 @@
             print("Final health check failed - system may be under load")
         
         # All services running
-        machine.succeed("systemctl is-active sinex-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         machine.succeed("systemctl is-active sinex-worker")
         machine.succeed("systemctl is-active postgresql")
         

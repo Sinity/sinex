@@ -7,10 +7,11 @@
 //! - Cross-component type safety integration
 //! - Repository type safety guarantees
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
-use sinex_types::{Id, Ulid};
-use sinex_db::models::{Event, Checkpoint};
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::types::{Id, Ulid};
+use sinex_core::db::models::{Event, Checkpoint};
+use sinex_core::types::domain::{EventSource, EventType};
 use serde_json::json;
 use std::collections::HashSet;
 use std::marker::PhantomData;

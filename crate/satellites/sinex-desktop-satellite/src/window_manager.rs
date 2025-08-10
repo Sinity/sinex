@@ -90,7 +90,8 @@
 
 use chrono::Utc;
 use serde_json::Value;
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -473,7 +474,7 @@ impl WindowManagerWatcher {
     async fn process_hyprland_event(
         &mut self,
         line: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         if line.is_empty() {
             return Ok(());
@@ -515,7 +516,7 @@ impl WindowManagerWatcher {
     async fn handle_window_focused(
         &mut self,
         data: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         // Format: "class,title"
         if let Some((class, title)) = data.split_once(',') {
@@ -524,13 +525,15 @@ impl WindowManagerWatcher {
 
             // Create window focused event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandWindowFocusedPayload {
-                window_id: window_address.to_string(),
-                window_class: class.to_string(),
-                window_title: title.to_string(),
-                workspace_id: 0, // TODO: Get actual workspace ID
-                previous_window_id: self.current_focused_window.clone(),
-            });
+            let event: RawEvent =
+                Event::from_payload(sinex_core::types::events::HyprlandWindowFocusedPayload {
+                    window_id: window_address.to_string(),
+                    window_class: class.to_string(),
+                    window_title: title.to_string(),
+                    workspace_id: 0, // TODO: Get actual workspace ID
+                    previous_window_id: self.current_focused_window.clone(),
+                })
+                .into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -546,7 +549,7 @@ impl WindowManagerWatcher {
     async fn handle_window_opened(
         &mut self,
         data: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         // Format: "address,workspace,class,title"
         let parts: Vec<&str> = data.split(',').collect();
@@ -558,20 +561,22 @@ impl WindowManagerWatcher {
 
             // Create window opened event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandWindowOpenedPayload {
-                window_id: window_address.to_string(),
-                window_class: window_class.to_string(),
-                window_title: window_title.to_string(),
-                workspace_id: workspace_id.parse().unwrap_or(0),
-                monitor_id: 0, // TODO: Get actual monitor ID
-                geometry: sinex_types::events::WindowGeometry {
-                    x: 0,
-                    y: 0,
-                    width: 0,
-                    height: 0,
-                }, // TODO: Get actual geometry
-                floating: false, // TODO: Get actual floating state
-            });
+            let event: RawEvent =
+                Event::from_payload(sinex_core::types::events::HyprlandWindowOpenedPayload {
+                    window_id: window_address.to_string(),
+                    window_class: window_class.to_string(),
+                    window_title: window_title.to_string(),
+                    workspace_id: workspace_id.parse().unwrap_or(0),
+                    monitor_id: 0, // TODO: Get actual monitor ID
+                    geometry: sinex_core::types::events::WindowGeometry {
+                        x: 0,
+                        y: 0,
+                        width: 0,
+                        height: 0,
+                    }, // TODO: Get actual geometry
+                    floating: false, // TODO: Get actual floating state
+                })
+                .into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -600,19 +605,21 @@ impl WindowManagerWatcher {
     async fn handle_window_closed(
         &mut self,
         data: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let window_address = data.trim().to_string();
 
         // Create window closed event
 
-        let event = Event::from_payload(sinex_types::events::HyprlandWindowClosedPayload {
-            window_id: window_address.to_string(),
-            window_class: String::new(), // TODO: Get from cache
-            window_title: String::new(), // TODO: Get from cache
-            workspace_id: 0,             // TODO: Get from cache
-            close_reason: None,
-        });
+        let event: RawEvent =
+            Event::from_payload(sinex_core::types::events::HyprlandWindowClosedPayload {
+                window_id: window_address.to_string(),
+                window_class: String::new(), // TODO: Get from cache
+                window_title: String::new(), // TODO: Get from cache
+                workspace_id: 0,             // TODO: Get from cache
+                close_reason: None,
+            })
+            .into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -628,17 +635,19 @@ impl WindowManagerWatcher {
     async fn handle_window_moved(
         &mut self,
         data: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         // Format: "address,workspace"
         if let Some((address, workspace)) = data.split_once(',') {
             // Create window moved event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandWindowMovedPayload {
-                window_address: address.to_string(),
-                new_workspace_id: workspace.parse().unwrap_or(0),
-                moved_at: chrono::Utc::now().to_rfc3339(),
-            });
+            let event: RawEvent =
+                Event::from_payload(sinex_core::types::events::HyprlandWindowMovedPayload {
+                    window_address: address.to_string(),
+                    new_workspace_id: workspace.parse().unwrap_or(0),
+                    moved_at: chrono::Utc::now().to_rfc3339(),
+                })
+                .into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -657,22 +666,25 @@ impl WindowManagerWatcher {
     async fn handle_workspace_changed(
         &mut self,
         data: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let workspace_id = data.trim().to_string();
 
         // Create workspace switched event
 
-        let event = Event::from_payload(sinex_types::events::HyprlandWorkspaceSwitchedPayload {
-            from_workspace_id: self
-                .current_workspace
-                .as_ref()
-                .and_then(|w| w.parse().ok())
-                .unwrap_or(0),
-            to_workspace_id: workspace_id.parse().unwrap_or(0),
-            monitor_id: 0,          // TODO: Get actual monitor ID
-            active_window_id: None, // TODO: Get active window
-        });
+        let event: RawEvent = Event::from_payload(
+            sinex_core::types::events::HyprlandWorkspaceSwitchedPayload {
+                from_workspace_id: self
+                    .current_workspace
+                    .as_ref()
+                    .and_then(|w| w.parse().ok())
+                    .unwrap_or(0),
+                to_workspace_id: workspace_id.parse().unwrap_or(0),
+                monitor_id: 0,          // TODO: Get actual monitor ID
+                active_window_id: None, // TODO: Get active window
+            },
+        )
+        .into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -687,18 +699,20 @@ impl WindowManagerWatcher {
     async fn handle_monitor_focused(
         &mut self,
         data: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         // Format: "monitor,workspace"
         if let Some((monitor, workspace)) = data.split_once(',') {
             // Create monitor focused event
 
-            let event = Event::from_payload(sinex_types::events::HyprlandMonitorFocusedPayload {
-                monitor_id: monitor.parse().unwrap_or(0),
-                workspace_id: workspace.parse().unwrap_or(0),
-                previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
-                focused_at: chrono::Utc::now().to_rfc3339(),
-            });
+            let event =
+                Event::from_payload(sinex_core::types::events::HyprlandMonitorFocusedPayload {
+                    monitor_id: monitor.parse().unwrap_or(0),
+                    workspace_id: workspace.parse().unwrap_or(0),
+                    previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
+                    focused_at: chrono::Utc::now().to_rfc3339(),
+                })
+                .into();
 
             if tx.send(event).is_err() {
                 warn!("Event channel closed");
@@ -713,7 +727,7 @@ impl WindowManagerWatcher {
     /// Capture periodic state snapshot
     async fn capture_state_snapshot(
         &mut self,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         let now = SystemTime::now();
 
@@ -729,34 +743,36 @@ impl WindowManagerWatcher {
 
         // Create state captured event
 
-        let event = Event::from_payload(sinex_types::events::HyprlandStateCapturedPayload {
-            windows: self
-                .windows
-                .values()
-                .map(|w| serde_json::to_value(w).unwrap())
-                .collect(),
-            workspaces: self
-                .workspaces
-                .values()
-                .map(|w| serde_json::to_value(w).unwrap())
-                .collect(),
-            monitors: self
-                .monitors
-                .values()
-                .map(|m| serde_json::to_value(m).unwrap())
-                .collect(),
-            current_workspace: self
-                .current_workspace
-                .as_ref()
-                .and_then(|w| w.parse().ok())
-                .unwrap_or(0),
-            current_monitor: self
-                .current_monitor
-                .as_ref()
-                .and_then(|m| m.parse().ok())
-                .unwrap_or(0),
-            captured_at: chrono::Utc::now().to_rfc3339(),
-        });
+        let event: RawEvent =
+            Event::from_payload(sinex_core::types::events::HyprlandStateCapturedPayload {
+                windows: self
+                    .windows
+                    .values()
+                    .map(|w| serde_json::to_value(w).unwrap())
+                    .collect(),
+                workspaces: self
+                    .workspaces
+                    .values()
+                    .map(|w| serde_json::to_value(w).unwrap())
+                    .collect(),
+                monitors: self
+                    .monitors
+                    .values()
+                    .map(|m| serde_json::to_value(m).unwrap())
+                    .collect(),
+                current_workspace: self
+                    .current_workspace
+                    .as_ref()
+                    .and_then(|w| w.parse().ok())
+                    .unwrap_or(0),
+                current_monitor: self
+                    .current_monitor
+                    .as_ref()
+                    .and_then(|m| m.parse().ok())
+                    .unwrap_or(0),
+                captured_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -770,7 +786,7 @@ impl WindowManagerWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!(
             "Starting window manager event streaming for {}",
@@ -790,7 +806,7 @@ impl WindowManagerWatcher {
     /// Stream Hyprland events
     async fn stream_hyprland_events(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         loop {
             match self.connect_to_hyprland_events().await {

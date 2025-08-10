@@ -3,9 +3,9 @@
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_db::models::Event;
-use sinex_db::{repositories::DbPoolExt, DbPool as PgPool};
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::{repositories::DbPoolExt, DbPool as PgPool};
+use sinex_core::types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -153,7 +153,7 @@ impl ReplayManager {
     /// Process events in replay mode
     pub async fn replay_events<F, Fut>(&self, mut processor: F) -> SatelliteResult<ReplayResult>
     where
-        F: FnMut(Vec<Event>) -> Fut,
+        F: FnMut(Vec<RawEvent>) -> Fut,
         Fut: std::future::Future<Output = SatelliteResult<usize>>,
     {
         if matches!(self.mode, ReplayMode::Live) {
@@ -181,7 +181,7 @@ impl ReplayManager {
 
         loop {
             // Fetch events using the query system based on mode
-            let events: Vec<Event> = match &self.mode {
+            let events: Vec<RawEvent> = match &self.mode {
                 ReplayMode::TimeRange {
                     start_time,
                     end_time,
@@ -190,7 +190,7 @@ impl ReplayManager {
 
                     // TODO: Add time range query to repository
                     // For now, use search with filters
-                    use sinex_db::repositories::{DbPoolExt, EventSearchFilters};
+                    use sinex_core::db::repositories::{DbPoolExt, EventSearchFilters};
                     self.pool
                         .events()
                         .search(EventSearchFilters {
@@ -225,7 +225,7 @@ impl ReplayManager {
 
                         // TODO: Add time range query with source filter to repository
                         // For now, use search with filters
-                        use sinex_db::repositories::EventSearchFilters;
+                        use sinex_core::db::repositories::EventSearchFilters;
                         self.pool
                             .events()
                             .search(EventSearchFilters {
@@ -258,7 +258,7 @@ impl ReplayManager {
                         // For complex queries, use get_recent and filter
 
                         // get_recent doesn't support offset, use search instead
-                        use sinex_db::repositories::EventSearchFilters;
+                        use sinex_core::db::repositories::EventSearchFilters;
                         self.pool
                             .events()
                             .search(EventSearchFilters {
@@ -268,7 +268,7 @@ impl ReplayManager {
                             })
                             .await?
                             .into_iter()
-                            .filter(|event: &Event| {
+                            .filter(|event: &RawEvent| {
                                 let type_matches =
                                     event_types.iter().any(|t| t == event.event_type.as_str());
                                 let start_matches =
@@ -284,7 +284,7 @@ impl ReplayManager {
                     // Use get_recent as base query and apply filters
 
                     // get_recent doesn't support offset, use search instead
-                    use sinex_db::repositories::EventSearchFilters;
+                    use sinex_core::db::repositories::EventSearchFilters;
                     self.pool
                         .events()
                         .search(EventSearchFilters {
@@ -359,7 +359,7 @@ impl ReplayManager {
     }
 
     /// Apply custom filters to an event
-    fn apply_custom_filters(&self, event: &Event, filters: &ReplayFilters) -> bool {
+    fn apply_custom_filters(&self, event: &RawEvent, filters: &ReplayFilters) -> bool {
         // Check source patterns (simple wildcard matching)
         if let Some(sources) = &filters.sources {
             let source_matches = sources.iter().any(|pattern| {

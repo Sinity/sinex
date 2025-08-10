@@ -18,6 +18,7 @@
 // - **Regression Detection**: Automated performance regression detection
 // - **Bottleneck Identification**: Tools for identifying system bottlenecks
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 /// Throughput and latency performance tests

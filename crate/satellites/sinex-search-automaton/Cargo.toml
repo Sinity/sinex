@@ -8,8 +8,7 @@ camino = { workspace = true }
 mimalloc = { workspace = true }
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk" }
 sinex-services = { path = "../../lib/sinex-services" }
-sinex-db = { path = "../../lib/sinex-db" }
-sinex-types = { path = "../../lib/sinex-types" }
+sinex-core = { path = "../../lib/sinex-core" }
 
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

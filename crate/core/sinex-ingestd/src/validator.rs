@@ -2,9 +2,10 @@
 
 use crate::IngestdResult;
 use ahash::AHashMap;
-use sinex_db::models::Event;
-use sinex_db::SqlxPgPool as PgPool;
-use sinex_types::ulid::Ulid;
+use sinex_core::db::models::RawEvent;
+use sinex_core::db::SqlxPgPool as PgPool;
+use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::ulid::Ulid;
 use sqlx::FromRow;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
@@ -144,7 +145,7 @@ impl EventValidator {
     }
 
     /// Validate a raw event
-    pub fn validate_event(&self, event: &Event) -> IngestdResult<ValidationResult> {
+    pub fn validate_event(&self, event: &RawEvent) -> IngestdResult<ValidationResult> {
         if !self.validation_enabled {
             return Ok(ValidationResult::Skipped);
         }
@@ -206,7 +207,7 @@ impl EventValidator {
     }
 
     /// Validate a batch of events
-    pub fn validate_batch(&self, events: &[Event]) -> IngestdResult<Vec<ValidationResult>> {
+    pub fn validate_batch(&self, events: &[RawEvent]) -> IngestdResult<Vec<ValidationResult>> {
         events
             .iter()
             .map(|event| self.validate_event(event))
@@ -227,17 +228,21 @@ impl EventValidator {
     }
 
     /// Check if a schema is available by ID
-    pub fn has_schema_by_id(&self, schema_id: &sinex_types::ulid::Ulid) -> bool {
+    pub fn has_schema_by_id(&self, schema_id: &sinex_core::types::ulid::Ulid) -> bool {
         let schema_key = Arc::new(schema_id.to_string());
         self.schema_cache.read().contains_key(&schema_key)
     }
 
     /// Get schema ID for a source and event type (latest version)
-    pub fn get_schema_id(&self, source: &str, event_type: &str) -> Option<Arc<String>> {
+    pub fn get_schema_id(
+        &self,
+        source: &EventSource,
+        event_type: &EventType,
+    ) -> Option<Arc<String>> {
         let lookup = self.schema_lookup.read();
         // Create Arc strings to use as lookup keys
-        let source_arc = Arc::new(source.to_string());
-        let event_type_arc = Arc::new(event_type.to_string());
+        let source_arc = Arc::new(source.as_str().to_string());
+        let event_type_arc = Arc::new(event_type.as_str().to_string());
         lookup.get(&(source_arc, event_type_arc)).cloned()
     }
 
@@ -355,7 +360,9 @@ pub enum ValidationResult {
     /// No schema specified for the event
     NoSchema,
     /// Schema not found
-    SchemaNotFound { schema_id: sinex_types::ulid::Ulid },
+    SchemaNotFound {
+        schema_id: sinex_core::types::ulid::Ulid,
+    },
     /// Event is invalid
     Invalid { errors: Vec<String> },
 }

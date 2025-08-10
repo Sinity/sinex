@@ -11,11 +11,11 @@
 
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::integrity::{ulid_verification, IntegrityTestConfig, IntegrityTester};
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::EventSource;
-use sinex_types::{Id, Ulid};
+use sinex_core::types::domain::EventSource;
+use sinex_core::types::{Id, Ulid};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 use tokio::time::sleep;

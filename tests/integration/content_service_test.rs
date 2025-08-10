@@ -11,11 +11,12 @@
 // IMPORTANT: These tests require git-annex to be available. If git-annex
 // is not installed, tests will be skipped with appropriate warnings.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 use futures;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
-use sinex_db::artifacts;
+use sinex_core::db::artifacts;
 use sinex_services::{ContentService, ServiceError};
 use sinex_test_utils::resources::{create_test_file, temp_dir};
 use camino::{Utf8Path, Utf8PathBuf};

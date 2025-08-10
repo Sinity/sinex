@@ -8,11 +8,11 @@ use crate::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::models::*;
-use sinex_db::DbPool;
+use sinex_core::db::models::*;
+use sinex_core::db::DbPool;
 
 use camino::Utf8Path;
-use sinex_types::error::SinexError;
+use sinex_core::types::error::SinexError;
 use std::collections::HashMap;
 use std::fs;
 
@@ -113,7 +113,7 @@ impl FixtureGenerator {
     }
 
     /// Generate events for the dataset
-    pub fn generate_events(&mut self) -> Vec<Event> {
+    pub fn generate_events(&mut self) -> Vec<RawEvent> {
         let mut events = Vec::with_capacity(self.config.event_count);
 
         // Pre-generate sources and event types
@@ -140,7 +140,7 @@ impl FixtureGenerator {
 
     /// Generate source names
     fn generate_sources(&self) -> Vec<String> {
-        use sinex_types::*;
+        use sinex_core::types::*;
         let base_sources = vec![
             FileCreatedPayload::SOURCE.to_string(),
             KittyCommandExecutedPayload::SOURCE.to_string(),
@@ -163,7 +163,7 @@ impl FixtureGenerator {
 
     /// Generate event types
     fn generate_event_types(&self) -> Vec<String> {
-        use sinex_types::*;
+        use sinex_core::types::*;
         let base_types = vec![
             FileCreatedPayload::EVENT_TYPE.to_string(),
             KittyCommandExecutedPayload::EVENT_TYPE.to_string(),
@@ -202,8 +202,8 @@ impl FixtureGenerator {
         payload_size: usize,
         timestamp: DateTime<Utc>,
         index: usize,
-    ) -> Event {
-        use sinex_types::*;
+    ) -> RawEvent {
+        use sinex_core::types::*;
         let mut payload = HashMap::new();
 
         // Add standard fields
@@ -243,9 +243,9 @@ impl FixtureGenerator {
             payload.insert("data".to_string(), json!("x".repeat(padding_size)));
         }
 
-        use sinex_types::domain::*;
+        use sinex_core::types::domain::*;
 
-        Event::builder()
+        RawEvent::builder()
             .source(EventSource::new(source))
             .event_type(EventType::new(event_type))
             .host(HostName::new("fixture_host"))
@@ -256,7 +256,7 @@ impl FixtureGenerator {
     }
 
     /// Generate SQL for the dataset
-    pub fn generate_sql(&mut self, events: &[Event]) -> String {
+    pub fn generate_sql(&mut self, events: &[RawEvent]) -> String {
         let mut sql = String::new();
 
         // Header
@@ -353,7 +353,7 @@ impl FixtureGenerator {
     }
 
     /// Generate JSON dataset
-    pub fn generate_json(&mut self, events: &[Event]) -> serde_json::Value {
+    pub fn generate_json(&mut self, events: &[RawEvent]) -> serde_json::Value {
         json!({
             "metadata": {
                 "dataset": self.config.name,
@@ -434,7 +434,7 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
     let metadata: DatasetMetadata = serde_json::from_str(&fs::read_to_string(metadata_path)?)?;
 
     // Check event count
-    use sinex_db::repositories::*;
+    use sinex_core::db::repositories::*;
     let event_count = pool.events().count_all().await?;
 
     if event_count != metadata.event_count as i64 {
@@ -457,8 +457,9 @@ pub async fn verify_dataset(pool: &DbPool, metadata_path: &Utf8Path) -> Result<b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[test]
+    #[sinex_test]
     fn test_dataset_configs() {
         let small = DatasetConfig::small();
         assert_eq!(small.event_count, 1_000);
@@ -471,7 +472,7 @@ mod tests {
         assert_eq!(large.event_count, 10_000_000);
     }
 
-    #[test]
+    #[sinex_test]
     fn test_deterministic_generation() {
         let config = DatasetConfig::small();
 

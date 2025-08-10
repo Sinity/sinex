@@ -10,7 +10,7 @@ use sinex_satellite_sdk::{
     grpc_client::IngestClient,
     SatelliteResult,
 };
-use sinex_db::SqlxPgPool;
+use sinex_core::db::SqlxPgPool;
 use std::collections::HashMap;
 use camino::Utf8PathBuf;
 use tracing::info;

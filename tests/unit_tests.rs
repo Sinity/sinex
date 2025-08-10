@@ -10,11 +10,11 @@
 
 use color_eyre::eyre::eyre;
 use serde_json::json;
-use sinex_db::models::Event as DbEvent;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::models::RawEvent as DbEvent;
+use sinex_core::db::repositories::DbPoolExt;
+use sinex_core::types::domain::{EventSource, EventType, HostName};
+use sinex_core::types::{Id, Ulid};
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType, HostName};
-use sinex_types::{Id, Ulid};
 use std::collections::HashSet;
 use std::str::FromStr;
 
@@ -35,8 +35,8 @@ mod unit {
 // ULID CORE FUNCTIONALITY TESTS - Time-ordered identifiers
 // =============================================================================
 
-#[test]
-fn test_ulid_basic_properties() {
+#[sinex_test]
+fn test_ulid_basic_properties() -> color_eyre::eyre::Result<()> {
     let ulid1 = Ulid::new();
     let ulid2 = Ulid::new();
 
@@ -49,20 +49,22 @@ fn test_ulid_basic_properties() {
 
     // ULIDs should generally maintain temporal ordering
     assert!(ulid1 <= ulid2);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_string_conversion() {
+#[sinex_test]
+fn test_ulid_string_conversion() -> color_eyre::eyre::Result<()> {
     let ulid = Ulid::new();
     let ulid_str = ulid.to_string();
 
     // Round-trip conversion should work
     let parsed = Ulid::from_str(&ulid_str).expect("Should parse valid ULID string");
     assert_eq!(parsed, ulid);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_ordering_consistency() {
+#[sinex_test]
+fn test_ulid_ordering_consistency() -> color_eyre::eyre::Result<()> {
     let mut ulids = Vec::new();
     for _ in 0..10 {
         ulids.push(Ulid::new());
@@ -87,20 +89,22 @@ fn test_ulid_ordering_consistency() {
         ulid_strings, sorted_strings,
         "ULID strings should be naturally sorted"
     );
+    Ok(())
 }
 
-#[test]
-fn test_ulid_specific_format() {
+#[sinex_test]
+fn test_ulid_specific_format() -> color_eyre::eyre::Result<()> {
     // Test with a known ULID to ensure format consistency
     let ulid_str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     let ulid = Ulid::from_str(ulid_str).expect("Should parse known valid ULID");
 
     assert_eq!(ulid.to_string(), ulid_str);
     assert_eq!(ulid.to_string().len(), 26);
+    Ok(())
 }
 
-#[test]
-fn test_ulid_invalid_strings() {
+#[sinex_test]
+fn test_ulid_invalid_strings() -> color_eyre::eyre::Result<()> {
     let invalid_cases = vec![
         "",                                // Empty string
         "invalid",                         // Too short
@@ -115,14 +119,15 @@ fn test_ulid_invalid_strings() {
             invalid_ulid
         );
     }
+    Ok(())
 }
 
 // =============================================================================
 // GENERIC ID SYSTEM TESTS - Type-safe identifiers
 // =============================================================================
 
-#[test]
-fn test_generic_id_creation() {
+#[sinex_test]
+fn test_generic_id_creation() -> color_eyre::eyre::Result<()> {
     let event_id = Id::<DbEvent>::new();
     let event_id2 = Id::<DbEvent>::new();
 
@@ -133,10 +138,11 @@ fn test_generic_id_creation() {
     let ulid: Ulid = event_id.clone().into();
     let id_from_ulid = Id::<DbEvent>::from(ulid);
     assert_eq!(event_id, id_from_ulid);
+    Ok(())
 }
 
-#[test]
-fn test_generic_id_type_safety() {
+#[sinex_test]
+fn test_generic_id_type_safety() -> color_eyre::eyre::Result<()> {
     let event_id = Id::<DbEvent>::new();
 
     // The following should compile - same type
@@ -145,10 +151,11 @@ fn test_generic_id_type_safety() {
     // Verify ID properties
     assert_eq!(event_id.to_string().len(), 26);
     assert!(!event_id.to_string().is_empty());
+    Ok(())
 }
 
-#[test]
-fn test_generic_id_string_conversion() {
+#[sinex_test]
+fn test_generic_id_string_conversion() -> color_eyre::eyre::Result<()> {
     let id = Id::<DbEvent>::new();
     let id_str = id.to_string();
 
@@ -160,10 +167,11 @@ fn test_generic_id_string_conversion() {
     let ulid = Ulid::from_str(&id_str).expect("Should be valid ULID");
     let new_id = Id::<DbEvent>::from(ulid);
     assert_eq!(id, new_id);
+    Ok(())
 }
 
-#[test]
-fn test_generic_id_collections() {
+#[sinex_test]
+fn test_generic_id_collections() -> color_eyre::eyre::Result<()> {
     // Test IDs work properly in collections
     let mut ids = Vec::new();
 
@@ -192,14 +200,15 @@ fn test_generic_id_collections() {
             "ID strings should be naturally sorted"
         );
     }
+    Ok(())
 }
 
 // =============================================================================
 // DOMAIN TYPES TESTS - EventSource, EventType, etc.
 // =============================================================================
 
-#[test]
-fn test_event_source_creation() {
+#[sinex_test]
+fn test_event_source_creation() -> color_eyre::eyre::Result<()> {
     // Static creation
     let source_static = EventSource::from_static("filesystem");
     assert_eq!(source_static.as_str(), "filesystem");
@@ -212,10 +221,11 @@ fn test_event_source_creation() {
     let source1 = EventSource::from_static("test");
     let source2 = EventSource::new("test");
     assert_eq!(source1, source2);
+    Ok(())
 }
 
-#[test]
-fn test_event_type_creation() {
+#[sinex_test]
+fn test_event_type_creation() -> color_eyre::eyre::Result<()> {
     // Static creation
     let type_static = EventType::from_static("file.created");
     assert_eq!(type_static.as_str(), "file.created");
@@ -228,10 +238,11 @@ fn test_event_type_creation() {
     let type1 = EventType::from_static("test.event");
     let type2 = EventType::new("test.event");
     assert_eq!(type1, type2);
+    Ok(())
 }
 
-#[test]
-fn test_hostname_creation() {
+#[sinex_test]
+fn test_hostname_creation() -> color_eyre::eyre::Result<()> {
     // Test hostname creation
     let hostname = HostName::new("test-host");
     assert_eq!(hostname.as_str(), "test-host");
@@ -239,10 +250,11 @@ fn test_hostname_creation() {
     // Test current hostname
     let current = HostName::new("localhost"); // Use a static hostname for tests
     assert!(!current.as_str().is_empty());
+    Ok(())
 }
 
-#[test]
-fn test_domain_type_validation() {
+#[sinex_test]
+fn test_domain_type_validation() -> color_eyre::eyre::Result<()> {
     // Test empty string handling
     let empty_source = EventSource::new("");
     assert_eq!(empty_source.as_str(), "");
@@ -255,6 +267,7 @@ fn test_domain_type_validation() {
     // Test unicode
     let unicode_source = EventSource::new("unicode-世界");
     assert_eq!(unicode_source.as_str(), "unicode-世界");
+    Ok(())
 }
 
 #[rstest]
@@ -282,8 +295,8 @@ fn test_domain_types_with_various_values(#[case] source_name: &str, #[case] type
 // EVENT CREATION TESTS - DbEvent::schemaless() builder
 // =============================================================================
 
-#[test]
-fn test_event_schemaless_builder() {
+#[sinex_test]
+fn test_event_schemaless_builder() -> color_eyre::eyre::Result<()> {
     let source = EventSource::from_static("test-source");
     let event_type = EventType::from_static("test.event");
     let payload = json!({
@@ -292,11 +305,7 @@ fn test_event_schemaless_builder() {
         "message": "Unit test event"
     });
 
-    let event = DbEvent::schemaless()
-        .source(source.clone())
-        .event_type(event_type.clone())
-        .payload(payload.clone())
-        .build();
+    let event = DbEvent::schemaless(source.clone(), event_type.clone(), payload.clone());
 
     // Verify event structure
     assert_eq!(event.source, source);
@@ -304,39 +313,42 @@ fn test_event_schemaless_builder() {
     assert_eq!(event.payload, payload);
     assert!(event.id.is_some());
     assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).unwrap());
+    Ok(())
 }
 
-#[test]
-fn test_event_builder_with_optional_fields() {
-    let event = DbEvent::schemaless()
-        .source(EventSource::from_static("optional-test"))
-        .event_type(EventType::from_static("optional.event"))
-        .payload(json!({"basic": true}))
-        .host(HostName::new("custom-host"))
-        .build();
+#[sinex_test]
+fn test_event_builder_with_optional_fields() -> color_eyre::eyre::Result<()> {
+    let mut event = DbEvent::schemaless(
+        EventSource::from_static("optional-test"),
+        EventType::from_static("optional.event"),
+        json!({"basic": true}),
+    );
+    event.host = HostName::new("custom-host");
 
     assert_eq!(event.source.as_str(), "optional-test");
     assert_eq!(event.event_type.as_str(), "optional.event");
     assert_eq!(event.host.as_str(), "custom-host");
     assert_eq!(event.payload["basic"], json!(true));
+    Ok(())
 }
 
-#[test]
-fn test_event_builder_with_timestamps() {
+#[sinex_test]
+fn test_event_builder_with_timestamps() -> color_eyre::eyre::Result<()> {
     use chrono::{DateTime, Utc};
 
     let custom_timestamp = Utc::now() - chrono::Duration::hours(1);
 
-    let event = DbEvent::schemaless()
-        .source(EventSource::from_static("timestamp-test"))
-        .event_type(EventType::from_static("timestamp.event"))
-        .payload(json!({"timestamp_test": true}))
-        .ts_orig(Some(custom_timestamp))
-        .build();
+    let mut event = DbEvent::schemaless(
+        EventSource::from_static("timestamp-test"),
+        EventType::from_static("timestamp.event"),
+        json!({"timestamp_test": true}),
+    );
+    event.ts_orig = Some(custom_timestamp);
 
     assert_eq!(event.ts_orig, Some(custom_timestamp));
     // ts_ingest should be set to current time
     assert!(event.ts_ingest > custom_timestamp);
+    Ok(())
 }
 
 #[rstest]
@@ -348,11 +360,11 @@ fn test_event_builder_with_timestamps() {
 #[case(json!([1, 2, 3]))]
 #[case(json!({"nested": {"deep": {"value": [1, 2, 3]}}}))]
 fn test_event_builder_with_various_payloads(#[case] payload: serde_json::Value) {
-    let event = DbEvent::schemaless()
-        .source(EventSource::from_static("payload-test"))
-        .event_type(EventType::from_static("various.payload"))
-        .payload(payload.clone())
-        .build();
+    let event = DbEvent::schemaless(
+        EventSource::from_static("payload-test"),
+        EventType::from_static("various.payload"),
+        payload.clone(),
+    );
 
     assert_eq!(event.payload, payload);
 }
@@ -361,8 +373,8 @@ fn test_event_builder_with_various_payloads(#[case] payload: serde_json::Value) 
 // ERROR HANDLING TESTS - color-eyre integration
 // =============================================================================
 
-#[test]
-fn test_result_type_compatibility() {
+#[sinex_test]
+fn test_result_type_compatibility() -> color_eyre::eyre::Result<()> {
     // Test that our Result type works with color-eyre
     fn returns_success() -> color_eyre::eyre::Result<String> {
         Ok("success".to_string())
@@ -381,6 +393,7 @@ fn test_result_type_compatibility() {
     let error_result = returns_error();
     assert!(error_result.is_err());
     assert!(error_result.unwrap_err().to_string().contains("test error"));
+    Ok(())
 }
 
 #[sinex_test]
@@ -402,8 +415,8 @@ async fn test_sinex_error_propagation(ctx: TestContext) -> color_eyre::eyre::Res
 // VALIDATION AND EDGE CASES - Robustness testing
 // =============================================================================
 
-#[test]
-fn test_edge_case_strings() {
+#[sinex_test]
+fn test_edge_case_strings() -> color_eyre::eyre::Result<()> {
     let long_string = "x".repeat(1000);
     let edge_cases = vec![
         ("empty", ""),
@@ -424,18 +437,15 @@ fn test_edge_case_strings() {
         assert_eq!(event_type.as_str(), &format!("edge.{}", test_name));
 
         // Should work in event creation
-        let event = DbEvent::schemaless()
-            .source(source)
-            .event_type(event_type)
-            .payload(json!({"test_value": test_value}))
-            .build();
+        let event = DbEvent::schemaless(source, event_type, json!({"test_value": test_value}));
 
         assert_eq!(event.payload["test_value"], json!(test_value));
     }
+    Ok(())
 }
 
-#[test]
-fn test_concurrent_ulid_generation() {
+#[sinex_test]
+fn test_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
     use std::sync::{Arc, Mutex};
     use std::thread;
 
@@ -470,10 +480,11 @@ fn test_concurrent_ulid_generation() {
             assert_ne!(ulid1, ulid2, "All ULIDs should be unique");
         }
     }
+    Ok(())
 }
 
-#[test]
-fn test_large_payload_creation() {
+#[sinex_test]
+fn test_large_payload_creation() -> color_eyre::eyre::Result<()> {
     // Test creating events with large payloads
     let large_string = "x".repeat(100_000); // 100KB string
 
@@ -490,22 +501,23 @@ fn test_large_payload_creation() {
         }
     });
 
-    let event = DbEvent::schemaless()
-        .source(EventSource::from_static("stress-test"))
-        .event_type(EventType::from_static("large.payload"))
-        .payload(large_payload.clone())
-        .build();
+    let event = DbEvent::schemaless(
+        EventSource::from_static("stress-test"),
+        EventType::from_static("large.payload"),
+        large_payload.clone(),
+    );
 
     assert_eq!(event.payload, large_payload);
     assert_eq!(event.payload["large_data"].as_str().unwrap().len(), 100_000);
+    Ok(())
 }
 
 // =============================================================================
 // SERIALIZATION AND DESERIALIZATION TESTS - JSON handling
 // =============================================================================
 
-#[test]
-fn test_domain_type_serialization() {
+#[sinex_test]
+fn test_domain_type_serialization() -> color_eyre::eyre::Result<()> {
     // Test that domain types serialize/deserialize correctly
     let source = EventSource::from_static("serialization-test");
     let event_type = EventType::from_static("serialize.test");
@@ -523,42 +535,44 @@ fn test_domain_type_serialization() {
 
     assert_eq!(deserialized_source, source);
     assert_eq!(deserialized_type, event_type);
+    Ok(())
 }
 
-#[test]
-fn test_event_json_roundtrip() {
-    let original_event = DbEvent::schemaless()
-        .source(EventSource::from_static("json-test"))
-        .event_type(EventType::from_static("roundtrip.test"))
-        .payload(json!({
+#[sinex_test]
+fn test_event_json_roundtrip() -> color_eyre::eyre::Result<()> {
+    let original_event = DbEvent::schemaless(
+        EventSource::from_static("json-test"),
+        EventType::from_static("roundtrip.test"),
+        json!({
             "string": "test",
             "number": 42,
             "boolean": true,
             "null": null,
             "array": [1, 2, 3],
             "object": {"nested": "value"}
-        }))
-        .build();
+        }),
+    );
 
     // Serialize to JSON
     let json_str = serde_json::to_string(&original_event).unwrap();
 
     // Deserialize back
-    let deserialized_event: Event = serde_json::from_str(&json_str).unwrap();
+    let deserialized_event: DbEvent = serde_json::from_str(&json_str).unwrap();
 
     // Should be equal
     assert_eq!(deserialized_event.source, original_event.source);
     assert_eq!(deserialized_event.event_type, original_event.event_type);
     assert_eq!(deserialized_event.payload, original_event.payload);
     assert_eq!(deserialized_event.id, original_event.id);
+    Ok(())
 }
 
 // =============================================================================
 // PERFORMANCE TESTS - Basic performance characteristics
 // =============================================================================
 
-#[test]
-fn test_ulid_generation_performance() {
+#[sinex_test]
+fn test_ulid_generation_performance() -> color_eyre::eyre::Result<()> {
     use std::time::Instant;
 
     let start = Instant::now();
@@ -584,10 +598,11 @@ fn test_ulid_generation_performance() {
     // Verify all are unique
     let unique_ulids: HashSet<_> = ulids.into_iter().collect();
     assert_eq!(unique_ulids.len(), count);
+    Ok(())
 }
 
-#[test]
-fn test_event_creation_performance() {
+#[sinex_test]
+fn test_event_creation_performance() -> color_eyre::eyre::Result<()> {
     use std::time::Instant;
 
     let start = Instant::now();
@@ -595,15 +610,15 @@ fn test_event_creation_performance() {
 
     let mut events = Vec::with_capacity(count);
     for i in 0..count {
-        let event = DbEvent::schemaless()
-            .source(EventSource::from_static("perf-test"))
-            .event_type(EventType::from_static("performance.test"))
-            .payload(json!({
+        let event = DbEvent::schemaless(
+            EventSource::from_static("perf-test"),
+            EventType::from_static("performance.test"),
+            json!({
                 "index": i,
                 "timestamp": chrono::Utc::now().timestamp(),
                 "data": format!("test-data-{}", i)
-            }))
-            .build();
+            }),
+        );
         events.push(event);
     }
 
@@ -627,6 +642,7 @@ fn test_event_creation_performance() {
         }
     }
     assert_eq!(event_ids.len(), count);
+    Ok(())
 }
 
 // =============================================================================

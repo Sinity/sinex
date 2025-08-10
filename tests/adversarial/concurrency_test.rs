@@ -9,6 +9,7 @@
 // - **Database Concurrency**: Transaction isolation, lock contention, deadlock detection
 // - **Memory Concurrency**: Shared state, atomic operations, cache coherency
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 use chrono::Utc;
@@ -29,7 +30,7 @@ async fn test_worker_claim_exact_same_microsecond(ctx: TestContext) -> color_eyr
     // Insert event to be claimed
     let event = events::race_test_event("race");
 
-    let inserted = sinex_db::insert_event_with_validator(&pool, &event, None).await?;
+    let inserted = sinex_core::db::insert_event_with_validator(&pool, &event, None).await?;
     let event_id = inserted.id;
 
     // Create high-precision synchronization
@@ -389,7 +390,7 @@ async fn test_worker_coordination_microsecond_sync(ctx: TestContext) -> color_ey
             None,
         );
 
-        sinex_db::insert_event_with_validator(&pool, &event, None)
+        sinex_core::db::insert_event_with_validator(&pool, &event, None)
             .await
             .unwrap();
         event_ids.push(event.id);

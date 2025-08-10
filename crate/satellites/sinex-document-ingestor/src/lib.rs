@@ -11,7 +11,8 @@ use chrono::Utc;
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::{DocumentIngestedPayload, Event};
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -23,7 +24,6 @@ use sinex_satellite_sdk::{
     },
     SatelliteError, SatelliteResult,
 };
-use sinex_types::events::DocumentIngestedPayload;
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
@@ -67,7 +67,7 @@ impl DocumentProcessor {
 
     /// Process a file using stage-as-you-go pattern for real-time provenance
     async fn process_file(&self, file_path: &Utf8Path) -> SatelliteResult<()> {
-        let ctx = self.context.as_ref().ok_or_else(|| {
+        let _ctx = self.context.as_ref().ok_or_else(|| {
             SatelliteError::Processing("Document ingestor context not initialized".to_string())
         })?;
 
@@ -99,20 +99,22 @@ impl DocumentProcessor {
                 "mime_type": mime_type,
                 "source_uri": source_uri,
                 "processed_by": "document-ingestor",
-            });
+            })
+            .into();
 
             let source_material_id = stage_context
                 .register_in_flight(&material_type, Some(&source_uri), initial_metadata)
                 .await?;
 
             // Step 2: Create and emit document.ingested event with provenance
-            let event = Event::from_payload(DocumentIngestedPayload {
+            let event: RawEvent = Event::from_payload(DocumentIngestedPayload {
                 file_path: file_path.to_string(),
                 source_material_id: source_material_id.to_string(),
                 size_bytes: content.len() as u64,
                 mime_type: Some(mime_type.clone()),
                 encoding: None, // TODO: Detect encoding
-            });
+            })
+            .into();
 
             stage_context
                 .emit_event_with_provenance(
@@ -168,7 +170,11 @@ fn determine_material_type(mime_type: &str) -> String {
 impl StatefulStreamProcessor for DocumentProcessor {
     type Config = DocumentProcessorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing document processor");
 
         // Initialize stage-as-you-go context for real-time provenance

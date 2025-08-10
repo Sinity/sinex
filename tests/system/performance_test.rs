@@ -20,7 +20,8 @@
 // - **Resource usage**: High CPU/memory usage during tests
 // - **Baseline performance**: 1000+ events/second insertion rate
 
-use sinex_types::events::{event_types, services, EventFactory};
+use color_eyre::eyre::Result;
+use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::timing_optimization::replacements::wait_for_filtered_event_count;
 use sqlx::Row;
@@ -209,7 +210,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), color_
         let pool = ctx.pool().clone();
         let handle = tokio::spawn(async move {
             for j in 0..200 {
-                sinex_db::insert_event_with_validator(
+                sinex_core::db::insert_event_with_validator(
                     &pool,
                     &EventFactory::new(&format!("perf_test_{}", i)).create_event(
                         &format!("test_event_{}", j),
@@ -256,7 +257,7 @@ async fn test_high_volume_ingestion(ctx: TestContext) -> AnyhowResult<(), color_
 async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Insert test events
     for i in 0..100 {
-        sinex_db::insert_event_with_validator(
+        sinex_core::db::insert_event_with_validator(
             ctx.pool(),
             &EventFactory::new("concurrent_test")
                 .create_event("process_me", serde_json::json!({ "id": i })),
@@ -301,7 +302,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre:
                     tokio::task::yield_now().await;
 
                     // Mark as processed
-                    sinex_db::insert_event_with_validator(
+                    sinex_core::db::insert_event_with_validator(
                         &pool,
                         &EventFactory::new("concurrent_test").create_event(
                             "processed",
@@ -352,7 +353,7 @@ async fn test_concurrent_processing_performance(ctx: TestContext) -> color_eyre:
 async fn test_query_latency(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Insert test data
     for i in 0..1000 {
-        sinex_db::insert_event_with_validator(
+        sinex_core::db::insert_event_with_validator(
             ctx.pool(),
             &EventFactory::new("latency_test").create_event(
                 if i % 2 == 0 { "type_a" } else { "type_b" },
@@ -534,7 +535,7 @@ async fn test_scaling_with_worker_count(ctx: TestContext) -> color_eyre::eyre::R
                         tokio::time::sleep(Duration::from_millis(1)).await;
 
                         // Mark as processed
-                        sinex_db::insert_event_with_validator(
+                        sinex_core::db::insert_event_with_validator(
                             &pool_clone,
                             &EventFactory::new("scaling_test").create_event(
                                 "processed",

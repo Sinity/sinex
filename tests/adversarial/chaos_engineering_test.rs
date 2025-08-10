@@ -9,13 +9,14 @@
 // - **State Machine Violations**: Shutdown during initialization, concurrent shutdowns
 // - **System Resource Chaos**: Memory exhaustion, disk full, network failures
 
+use color_eyre::eyre::Result;
 use redis::cmd;
 use sinex_test_utils::prelude::*;
 
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{events, resources};
 use chrono::Utc;
-use sinex_db::{models::AutomatonManifest, queries};
+use sinex_core::db::{models::AutomatonManifest, queries};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
@@ -131,7 +132,7 @@ async fn test_agent_registering_from_multiple_instances(ctx: TestContext) -> col
                 updated_at: Utc::now(),
             };
 
-            match sinex_db::upsert_automaton_manifest(
+            match sinex_core::db::upsert_automaton_manifest(
                 &pool_clone,
                 &manifest.processor_name,
                 &manifest.version,
@@ -237,7 +238,7 @@ async fn test_agent_heartbeat_chaos_with_network_failures(ctx: TestContext) -> c
         updated_at: Utc::now(),
     };
 
-    sinex_db::upsert_automaton_manifest(
+    sinex_core::db::upsert_automaton_manifest(
         pool,
         &manifest.processor_name,
         &manifest.version,
@@ -336,7 +337,7 @@ async fn test_agent_lifecycle_during_concurrent_operations(ctx: TestContext) -> 
 
         let handle = tokio::spawn(async move {
             // Register agent
-            match sinex_db::upsert_automaton_manifest(
+            match sinex_core::db::upsert_automaton_manifest(
                 &pool_clone,
                 &agent_name,
                 "1.0.0",
@@ -979,7 +980,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> color_eyre::eyre:
                     ))))
                 } else {
                     // Normal database operation
-                    match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
+                    match sinex_core::db::sinex_test_utils::sinex_core::db::insert_event_with_validator(
                         &pool_clone,
                         &format!("chaos-worker-{}", worker_id),
                         &format!("database.operation.{}", operation_id),
@@ -1007,7 +1008,7 @@ async fn test_database_failure_resilience(ctx: TestContext) -> color_eyre::eyre:
                     for retry in 0..3 {
                         tokio::time::sleep(Duration::from_millis(100 * (1 << retry))).await;
 
-                        match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
+                        match sinex_core::db::sinex_test_utils::sinex_core::db::insert_event_with_validator(
                             &pool_clone,
                             &format!("chaos-worker-{}", worker_id),
                             &format!("database.retry.{}.{}", operation_id, retry),
@@ -1386,7 +1387,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Re
 //                     match injector.should_fail("event_ingestion").await {
 //                         Ok(()) => {
 //                             // Simulate successful event ingestion
-//                             match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
+//                             match sinex_core::db::sinex_test_utils::sinex_core::db::insert_event_with_validator(
 //                                 &pool_clone,
 //                                 &format!("cascade-component-{}", component_id),
 //                                 &format!("component.operation.{}", operation_id),
@@ -1596,7 +1597,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Re
 //                 }
 //
 //                 // Recovery database operations
-//                 match sinex_db::sinex_test_utils::sinex_db::insert_event_with_validator(
+//                 match sinex_core::db::sinex_test_utils::sinex_core::db::insert_event_with_validator(
 //                     &pool_clone,
 //                     &format!("recovery-component-{}", recovery_id),
 //                     &format!("recovery.operation.{}", op),

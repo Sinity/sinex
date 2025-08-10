@@ -80,8 +80,8 @@
     
     # Initial setup
     sinex.wait_for_unit("postgresql.service")
-    sinex.wait_for_unit("sinex-unified-collector.service")
-    sinex.wait_for_unit("sinex-promo-worker.service")
+    sinex.wait_for_unit("sinex-ingestd.service")
+    sinex.wait_for_unit("sinex-gateway.service")
     
     # Capture initial state
     with subtest("Initial deployment state"):
@@ -93,20 +93,20 @@
         
         # Check initial configuration
         sinex.succeed(
-            "systemctl show -p Environment sinex-unified-collector.service | "
+            "systemctl show -p Environment sinex-ingestd.service | "
             "grep -q 'SINEX_PRESET=lite'"
         )
     
     # Test coordinated update process
     with subtest("Coordinated update"):
         # Trigger update signal
-        sinex.execute("systemctl reload sinex-unified-collector.service")
+        sinex.execute("systemctl reload sinex-ingestd.service")
         
         # Verify grace period behavior
         time.sleep(5)
         
         # Service should still be active during grace period
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
         
         # Verify events are still being collected
         sinex.execute("touch /tmp/update-test-file")
@@ -128,16 +128,16 @@
         )
         
         # Send reload signal
-        sinex.execute("systemctl reload sinex-unified-collector.service")
+        sinex.execute("systemctl reload sinex-ingestd.service")
         
         # Verify configuration was reloaded
         sinex.succeed(
-            "journalctl -u sinex-unified-collector.service | "
+            "journalctl -u sinex-ingestd.service | "
             "grep -q 'Configuration reloaded'"
         )
         
         # Service should remain active
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
     
     # Test rollback scenario
     with subtest("Rollback on failure"):
@@ -147,10 +147,10 @@
         )
         
         # Attempt reload
-        sinex.fail("systemctl reload sinex-unified-collector.service")
+        sinex.fail("systemctl reload sinex-ingestd.service")
         
         # Service should still be running with old config
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
         
         # Fix configuration
         sinex.succeed(
@@ -178,8 +178,8 @@
         )
         
         # Verify services remained active
-        sinex.succeed("systemctl is-active sinex-unified-collector.service")
-        sinex.succeed("systemctl is-active sinex-promo-worker.service")
+        sinex.succeed("systemctl is-active sinex-ingestd.service")
+        sinex.succeed("systemctl is-active sinex-gateway.service")
         
         # Verify migration was applied
         sinex.succeed(
@@ -191,15 +191,15 @@
     with subtest("Dynamic worker scaling"):
         # Check initial worker count
         initial_workers = sinex.succeed(
-            "pgrep -f sinex-promo-worker | wc -l"
+            "pgrep -f sinex-gateway | wc -l"
         ).strip()
         
         # Scale up workers (would normally be done via config update)
         # For now, just verify the service can handle restarts
-        sinex.execute("systemctl restart sinex-promo-worker.service")
+        sinex.execute("systemctl restart sinex-gateway.service")
         
         # Wait for service to come back
-        sinex.wait_for_unit("sinex-promo-worker.service")
+        sinex.wait_for_unit("sinex-gateway.service")
         
         # Verify workers are processing
         time.sleep(5)
@@ -211,18 +211,18 @@
     # Test update failure recovery
     with subtest("Update failure recovery"):
         # Stop collector to simulate failure
-        sinex.execute("systemctl stop sinex-unified-collector.service")
+        sinex.execute("systemctl stop sinex-ingestd.service")
         
         # Verify Dead Letter Queue is active
         time.sleep(2)
         
         # Restart collector
-        sinex.execute("systemctl start sinex-unified-collector.service")
-        sinex.wait_for_unit("sinex-unified-collector.service")
+        sinex.execute("systemctl start sinex-ingestd.service")
+        sinex.wait_for_unit("sinex-ingestd.service")
         
         # Verify recovery
         sinex.succeed(
-            "journalctl -u sinex-unified-collector.service | "
+            "journalctl -u sinex-ingestd.service | "
             "grep -q 'Service started successfully'"
         )
   '';

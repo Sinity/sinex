@@ -1116,9 +1116,10 @@ fn generate_error_handling_helpers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_stream_processor_args_parsing() {
+    #[sinex_test]
+    fn test_stream_processor_args_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             processor_type = "ingestor",
             checkpoint_type = "external",
@@ -1129,10 +1130,11 @@ mod tests {
         assert!(matches!(parsed.processor_type, ProcessorType::Ingestor));
         assert!(matches!(parsed.checkpoint_type, CheckpointType::External));
         assert_eq!(parsed.source, Some("filesystem".to_string()));
+        Ok(())
     }
 
-    #[test]
-    fn test_state_field_extraction() {
+    #[sinex_test]
+    fn test_state_field_extraction() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             {
                 config: TestConfig,
@@ -1150,5 +1152,6 @@ mod tests {
         assert_eq!(state_fields.len(), 2);
         assert_eq!(state_fields[0].name, "last_position");
         assert_eq!(state_fields[1].name, "file_handles");
+        Ok(())
     }
 }

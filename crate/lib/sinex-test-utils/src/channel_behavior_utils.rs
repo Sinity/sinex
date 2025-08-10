@@ -7,7 +7,6 @@ use crate::channel_helpers::{
     BackpressureManager, ChannelMonitor, ChannelReceiverExt, ChannelSenderExt,
 };
 use crate::prelude::*;
-use crate::Result;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -684,9 +683,10 @@ pub mod scenarios {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_channel_test_utilities() {
+    #[sinex_test]
+    async fn test_channel_test_utilities() -> color_eyre::eyre::Result<()> {
         let test_items = vec!["item1", "item2", "item3"];
 
         // Test comprehensive scenario
@@ -698,10 +698,11 @@ mod tests {
         scenarios::run_backpressure_test_scenario("string_backpressure_test", test_items)
             .await
             .unwrap();
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_channel_performance_measurement() {
+    #[sinex_test]
+    async fn test_channel_performance_measurement() -> color_eyre::eyre::Result<()> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 
         let report = performance::measure_channel_throughput(tx, rx, 1000, "test_item")
@@ -711,10 +712,11 @@ mod tests {
         assert!(report.items_sent > 0);
         assert!(report.send_rate > 0.0);
         assert_eq!(report.items_sent, report.items_received);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_channel_monitoring() {
+    #[sinex_test]
+    async fn test_channel_monitoring() -> color_eyre::eyre::Result<()> {
         let (tx, _rx) = tokio::sync::mpsc::channel(10);
         let monitor = ChannelMonitor::new();
 
@@ -726,6 +728,7 @@ mod tests {
 
         let stats = monitor.stats();
         assert_eq!(stats.sent, 5);
+        Ok(())
     }
 }
 
@@ -987,8 +990,8 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[test]
-    fn test_channel_monitor_thread_safety() {
+    #[sinex_test]
+    fn test_channel_monitor_thread_safety() -> Result<()> {
         use std::thread;
 
         let monitor = Arc::new(ChannelMonitor::new());
@@ -1016,5 +1019,7 @@ mod comprehensive_tests {
         assert_eq!(stats.sent, 1000);
         assert_eq!(stats.received, 1000);
         assert_eq!(stats.queue_depth, 0);
+
+        Ok(())
     }
 }

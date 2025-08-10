@@ -29,6 +29,12 @@ except ImportError:
     # Handle case where running directly
     from rpc_client import SinexRPCClient, SinexRPCError, create_client
 
+# Import replay commands
+try:
+    from .replay_commands import replay
+except ImportError:
+    from replay_commands import replay
+
 console = Console()
 
 
@@ -4112,6 +4118,10 @@ def completion_generate(shell: str):
         console.print("[red]Completion module not available[/red]")
         sys.exit(1)
 
+
+# Register replay commands group with different name to avoid conflict
+from replay_commands import replay as replay_plan_group
+cli.add_command(replay_plan_group, name='replay-plan')
 
 if __name__ == '__main__':
     try:

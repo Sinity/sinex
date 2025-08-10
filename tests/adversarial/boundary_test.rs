@@ -9,9 +9,10 @@
 // - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
+use color_eyre::eyre::Result;
 use chrono::Datelike;
 use futures::future::join_all;
-use sinex_types::events::{event_types, services, EventFactory};
+use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::events;
 use sinex_test_utils::prelude::*;
 use std::sync::{
@@ -193,7 +194,7 @@ async fn test_database_transaction_boundary_limits(ctx: TestContext) -> color_ey
         let factory = EventFactory::new("boundary_test");
         let event = factory.create_event("transaction.test", json!({"operation_id": i}));
 
-        match sinex_db::insert_event_with_validator(&pool, &event, None).await {
+        match sinex_core::db::insert_event_with_validator(&pool, &event, None).await {
             Ok(_) => {}
             Err(e) => {
                 println!("Transaction failed at operation {}: {}", i, e);

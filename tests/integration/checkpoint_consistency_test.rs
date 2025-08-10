@@ -7,9 +7,10 @@
 // - Cross-automaton checkpoint validation
 // - Recovery scenarios and data loss detection
 
-use sinex_db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
-use sinex_db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
-use sinex_types::events::{event_types, services, EventFactory};
+use color_eyre::eyre::Result;
+use sinex_core::db::integrity::{checkpoint_verification, IntegrityTestConfig, IntegrityTester};
+use sinex_core::db::validation::{CheckpointInconsistency, CheckpointInconsistencyType};
+use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 
@@ -118,7 +119,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
         let event = {
             let factory = EventFactory::new("test.gap_detection");
             let event = factory.create_event("batch1", json!({"batch": 1, "sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
         };
         batch1_events.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -146,7 +147,7 @@ async fn test_checkpoint_gap_detection(ctx: TestContext) -> color_eyre::eyre::Re
         let event = {
             let factory = EventFactory::new("test.gap_detection");
             let event = factory.create_event("batch2", json!({"batch": 2, "sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
         };
         batch2_events.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -264,7 +265,7 @@ async fn test_stale_checkpoint_detection(ctx: TestContext) -> color_eyre::eyre::
     // Insert a single event
     let factory = EventFactory::new("test.stale_checkpoint");
     let raw_event = factory.create_event("stale_test", json!({"data": "test"}));
-    let event = sinex_db::insert_event_with_validator(&pool, &raw_event, None).await?;
+    let event = sinex_core::db::insert_event_with_validator(&pool, &raw_event, None).await?;
 
     // Create checkpoint with old timestamp (3 hours ago)
     sqlx::query!(
@@ -711,7 +712,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
         let event = {
             let factory = EventFactory::new("test.data_loss");
             let event = factory.create_event("sequence_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
         };
         event_sequence.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
@@ -738,7 +739,7 @@ async fn test_checkpoint_data_loss_detection(ctx: TestContext) -> color_eyre::ey
         let event = {
             let factory = EventFactory::new("test.data_loss");
             let event = factory.create_event("post_checkpoint_event", json!({"sequence": i}));
-            sinex_db::insert_event_with_validator(&pool, &event, None).await?
+            sinex_core::db::insert_event_with_validator(&pool, &event, None).await?
         };
         event_sequence.push(event.id);
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;

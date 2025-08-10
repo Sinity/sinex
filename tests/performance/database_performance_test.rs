@@ -4,14 +4,15 @@
 // index effectiveness, connection pool behavior, and database scalability.
 // These tests help identify database bottlenecks and optimization opportunities.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_types::events::{event_types, services, EventFactory};
+use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::prelude::*;
 use sinex_test_utils::{events, generators};
-use sinex_types::ulid::Ulid;
+use sinex_core::types::ulid::Ulid;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration as StdDuration, Instant};
@@ -174,7 +175,7 @@ async fn test_query_performance_patterns(ctx: TestContext) -> color_eyre::eyre::
     );
 
     for event in &test_events {
-        sinex_db::insert_event_with_validator(pool, event, None).await?;
+        sinex_core::db::insert_event_with_validator(pool, event, None).await?;
     }
 
     // Define comprehensive query test suite
@@ -347,7 +348,7 @@ async fn test_concurrent_database_performance(ctx: TestContext) -> color_eyre::e
                                 })
                             );
 
-                            let result = sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                            let result = sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                             let duration = start.elapsed();
 
                             let mut metrics_lock = metrics.lock().await;
@@ -603,8 +604,8 @@ async fn test_transaction_performance(ctx: TestContext) -> color_eyre::eyre::Res
         );
 
         // Insert both events in the same transaction
-        let insert1 = sinex_db::insert_event_with_validator(&mut tx, &event1, None).await;
-        let insert2 = sinex_db::insert_event_with_validator(&mut tx, &event2, None).await;
+        let insert1 = sinex_core::db::insert_event_with_validator(&mut tx, &event1, None).await;
+        let insert2 = sinex_core::db::insert_event_with_validator(&mut tx, &event2, None).await;
 
         let commit_result = if insert1.is_ok() && insert2.is_ok() {
             tx.commit().await
@@ -647,7 +648,7 @@ async fn test_transaction_performance(ctx: TestContext) -> color_eyre::eyre::Res
                     }),
                 );
 
-                sinex_db::insert_event_with_validator(&mut tx, &event, None).await?;
+                sinex_core::db::insert_event_with_validator(&mut tx, &event, None).await?;
             }
 
             tx.commit().await?;

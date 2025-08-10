@@ -29,9 +29,12 @@ use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
-use sinex_db::models::*;
-
-use sinex_db::{repositories::DbPoolExt, DbPool};
+use sinex_core::db::models::*;
+use sinex_core::db::{repositories::DbPoolExt, DbPool};
+use sinex_core::types::events::payloads::{
+    ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
+};
+use sinex_core::types::events::Event;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -367,11 +370,12 @@ async fn create_user_session_fixture(
     // Create filesystem events
     for i in 0..event_count / 3 {
         let event = Event::from_payload(FileCreatedPayload {
-            path: format!("/home/{}/documents/file_{}.txt", user_id, i),
+            path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
             size: 0,
             created_at: Utc::now(),
             permissions: None,
-        });
+        })
+        .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
@@ -398,8 +402,8 @@ async fn create_user_session_fixture(
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
         let event = Event::from_payload(KittyCommandCompletedPayload {
-            command: cmd.to_string(),
-            working_directory: format!("/home/{}/projects", user_id),
+            command: CommandText::from(cmd.to_string()),
+            working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
             exit_status: 0,
             duration_ms: 100 + i as u64 * 10,
             shell_pid: 1000 + i as u32,
@@ -407,7 +411,8 @@ async fn create_user_session_fixture(
             kitty_tab_id: "tab_1".to_string(),
             output_lines: Some(10),
             error_output: None,
-        });
+        })
+        .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
@@ -439,7 +444,8 @@ async fn create_user_session_fixture(
             original_hash: None,
             annex_key: None,
             blob_id: None,
-        });
+        })
+        .into();
 
         let inserted = pool.events().insert(event).await.map_err(|e| {
             SinexError::database("Failed to insert event")
@@ -541,27 +547,19 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
     // Create events that would fail validation
     let invalid_events = vec![
         (
-            Event::schemaless()
-                .source(EventSource::from(""))
-                .event_type(EventType::from("test"))
-                .payload(json!({}))
-                .build(),
+            RawEvent::schemaless(EventSource::from(""), EventType::from("test"), json!({})),
             "Empty source",
         ),
         (
-            Event::schemaless()
-                .source(EventSource::from("test"))
-                .event_type(EventType::from(""))
-                .payload(json!({}))
-                .build(),
+            RawEvent::schemaless(EventSource::from("test"), EventType::from(""), json!({})),
             "Empty event type",
         ),
         (
-            Event::schemaless()
-                .source(EventSource::from("test"))
-                .event_type(EventType::from("test.event"))
-                .payload(json!(null))
-                .build(),
+            RawEvent::schemaless(
+                EventSource::from("test"),
+                EventType::from("test.event"),
+                json!(null),
+            ),
             "Null payload",
         ),
     ];
@@ -625,7 +623,7 @@ async fn create_performance_dataset_fixture(
     let start_time = Utc::now() - Duration::days(7);
     let end_time = Utc::now();
     // Use source constants from payload types
-    use sinex_types::*;
+    use sinex_core::types::*;
 
     let sources = vec![
         FileCreatedPayload::SOURCE,
@@ -653,15 +651,15 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let event = Event::schemaless()
-            .source(source.clone())
-            .event_type(event_type.clone())
-            .payload(json!({
+        let event = RawEvent::schemaless(
+            source.clone(),
+            event_type.clone(),
+            json!({
                 "index": i,
                 "data": "x".repeat(payload_size)
-            }))
-            .build()
-            .with_ts_orig(Some(start_time + time_step * i as i32));
+            }),
+        )
+        .with_ts_orig(Some(start_time + time_step * i as i32));
         batch.push(event);
     }
 
@@ -731,7 +729,7 @@ pub(crate) async fn with_transaction_fixture<F, T>(ctx: &TestContext, fixture_fn
 where
     F: for<'a> FnOnce(sqlx::Transaction<'a, sqlx::Postgres>) -> BoxFuture<'a, Result<T>>,
 {
-    let mut tx = ctx.pool.begin().await?;
+    let tx = ctx.pool.begin().await?;
 
     // Create some fixture data in the transaction
     let _event = ctx
@@ -784,7 +782,7 @@ pub(crate) async fn pre_warmed_database(
 }
 
 async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
-    use sinex_types::domain::*;
+    use sinex_core::types::domain::*;
 
     let event_count = 5000;
     let checkpoint_count = 10;
@@ -796,14 +794,14 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let event = Event::schemaless()
-            .source(EventSource::from("performance_test"))
-            .event_type(EventType::from("test.event"))
-            .payload(json!({
+        let event = RawEvent::schemaless(
+            EventSource::from("performance_test"),
+            EventType::from("test.event"),
+            json!({
                 "index": i,
                 "data": "x".repeat(payload_size)
-            }))
-            .build();
+            }),
+        );
         batch.push(event);
     }
 
@@ -1119,6 +1117,7 @@ macro_rules! fixture {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use std::sync::Arc;
     use std::time::Duration;
 
@@ -1179,7 +1178,7 @@ mod tests {
         let count = ctx
             .pool
             .events()
-            .count_by_source(&sinex_types::domain::EventSource::from("test"))
+            .count_by_source(&sinex_core::types::domain::EventSource::from("test"))
             .await?;
         assert_eq!(count, 0, "Test data should be cleaned");
 
@@ -1197,7 +1196,7 @@ mod tests {
 
         // Verify checkpoints exist
         for name in &fixture.processor_names {
-            let processor_name = sinex_types::domain::ProcessorName::from(name.as_str());
+            let processor_name = sinex_core::types::domain::ProcessorName::from(name.as_str());
             let checkpoint = ctx
                 .pool
                 .checkpoints()
@@ -1287,7 +1286,7 @@ mod tests {
                     "INSERT INTO core.events (id, source, event_type, host, payload) 
                      VALUES ($1, 'tx_test', 'test', 'test', '{}'::jsonb)",
                 )
-                .bind(sinex_types::ulid::Ulid::new().to_uuid())
+                .bind(sinex_core::types::ulid::Ulid::new().to_uuid())
                 .execute(&mut *tx)
                 .await?;
 
@@ -1299,7 +1298,7 @@ mod tests {
         assert_eq!(result, 42);
 
         // Transaction should be rolled back
-        let source_ref = sinex_types::domain::EventSource::from("tx_test");
+        let source_ref = sinex_core::types::domain::EventSource::from("tx_test");
         let count = ctx.pool.events().count_by_source(&source_ref).await? as usize;
         assert_eq!(count, 0, "Transaction should be rolled back");
 
@@ -1333,38 +1332,38 @@ mod tests {
         let mut event_ids = vec![];
 
         // Insert start event
-        let start_event = Event::schemaless()
-            .source(EventSource::from_static("test"))
-            .event_type(EventType::from_static("test.started"))
-            .payload(json!({}))
-            .build();
+        let start_event = RawEvent::schemaless(
+            EventSource::from_static("test"),
+            EventType::from_static("test.started"),
+            json!({}),
+        );
         let start = ctx.insert_event(&start_event).await?;
         event_ids.push(start.id.expect("Inserted event must have ID"));
 
         // Insert middle events
         for i in 0..5 {
-            let middle_event = Event::schemaless()
-                .source(EventSource::from_static("test"))
-                .event_type(EventType::from_static("test.started"))
-                .payload(json!({"index": i}))
-                .build();
+            let middle_event = RawEvent::schemaless(
+                EventSource::from_static("test"),
+                EventType::from_static("test.started"),
+                json!({"index": i}),
+            );
             let event = ctx.insert_event(&middle_event).await?;
             event_ids.push(event.id.expect("Inserted event must have ID"));
         }
 
         // Insert end event
-        let end_event = Event::schemaless()
-            .source(EventSource::from_static("test"))
-            .event_type(EventType::from_static("test.completed"))
-            .payload(json!({}))
-            .build();
+        let end_event = RawEvent::schemaless(
+            EventSource::from_static("test"),
+            EventType::from_static("test.completed"),
+            json!({}),
+        );
         let end = ctx.insert_event(&end_event).await?;
         event_ids.push(end.id.expect("Inserted event must have ID"));
 
         assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
 
         // Verify all events exist
-        let source_ref = sinex_types::domain::EventSource::from("scenario");
+        let source_ref = sinex_core::types::domain::EventSource::from("scenario");
         let events = ctx
             .pool
             .events()
@@ -1418,7 +1417,7 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_error_propagation(ctx: TestContext) -> Result<()> {
         // Test error propagation by trying to query non-existent data
-        let id = sinex_types::Id::<sinex_db::models::Event>::new();
+        let id = sinex_core::types::Id::<sinex_core::db::models::RawEvent>::new();
         let result = ctx.pool.events().get_by_id(id).await;
 
         assert!(result.is_err());
@@ -1483,12 +1482,13 @@ mod tests {
         Ok(())
     }
 
-    #[tokio::test]
-    async fn test_fixture_registry_singleton() {
+    #[sinex_test]
+    async fn test_fixture_registry_singleton() -> color_eyre::eyre::Result<()> {
         // Registry should be singleton
         let registry1 = get_registry().await;
         let registry2 = get_registry().await;
 
         assert!(Arc::ptr_eq(&registry1, &registry2));
+        Ok(())
     }
 }

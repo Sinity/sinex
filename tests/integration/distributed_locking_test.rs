@@ -8,7 +8,8 @@
 //! - Lock cleanup and recovery
 //! - Version-based leadership election
 
-use sinex_db::distributed_locking::{AdvisoryLock, DistributedCoordination};
+use color_eyre::eyre::Result;
+use sinex_core::db::distributed_locking::{AdvisoryLock, DistributedCoordination};
 use sinex_satellite_sdk::version::{SatelliteVersion, SatelliteInstance};
 use sinex_test_utils::{sinex_test, TestContext};
 use std::sync::Arc;

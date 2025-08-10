@@ -5,7 +5,7 @@ use crate::proto::{
     RawEvent as ProtoRawEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tracing::{debug, error, warn};
 
@@ -35,7 +35,7 @@ impl IngestClient {
     }
 
     /// Send a single event to ingestd
-    pub async fn ingest_event(&mut self, event: &Event) -> SatelliteResult<String> {
+    pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String> {
         let proto_event = self.convert_to_proto(event)?;
 
         let request = tonic::Request::new(proto_event);
@@ -53,7 +53,7 @@ impl IngestClient {
     }
 
     /// Send a batch of events to ingestd
-    pub async fn ingest_batch(&mut self, events: &[Event]) -> SatelliteResult<BatchResult> {
+    pub async fn ingest_batch(&mut self, events: &[RawEvent]) -> SatelliteResult<BatchResult> {
         if events.is_empty() {
             return Ok(BatchResult {
                 success: true,
@@ -108,7 +108,7 @@ impl IngestClient {
     }
 
     /// Convert Event to protobuf format
-    fn convert_to_proto(&self, event: &Event) -> SatelliteResult<ProtoRawEvent> {
+    fn convert_to_proto(&self, event: &RawEvent) -> SatelliteResult<ProtoRawEvent> {
         let payload_json = serde_json::to_string(&event.payload)?;
 
         Ok(ProtoRawEvent {
@@ -150,7 +150,7 @@ pub struct HealthStatus {
 /// Helper for batching events before sending
 pub struct EventBatcher {
     client: IngestClient,
-    batch: Vec<Event>,
+    batch: Vec<RawEvent>,
     batch_size: usize,
     timeout: tokio::time::Duration,
     last_flush: tokio::time::Instant,
@@ -169,7 +169,7 @@ impl EventBatcher {
     }
 
     /// Add an event to the batch, flushing if necessary
-    pub async fn add_event(&mut self, event: Event) -> SatelliteResult<Option<BatchResult>> {
+    pub async fn add_event(&mut self, event: RawEvent) -> SatelliteResult<Option<BatchResult>> {
         self.batch.push(event);
 
         // Check if we should flush

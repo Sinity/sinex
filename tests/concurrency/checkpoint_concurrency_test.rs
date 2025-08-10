@@ -6,7 +6,8 @@
 //! - Optimistic locking behavior
 //! - Checkpoint versioning under contention
 
-use sinex_db::queries::checkpoints::CheckpointQueries;
+use color_eyre::eyre::Result;
+use sinex_core::db::queries::checkpoints::CheckpointQueries;
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -730,6 +731,6 @@ async fn update_checkpoint_atomic(
     Ok(result.rows_affected() > 0)
 }
 
-use sinex_types::error::{Error, ErrorContext};
-use sinex_types::ulid::Ulid;
+use sinex_core::types::error::{Error, ErrorContext};
+use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;

@@ -1,5 +1,6 @@
 // Preflight Unit Tests - Comprehensive verification phase testing
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 // Mock the preflight verification status since the actual module might not be available
@@ -527,6 +528,7 @@ async fn test_phase5_config_format_validation(_ctx: TestContext) -> color_eyre::
 "database": {
 "url": "postgresql:///test",
 "pool_size": 10
+Ok(())
 },
 "logging": {
 "level": "info"

@@ -27,7 +27,7 @@
       fi
       
       # Check Sinex collector
-      if ! systemctl is-active --quiet sinex-unified-collector; then
+      if ! systemctl is-active --quiet sinex-ingestd; then
         echo "❌ Sinex collector is not running"
         FAILED=1
       else
@@ -43,9 +43,9 @@
       fi
       
       # Check promo worker if enabled
-      if systemctl list-unit-files | grep -q "sinex-promo-worker.service"; then
-        if systemctl is-enabled --quiet sinex-promo-worker; then
-          if ! systemctl is-active --quiet sinex-promo-worker; then
+      if systemctl list-unit-files | grep -q "sinex-gateway.service"; then
+        if systemctl is-enabled --quiet sinex-gateway; then
+          if ! systemctl is-active --quiet sinex-gateway; then
             echo "❌ Sinex promo worker is not running"
             FAILED=1
           else
@@ -125,7 +125,7 @@
         
         # Service status
         echo "Services:"
-        for service in postgresql sinex-unified-collector sinex-promo-worker; do
+        for service in postgresql sinex-ingestd sinex-gateway; do
           if systemctl list-unit-files | grep -q "$service.service"; then
             STATUS=$(systemctl is-active "$service" 2>/dev/null || echo "unknown")
             case $STATUS in
@@ -164,7 +164,7 @@
   # Systemd service for continuous health monitoring
   systemd.services.sinex-health-monitor = {
     description = "Sinex health monitoring service";
-    after = [ "sinex-unified-collector.service" ];
+    after = [ "sinex-ingestd.service" ];
     wantedBy = [ ];
     
     serviceConfig = {

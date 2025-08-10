@@ -8,13 +8,13 @@ use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_db::models::Event;
-use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
-    DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload,
+    DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload, Event,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -35,7 +35,7 @@ impl DbusWatcher {
     /// Start monitoring both session and system buses concurrently
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting D-Bus monitoring");
 
@@ -43,7 +43,7 @@ impl DbusWatcher {
 
         // Helper closure to spawn monitoring tasks
         let spawn_monitor =
-            |bus_type: &'static str, tx: mpsc::UnboundedSender<Event>, config: DbusConfig| {
+            |bus_type: &'static str, tx: mpsc::UnboundedSender<RawEvent>, config: DbusConfig| {
                 tokio::spawn(async move { Self::monitor_bus(bus_type, tx, config).await })
             };
 
@@ -72,7 +72,7 @@ impl DbusWatcher {
     /// Monitor a specific D-Bus bus with real-time signal subscription
     async fn monitor_bus(
         bus_type: &str,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
         config: DbusConfig,
     ) -> SatelliteResult<()> {
         loop {
@@ -94,7 +94,7 @@ impl DbusWatcher {
     /// Inner monitoring loop with proper error handling
     async fn monitor_bus_inner(
         bus_type: &str,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         info!("Connecting to D-Bus {} bus", bus_type);
@@ -198,7 +198,7 @@ impl DbusWatcher {
         sender: Option<String>,
         destination: Option<String>,
         args: serde_json::Value,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         let interface = interface.unwrap_or_default();
@@ -250,7 +250,7 @@ impl DbusWatcher {
         sender: &Option<String>,
         args: &serde_json::Value,
         timestamp: String,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
         config: &DbusConfig,
     ) -> SatelliteResult<()> {
         // Extract specialized events based on interface
@@ -259,7 +259,7 @@ impl DbusWatcher {
             && member == "Notify"
         {
             let payload = Self::parse_notification_args(args, timestamp.clone());
-            let event = Event::from_payload(payload);
+            let event: RawEvent = Event::from_payload(payload).into();
             Self::send_event(tx, event, "dbus_notification").await?;
         }
 
@@ -275,7 +275,7 @@ impl DbusWatcher {
             let payload = Self::parse_mpris_properties(args, player, sender, timestamp.clone())
                 .unwrap_or_else(|| Self::default_media_payload(player, sender, timestamp.clone()));
 
-            let event = Event::from_payload(payload);
+            let event: RawEvent = Event::from_payload(payload).into();
             Self::send_event(tx, event, "dbus_media_playback").await?;
         }
 
@@ -284,7 +284,7 @@ impl DbusWatcher {
                 && matches!(member, "PrepareForSleep" | "PrepareForShutdown"))
                 || (interface == "org.freedesktop.UPower" && member == "DeviceChanged"))
         {
-            let event = Event::from_payload(DbusPowerStateChangedPayload {
+            let event: RawEvent = Event::from_payload(DbusPowerStateChangedPayload {
                 event_type: member.to_string(),
                 details: json!({
                     "bus": bus_type,
@@ -292,7 +292,8 @@ impl DbusWatcher {
                     "path": path,
                 }),
                 timestamp: timestamp.clone(),
-            });
+            })
+            .into();
             Self::send_event(tx, event, "dbus_power_event").await?;
         }
 
@@ -306,7 +307,7 @@ impl DbusWatcher {
                 "power"
             };
 
-            let event = Event::from_payload(DbusDeviceConnectedPayload {
+            let event: RawEvent = Event::from_payload(DbusDeviceConnectedPayload {
                 device_type: device_type.to_string(),
                 event_type: member.to_string(),
                 device_path: path.to_string(),
@@ -316,12 +317,13 @@ impl DbusWatcher {
                 serial: None,
                 properties: HashMap::new(),
                 timestamp: timestamp.clone(),
-            });
+            })
+            .into();
             Self::send_event(tx, event, "dbus_hardware_event").await?;
         }
 
         if config.extract_bluetooth && interface.starts_with("org.bluez") {
-            let event = Event::from_payload(DbusBluetoothDeviceChangedPayload {
+            let event: RawEvent = Event::from_payload(DbusBluetoothDeviceChangedPayload {
                 event_type: member.to_string(),
                 device_address: "unknown".to_string(),
                 device_name: None,
@@ -331,12 +333,13 @@ impl DbusWatcher {
                 paired: false,
                 trusted: false,
                 timestamp: timestamp.clone(),
-            });
+            })
+            .into();
             Self::send_event(tx, event, "dbus_bluetooth_event").await?;
         }
 
         if config.extract_network && interface.starts_with("org.freedesktop.NetworkManager") {
-            let event = Event::from_payload(DbusNetworkStateChangedPayload {
+            let event: RawEvent = Event::from_payload(DbusNetworkStateChangedPayload {
                 event_type: member.to_string(),
                 interface: path.to_string(),
                 connection_type: "unknown".to_string(),
@@ -344,14 +347,15 @@ impl DbusWatcher {
                 ip_address: None,
                 state: "unknown".to_string(),
                 timestamp: timestamp.clone(),
-            });
+            })
+            .into();
             Self::send_event(tx, event, "dbus_network_event").await?;
         }
 
         if config.extract_mounts && interface == "org.freedesktop.UDisks2.Filesystem" {
             let mounted = member == "Mount";
 
-            let event = Event::from_payload(DbusMountEventPayload {
+            let event: RawEvent = Event::from_payload(DbusMountEventPayload {
                 event_type: if mounted { "mounted" } else { "unmounted" }.to_string(),
                 device: path.to_string(),
                 mount_point: "/unknown".to_string(),
@@ -360,12 +364,13 @@ impl DbusWatcher {
                 uuid: None,
                 size_bytes: None,
                 timestamp: timestamp.clone(),
-            });
+            })
+            .into();
             Self::send_event(tx, event, "dbus_mount_event").await?;
         }
 
         // Always emit generic signal events
-        let event = Event::from_payload(DbusSignalPayload {
+        let event: RawEvent = Event::from_payload(DbusSignalPayload {
             bus: bus_type.to_string(),
             sender: sender.as_deref().unwrap_or_default().to_string(),
             path: path.to_string(),
@@ -373,7 +378,8 @@ impl DbusWatcher {
             signal: member.to_string(),
             args: args.clone(),
             timestamp,
-        });
+        })
+        .into();
         Self::send_event(tx, event, "dbus_generic_signal").await?;
 
         Ok(())
@@ -390,10 +396,10 @@ impl DbusWatcher {
         destination: &Option<String>,
         args: &serde_json::Value,
         timestamp: String,
-        tx: &mpsc::UnboundedSender<Event>,
+        tx: &mpsc::UnboundedSender<RawEvent>,
         _config: &DbusConfig,
     ) -> SatelliteResult<()> {
-        let event = Event::from_payload(DbusMethodCalledPayload {
+        let event: RawEvent = Event::from_payload(DbusMethodCalledPayload {
             bus: bus_type.to_string(),
             sender: sender.as_deref().unwrap_or_default().to_string(),
             destination: destination.as_deref().unwrap_or_default().to_string(),
@@ -402,7 +408,8 @@ impl DbusWatcher {
             method: member.to_string(),
             args: args.clone(),
             timestamp,
-        });
+        })
+        .into();
         Self::send_event(tx, event, "dbus_generic_method_call").await?;
 
         Ok(())
@@ -713,8 +720,8 @@ impl DbusWatcher {
 
     /// Send event with error logging
     async fn send_event(
-        tx: &mpsc::UnboundedSender<Event>,
-        event: Event,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+        event: RawEvent,
         context: &str,
     ) -> SatelliteResult<()> {
         if tx.send(event).is_err() {

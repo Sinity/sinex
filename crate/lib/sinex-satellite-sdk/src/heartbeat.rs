@@ -6,7 +6,7 @@
 //! by the health aggregator automaton.
 
 use serde::{Deserialize, Serialize};
-use sinex_types::utils::CoordinationPrimitive;
+use sinex_core::types::utils::CoordinationPrimitive;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::time::{interval, Duration};
@@ -300,16 +300,18 @@ macro_rules! emit_heartbeat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
-    async fn test_heartbeat_emitter_creation() {
+    #[sinex_test]
+    async fn test_heartbeat_emitter_creation() -> color_eyre::eyre::Result<()> {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         assert_eq!(emitter.service_name, "test-service");
         assert_eq!(emitter.interval_seconds, 30);
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_counter_handle() {
+    #[sinex_test]
+    async fn test_counter_handle() -> color_eyre::eyre::Result<()> {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         let handle = emitter.get_counter_handle();
 
@@ -318,10 +320,11 @@ mod tests {
 
         assert_eq!(handle.get_events_processed(), 5);
         assert_eq!(handle.get_errors_count(), 1);
+        Ok(())
     }
 
-    #[test]
-    fn test_heartbeat_metrics_creation() {
+    #[sinex_test]
+    fn test_heartbeat_metrics_creation() -> color_eyre::eyre::Result<()> {
         let emitter = HeartbeatEmitter::new("test-service".to_string(), 30);
         emitter.increment_events_processed(10);
         emitter.record_error("test error");
@@ -330,12 +333,14 @@ mod tests {
         assert_eq!(metrics.service_name, "test-service");
         assert_eq!(metrics.errors_count, 1);
         assert!(metrics.last_error_message.is_some());
+        Ok(())
     }
 
-    #[test]
-    fn test_emit_heartbeat_macro() {
+    #[sinex_test]
+    fn test_emit_heartbeat_macro() -> color_eyre::eyre::Result<()> {
         // This test just ensures the macro compiles
         emit_heartbeat!("test-service");
         emit_heartbeat!("test-service", events_processed = 5, status = "healthy");
+        Ok(())
     }
 }

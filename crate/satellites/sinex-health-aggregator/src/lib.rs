@@ -50,7 +50,11 @@ impl HealthAggregator {
 impl StatefulStreamProcessor for HealthAggregator {
     type Config = HealthAggregatorConfig;
 
-    async fn initialize(&mut self, ctx: StreamProcessorContext, _config: Self::Config) -> SatelliteResult<()> {
+    async fn initialize(
+        &mut self,
+        ctx: StreamProcessorContext,
+        _config: Self::Config,
+    ) -> SatelliteResult<()> {
         info!("Initializing health aggregator");
         self.context = Some(ctx);
         Ok(())
@@ -106,7 +110,7 @@ impl Default for HealthAggregator {
 impl NatsEventBatchProcessor for HealthAggregator {
     async fn process_batch(
         &mut self,
-        events: Vec<sinex_db::models::Event>,
+        events: Vec<sinex_core::db::models::RawEvent>,
     ) -> SatelliteResult<NatsBatchProcessingResult> {
         // Simple implementation that just acknowledges all events
         info!("Health aggregator processed {} events", events.len());

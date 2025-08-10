@@ -5,8 +5,8 @@
 
 use crate::prelude::*;
 use serde_json::Value;
-use sinex_db::models::*;
-use sinex_types::error::SinexError;
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::error::SinexError;
 use std::fmt::Debug;
 
 /// Error assertion helpers that work with TestContext
@@ -170,7 +170,6 @@ impl<'ctx> ValidationTester<'ctx> {
         payload: Value,
         expected_error: &str,
     ) -> crate::Result<()> {
-        use sinex_types::domain::*;
         let result = self
             .ctx
             .create_test_event(source, event_type, payload)
@@ -186,8 +185,7 @@ impl<'ctx> ValidationTester<'ctx> {
         source: &str,
         event_type: &str,
         payload: Value,
-    ) -> std::result::Result<Event, SinexError> {
-        use sinex_types::domain::*;
+    ) -> std::result::Result<RawEvent, SinexError> {
         self.ctx
             .create_test_event(source, event_type, payload)
             .await
@@ -402,6 +400,7 @@ impl TestContextErrorExt for TestContext {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use serde_json::json;
 
     #[sinex_test]
@@ -696,8 +695,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_error_type_matching() {
+    #[sinex_test]
+    fn test_error_type_matching() -> color_eyre::eyre::Result<()> {
         // Test SinexError variant matching
         let validation_err = SinexError::validation("test");
         let database_err = SinexError::database("test");
@@ -717,5 +716,7 @@ mod tests {
             SinexError::Service(_) => assert!(true),
             _ => panic!("Wrong error type"),
         }
+
+        Ok(())
     }
 }

@@ -4,6 +4,7 @@
 // coordinator, satellites for event collection, and NATS for message streaming.
 // This replaces the deprecated sinex_collector architecture.
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use std::time::Duration;
 use tokio::time::timeout;

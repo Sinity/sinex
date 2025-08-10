@@ -7,6 +7,7 @@ use super::{
 };
 use async_nats::jetstream;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::domain::{EventSource, EventType, NatsSubject, ServiceName};
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -17,7 +18,7 @@ pub struct StreamConfig {
     pub name: String,
 
     /// Subject patterns this stream captures
-    pub subjects: Vec<String>,
+    pub subjects: Vec<NatsSubject>,
 
     /// Stream description
     pub description: Option<String>,
@@ -47,7 +48,7 @@ impl StreamConfig {
     pub fn raw_events() -> Self {
         Self {
             name: "SINEX_RAW_EVENTS".to_string(),
-            subjects: vec!["sinex.events.raw.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.events.raw.>".to_string())],
             description: Some("Raw event stream for all Sinex events".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 30), // 30 days
             max_msgs: 0,                                         // unlimited
@@ -62,7 +63,7 @@ impl StreamConfig {
     pub fn processed_events() -> Self {
         Self {
             name: "SINEX_PROCESSED_EVENTS".to_string(),
-            subjects: vec!["sinex.events.processed.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.events.processed.>".to_string())],
             description: Some("Processed event stream for canonicalized events".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 90), // 90 days
             max_msgs: 0,
@@ -77,7 +78,7 @@ impl StreamConfig {
     pub fn metrics() -> Self {
         Self {
             name: "SINEX_METRICS".to_string(),
-            subjects: vec!["sinex.metrics.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.metrics.>".to_string())],
             description: Some("Metrics stream for system telemetry".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 7), // 7 days
             max_msgs: 0,
@@ -92,7 +93,7 @@ impl StreamConfig {
     pub fn alerts() -> Self {
         Self {
             name: "SINEX_ALERTS".to_string(),
-            subjects: vec!["sinex.alerts.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.alerts.>".to_string())],
             description: Some("Alert stream for system notifications".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 30), // 30 days
             max_msgs: 10000,
@@ -107,7 +108,7 @@ impl StreamConfig {
     pub fn satellite_control() -> Self {
         Self {
             name: "SINEX_SATELLITE_CONTROL".to_string(),
-            subjects: vec!["sinex.satellite.control.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.satellite.control.>".to_string())],
             description: Some("Control stream for satellite coordination".to_string()),
             max_age: std::time::Duration::from_secs(3600), // 1 hour
             max_msgs: 1000,
@@ -133,7 +134,11 @@ impl StreamConfig {
 
         jetstream::stream::Config {
             name: self.name.clone(),
-            subjects: self.subjects.clone(),
+            subjects: self
+                .subjects
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect(),
             description: self.description.clone(),
             max_age: self.max_age,
             max_messages: self.max_msgs,
@@ -220,18 +225,26 @@ impl StreamManager {
     }
 
     /// Create a subject for a specific event source and type
-    pub fn event_subject(source: &str, event_type: &str) -> String {
-        format!("sinex.events.raw.{}.{}", source, event_type)
+    pub fn event_subject(source: &EventSource, event_type: &EventType) -> String {
+        format!(
+            "sinex.events.raw.{}.{}",
+            source.as_str(),
+            event_type.as_str()
+        )
     }
 
     /// Create a subject for processed events
-    pub fn processed_subject(source: &str, event_type: &str) -> String {
-        format!("sinex.events.processed.{}.{}", source, event_type)
+    pub fn processed_subject(source: &EventSource, event_type: &EventType) -> String {
+        format!(
+            "sinex.events.processed.{}.{}",
+            source.as_str(),
+            event_type.as_str()
+        )
     }
 
     /// Create a subject for metrics
-    pub fn metrics_subject(component: &str, metric_type: &str) -> String {
-        format!("sinex.metrics.{}.{}", component, metric_type)
+    pub fn metrics_subject(component: &ServiceName, metric_type: &str) -> String {
+        format!("sinex.metrics.{}.{}", component.as_str(), metric_type)
     }
 
     /// Create a subject for alerts
@@ -278,34 +291,44 @@ impl StreamManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_stream_configs() {
+    #[sinex_test]
+    fn test_stream_configs() -> color_eyre::eyre::Result<()> {
         let raw = StreamConfig::raw_events();
         assert_eq!(raw.name, "SINEX_RAW_EVENTS");
-        assert_eq!(raw.subjects, vec!["sinex.events.raw.>"]);
+        assert_eq!(
+            raw.subjects,
+            vec![NatsSubject::from("sinex.events.raw.>".to_string())]
+        );
 
         let processed = StreamConfig::processed_events();
         assert_eq!(processed.name, "SINEX_PROCESSED_EVENTS");
 
         let metrics = StreamConfig::metrics();
         assert_eq!(metrics.name, "SINEX_METRICS");
+        Ok(())
     }
 
-    #[test]
-    fn test_subject_creation() {
+    #[sinex_test]
+    fn test_subject_creation() -> color_eyre::eyre::Result<()> {
+        let source = EventSource::from_static("filesystem");
+        let event_type = EventType::from_static("created");
         assert_eq!(
-            StreamManager::event_subject("filesystem", "created"),
+            StreamManager::event_subject(&source, &event_type),
             "sinex.events.raw.filesystem.created"
         );
 
+        let source2 = EventSource::from_static("terminal");
+        let event_type2 = EventType::from_static("command");
         assert_eq!(
-            StreamManager::processed_subject("terminal", "command"),
+            StreamManager::processed_subject(&source2, &event_type2),
             "sinex.events.processed.terminal.command"
         );
 
+        let service = ServiceName::from_static("ingestd");
         assert_eq!(
-            StreamManager::metrics_subject("ingestd", "throughput"),
+            StreamManager::metrics_subject(&service, "throughput"),
             "sinex.metrics.ingestd.throughput"
         );
 
@@ -318,5 +341,6 @@ mod tests {
             StreamManager::control_subject("fs-watcher", "restart"),
             "sinex.satellite.control.fs-watcher.restart"
         );
+        Ok(())
     }
 }

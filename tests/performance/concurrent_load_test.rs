@@ -4,10 +4,11 @@
 // Focuses on measuring throughput, latency, and system stability
 // when multiple operations are running simultaneously.
 
+use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_db::queries::{CheckpointQueries, EventQueries};
-use sinex_db::query_builder::{QueryBuilder, QueryParam};
-use sinex_types::events::{event_types, sources, EventFactory};
+use sinex_core::db::queries::{CheckpointQueries, EventQueries};
+use sinex_core::db::query_builder::{QueryBuilder, QueryParam};
+use sinex_core::types::events::{event_types, sources, EventFactory};
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -195,7 +196,7 @@ async fn test_concurrent_event_ingestion(ctx: TestContext) -> color_eyre::eyre::
                         }),
                     );
 
-                    match sinex_db::insert_event_with_validator(&pool_clone, &event, None).await {
+                    match sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await {
                         Ok(_) => {
                             worker_successes += 1;
                             let duration = operation_start.elapsed();
@@ -304,7 +305,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> color_eyre::eyre::R
                 "timestamp": chrono::Utc::now().to_rfc3339()
             }),
         );
-        sinex_db::insert_event_with_validator(pool, &event, None).await?;
+        sinex_core::db::insert_event_with_validator(pool, &event, None).await?;
     }
 
     println!("🔄 Testing mixed concurrent workload");
@@ -342,7 +343,7 @@ async fn test_mixed_concurrent_workload(ctx: TestContext) -> color_eyre::eyre::R
                             );
 
                             let result =
-                                sinex_db::insert_event_with_validator(&pool_clone, &event, None)
+                                sinex_core::db::insert_event_with_validator(&pool_clone, &event, None)
                                     .await;
                             let duration = operation_start.elapsed();
 
@@ -515,7 +516,7 @@ async fn test_rate_limited_concurrent_load(ctx: TestContext) -> color_eyre::eyre
                     );
 
                     let result =
-                        sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                        sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                     let duration = operation_start.elapsed();
 
                     // Record metrics
@@ -620,7 +621,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> color_eyre::eyre::Result<
                         );
 
                         let result =
-                            sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                            sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                         let duration = operation_start.elapsed();
 
                         if result.is_ok() {
@@ -676,7 +677,7 @@ async fn test_burst_load_handling(ctx: TestContext) -> color_eyre::eyre::Result<
                         );
 
                         let result =
-                            sinex_db::insert_event_with_validator(&pool_clone, &event, None).await;
+                            sinex_core::db::insert_event_with_validator(&pool_clone, &event, None).await;
                         let duration = operation_start.elapsed();
 
                         if result.is_ok() {

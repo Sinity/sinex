@@ -7,6 +7,7 @@
 //! - Authentication and authorization edge cases
 //! - Cryptographic edge cases
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 /// Unicode security testing including homograph attacks, normalization exploits, etc.

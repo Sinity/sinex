@@ -7,9 +7,9 @@
 
 use crate::prelude::*;
 use crate::Result;
-use sinex_db::repositories::*;
-use sinex_types::error::SinexError;
-use sinex_types::*; // Use production primitives from sinex-types
+use sinex_core::db::repositories::*;
+use sinex_core::types::error::SinexError;
+use sinex_core::types::*; // Use production primitives from sinex-types
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -155,7 +155,7 @@ impl WaitHelpers {
         timeout_secs: u64,
     ) -> Result<usize> {
         let pool = pool.clone(); // Clone for closure
-        sinex_types::utils::wait_for_condition_adaptive(
+        sinex_core::types::utils::wait_for_condition_adaptive(
             || async {
                 let count = pool
                     .events()
@@ -196,9 +196,9 @@ impl WaitHelpers {
         let pool = pool.clone(); // Clone for closure
         let source = source.to_string(); // Clone for closure
 
-        sinex_types::utils::wait_for_condition_adaptive(
+        sinex_core::types::utils::wait_for_condition_adaptive(
             || async {
-                let event_source = sinex_types::domain::EventSource::new(&source);
+                let event_source = sinex_core::types::domain::EventSource::new(&source);
                 let count = pool.events().count_by_source(&event_source).await?;
                 Ok(count as usize >= expected_count)
             },
@@ -216,7 +216,7 @@ impl WaitHelpers {
         })?;
 
         // Return final count
-        let event_source = sinex_types::domain::EventSource::new(&source);
+        let event_source = sinex_core::types::domain::EventSource::new(&source);
         let final_count = pool.events().count_by_source(&event_source).await?;
         Ok(final_count as usize)
     }
@@ -227,7 +227,7 @@ impl WaitHelpers {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<bool>>,
     {
-        sinex_types::utils::wait_for_condition_adaptive(
+        sinex_core::types::utils::wait_for_condition_adaptive(
             || async { condition().await },
             timeout_secs,
             "custom test condition",
@@ -263,7 +263,7 @@ impl WaitHelpers {
             }));
         }
 
-        sinex_types::utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
+        sinex_core::types::utils::wait_for_multiple_conditions(prod_conditions, timeout_secs)
             .await
             .map_err(|e| {
                 SinexError::timeout("Multiple conditions wait failed")
@@ -371,10 +371,14 @@ impl<'ctx> TimingUtils<'ctx> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
     use color_eyre::eyre::eyre;
+    use sinex_core::SinexError;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
     use std::time::Duration;
+
+    type Result<T> = std::result::Result<T, SinexError>;
 
     #[sinex_test]
     async fn test_synchronizer_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -783,8 +787,8 @@ mod tests {
         Ok(())
     }
 
-    #[test]
-    fn test_barrier_generation_tracking() {
+    #[sinex_test]
+    fn test_barrier_generation_tracking() -> Result<()> {
         let barrier = TestBarrier::new(2);
 
         assert_eq!(barrier.generation(), 0);
@@ -794,5 +798,6 @@ mod tests {
         barrier.counter.fetch_add(1, Ordering::SeqCst);
         assert_eq!(barrier.current_count(), 1);
         assert_eq!(barrier.generation(), 0);
+        Ok(())
     }
 }

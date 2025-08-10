@@ -216,16 +216,18 @@ pub fn print_version_info() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
 
-    #[test]
-    fn test_version_parsing() {
+    #[sinex_test]
+    fn test_version_parsing() -> color_eyre::eyre::Result<()> {
         let version = satellite_version();
         assert!(version.major >= 1);
         assert!(version.patch > 0); // Should have some commits
+        Ok(())
     }
 
-    #[test]
-    fn test_version_comparison() {
+    #[sinex_test]
+    fn test_version_comparison() -> color_eyre::eyre::Result<()> {
         let v1 = SatelliteVersion {
             version: Version::new(1, 0, 100),
             full_version: "1.0.100".to_string(),
@@ -249,10 +251,11 @@ mod tests {
         assert!(v2.is_newer_than(&v1));
         assert!(!v1.is_newer_than(&v2));
         assert!(v2 > v1);
+        Ok(())
     }
 
-    #[test]
-    fn test_dirty_build_preference() {
+    #[sinex_test]
+    fn test_dirty_build_preference() -> color_eyre::eyre::Result<()> {
         let clean = SatelliteVersion {
             version: Version::new(1, 0, 100),
             full_version: "1.0.100".to_string(),
@@ -275,5 +278,6 @@ mod tests {
 
         // Same version, but clean build should be preferred
         assert!(clean > dirty);
+        Ok(())
     }
 }

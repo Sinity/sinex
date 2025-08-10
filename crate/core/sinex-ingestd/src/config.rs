@@ -238,7 +238,7 @@ fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
-    use sinex_types::validate_path;
+    use sinex_core::types::validate_path;
 
     validate_path(path)
         .map(|_| ())
@@ -246,7 +246,7 @@ fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
-    use sinex_types::validate_path;
+    use sinex_core::types::validate_path;
 
     validate_path(path.as_str())
         .map(|_| ())

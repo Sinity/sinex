@@ -277,19 +277,21 @@ use futures::TryStreamExt;
 mod tests {
     use super::*;
     use crate::nats::{client::NatsClient, config::NatsConfig};
+    use sinex_test_utils::sinex_test;
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server with JetStream
-    async fn test_jetstream_context() {
+    async fn test_jetstream_context() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config.clone()).await.unwrap();
         let js = JetStream::new(&client, config.jetstream).await;
         assert!(js.is_ok());
+        Ok(())
     }
 
-    #[tokio::test]
+    #[sinex_test]
     #[ignore] // Requires NATS server with JetStream
-    async fn test_stream_operations() {
+    async fn test_stream_operations() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         let client = NatsClient::new(config.clone()).await.unwrap();
         let js = JetStream::new(&client, config.jetstream).await.unwrap();
@@ -307,5 +309,6 @@ mod tests {
 
         // Clean up
         js.delete_stream("TEST_STREAM").await.unwrap();
+        Ok(())
     }
 }

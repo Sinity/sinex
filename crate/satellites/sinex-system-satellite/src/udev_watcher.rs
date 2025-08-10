@@ -2,13 +2,13 @@
 //!
 //! Monitors hardware device events via udev
 
-use sinex_db::models::Event;
+use sinex_core::db::models::RawEvent;
 
-use sinex_satellite_sdk::SatelliteResult;
-use sinex_types::events::{
-    UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
+use sinex_core::types::events::{
+    Event, UdevDeviceChangedPayload, UdevDeviceConnectedPayload, UdevDeviceDisconnectedPayload,
     UdevDeviceDriverChangedPayload, UdevDeviceOtherPayload,
 };
+use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -29,7 +29,8 @@ macro_rules! create_udev_event {
             serial: $serial,
             properties: $properties,
             timestamp: $timestamp,
-        }))
+        })
+        .into())
     };
 }
 
@@ -56,7 +57,7 @@ impl UdevWatcher {
         device_path: &str,
         device_type: &str,
         properties: std::collections::HashMap<String, String>,
-    ) -> SatelliteResult<Event> {
+    ) -> SatelliteResult<RawEvent> {
         // Extract common properties
         let subsystem = properties.get("SUBSYSTEM").cloned();
         let devtype = properties.get("DEVTYPE").cloned();
@@ -144,7 +145,10 @@ impl UdevWatcher {
     }
 
     /// Monitor udev events using netlink socket (fallback implementation)
-    async fn monitor_udev_events(&self, tx: mpsc::UnboundedSender<Event>) -> SatelliteResult<()> {
+    async fn monitor_udev_events(
+        &self,
+        tx: mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
         info!("Starting udev event monitoring via filesystem polling");
 
         // Since libudev is disabled, we'll do periodic scanning of /sys/class
@@ -249,7 +253,7 @@ impl UdevWatcher {
     /// Start streaming events
     pub async fn start_streaming(
         &mut self,
-        tx: mpsc::UnboundedSender<Event>,
+        tx: mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
         info!("Starting udev event streaming");
 

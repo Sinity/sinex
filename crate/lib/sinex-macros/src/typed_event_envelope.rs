@@ -291,10 +291,11 @@ fn is_raw_event_type(ty: &Type) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sinex_test_utils::sinex_test;
     use syn::parse_quote;
 
-    #[test]
-    fn test_typed_event_envelope_parsing() {
+    #[sinex_test]
+    fn test_typed_event_envelope_parsing() -> color_eyre::eyre::Result<()> {
         let input = quote! {
             pub enum EventEnvelope {
                 FileCreated(TypedRawEvent<FileCreatedPayload>),
@@ -311,10 +312,11 @@ mod tests {
         } else {
             panic!("Expected enum");
         }
+        Ok(())
     }
 
-    #[test]
-    fn test_typed_raw_event_detection() {
+    #[sinex_test]
+    fn test_typed_raw_event_detection() -> color_eyre::eyre::Result<()> {
         let typed_event: Type = parse_quote!(TypedRawEvent<FileCreatedPayload>);
         assert!(is_typed_raw_event_type(&typed_event));
 
@@ -325,5 +327,6 @@ mod tests {
         let other_type: Type = parse_quote!(String);
         assert!(!is_typed_raw_event_type(&other_type));
         assert!(!is_raw_event_type(&other_type));
+        Ok(())
     }
 }

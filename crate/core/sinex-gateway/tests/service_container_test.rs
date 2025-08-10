@@ -5,12 +5,13 @@
 
 use color_eyre::eyre::Result;
 use sinex_gateway::service_container::ServiceContainer;
+use sinex_test_utils::sinex_test;
 use std::env;
 use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Test successful initialization with valid database URL
-#[tokio::test]
+#[sinex_test]
 async fn test_service_container_initialization_success() -> Result<()> {
     // Use the development database URL from nix environment
     let db_url = env::var("DATABASE_URL")
@@ -45,7 +46,7 @@ async fn test_service_container_initialization_success() -> Result<()> {
 }
 
 /// Test initialization with DATABASE_URL from environment
-#[tokio::test]
+#[sinex_test]
 async fn test_service_container_env_database_url() -> Result<()> {
     // Set DATABASE_URL in environment
     let db_url = env::var("DATABASE_URL")
@@ -88,8 +89,8 @@ async fn test_service_container_env_database_url() -> Result<()> {
 }
 
 /// Test initialization fails gracefully with invalid database URL
-#[tokio::test]
-async fn test_service_container_invalid_database_url() {
+#[sinex_test]
+async fn test_service_container_invalid_database_url() -> color_eyre::eyre::Result<()> {
     // Use an invalid database URL
     let invalid_url = "postgresql://invalid:invalid@nonexistent:5432/invalid".to_string();
 
@@ -113,11 +114,12 @@ async fn test_service_container_invalid_database_url() {
         }
         Ok(_) => panic!("Expected error but got success"),
     }
+    Ok(())
 }
 
 /// Test initialization fails when no database URL is provided
-#[tokio::test]
-async fn test_service_container_no_database_url() {
+#[sinex_test]
+async fn test_service_container_no_database_url() -> color_eyre::eyre::Result<()> {
     // Save and clear DATABASE_URL from environment
     let original_db_url = env::var("DATABASE_URL").ok();
     env::remove_var("DATABASE_URL");
@@ -149,10 +151,11 @@ async fn test_service_container_no_database_url() {
     if let Some(url) = original_db_url {
         env::set_var("DATABASE_URL", url);
     }
+    Ok(())
 }
 
 /// Test service container cloning
-#[tokio::test]
+#[sinex_test]
 async fn test_service_container_clone() -> Result<()> {
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -189,7 +192,7 @@ async fn test_service_container_clone() -> Result<()> {
 }
 
 /// Test annex path configuration
-#[tokio::test]
+#[sinex_test]
 async fn test_service_container_annex_path_config() -> Result<()> {
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -222,7 +225,7 @@ async fn test_service_container_annex_path_config() -> Result<()> {
 }
 
 /// Test concurrent service container initialization
-#[tokio::test]
+#[sinex_test]
 async fn test_service_container_concurrent_initialization() -> Result<()> {
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());
@@ -252,7 +255,7 @@ async fn test_service_container_concurrent_initialization() -> Result<()> {
 }
 
 /// Test service Arc reference counting
-#[tokio::test]
+#[sinex_test]
 async fn test_service_container_arc_references() -> Result<()> {
     let db_url = env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string());

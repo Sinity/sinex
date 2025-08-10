@@ -1,5 +1,5 @@
 # Basic E2E flow test using unified test abstractions
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, sinex-test-bridge, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, sinex-test-bridge, ... }:
 
 let
   inherit (pkgs) lib;
@@ -61,7 +61,7 @@ pkgs.nixosTest {
   nodes.machine = { config, pkgs, lib, ... }: {
     imports = [ 
       (import ../common/test-base.nix { 
-        inherit config pkgs lib sinex-collector sinex-promo-worker pg_jsonschema; 
+        inherit config pkgs lib sinex-ingestd sinex-gateway pg_jsonschema; 
       })
     ];
 
@@ -69,7 +69,7 @@ pkgs.nixosTest {
     systemd.services.sinex-test-bridge = {
       description = "Sinex Test Bridge Service";
       wantedBy = [ "multi-user.target" ];
-      after = [ "postgresql.service" "sinex-unified-collector.service" ];
+      after = [ "postgresql.service" "sinex-ingestd.service" ];
       
       serviceConfig = {
         ExecStart = "${sinex-test-bridge}/bin/sinex-test-bridge";
@@ -110,7 +110,7 @@ pkgs.nixosTest {
     with subtest("System initialization"):
         machine.wait_for_unit("multi-user.target")
         machine.wait_for_unit("postgresql.service", timeout=60)
-        machine.wait_for_unit("sinex-unified-collector.service", timeout=60)
+        machine.wait_for_unit("sinex-ingestd.service", timeout=60)
         machine.wait_for_unit("sinex-test-bridge.service", timeout=60)
         
         # Wait for bridge to be ready
@@ -177,11 +177,11 @@ print("\\n✓ All assertions passed!")
     # Traditional VM test operations can still be mixed in
     with subtest("Additional VM-specific tests"):
         # Test service resilience
-        machine.systemctl("restart sinex-unified-collector")
-        machine.wait_for_unit("sinex-unified-collector.service")
+        machine.systemctl("restart sinex-ingestd")
+        machine.wait_for_unit("sinex-ingestd.service")
         
         # Verify service recovered
-        machine.succeed("systemctl is-active sinex-unified-collector")
+        machine.succeed("systemctl is-active sinex-ingestd")
         
         # Use bridge to verify events still being processed
         machine.succeed("""
@@ -189,7 +189,7 @@ cd /tmp && python3 -c "
 from test_bridge_client import TestBridgeClient
 client = TestBridgeClient()
 # Generate event after restart
-event_id = client.create_event('test', 'service.restarted', {'service': 'sinex-unified-collector'})
+event_id = client.create_event('test', 'service.restarted', {'service': 'sinex-ingestd'})
 print(f'Created event: {event_id}')
 # Verify it was stored
 result = client.wait_for_events(16, timeout_seconds=5)

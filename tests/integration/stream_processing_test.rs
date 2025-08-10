@@ -4,6 +4,7 @@
 //! event routing, consumer behavior, and stream processing patterns.
 //! Focuses on correctness and integration rather than raw performance.
 
+use color_eyre::eyre::Result;
 use async_nats::jetstream::{consumer::PullConsumer, stream::Config as StreamConfig, Context};
 use futures::StreamExt;
 use serde_json::json;

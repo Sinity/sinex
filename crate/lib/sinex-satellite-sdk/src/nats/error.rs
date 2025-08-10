@@ -43,9 +43,9 @@ pub enum NatsError {
 
 pub type Result<T> = std::result::Result<T, NatsError>;
 
-impl From<NatsError> for sinex_types::error::SinexError {
+impl From<NatsError> for sinex_core::error::SinexError {
     fn from(err: NatsError) -> Self {
-        sinex_types::error::SinexError::service(err.to_string())
+        sinex_core::error::SinexError::service(err.to_string())
             .with_operation("nats")
             .with_context("service", "nats")
     }

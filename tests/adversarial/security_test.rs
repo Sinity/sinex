@@ -11,9 +11,10 @@
 // - **Query Interface**: API security and exploit prevention
 // - **Unicode Exploits**: Character encoding and normalization attacks
 
+use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
-use sinex_db::validation::EventValidator;
-use sinex_db::models::{EventFactory, services, event_types};
+use sinex_core::db::validation::EventValidator;
+use sinex_core::db::models::{EventFactory, services, event_types};
 use std::fs;
 use std::collections::HashMap;
 

@@ -328,7 +328,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
         use crate::grpc_client::IngestClient;
         use crate::nats::config::NatsConfig;
         use crate::stream_processor::{ScanArgs, StreamProcessorRunner};
-        use sinex_db::SqlxPgPool;
+        use sinex_core::db::SqlxPgPool;
 
         // Initialize logging based on verbosity
         let log_level = match args.verbose {
@@ -422,11 +422,11 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     nats_config.client_name = format!("sinex-{}", service_name);
 
                     runner
-                        .initialize_with_nats(
+                        .initialize_with_grpc_legacy(
                             service_name.clone(),
                             processor_config,
                             db_pool.clone(),
-                            nats_config,
+                            "/run/sinex/ingest.sock".to_string(),
                             work_dir.into(),
                             dry_run,
                         )
@@ -461,7 +461,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                                 // Only leader processes events
                                 let mut runner = runner.lock().await;
                                 runner.run_service().await.map_err(|e| {
-                                    sinex_types::SinexError::service(format!(
+                                    sinex_core::SinexError::service(format!(
                                         "Satellite error: {}",
                                         e
                                     ))
@@ -557,11 +557,11 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     nats_config.client_name = format!("sinex-{}-scan", service_name);
 
                     runner
-                        .initialize_with_nats(
+                        .initialize_with_grpc_legacy(
                             service_name,
                             processor_config,
                             db_pool,
-                            nats_config,
+                            "/run/sinex/ingest.sock".to_string(),
                             work_dir.into(),
                             dry_run,
                         )

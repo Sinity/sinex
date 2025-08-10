@@ -6,12 +6,13 @@
 //! Tests use the repository pattern, modern error handling with color-eyre,
 //! and #[sinex_test] macro for async test execution.
 
+use color_eyre::eyre::Result;
 use chrono::{Duration, Utc};
 use serde_json::json;
-use sinex_db::repositories::DbPoolExt;
+use sinex_core::db::repositories::DbPoolExt;
 use sinex_services::AnalyticsService;
 use sinex_test_utils::prelude::*;
-use sinex_types::domain::{EventSource, EventType};
+use sinex_core::types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 
 /// Helper to create test events with specific timestamps and content using modern patterns
@@ -27,9 +28,9 @@ async fn create_analytics_test_event(
         let timestamp = Utc::now() - offset;
         
         // Create event with specific timestamp using builder pattern
-        sinex_db::models::Event::schemaless()
-            .source(sinex_types::domain::EventSource::new(source))
-            .event_type(sinex_types::domain::EventType::new(event_type))
+        sinex_core::db::models::Event::schemaless()
+            .source(sinex_core::types::domain::EventSource::new(source))
+            .event_type(sinex_core::types::domain::EventType::new(event_type))
             .payload(payload_content)
             .build()
             .with_ts_orig(Some(timestamp))

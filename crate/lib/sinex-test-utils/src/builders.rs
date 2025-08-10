@@ -8,7 +8,7 @@ use crate::prelude::*;
 use bon::Builder;
 use chrono::{DateTime, Utc};
 use serde_json::{json, Value as JsonValue};
-use sinex_db::{self, repositories::DbPoolExt, DbPool};
+use sinex_core::db::{repositories::DbPoolExt, DbPool};
 
 // Test data builders using bon derive macros
 
@@ -18,7 +18,7 @@ pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
     consumer_group: Option<String>,
     consumer_name: Option<String>,
-    last_processed_id: Option<Id<Event>>,
+    last_processed_id: Option<Id<RawEvent>>,
     processed_count: i64,
     state_data: Option<JsonValue>,
     checkpoint_version: i32,
@@ -47,7 +47,7 @@ impl TestCheckpointBuilder {
     }
 
     /// Set last processed ID
-    pub fn last_processed_id(mut self, id: Id<Event>) -> Self {
+    pub fn last_processed_id(mut self, id: Id<RawEvent>) -> Self {
         self.last_processed_id = Some(id);
         self
     }
@@ -60,8 +60,8 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_db::repositories::*;
-        use sinex_types::domain::*;
+        use sinex_core::db::repositories::*;
+        use sinex_core::types::domain::*;
 
         let processor_name = ProcessorName::new(&self.processor_name);
         let group = ConsumerGroup::new(
@@ -94,7 +94,7 @@ impl TestCheckpointBuilder {
 /// Builder for test scenarios with multiple events - manual implementation
 #[derive(Debug)]
 pub(crate) struct TestScenarioBuilder {
-    events: Vec<Event>,
+    events: Vec<RawEvent>,
     checkpoints: Vec<TestCheckpointBuilder>,
     pool: Option<DbPool>,
 }
@@ -115,16 +115,21 @@ impl TestScenarioBuilder {
         self
     }
     /// Add multiple events from the same source
-    pub fn with_events_from_source(mut self, source: &str, event_type: &str, count: usize) -> Self {
+    pub fn with_events_from_source(
+        mut self,
+        source: &EventSource,
+        event_type: &EventType,
+        count: usize,
+    ) -> Self {
         for i in 0..count {
-            let event = Event::schemaless()
-                .source(EventSource::from(source))
-                .event_type(EventType::from(event_type))
-                .payload(json!({
+            let event = RawEvent::schemaless(
+                source.clone(),
+                event_type.clone(),
+                json!({
                     "index": i,
                     "batch": true
-                }))
-                .build();
+                }),
+            );
             self.events.push(event);
         }
         self
@@ -172,15 +177,17 @@ impl DatabaseMetricsBuilder {
     }
 
     /// Add events by source (updates unique_sources automatically)
-    pub fn with_source_count(mut self, source: &str, count: u64) -> Self {
-        self.events_by_source.insert(source.to_string(), count);
+    pub fn with_source_count(mut self, source: &EventSource, count: u64) -> Self {
+        self.events_by_source
+            .insert(source.as_str().to_string(), count);
         self.unique_sources = self.events_by_source.len() as u32;
         self
     }
 
     /// Add events by type (updates unique_event_types automatically)  
-    pub fn with_type_count(mut self, event_type: &str, count: u64) -> Self {
-        self.events_by_type.insert(event_type.to_string(), count);
+    pub fn with_type_count(mut self, event_type: &EventType, count: u64) -> Self {
+        self.events_by_type
+            .insert(event_type.as_str().to_string(), count);
         self.unique_event_types = self.events_by_type.len() as u32;
         self
     }

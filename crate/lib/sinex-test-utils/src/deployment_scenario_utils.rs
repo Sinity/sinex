@@ -206,7 +206,7 @@ impl ConfigCompatibilityTester {
     /// Create a new configuration compatibility tester
     pub async fn new() -> Result<Self> {
         let temp_dir = TempDir::new().map_err(|e| {
-            sinex_types::error::SinexError::io("temp_directory")
+            sinex_core::types::error::SinexError::io("temp_directory")
                 .with_context("source", e.to_string())
         })?;
 
@@ -837,7 +837,7 @@ impl ConfigCompatibilityTester {
             fs::write(&config_path, &component.config_file_content)
                 .await
                 .map_err(|e| {
-                    sinex_types::error::SinexError::io(config_path.display().to_string())
+                    sinex_core::types::error::SinexError::io(config_path.display().to_string())
                         .with_context("source", e.to_string())
                 })?;
         }
@@ -1180,19 +1180,21 @@ pub fn generate_compatibility_report(results: &[CompatibilityResult]) -> String 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sinex_test;
 
-    #[tokio::test]
-    async fn test_compatibility_tester_creation() {
+    #[sinex_test]
+    async fn test_compatibility_tester_creation() -> color_eyre::eyre::Result<()> {
         let tester = ConfigCompatibilityTester::new().await.unwrap();
         assert!(!tester.test_scenarios.is_empty());
 
         let scenario_names = tester.list_scenarios();
         assert!(scenario_names.contains(&"development_environment"));
         assert!(scenario_names.contains(&"production_environment"));
+        Ok(())
     }
 
-    #[tokio::test]
-    async fn test_development_scenario() {
+    #[sinex_test]
+    async fn test_development_scenario() -> color_eyre::eyre::Result<()> {
         let tester = ConfigCompatibilityTester::new().await.unwrap();
         let scenario = tester.get_scenario("development_environment").unwrap();
 
@@ -1202,6 +1204,7 @@ mod tests {
         );
         assert!(scenario.expected_outcome.should_succeed);
         assert!(!scenario.validation_steps.is_empty());
+        Ok(())
     }
 }
 
@@ -1557,8 +1560,8 @@ mod comprehensive_tests {
         Ok(())
     }
 
-    #[test]
-    fn test_validation_type_equality() {
+    #[sinex_test]
+    fn test_validation_type_equality() -> Result<()> {
         assert_eq!(
             ValidationType::ConfigurationLoad,
             ValidationType::ConfigurationLoad
@@ -1571,10 +1574,11 @@ mod comprehensive_tests {
             ValidationType::DatabaseConnection,
             ValidationType::RedisConnection
         );
+        Ok(())
     }
 
-    #[test]
-    fn test_compatibility_test_result_creation() {
+    #[sinex_test]
+    fn test_compatibility_test_result_creation() -> Result<()> {
         let result = CompatibilityResult {
             scenario_name: "test".to_string(),
             overall_success: true,
@@ -1593,5 +1597,6 @@ mod comprehensive_tests {
         assert!(result.overall_success);
         assert!(result.step_results.is_empty());
         assert!(result.issues_found.is_empty());
+        Ok(())
     }
 }

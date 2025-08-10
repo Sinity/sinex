@@ -1,5 +1,5 @@
 # Multi-source stress test for Sinex
-{ pkgs, sinex-collector, sinex-promo-worker, pg_jsonschema, ... }:
+{ pkgs, sinex-ingestd, sinex-gateway, pg_jsonschema, ... }:
 
 let
   # Enhanced query tool with metrics support
@@ -216,7 +216,7 @@ pkgs.nixosTest {
 
       services.sinex = {
         enable = true;
-        package = sinex-collector;
+        package = sinex-ingestd;
         promoWorker.enable = true;  # Enable worker for this test
 
         unifiedCollector = {
@@ -394,8 +394,8 @@ EOF
       
       # Package overlays
       nixpkgs.overlays = [(final: prev: {
-        sinex-unified-collector = sinex-collector;
-        sinex-promo-worker = sinex-promo-worker;
+        sinex-ingestd = sinex-ingestd;
+        sinex-gateway = sinex-gateway;
         postgresql16Packages = prev.postgresql16Packages // {
           pg_jsonschema = pg_jsonschema;
         };
@@ -414,12 +414,12 @@ EOF
     
     # Wait for Sinex services
     machine.wait_for_unit("sinex-migrate.service")
-    machine.wait_for_unit("sinex-unified-collector.service")
-    machine.wait_for_unit("sinex-promo-worker.service")
+    machine.wait_for_unit("sinex-ingestd.service")
+    machine.wait_for_unit("sinex-gateway.service")
     
     # Verify all services are active
-    machine.succeed("systemctl is-active sinex-unified-collector")
-    machine.succeed("systemctl is-active sinex-promo-worker")
+    machine.succeed("systemctl is-active sinex-ingestd")
+    machine.succeed("systemctl is-active sinex-gateway")
 
     # Initialize all data sources
     with subtest("Initialize all event sources"):
@@ -559,8 +559,8 @@ EOF
     # Test 5: System stability validation
     with subtest("System stability after stress test"):
         # Verify all services are still running
-        machine.succeed("systemctl is-active sinex-unified-collector")
-        machine.succeed("systemctl is-active sinex-promo-worker")
+        machine.succeed("systemctl is-active sinex-ingestd")
+        machine.succeed("systemctl is-active sinex-gateway")
         machine.succeed("systemctl is-active postgresql")
         
         # Test database responsiveness

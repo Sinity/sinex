@@ -4,6 +4,8 @@
 //! Verifies that checkpoints are correctly saved to and restored from the database,
 //! and that checkpoint managers can persist and recover state correctly.
 
+use color_eyre::eyre::Result;
+use sinex_core::types::domain::EventSource;
 use sinex_test_utils::prelude::*;
 use serde_json::json;
 use sinex_satellite_sdk::checkpoint::CheckpointManager;
@@ -78,8 +80,12 @@ async fn test_checkpoint_manager_basic_functionality(
             "Initial checkpoint should have no last processed ID",
         )?;
 
-    // Verify events were created in the database
-    let created_events = ctx.get_events_by_source("checkpoint-test").await?;
+    // Verify events were created in the database using direct repository access
+    let created_events = ctx
+        .pool
+        .events()
+        .get_by_source(&EventSource::from_static("checkpoint-test"), Some(100), None)
+        .await?;
     ctx.assert("test event creation")
         .eq(&created_events.len(), &3)?;
 
@@ -214,8 +220,12 @@ async fn test_checkpoint_with_events_context(
             "Checkpoint processed count should be valid",
         )?;
 
-    // Verify our test events exist in the database
-    let events_in_db = ctx.get_events_by_source("checkpoint-context").await?;
+    // Verify our test events exist in the database using direct repository access
+    let events_in_db = ctx
+        .pool
+        .events()
+        .get_by_source(&EventSource::from_static("checkpoint-context"), Some(100), None)
+        .await?;
     ctx.assert("events in database")
         .eq(&events_in_db.len(), &2)?;
 
