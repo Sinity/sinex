@@ -230,8 +230,8 @@ mod tests {
         let result: Vec<FileCreatedPayload> =
             Vec::<FileCreatedPayload>::try_from_legacy(value, "1.0.0").unwrap();
         assert_eq!(result.len(), 2);
-        assert_eq!(result[0].path, "/test1.txt");
-        assert_eq!(result[1].path, "/test2.txt");
+        assert_eq!(result[0].path.as_str(), "/test1.txt");
+        assert_eq!(result[1].path.as_str(), "/test2.txt");
         Ok(())
     }
 }

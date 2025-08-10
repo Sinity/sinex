@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
+use futures::pin_mut;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::{
@@ -115,7 +116,8 @@ impl SensdFilesystemProcessor {
         info!("Processing material: {}", material_id);
 
         // Create stream for material slices
-        let mut stream = self.create_material_stream(material_id).await?;
+        let stream = self.create_material_stream(material_id).await?;
+        pin_mut!(stream);
 
         let mut total_events = 0;
 

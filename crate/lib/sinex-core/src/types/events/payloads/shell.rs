@@ -3,6 +3,7 @@
 //! Note: Payloads are source-specific. A command from Kitty is different
 //! from a command from Atuin, even if they have similar fields.
 
+use crate::types::domain::{CommandText, HostName, SanitizedPath, ShellName};
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -14,11 +15,11 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "shell.kitty", event_type = "command.executed")]
 pub struct KittyCommandExecutedPayload {
-    pub command: String,
-    pub working_directory: Option<String>,
+    pub command: CommandText,
+    pub working_directory: Option<SanitizedPath>,
     pub exit_status: Option<i32>,
     pub execution_time_ms: Option<u64>,
-    pub shell_type: Option<String>,
+    pub shell_type: Option<ShellName>,
     pub kitty_window_id: String,
     pub kitty_tab_id: String,
 }
@@ -26,8 +27,8 @@ pub struct KittyCommandExecutedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "shell.kitty", event_type = "command.completed")]
 pub struct KittyCommandCompletedPayload {
-    pub command: String,
-    pub working_directory: String,
+    pub command: CommandText,
+    pub working_directory: SanitizedPath,
     pub exit_status: i32,
     pub duration_ms: u64,
     pub shell_pid: u32,
@@ -42,8 +43,8 @@ pub struct KittyCommandCompletedPayload {
 pub struct KittySessionStartedPayload {
     pub window_id: String,
     pub tab_id: String,
-    pub shell_type: String,
-    pub working_directory: String,
+    pub shell_type: ShellName,
+    pub working_directory: SanitizedPath,
     pub env_vars: Option<HashMap<String, String>>,
 }
 
@@ -61,8 +62,8 @@ pub struct KittySessionEndedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "shell.atuin", event_type = "command.executed")]
 pub struct AtuinCommandExecutedPayload {
-    pub command_string: String,
-    pub cwd: String,
+    pub command_string: CommandText,
+    pub cwd: SanitizedPath,
     pub exit_code: i32,
     pub duration_ns: i64,
     pub atuin_history_id: String,
@@ -70,7 +71,7 @@ pub struct AtuinCommandExecutedPayload {
     pub timestamp: i64,
     pub ts_start_orig: DateTime<Utc>,
     pub ts_end_orig: DateTime<Utc>,
-    pub hostname: String,
+    pub hostname: HostName,
     pub terminal_session_ulid: Option<String>,
 }
 
@@ -272,7 +273,7 @@ impl KittyCommandExecutedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(command: impl Into<String>) -> Self {
         Self {
-            command: command.into(),
+            command: CommandText::from(command.into()),
             working_directory: None,
             exit_status: None,
             execution_time_ms: None,
@@ -284,7 +285,7 @@ impl KittyCommandExecutedPayload {
 
     /// Builder-style method for working directory
     pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
-        self.working_directory = Some(dir.into());
+        self.working_directory = Some(SanitizedPath::from(dir.into()));
         self
     }
 
@@ -302,7 +303,7 @@ impl KittyCommandExecutedPayload {
 
     /// Builder-style method for shell type
     pub fn with_shell_type(mut self, shell: impl Into<String>) -> Self {
-        self.shell_type = Some(shell.into());
+        self.shell_type = Some(ShellName::from(shell.into()));
         self
     }
 
@@ -324,8 +325,8 @@ impl AtuinCommandExecutedPayload {
         use chrono::Utc;
         let now = Utc::now();
         Self {
-            command_string: command_string.into(),
-            cwd: cwd.into(),
+            command_string: CommandText::from(command_string.into()),
+            cwd: SanitizedPath::from(cwd.into()),
             exit_code: 0,
             duration_ns: 1000000, // 1ms in nanoseconds
             atuin_history_id: "test-history-id".to_string(),
@@ -333,7 +334,7 @@ impl AtuinCommandExecutedPayload {
             timestamp: now.timestamp(),
             ts_start_orig: now,
             ts_end_orig: now,
-            hostname: "test-hostname".to_string(),
+            hostname: HostName::from("test-hostname".to_string()),
             terminal_session_ulid: None,
         }
     }
@@ -363,7 +364,7 @@ impl AtuinCommandExecutedPayload {
 
     /// Builder-style method for hostname
     pub fn with_hostname(mut self, hostname: impl Into<String>) -> Self {
-        self.hostname = hostname.into();
+        self.hostname = HostName::from(hostname.into());
         self
     }
 
@@ -437,8 +438,8 @@ impl KittySessionStartedPayload {
         Self {
             window_id: "1".to_string(),
             tab_id: "1".to_string(),
-            shell_type: "bash".to_string(),
-            working_directory: "/tmp".to_string(),
+            shell_type: ShellName::from("bash".to_string()),
+            working_directory: SanitizedPath::from("/tmp".to_string()),
             env_vars: None,
         }
     }
@@ -456,13 +457,13 @@ impl KittySessionStartedPayload {
 
     /// Builder-style method for shell type
     pub fn with_shell_type(mut self, shell: impl Into<String>) -> Self {
-        self.shell_type = shell.into();
+        self.shell_type = ShellName::from(shell.into());
         self
     }
 
     /// Builder-style method for working directory
     pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
-        self.working_directory = dir.into();
+        self.working_directory = SanitizedPath::from(dir.into());
         self
     }
 

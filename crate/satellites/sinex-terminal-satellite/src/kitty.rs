@@ -24,6 +24,7 @@
 use camino::Utf8Path;
 use regex::Regex;
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::{CommandText, SanitizedPath};
 use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
@@ -382,8 +383,10 @@ impl KittyWatcher {
 
                     let completion_event: RawEvent = Event::from_payload(
                         sinex_core::types::events::KittyCommandCompletedPayload {
-                            command: command_text.clone(),
-                            working_directory: window.cwd.clone().unwrap_or_default(),
+                            command: CommandText::new(command_text.clone()),
+                            working_directory: SanitizedPath::new_unchecked(
+                                window.cwd.clone().unwrap_or_default(),
+                            ),
                             exit_status: window.last_cmd_exit_status.unwrap_or(0),
                             duration_ms: 0, // TODO: Requires tracking command start times
                             shell_pid: 0,   // TODO: Get actual shell PID

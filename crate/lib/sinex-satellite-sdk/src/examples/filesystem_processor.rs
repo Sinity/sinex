@@ -20,6 +20,7 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::Event;
 use std::collections::HashMap;
 use tokio::fs;
@@ -139,7 +140,7 @@ impl FilesystemProcessor {
                         .unwrap_or_else(Utc::now);
 
                     Event::from_payload(sinex_core::events::FileDiscoveredPayload {
-                        path: entry_path.to_string_lossy().to_string(),
+                        path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         size: metadata.len(),
                         modified_at: modified_time,
                         permissions: Some(metadata.permissions().mode()),
@@ -157,7 +158,7 @@ impl FilesystemProcessor {
                         .unwrap_or_else(Utc::now);
 
                     Event::from_payload(sinex_core::events::DirDiscoveredPayload {
-                        path: entry_path.to_string_lossy().to_string(),
+                        path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         modified_at: modified_time,
                     })
                     .with_ts_orig(Some(chrono::Utc::now()))

@@ -248,7 +248,7 @@ mod tests {
     #[sinex_test]
     fn test_event_creation() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
-            path: "/test/file.txt".into(),
+            path: SanitizedPath::new_unchecked("/test/file.txt"),
             size: 1024,
             created_at: chrono::Utc::now(),
             permissions: Some(0o644),
@@ -266,7 +266,7 @@ mod tests {
     #[sinex_test]
     fn test_event_to_raw_conversion() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
-            path: "/test/file.txt".into(),
+            path: SanitizedPath::new_unchecked("/test/file.txt"),
             size: 1024,
             created_at: chrono::Utc::now(),
             permissions: Some(0o644),
@@ -287,7 +287,7 @@ mod tests {
     #[sinex_test]
     fn test_raw_to_event_conversion() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
-            path: "/test/file.txt".into(),
+            path: SanitizedPath::new_unchecked("/test/file.txt"),
             size: 1024,
             created_at: chrono::Utc::now(),
             permissions: Some(0o644),
@@ -308,7 +308,7 @@ mod tests {
         use crate::types::events::payloads::filesystem::FileDeletedPayload;
 
         let payload = FileCreatedPayload {
-            path: "/test/file.txt".into(),
+            path: SanitizedPath::new_unchecked("/test/file.txt"),
             size: 1024,
             created_at: chrono::Utc::now(),
             permissions: Some(0o644),
@@ -326,7 +326,7 @@ mod tests {
     #[sinex_test]
     fn test_builder_methods() -> color_eyre::eyre::Result<()> {
         let payload = FileCreatedPayload {
-            path: "/test/file.txt".into(),
+            path: SanitizedPath::new_unchecked("/test/file.txt"),
             size: 1024,
             created_at: chrono::Utc::now(),
             permissions: Some(0o644),

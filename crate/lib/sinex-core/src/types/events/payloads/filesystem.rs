@@ -1,8 +1,6 @@
 //! Filesystem event payloads
-//!
-//! Note: Path fields are kept as String for serialization compatibility.
-//! Use the provided helper methods to convert to domain types like SanitizedPath.
 
+use crate::types::domain::SanitizedPath;
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -11,7 +9,7 @@ use sinex_macros::EventPayload;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.created", version = "1.0.0")]
 pub struct FileCreatedPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub size: u64,
     pub created_at: DateTime<Utc>,
     pub permissions: Option<u32>,
@@ -20,7 +18,7 @@ pub struct FileCreatedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.modified")]
 pub struct FileModifiedPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub size: u64,
     pub modified_at: DateTime<Utc>,
     pub modification_type: String,
@@ -29,36 +27,36 @@ pub struct FileModifiedPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.deleted")]
 pub struct FileDeletedPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub deleted_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.moved")]
 pub struct FileMovedPayload {
-    pub old_path: String,
-    pub new_path: String,
+    pub old_path: SanitizedPath,
+    pub new_path: SanitizedPath,
     pub moved_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "dir.created")]
 pub struct DirCreatedPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub created_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "dir.deleted")]
 pub struct DirDeletedPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub deleted_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "file.discovered")]
 pub struct FileDiscoveredPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub size: u64,
     pub modified_at: DateTime<Utc>,
     pub permissions: Option<u32>,
@@ -67,7 +65,7 @@ pub struct FileDiscoveredPayload {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
 #[event_payload(source = "fs-watcher", event_type = "dir.discovered")]
 pub struct DirDiscoveredPayload {
-    pub path: String,
+    pub path: SanitizedPath,
     pub modified_at: DateTime<Utc>,
 }
 
@@ -75,7 +73,7 @@ impl FileCreatedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             size: 0,
             created_at: Utc::now(),
             permissions: Some(0o644),
@@ -105,7 +103,7 @@ impl FileModifiedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             size: 0,
             modified_at: Utc::now(),
             modification_type: "content".to_string(),
@@ -135,7 +133,7 @@ impl FileDeletedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             deleted_at: Utc::now(),
         }
     }
@@ -151,8 +149,8 @@ impl FileMovedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(old_path: impl Into<String>, new_path: impl Into<String>) -> Self {
         Self {
-            old_path: old_path.into(),
-            new_path: new_path.into(),
+            old_path: SanitizedPath::new_unchecked(old_path.into()),
+            new_path: SanitizedPath::new_unchecked(new_path.into()),
             moved_at: Utc::now(),
         }
     }
@@ -168,7 +166,7 @@ impl DirCreatedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             created_at: Utc::now(),
         }
     }
@@ -184,7 +182,7 @@ impl DirDeletedPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             deleted_at: Utc::now(),
         }
     }
@@ -200,7 +198,7 @@ impl FileDiscoveredPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             size: 0,
             modified_at: Utc::now(),
             permissions: Some(0o644),
@@ -230,7 +228,7 @@ impl DirDiscoveredPayload {
     /// Create a test payload with sensible defaults
     pub fn test_default(path: impl Into<String>) -> Self {
         Self {
-            path: path.into(),
+            path: SanitizedPath::new_unchecked(path.into()),
             modified_at: Utc::now(),
         }
     }

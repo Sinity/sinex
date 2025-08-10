@@ -7,7 +7,7 @@ use super::{
 };
 use async_nats::jetstream;
 use serde::{Deserialize, Serialize};
-use sinex_core::types::domain::{EventSource, EventType, ServiceName};
+use sinex_core::types::domain::{EventSource, EventType, NatsSubject, ServiceName};
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -18,7 +18,7 @@ pub struct StreamConfig {
     pub name: String,
 
     /// Subject patterns this stream captures
-    pub subjects: Vec<String>,
+    pub subjects: Vec<NatsSubject>,
 
     /// Stream description
     pub description: Option<String>,
@@ -48,7 +48,7 @@ impl StreamConfig {
     pub fn raw_events() -> Self {
         Self {
             name: "SINEX_RAW_EVENTS".to_string(),
-            subjects: vec!["sinex.events.raw.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.events.raw.>".to_string())],
             description: Some("Raw event stream for all Sinex events".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 30), // 30 days
             max_msgs: 0,                                         // unlimited
@@ -63,7 +63,7 @@ impl StreamConfig {
     pub fn processed_events() -> Self {
         Self {
             name: "SINEX_PROCESSED_EVENTS".to_string(),
-            subjects: vec!["sinex.events.processed.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.events.processed.>".to_string())],
             description: Some("Processed event stream for canonicalized events".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 90), // 90 days
             max_msgs: 0,
@@ -78,7 +78,7 @@ impl StreamConfig {
     pub fn metrics() -> Self {
         Self {
             name: "SINEX_METRICS".to_string(),
-            subjects: vec!["sinex.metrics.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.metrics.>".to_string())],
             description: Some("Metrics stream for system telemetry".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 7), // 7 days
             max_msgs: 0,
@@ -93,7 +93,7 @@ impl StreamConfig {
     pub fn alerts() -> Self {
         Self {
             name: "SINEX_ALERTS".to_string(),
-            subjects: vec!["sinex.alerts.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.alerts.>".to_string())],
             description: Some("Alert stream for system notifications".to_string()),
             max_age: std::time::Duration::from_secs(86400 * 30), // 30 days
             max_msgs: 10000,
@@ -108,7 +108,7 @@ impl StreamConfig {
     pub fn satellite_control() -> Self {
         Self {
             name: "SINEX_SATELLITE_CONTROL".to_string(),
-            subjects: vec!["sinex.satellite.control.>".to_string()],
+            subjects: vec![NatsSubject::from("sinex.satellite.control.>".to_string())],
             description: Some("Control stream for satellite coordination".to_string()),
             max_age: std::time::Duration::from_secs(3600), // 1 hour
             max_msgs: 1000,
@@ -134,7 +134,11 @@ impl StreamConfig {
 
         jetstream::stream::Config {
             name: self.name.clone(),
-            subjects: self.subjects.clone(),
+            subjects: self
+                .subjects
+                .iter()
+                .map(|s| s.as_str().to_string())
+                .collect(),
             description: self.description.clone(),
             max_age: self.max_age,
             max_messages: self.max_msgs,
@@ -293,7 +297,10 @@ mod tests {
     fn test_stream_configs() -> color_eyre::eyre::Result<()> {
         let raw = StreamConfig::raw_events();
         assert_eq!(raw.name, "SINEX_RAW_EVENTS");
-        assert_eq!(raw.subjects, vec!["sinex.events.raw.>"]);
+        assert_eq!(
+            raw.subjects,
+            vec![NatsSubject::from("sinex.events.raw.>".to_string())]
+        );
 
         let processed = StreamConfig::processed_events();
         assert_eq!(processed.name, "SINEX_PROCESSED_EVENTS");

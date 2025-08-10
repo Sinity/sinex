@@ -4,6 +4,7 @@
 //! accidental mixing of different string types (e.g., EventSource vs EventType).
 
 use camino::{Utf8Path, Utf8PathBuf};
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::fmt;
@@ -13,7 +14,7 @@ use std::str::FromStr;
 macro_rules! define_string_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
         #[serde(transparent)]
         pub struct $name(Cow<'static, str>);
 
@@ -91,7 +92,7 @@ macro_rules! define_string_type {
 macro_rules! define_validated_string_type {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
         #[serde(transparent)]
         pub struct $name(Cow<'static, str>);
 

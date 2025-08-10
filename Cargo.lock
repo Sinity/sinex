@@ -4563,6 +4563,7 @@ dependencies = [
  "clap",
  "color-eyre",
  "dirs 5.0.1",
+ "futures",
  "glob",
  "mimalloc",
  "mime_guess",

@@ -9,6 +9,7 @@ use notify::event::{DataChange, ModifyKind};
 use notify::{EventKind, RecursiveMode, Watcher};
 use rusqlite::{Connection, Row};
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::{CommandText, HostName, SanitizedPath};
 use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::time::Duration;
@@ -275,8 +276,8 @@ impl AtuinWatcher {
 
         let event: RawEvent =
             Event::from_payload(sinex_core::types::events::AtuinCommandExecutedPayload {
-                command_string: entry.command.clone(),
-                cwd: entry.cwd.clone(),
+                command_string: CommandText::from(entry.command.clone()),
+                cwd: SanitizedPath::from(entry.cwd.clone()),
                 exit_code: entry.exit_code,
                 duration_ns: entry.duration_ns,
                 atuin_history_id: entry.id.clone(),
@@ -284,7 +285,7 @@ impl AtuinWatcher {
                 timestamp: entry.timestamp_ns,
                 ts_start_orig: ts_start,
                 ts_end_orig: ts_end,
-                hostname: entry.hostname.clone(),
+                hostname: HostName::from(entry.hostname.clone()),
                 terminal_session_ulid: None, // Could be enhanced later
             })
             .into();

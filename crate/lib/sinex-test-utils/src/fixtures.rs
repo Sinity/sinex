@@ -370,7 +370,7 @@ async fn create_user_session_fixture(
     // Create filesystem events
     for i in 0..event_count / 3 {
         let event = Event::from_payload(FileCreatedPayload {
-            path: format!("/home/{}/documents/file_{}.txt", user_id, i),
+            path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
             size: 0,
             created_at: Utc::now(),
             permissions: None,
@@ -402,8 +402,8 @@ async fn create_user_session_fixture(
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
         let event = Event::from_payload(KittyCommandCompletedPayload {
-            command: cmd.to_string(),
-            working_directory: format!("/home/{}/projects", user_id),
+            command: CommandText::from(cmd.to_string()),
+            working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
             exit_status: 0,
             duration_ms: 100 + i as u64 * 10,
             shell_pid: 1000 + i as u32,

@@ -42,6 +42,7 @@ sqlx = { workspace = true }
 # Streaming
 tokio-stream = { workspace = true }
 async-stream = "0.3"
+futures = { workspace = true }
 
 # Local dependencies
 sinex-satellite-sdk = { path = "../../lib/sinex-satellite-sdk", features = ["macros"] }

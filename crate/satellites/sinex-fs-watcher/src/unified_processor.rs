@@ -98,6 +98,7 @@ use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::with_context;
 use sinex_core::types::events::Event;
 use sinex_core::types::validate_path;
@@ -536,7 +537,7 @@ impl FilesystemProcessor {
         if metadata.is_file() {
             let event: RawEvent =
                 Event::from_payload(sinex_core::types::events::FileDiscoveredPayload {
-                    path: path_str.to_string(),
+                    path: SanitizedPath::new_unchecked(path_str),
                     size: metadata.len(),
                     modified_at: Utc::now(),
                     permissions: Self::get_permissions(metadata),
@@ -546,7 +547,7 @@ impl FilesystemProcessor {
         } else if metadata.is_dir() {
             let event: RawEvent =
                 Event::from_payload(sinex_core::types::events::DirDiscoveredPayload {
-                    path: path_str.to_string(),
+                    path: SanitizedPath::new_unchecked(path_str),
                     modified_at: Utc::now(),
                 })
                 .into();
