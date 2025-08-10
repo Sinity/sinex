@@ -16,10 +16,10 @@ use serde_json::Value as JsonValue;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 
-/// Operation log entry matching core.operations_log per TARGET_canonical.md
+/// Database record for operations_log table
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct Operation {
-    pub operation_id: Id<Operation>,
+pub struct OperationRecord {
+    pub id: Id<Operation>,
     pub actor: String,
     pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
     pub state: String, // planning|previewed|approved|executing|committing|completed|failed|cancelled
@@ -35,16 +35,29 @@ pub struct Operation {
     pub created_at: DateTime<Utc>,
 }
 
-/// New operation to log per TARGET_canonical.md
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NewOperation {
+/// Operation log entry matching core.operations_log per TARGET_canonical.md
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
+pub struct Operation {
+    /// Operation ID - None when creating, Some when from DB
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[builder(skip)]
+    pub id: Option<Id<Operation>>,
+
     pub actor: String,                      // e.g., 'user@host' or 'system'
     pub scope: JsonValue, // { processor, mode: ingestor|automaton, window/blob filters }
+    pub state: Option<String>, // planning|previewed|approved|executing|committing|completed|failed|cancelled
     pub preview_summary: Option<JsonValue>, // { counts, cascades, churn_percent, time_quality_flips }
+    pub checkpoint: Option<JsonValue>,      // Execution checkpoint for resumable operations
+    pub approved_by: Option<String>,
+    pub approved_at: Option<DateTime<Utc>>,
+    pub executor_node: Option<String>,
     pub started_at: Option<DateTime<Utc>>,
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
     pub error_details: Option<String>,
+
+    #[builder(skip)]
+    pub created_at: DateTime<Utc>,
 }
 
 /// State repository combining checkpoints and operations
@@ -84,7 +97,7 @@ impl<'a> StateRepository<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                id, processor_name, consumer_group, consumer_name,
+                manifest_id, processor_name, consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8
@@ -201,21 +214,22 @@ impl<'a> StateRepository<'a> {
     // ===== Operations Log Methods =====
 
     /// Log an operation
-    pub async fn log_operation(&self, operation: NewOperation) -> DbResult<Operation> {
+    pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
         let id = Id::<Operation>::new();
         let started_at = operation.started_at.unwrap_or_else(Utc::now);
+        let state = operation.state.unwrap_or_else(|| "planning".to_string());
 
         let result = sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             INSERT INTO core.operations_log (
                 operation_id, actor, scope, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, 'planning', $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7, $8, $9
             )
             RETURNING 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -233,6 +247,7 @@ impl<'a> StateRepository<'a> {
             *id.as_ulid() as _,
             operation.actor,
             operation.scope,
+            state,
             operation.preview_summary,
             started_at,
             operation.finished_at,
@@ -247,12 +262,12 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Get operation by ID
-    pub async fn get_operation(&self, id: &Id<Operation>) -> DbResult<Option<Operation>> {
+    pub async fn get_operation(&self, id: &Id<Operation>) -> DbResult<Option<OperationRecord>> {
         sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             SELECT 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -277,12 +292,12 @@ impl<'a> StateRepository<'a> {
     }
 
     /// Get recent operations
-    pub async fn get_recent_operations(&self, limit: i64) -> DbResult<Vec<Operation>> {
+    pub async fn get_recent_operations(&self, limit: i64) -> DbResult<Vec<OperationRecord>> {
         sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             SELECT 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -313,7 +328,7 @@ impl<'a> StateRepository<'a> {
         actor: Option<&str>,
         scope_filter: Option<JsonValue>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Operation>> {
+    ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
 
         let mut query_builder = sqlx::QueryBuilder::new(
@@ -333,7 +348,7 @@ impl<'a> StateRepository<'a> {
         query_builder.push(" ORDER BY created_at DESC LIMIT ");
         query_builder.push_bind(limit);
 
-        let query = query_builder.build_query_as::<Operation>();
+        let query = query_builder.build_query_as::<OperationRecord>();
         query
             .fetch_all(self.pool)
             .await
@@ -345,14 +360,14 @@ impl<'a> StateRepository<'a> {
         &self,
         scope_filter: JsonValue,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Operation>> {
+    ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
 
         sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             SELECT 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -384,14 +399,14 @@ impl<'a> StateRepository<'a> {
         &self,
         actor: &str,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Operation>> {
+    ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
 
         sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             SELECT 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -423,15 +438,15 @@ impl<'a> StateRepository<'a> {
         &self,
         since: Option<DateTime<Utc>>,
         limit: Option<i64>,
-    ) -> DbResult<Vec<Operation>> {
+    ) -> DbResult<Vec<OperationRecord>> {
         let limit = limit.unwrap_or(100);
         let since = since.unwrap_or_else(|| Utc::now() - chrono::Duration::days(7));
 
         sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             SELECT 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -908,7 +923,7 @@ impl<'a> StateRepositoryTx<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                id, processor_name, consumer_group, consumer_name,
+                manifest_id, processor_name, consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8
@@ -952,21 +967,22 @@ impl<'a> StateRepositoryTx<'a> {
     }
 
     /// Log operation within transaction
-    pub async fn log_operation(&mut self, operation: NewOperation) -> DbResult<Operation> {
+    pub async fn log_operation(&mut self, operation: Operation) -> DbResult<OperationRecord> {
         let id = Id::<Operation>::new();
         let started_at = operation.started_at.unwrap_or_else(Utc::now);
+        let state = operation.state.unwrap_or_else(|| "planning".to_string());
 
         let result = sqlx::query_as!(
-            Operation,
+            OperationRecord,
             r#"
             INSERT INTO core.operations_log (
                 operation_id, actor, scope, state, preview_summary,
                 started_at, finished_at, outcome, error_details
             ) VALUES (
-                $1, $2, $3, 'planning', $4, $5, $6, $7, $8
+                $1, $2, $3, $4, $5, $6, $7, $8, $9
             )
             RETURNING 
-                operation_id as "operation_id: Id<Operation>",
+                operation_id as "id: Id<Operation>",
                 actor,
                 scope,
                 state,
@@ -984,6 +1000,7 @@ impl<'a> StateRepositoryTx<'a> {
             *id.as_ulid() as _,
             operation.actor,
             operation.scope,
+            state,
             operation.preview_summary,
             started_at,
             operation.finished_at,
@@ -1129,7 +1146,14 @@ mod tests {
         let repo = &ctx.pool.state();
 
         // Log a successful operation
-        let operation = NewOperation {
+        let operation = Operation {
+            id: None,
+            state: None,
+            checkpoint: None,
+            approved_by: None,
+            approved_at: None,
+            executor_node: None,
+            created_at: Utc::now(),
             actor: "ingestd@localhost".to_string(),
             scope: json!({
                 "processor": "ingestd",
@@ -1152,7 +1176,14 @@ mod tests {
         assert!(logged.error_details.is_none());
 
         // Log a failed operation
-        let failed_op = NewOperation {
+        let failed_op = Operation {
+            id: None,
+            state: None,
+            checkpoint: None,
+            approved_by: None,
+            approved_at: None,
+            executor_node: None,
+            created_at: Utc::now(),
             actor: "api-user@localhost".to_string(),
             scope: json!({
                 "processor": "schema-manager",
@@ -1205,7 +1236,14 @@ mod tests {
 
         for (outcome, error_details) in operations {
             let started = Utc::now();
-            let operation = NewOperation {
+            let operation = Operation {
+                id: None,
+                state: None,
+                checkpoint: None,
+                approved_by: None,
+                approved_at: None,
+                executor_node: None,
+                created_at: Utc::now(),
                 actor: "test-service@localhost".to_string(),
                 scope: json!({
                     "processor": "test",
