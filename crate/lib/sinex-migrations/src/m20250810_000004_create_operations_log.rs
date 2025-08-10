@@ -118,10 +118,10 @@ impl MigrationTrait for Migration {
                     -- Get current operation_id from session
                     current_op_id := current_setting('sinex.operation_id', true);
                     
-                    -- If operation_id is set, add it to event metadata
+                    -- If operation_id is set, add it to event payload under _meta
                     IF current_op_id IS NOT NULL AND current_op_id != '' THEN
-                        NEW.metadata = COALESCE(NEW.metadata, '{}'::jsonb) || 
-                                      jsonb_build_object('operation_id', current_op_id);
+                        NEW.payload = NEW.payload || 
+                                      jsonb_build_object('_meta', jsonb_build_object('operation_id', current_op_id));
                     END IF;
                     
                     RETURN NEW;

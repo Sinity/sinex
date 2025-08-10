@@ -266,6 +266,12 @@ class ReplayPlanner:
         plan.status = 'executing'
         self.save_plan(plan)
         
+        # Set operation_id in session for tracking
+        with self.get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT set_operation_id(%s)", (plan.operation_id,))
+                conn.commit()
+        
         try:
             # Get events to replay
             events = self.preview_events(**plan.source_query)
@@ -316,6 +322,12 @@ class ReplayPlanner:
             plan.status = 'failed'
             self.save_plan(plan)
             raise
+        finally:
+            # Clear operation_id from session
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT set_operation_id(NULL)")
+                    conn.commit()
         
         results['end_time'] = datetime.utcnow()
         results['duration'] = (results['end_time'] - results['start_time']).total_seconds()
@@ -377,11 +389,26 @@ class ReplayPlanner:
             # Just log it
             console.print(f"Would replay: {event['event_type']} - {event['event_id']}")
         elif target_system == "nats":
-            # TODO: Publish to NATS
+            # TODO: Publish to NATS with operation_id in metadata
+            # The NATS publisher would add operation_id to event metadata
             pass
         elif target_system == "database":
-            # TODO: Insert into staging table
-            pass
+            # Insert into staging table with operation_id
+            with self.get_connection() as conn:
+                with conn.cursor() as cur:
+                    # The trigger will automatically add operation_id to metadata
+                    cur.execute("""
+                        INSERT INTO core.events (
+                            source, event_type, host, payload, ts_orig, ts_ingest
+                        ) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    """, (
+                        f"replay_{event['source']}",
+                        event['event_type'],
+                        event['host'],
+                        event['payload'],
+                        event.get('ts_orig')
+                    ))
+                    conn.commit()
         else:
             raise ValueError(f"Unknown target system: {target_system}")
 
