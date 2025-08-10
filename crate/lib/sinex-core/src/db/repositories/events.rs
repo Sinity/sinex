@@ -86,7 +86,6 @@ impl EventRecord {
             event_type: self.event_type.into(),
             host: self.host.into(),
             payload: self.payload,
-            ts_ingest: self.ts_ingest,
             ts_orig: self.ts_orig,
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id.map(uuid_to_ulid),
@@ -1687,12 +1686,12 @@ impl<'a> EventRepository<'a> {
         event_type: &str,
         payload: serde_json::Value,
     ) -> DbResult<RawEvent> {
-        let event = RawEvent::builder()
-            .source(EventSource::new(source.to_string()))
-            .event_type(EventType::new(event_type.to_string()))
-            .host(HostName::new("test-host".to_string()))
-            .payload(payload)
-            .build();
+        let event = RawEvent::new(
+            EventSource::new(source.to_string()),
+            EventType::new(event_type.to_string()),
+            payload,
+        )
+        .with_host(HostName::new("test-host".to_string()));
 
         self.insert(event).await
     }
@@ -2026,12 +2025,12 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create an event
-        let event = crate::models::RawEvent::builder()
-            .source(EventSource::new("test.source"))
-            .event_type(EventType::new("test.event"))
-            .host(HostName::new("test-host"))
-            .payload(json!({"test": "data"}))
-            .build();
+        let event = crate::models::RawEvent::new(
+            EventSource::new("test.source"),
+            EventType::new("test.event"),
+            json!({"test": "data"}),
+        )
+        .with_host(HostName::new("test-host"));
 
         // Insert using repository pattern with EventRecord
         let inserted = pool.events().insert(event).await?;
@@ -2042,8 +2041,8 @@ mod tests {
         assert_eq!(inserted.host.as_str(), "test-host");
         assert_eq!(inserted.payload["test"], "data");
 
-        // ts_ingest should be set by database
-        assert!(!inserted.ts_ingest.timestamp().is_negative());
+        // ts_ingest should be set by database (can be extracted from ULID)
+        assert!(inserted.ts_ingest_from_ulid().is_some());
 
         Ok(())
     }
@@ -2053,24 +2052,24 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = crate::models::RawEvent::builder()
-            .source(EventSource::new("test.source"))
-            .event_type(EventType::new("source.event"))
-            .host(HostName::new("test-host"))
-            .payload(json!({"original": true}))
-            .build();
+        let source_event = crate::models::RawEvent::new(
+            EventSource::new("test.source"),
+            EventType::new("source.event"),
+            json!({"original": true}),
+        )
+        .with_host(HostName::new("test-host"));
 
         let source = pool.events().insert(source_event).await?;
         let source_id = source.id.unwrap();
 
         // Create derived event with provenance
-        let derived_event = crate::models::RawEvent::builder()
-            .source(EventSource::new("test.processor"))
-            .event_type(EventType::new("derived.event"))
-            .host(HostName::new("test-host"))
-            .payload(json!({"derived": true}))
-            .provenance(crate::models::Provenance::Events(vec![source_id.clone()]))
-            .build();
+        let derived_event = crate::models::RawEvent::new(
+            EventSource::new("test.processor"),
+            EventType::new("derived.event"),
+            json!({"derived": true}),
+        )
+        .with_host(HostName::new("test-host"))
+        .with_provenance(crate::models::Provenance::Events(vec![source_id.clone()]));
 
         let inserted = pool.events().insert(derived_event).await?;
 

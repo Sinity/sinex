@@ -18,6 +18,7 @@ use sinex_satellite_sdk::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
         MissingItem, SourceState,
     },
+    error_helpers::{parse_config_value, parse_typed_config},
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -139,15 +140,6 @@ impl DesktopProcessor {
     }
 
     /// Parse configuration value from context with type conversion
-    fn parse_config_value<T: serde::de::DeserializeOwned>(
-        &self,
-        key: &str,
-        ctx: &StreamProcessorContext,
-    ) -> Option<T> {
-        ctx.config
-            .get(key)
-            .and_then(|json| serde_json::from_value::<T>(json.clone()).ok())
-    }
 
     /// Take a snapshot of current desktop state
     async fn take_snapshot(&mut self) -> SatelliteResult<DesktopState> {
@@ -314,32 +306,24 @@ impl StatefulStreamProcessor for DesktopProcessor {
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
 
         // Parse configuration from processor context
-        if let Some(config_json) = ctx.config.get("desktop") {
-            match serde_json::from_value::<DesktopConfig>(config_json.clone()) {
-                Ok(config) => {
-                    self.config = config;
-                }
-                Err(e) => {
-                    warn!("Failed to parse desktop config, using defaults: {}", e);
-                }
-            }
+        if let Some(config) = parse_typed_config::<DesktopConfig>("desktop", &ctx) {
+            self.config = config;
         }
 
         // Override with individual config values if present
-        if let Some(enabled) = self.parse_config_value::<bool>("clipboard_enabled", &ctx) {
+        if let Some(enabled) = parse_config_value::<bool>("clipboard_enabled", &ctx) {
             self.config.clipboard_enabled = enabled;
         }
 
-        if let Some(enabled) = self.parse_config_value::<bool>("window_manager_enabled", &ctx) {
+        if let Some(enabled) = parse_config_value::<bool>("window_manager_enabled", &ctx) {
             self.config.window_manager_enabled = enabled;
         }
 
-        if let Some(wm_type) = self.parse_config_value::<String>("window_manager_type", &ctx) {
+        if let Some(wm_type) = parse_config_value::<String>("window_manager_type", &ctx) {
             self.config.window_manager_type = wm_type;
         }
 
-        if let Some(interval) = self.parse_config_value::<u64>("clipboard_poll_interval_secs", &ctx)
-        {
+        if let Some(interval) = parse_config_value::<u64>("clipboard_poll_interval_secs", &ctx) {
             self.config.clipboard_poll_interval_secs = interval;
         }
 

@@ -142,16 +142,6 @@ impl DirDeletedPayload {
 }
 
 impl FileDiscoveredPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            size: 0,
-            modified_at: Utc::now(),
-            permissions: Some(0o644),
-        }
-    }
-
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
@@ -172,14 +162,6 @@ impl FileDiscoveredPayload {
 }
 
 impl DirDiscoveredPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            modified_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for modified_at timestamp
     pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.modified_at = timestamp;

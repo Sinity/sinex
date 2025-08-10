@@ -83,6 +83,84 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 // Use the transaction methods directly on StateRepositoryTx instead.
 
 impl<'a> StateRepository<'a> {
+    // ===== Validation Methods =====
+
+    /// Validate a ReplayScope JSON object
+    pub fn validate_replay_scope(scope: &JsonValue) -> DbResult<()> {
+        // Required fields for replay scope
+        if !scope.is_object() {
+            return Err(db_error(
+                "ReplayScope must be a JSON object",
+                "validate_replay_scope",
+            ));
+        }
+
+        let obj = scope.as_object().unwrap();
+
+        // Check required fields
+        if !obj.contains_key("target_type") {
+            return Err(db_error(
+                "ReplayScope missing required field: target_type",
+                "validate_replay_scope",
+            ));
+        }
+
+        // Validate target_type is a string and one of allowed values
+        if let Some(target_type) = obj.get("target_type").and_then(|v| v.as_str()) {
+            match target_type {
+                "event" | "time_range" | "cascade" | "operation" => {},
+                _ => return Err(db_error(
+                    format!("Invalid target_type: {}. Must be one of: event, time_range, cascade, operation", target_type),
+                    "validate_replay_scope"
+                )),
+            }
+
+            // Validate type-specific fields
+            match target_type {
+                "event" => {
+                    if !obj.contains_key("event_id") {
+                        return Err(db_error(
+                            "Event scope requires event_id",
+                            "validate_replay_scope",
+                        ));
+                    }
+                }
+                "time_range" => {
+                    if !obj.contains_key("start_time") || !obj.contains_key("end_time") {
+                        return Err(db_error(
+                            "Time range scope requires start_time and end_time",
+                            "validate_replay_scope",
+                        ));
+                    }
+                }
+                "cascade" => {
+                    if !obj.contains_key("root_event_id") {
+                        return Err(db_error(
+                            "Cascade scope requires root_event_id",
+                            "validate_replay_scope",
+                        ));
+                    }
+                }
+                "operation" => {
+                    if !obj.contains_key("operation_id") {
+                        return Err(db_error(
+                            "Operation scope requires operation_id",
+                            "validate_replay_scope",
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            return Err(db_error(
+                "target_type must be a string",
+                "validate_replay_scope",
+            ));
+        }
+
+        Ok(())
+    }
+
     // ===== Checkpoint Methods (from CheckpointRepository) =====
 
     /// Save a checkpoint for a processor
@@ -213,6 +291,9 @@ impl<'a> StateRepository<'a> {
 
     /// Log an operation
     pub async fn log_operation(&self, operation: Operation) -> DbResult<OperationRecord> {
+        // Validate the scope
+        Self::validate_replay_scope(&operation.scope)?;
+
         let id = Id::<Operation>::new();
         let started_at = operation.started_at.unwrap_or_else(Utc::now);
         let state = operation.state.unwrap_or_else(|| "planning".to_string());
@@ -964,6 +1045,9 @@ impl<'a> StateRepositoryTx<'a> {
 
     /// Log operation within transaction
     pub async fn log_operation(&mut self, operation: Operation) -> DbResult<OperationRecord> {
+        // Validate the scope
+        StateRepository::validate_replay_scope(&operation.scope)?;
+
         let id = Id::<Operation>::new();
         let started_at = operation.started_at.unwrap_or_else(Utc::now);
         let state = operation.state.unwrap_or_else(|| "planning".to_string());

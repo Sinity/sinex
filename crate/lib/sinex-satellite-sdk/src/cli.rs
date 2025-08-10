@@ -314,6 +314,72 @@ pub enum ExportFormat {
     Raw,
 }
 
+/// Macro to generate default ExplorationProvider implementation for automata
+///
+/// This reduces code duplication across automaton processors by providing
+/// a standard stub implementation with only the description customizable.
+///
+/// # Usage
+///
+/// ```rust
+/// use sinex_satellite_sdk::default_exploration_provider;
+///
+/// struct MyProcessor;
+///
+/// default_exploration_provider!(MyProcessor, "My processor description");
+/// ```
+#[macro_export]
+macro_rules! default_exploration_provider {
+    ($processor_type:ty, $description:expr) => {
+        impl $crate::cli::ExplorationProvider for $processor_type {
+            fn get_source_state(&self) -> color_eyre::eyre::Result<$crate::cli::SourceState> {
+                use std::collections::HashMap;
+
+                Ok($crate::cli::SourceState {
+                    description: $description.to_string(),
+                    last_updated: chrono::Utc::now(),
+                    total_items: Some(0),
+                    metadata: HashMap::new(),
+                    healthy: true,
+                    recent_activity: Vec::new(),
+                })
+            }
+
+            fn get_ingestion_history(
+                &self,
+                _limit: u64,
+            ) -> color_eyre::eyre::Result<Vec<$crate::cli::IngestionHistoryEntry>> {
+                Ok(Vec::new())
+            }
+
+            fn get_coverage_analysis(
+                &self,
+                _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+            ) -> color_eyre::eyre::Result<$crate::cli::CoverageAnalysis> {
+                let now = chrono::Utc::now();
+                Ok($crate::cli::CoverageAnalysis {
+                    time_range: (now - chrono::Duration::days(1), now),
+                    source_total: 0,
+                    sinex_total: 0,
+                    coverage_percentage: 0.0,
+                    missing_count: 0,
+                    missing_samples: Vec::new(),
+                    duplicate_count: 0,
+                    recommendations: Vec::new(),
+                })
+            }
+
+            fn export_data(
+                &self,
+                _path: &camino::Utf8PathBuf,
+                _format: $crate::cli::ExportFormat,
+            ) -> color_eyre::eyre::Result<()> {
+                Ok(())
+            }
+        }
+    };
+}
+
 /// Generic CLI runner for stream processor satellites
 ///
 /// This provides a standardized way to run any StatefulStreamProcessor with

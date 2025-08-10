@@ -73,17 +73,6 @@ pub struct SensorDeactivatedPayload {
 }
 
 impl ProcessStartedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(process_name: impl Into<String>) -> Self {
-        Self {
-            process_name: process_name.into(),
-            process_type: "satellite".to_string(),
-            pid: 1234,
-            version: "1.0.0".to_string(),
-            config: serde_json::json!({}),
-        }
-    }
-
     /// Builder-style method for process type
     pub fn with_process_type(mut self, process_type: impl Into<String>) -> Self {
         self.process_type = process_type.into();
@@ -110,16 +99,6 @@ impl ProcessStartedPayload {
 }
 
 impl ProcessHeartbeatPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(source: impl Into<String>) -> Self {
-        Self {
-            source: source.into(),
-            sequence: 1,
-            status: "healthy".to_string(),
-            metrics: None,
-        }
-    }
-
     /// Builder-style method for sequence
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.sequence = sequence;
@@ -140,18 +119,6 @@ impl ProcessHeartbeatPayload {
 }
 
 impl ProcessShutdownPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(process_name: impl Into<String>) -> Self {
-        Self {
-            process_name: process_name.into(),
-            process_type: "satellite".to_string(),
-            pid: 1234,
-            uptime_seconds: 0,
-            shutdown_reason: "normal".to_string(),
-            exit_code: 0,
-        }
-    }
-
     /// Builder-style method for process type
     pub fn with_process_type(mut self, process_type: impl Into<String>) -> Self {
         self.process_type = process_type.into();
@@ -184,20 +151,6 @@ impl ProcessShutdownPayload {
 }
 
 impl AutomatonErrorPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(
-        automaton_name: impl Into<String>,
-        error_message: impl Into<String>,
-    ) -> Self {
-        Self {
-            automaton_name: automaton_name.into(),
-            error_message: error_message.into(),
-            error_code: None,
-            stack_trace: None,
-            context: None,
-        }
-    }
-
     /// Builder-style method for error code
     pub fn with_error_code(mut self, code: impl Into<String>) -> Self {
         self.error_code = Some(code.into());
@@ -218,15 +171,6 @@ impl AutomatonErrorPayload {
 }
 
 impl SensorActivatedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(sensor: impl Into<String>, satellite: impl Into<String>) -> Self {
-        Self {
-            sensor: sensor.into(),
-            satellite: satellite.into(),
-            activation_time: Utc::now(),
-        }
-    }
-
     /// Builder-style method for activation time
     pub fn with_activation_time(mut self, time: DateTime<Utc>) -> Self {
         self.activation_time = time;
@@ -235,17 +179,6 @@ impl SensorActivatedPayload {
 }
 
 impl SensorDeactivatedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(sensor: impl Into<String>, satellite: impl Into<String>) -> Self {
-        Self {
-            sensor: sensor.into(),
-            satellite: satellite.into(),
-            uptime_seconds: 0,
-            events_generated: 0,
-            reason: "normal".to_string(),
-        }
-    }
-
     /// Builder-style method for uptime
     pub fn with_uptime_seconds(mut self, uptime: u64) -> Self {
         self.uptime_seconds = uptime;

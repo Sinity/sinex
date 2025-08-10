@@ -117,6 +117,7 @@ pub mod checkpoint;
 pub mod cli;
 pub mod config;
 pub mod coordination;
+pub mod error_helpers;
 pub mod event_processor;
 pub mod examples;
 pub mod figment_config;

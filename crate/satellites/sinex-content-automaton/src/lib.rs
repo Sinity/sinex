@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
+    default_exploration_provider,
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
@@ -102,47 +103,4 @@ impl Default for ContentProcessor {
     }
 }
 
-impl ExplorationProvider for ContentProcessor {
-    fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        Ok(SourceState {
-            description: "Content processor".to_string(),
-            last_updated: chrono::Utc::now(),
-            total_items: Some(0),
-            metadata: HashMap::new(),
-            healthy: true,
-            recent_activity: Vec::new(),
-        })
-    }
-
-    fn get_ingestion_history(
-        &self,
-        _limit: u64,
-    ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        Ok(Vec::new())
-    }
-
-    fn get_coverage_analysis(
-        &self,
-        _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
-    ) -> color_eyre::eyre::Result<CoverageAnalysis> {
-        let now = chrono::Utc::now();
-        Ok(CoverageAnalysis {
-            time_range: (now - chrono::Duration::days(1), now),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 0.0,
-            missing_count: 0,
-            missing_samples: Vec::new(),
-            duplicate_count: 0,
-            recommendations: Vec::new(),
-        })
-    }
-
-    fn export_data(
-        &self,
-        _path: &Utf8PathBuf,
-        _format: ExportFormat,
-    ) -> color_eyre::eyre::Result<()> {
-        Ok(())
-    }
-}
+default_exploration_provider!(ContentProcessor, "Content processor");

@@ -34,6 +34,7 @@ use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_core::types::Timestamp;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
+use sinex_satellite_sdk::error_helpers::{path_utils, processing_error};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -133,9 +134,8 @@ impl ClipboardWatcher {
             .unwrap_or(false);
 
         if !wl_paste_available && !xclip_available {
-            return Err(sinex_satellite_sdk::SatelliteError::Processing(
-                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring"
-                    .to_string(),
+            return Err(processing_error(
+                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring",
             ));
         }
 
@@ -224,43 +224,9 @@ impl ClipboardWatcher {
     }
 
     /// Sanitize path component using core utilities
-    fn sanitize_path_component(&self, path_str: &str) -> String {
-        let path = std::path::Path::new(path_str);
-        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-            let sanitized_name = sinex_core::types::sanitize_filename_component(filename)
-                .unwrap_or_else(|_| filename.to_string());
-            path.parent()
-                .map(|parent| parent.join(&sanitized_name).to_string_lossy().to_string())
-                .unwrap_or_else(|| sanitized_name)
-        } else {
-            path_str.to_string()
-        }
-    }
-
     /// Extract file paths from clipboard content
     fn extract_file_paths(&self, content: &str) -> Option<Vec<String>> {
-        if content.starts_with("file://") {
-            Some(
-                content
-                    .lines()
-                    .filter_map(|line| {
-                        line.strip_prefix("file://")
-                            .and_then(|p| urlencoding::decode(p).ok())
-                            .map(|p| self.sanitize_path_component(&p.to_string()))
-                    })
-                    .collect(),
-            )
-        } else if content.lines().all(|l| l.starts_with('/') || l.is_empty()) {
-            Some(
-                content
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(|l| self.sanitize_path_component(l))
-                    .collect(),
-            )
-        } else {
-            None
-        }
+        path_utils::extract_file_paths(content)
     }
 
     /// Get active window application name

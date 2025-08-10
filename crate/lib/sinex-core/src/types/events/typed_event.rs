@@ -33,7 +33,7 @@ use serde::{Deserialize, Serialize};
 ///     size: 1024,
 ///     // ...
 /// };
-/// let event = Event::from_payload(payload);
+/// let event = Event::new(payload);
 ///
 /// // Convert to RawEvent for storage
 /// let raw_event: RawEvent = event.into();
@@ -56,13 +56,12 @@ pub struct Event<T: EventPayload> {
     /// Strongly-typed event payload
     pub payload: T,
 
-    /// Ingestion timestamp - set by database
-    pub ts_ingest: Timestamp,
-
     /// Original timestamp when the event occurred
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ts_orig: OptionalTimestamp,
 
     /// Hostname where the event was generated
+    #[serde(default = "get_hostname")]
     pub host: HostName,
 
     /// Version of the ingestor that created this event
@@ -86,13 +85,12 @@ impl<T: EventPayload> Event<T> {
     ///
     /// This is the primary constructor for typed events. The source and event_type
     /// are automatically derived from the payload type's associated constants.
-    pub fn from_payload(payload: T) -> Self {
+    pub fn new(payload: T) -> Self {
         Self {
             id: None,
             source: T::SOURCE,
             event_type: T::EVENT_TYPE,
             payload,
-            ts_ingest: chrono::Utc::now(),
             ts_orig: None,
             host: get_hostname(),
             ingestor_version: get_ingestor_version(),
@@ -103,11 +101,21 @@ impl<T: EventPayload> Event<T> {
         }
     }
 
+    /// Alias for backward compatibility - will be removed
+    #[deprecated(since = "0.2.0", note = "Use Event::new instead")]
+    pub fn from_payload(payload: T) -> Self {
+        Self::new(payload)
+    }
+
     /// Create a typed event from a payload with a specific timestamp
+    pub fn with_timestamp(payload: T, ts_orig: Timestamp) -> Self {
+        Self::new(payload).with_ts_orig(Some(ts_orig))
+    }
+
+    /// Alias for backward compatibility - will be removed
+    #[deprecated(since = "0.2.0", note = "Use Event::with_timestamp instead")]
     pub fn from_payload_with_timestamp(payload: T, ts_orig: Timestamp) -> Self {
-        let mut event = Self::from_payload(payload);
-        event.ts_orig = Some(ts_orig);
-        event
+        Self::with_timestamp(payload, ts_orig)
     }
 
     /// Builder pattern method to set timestamp origin
@@ -162,7 +170,6 @@ impl<T: EventPayload> From<Event<T>> for RawEvent {
             source: typed.source,
             event_type: typed.event_type,
             payload: payload_json,
-            ts_ingest: typed.ts_ingest,
             ts_orig: typed.ts_orig,
             host: typed.host,
             ingestor_version: typed.ingestor_version,
@@ -213,7 +220,6 @@ where
             source: raw.source,
             event_type: raw.event_type,
             payload,
-            ts_ingest: raw.ts_ingest,
             ts_orig: raw.ts_orig,
             host: raw.host,
             ingestor_version: raw.ingestor_version,
@@ -255,7 +261,7 @@ mod tests {
             permissions: Some(0o644),
         };
 
-        let event = Event::from_payload(payload.clone());
+        let event = Event::new(payload.clone());
 
         assert_eq!(event.source, FileCreatedPayload::SOURCE);
         assert_eq!(event.event_type, FileCreatedPayload::EVENT_TYPE);
@@ -273,7 +279,7 @@ mod tests {
             permissions: Some(0o644),
         };
 
-        let event = Event::from_payload(payload.clone());
+        let event = Event::new(payload.clone());
         let raw_event: RawEvent = event.into();
 
         assert_eq!(raw_event.source, FileCreatedPayload::SOURCE);
@@ -294,7 +300,7 @@ mod tests {
             permissions: Some(0o644),
         };
 
-        let event = Event::from_payload(payload.clone());
+        let event = Event::new(payload.clone());
         let raw_event: RawEvent = event.clone().into();
         let converted_event: Event<FileCreatedPayload> = Event::try_from(raw_event).unwrap();
 
@@ -315,7 +321,7 @@ mod tests {
             permissions: Some(0o644),
         };
 
-        let event = Event::from_payload(payload);
+        let event = Event::new(payload);
         let raw_event: RawEvent = event.into();
 
         // Try to convert to wrong type
@@ -337,7 +343,7 @@ mod tests {
         let schema_id = Ulid::new();
         let blob_id = Ulid::new();
 
-        let event = Event::from_payload(payload)
+        let event = Event::new(payload)
             .with_ts_orig(Some(ts))
             .with_schema_id(schema_id)
             .with_blob_ids(vec![blob_id])

@@ -147,16 +147,6 @@ impl RawEvent {
         }
     }
 
-    /// Alias for backward compatibility - will be removed
-    #[deprecated(since = "0.2.0", note = "Use RawEvent::new instead")]
-    pub fn schemaless(
-        source: impl Into<EventSource>,
-        event_type: impl Into<EventType>,
-        payload: JsonValue,
-    ) -> Self {
-        Self::new(source, event_type, payload)
-    }
-
     /// Fluent method to set timestamp origin
     pub fn with_ts_orig(mut self, ts: Option<Timestamp>) -> Self {
         self.ts_orig = ts;
@@ -220,11 +210,6 @@ impl RawEvent {
             Some(Provenance::Events(ids)) => Some(ids),
             _ => None,
         }
-    }
-
-    /// Extract ingestion timestamp from ULID if persisted
-    pub fn ts_ingest_from_ulid(&self) -> Option<Timestamp> {
-        self.id.as_ref().map(|id| id.timestamp())
     }
 }
 

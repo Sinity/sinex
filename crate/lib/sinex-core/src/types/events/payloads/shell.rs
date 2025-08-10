@@ -270,19 +270,6 @@ pub struct ShellOutputCapturedPayload {
 }
 
 impl KittyCommandExecutedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(command: impl Into<String>) -> Self {
-        Self {
-            command: CommandText::from(command.into()),
-            working_directory: None,
-            exit_status: None,
-            execution_time_ms: None,
-            shell_type: None,
-            kitty_window_id: "1".to_string(),
-            kitty_tab_id: "1".to_string(),
-        }
-    }
-
     /// Builder-style method for working directory
     pub fn with_working_directory(mut self, dir: impl Into<String>) -> Self {
         self.working_directory = Some(SanitizedPath::from(dir.into()));
@@ -320,25 +307,6 @@ impl KittyCommandExecutedPayload {
 }
 
 impl AtuinCommandExecutedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(command_string: impl Into<String>, cwd: impl Into<String>) -> Self {
-        use chrono::Utc;
-        let now = Utc::now();
-        Self {
-            command_string: CommandText::from(command_string.into()),
-            cwd: SanitizedPath::from(cwd.into()),
-            exit_code: 0,
-            duration_ns: 1000000, // 1ms in nanoseconds
-            atuin_history_id: "test-history-id".to_string(),
-            atuin_session_id: "test-session-id".to_string(),
-            timestamp: now.timestamp(),
-            ts_start_orig: now,
-            ts_end_orig: now,
-            hostname: HostName::from("test-hostname".to_string()),
-            terminal_session_ulid: None,
-        }
-    }
-
     /// Builder-style method for exit code
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
@@ -376,25 +344,6 @@ impl AtuinCommandExecutedPayload {
 }
 
 impl CanonicalCommandPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(command: impl Into<String>, working_directory: impl Into<String>) -> Self {
-        use chrono::Utc;
-        let now = Utc::now();
-        Self {
-            command: command.into(),
-            working_directory: working_directory.into(),
-            exit_code: 0,
-            duration_ms: 100,
-            start_time: now,
-            end_time: now,
-            user: "test-user".to_string(),
-            session_id: "test-session".to_string(),
-            environment_hash: "test-env-hash".to_string(),
-            source_events: vec![],
-            enrichment_history: vec![],
-        }
-    }
-
     /// Builder-style method for exit code
     pub fn with_exit_code(mut self, code: i32) -> Self {
         self.exit_code = code;
@@ -433,17 +382,6 @@ impl CanonicalCommandPayload {
 }
 
 impl KittySessionStartedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            window_id: "1".to_string(),
-            tab_id: "1".to_string(),
-            shell_type: ShellName::from("bash".to_string()),
-            working_directory: SanitizedPath::from("/tmp".to_string()),
-            env_vars: None,
-        }
-    }
-
     /// Builder-style method for window and tab IDs
     pub fn with_kitty_ids(
         mut self,
@@ -475,21 +413,6 @@ impl KittySessionStartedPayload {
 }
 
 impl HistoryCommandImportedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(
-        command: impl Into<String>,
-        shell_type: impl Into<String>,
-        source_file: impl Into<String>,
-    ) -> Self {
-        Self {
-            command: command.into(),
-            timestamp: None,
-            shell_type: shell_type.into(),
-            source_file: source_file.into(),
-            line_number: None,
-        }
-    }
-
     /// Builder-style method for timestamp
     pub fn with_timestamp(mut self, timestamp: DateTime<Utc>) -> Self {
         self.timestamp = Some(timestamp);
@@ -504,14 +427,6 @@ impl HistoryCommandImportedPayload {
 }
 
 impl TerminalMonitoringStartedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            enabled_sources: HashMap::new(),
-            start_time: Utc::now(),
-        }
-    }
-
     /// Builder-style method for enabled sources
     pub fn with_enabled_sources(mut self, sources: HashMap<String, bool>) -> Self {
         self.enabled_sources = sources;

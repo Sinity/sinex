@@ -26,7 +26,12 @@ use regex::Regex;
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::{CommandText, SanitizedPath};
 use sinex_core::types::events::Event;
-use sinex_satellite_sdk::{SatelliteError, SatelliteResult};
+use sinex_satellite_sdk::{
+    error_helpers::{
+        io_error_with_context, json_error_with_context, processing_error, utf8_error_with_context,
+    },
+    SatelliteError, SatelliteResult,
+};
 use std::collections::HashMap;
 use std::io;
 use std::time::{Duration, SystemTime};
@@ -155,15 +160,14 @@ impl KittyWatcher {
         &self,
         command: serde_json::Value,
     ) -> SatelliteResult<serde_json::Value> {
-        let socket_path = self.socket_path.as_ref().ok_or_else(|| {
-            sinex_satellite_sdk::SatelliteError::Processing(
-                "No Kitty socket configured".to_string(),
-            )
-        })?;
+        let socket_path = self
+            .socket_path
+            .as_ref()
+            .ok_or_else(|| processing_error("No Kitty socket configured"))?;
 
         let mut stream = UnixStream::connect(socket_path)
             .await
-            .map_err(|e| io_to_satellite_error(e, "Failed to connect to socket"))?;
+            .map_err(|e| io_error_with_context(e, "Failed to connect to socket"))?;
 
         let cmd_str = command.to_string();
         let framed_cmd = format!("\x1bP@kitty-cmd{}\x1b\\", cmd_str);
@@ -171,38 +175,28 @@ impl KittyWatcher {
         stream
             .write_all(framed_cmd.as_bytes())
             .await
-            .map_err(|e| io_to_satellite_error(e, "Failed to write command"))?;
+            .map_err(|e| io_error_with_context(e, "Failed to write command"))?;
         stream
             .flush()
             .await
-            .map_err(|e| io_to_satellite_error(e, "Failed to flush"))?;
+            .map_err(|e| io_error_with_context(e, "Failed to flush"))?;
 
         let mut response_buffer = Vec::new();
         stream
             .read_to_end(&mut response_buffer)
             .await
-            .map_err(|e| io_to_satellite_error(e, "Failed to read response"))?;
+            .map_err(|e| io_error_with_context(e, "Failed to read response"))?;
 
-        let response_str = String::from_utf8(response_buffer).map_err(|e| {
-            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                "Invalid UTF-8 in response: {}",
-                e
-            ))
-        })?;
+        let response_str = String::from_utf8(response_buffer)
+            .map_err(|e| utf8_error_with_context(e, "Invalid UTF-8 in response"))?;
 
         // Extract JSON from framed response
         if let Some(json_str) = extract_json_from_framed_response(&response_str) {
-            return serde_json::from_str(json_str).map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!(
-                    "Failed to parse JSON: {}",
-                    e
-                ))
-            });
+            return serde_json::from_str(json_str)
+                .map_err(|e| json_error_with_context(e, "Failed to parse JSON"));
         }
 
-        Err(sinex_satellite_sdk::SatelliteError::Processing(
-            "Could not parse Kitty response as JSON".to_string(),
-        ))
+        Err(processing_error("Could not parse Kitty response as JSON"))
     }
 
     async fn get_kitty_tabs_and_windows(
@@ -584,9 +578,6 @@ impl KittyWatcher {
 }
 
 /// Helper function to convert IO errors to SatelliteError
-fn io_to_satellite_error(e: io::Error, operation: &str) -> SatelliteError {
-    SatelliteError::Processing(format!("{}: {}", operation, e))
-}
 
 /// Helper function to extract JSON from framed Kitty response
 fn extract_json_from_framed_response(response: &str) -> Option<&str> {

@@ -36,24 +36,6 @@ pub struct ClipboardSelectedPayload {
 }
 
 impl ClipboardCopiedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(content_hash: impl Into<String>) -> Self {
-        Self {
-            operation: "copy".to_string(),
-            content_type: "text/plain".to_string(),
-            content_size: 0,
-            text_preview: None,
-            file_count: None,
-            file_paths: None,
-            source_app: None,
-            window_title: None,
-            content_hash: content_hash.into(),
-            original_hash: None,
-            annex_key: None,
-            blob_id: None,
-        }
-    }
-
     /// Builder-style method for operation
     pub fn with_operation(mut self, operation: impl Into<String>) -> Self {
         self.operation = operation.into();
@@ -93,21 +75,6 @@ impl ClipboardCopiedPayload {
 }
 
 impl ClipboardSelectedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(content_hash: impl Into<String>) -> Self {
-        Self {
-            selection_type: "clipboard".to_string(),
-            content_type: "text/plain".to_string(),
-            content_size: 0,
-            text_preview: None,
-            source_app: None,
-            content_hash: content_hash.into(),
-            original_hash: None,
-            annex_key: None,
-            blob_id: None,
-        }
-    }
-
     /// Builder-style method for selection type
     pub fn with_selection_type(mut self, selection_type: impl Into<String>) -> Self {
         self.selection_type = selection_type.into();
