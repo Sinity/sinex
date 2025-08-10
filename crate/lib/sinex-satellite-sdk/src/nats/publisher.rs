@@ -9,6 +9,7 @@ use async_nats::{jetstream::publish::PublishAck, HeaderMap};
 use bytes::Bytes;
 use serde::Serialize;
 use sinex_core::db::models::{Provenance, RawEvent};
+use sinex_core::types::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -153,7 +154,8 @@ impl NatsPublisher {
         value: f64,
         labels: Option<serde_json::Value>,
     ) -> Result<PublishAck> {
-        let subject = StreamManager::metrics_subject(component, metric_type);
+        let service_name = ServiceName::from(component);
+        let subject = StreamManager::metrics_subject(&service_name, metric_type);
 
         let metric = serde_json::json!({
             "component": component,

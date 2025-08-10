@@ -809,8 +809,8 @@ async fn test_storage_statistics_emission(ctx: TestContext) -> color_eyre::Resul
     // Emit storage statistics
     fixture.manager.emit_storage_stats().await?;
 
-    // Verify statistics event was created in core.events
-    let recent_events = ctx.get_recent_events(10).await?;
+    // Verify statistics event was created in core.events using direct repository access
+    let recent_events = ctx.pool.events().get_recent(10).await?;
     let stats_events: Vec<_> = recent_events
         .iter()
         .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_STATISTICS)
@@ -836,8 +836,8 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> color_eyre
     let fixture = BlobManagerTest::new(ctx.pool()).await?;
     let content = b"Content for metrics testing";
 
-    // Count events before operation
-    let events_before = ctx.get_recent_events(100).await?;
+    // Count events before operation using direct repository access
+    let events_before = ctx.pool.events().get_recent(100).await?;
     let metrics_before = events_before
         .iter()
         .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)
@@ -854,8 +854,8 @@ async fn test_metrics_emission_during_operations(ctx: TestContext) -> color_eyre
         .retrieve_content(&metadata.annex_key)
         .await?;
 
-    // Check that operation metrics were emitted
-    let events_after = ctx.get_recent_events(100).await?;
+    // Check that operation metrics were emitted using direct repository access
+    let events_after = ctx.pool.events().get_recent(100).await?;
     let metrics_after = events_after
         .iter()
         .filter(|e| e.source == sources::BLOB_STORAGE && e.event_type == event_types::metrics::BLOB_STORAGE_OPERATION)

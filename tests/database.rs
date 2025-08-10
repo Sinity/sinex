@@ -12,6 +12,7 @@
 
 use color_eyre::eyre::Result;
 use serde_json::json;
+use sinex_core::types::domain::EventSource;
 use sinex_test_utils::prelude::*;
 use std::time::Duration as StdDuration;
 
@@ -40,8 +41,8 @@ async fn test_batch_event_insertion(ctx: TestContext) -> color_eyre::eyre::Resul
         inserted_events.push(event);
     }
 
-    // Verify all events were inserted
-    let recent_events = ctx.get_recent_events(20).await?;
+    // Verify all events were inserted using direct repository access
+    let recent_events = ctx.pool.events().get_recent(20).await?;
     assert!(recent_events.len() >= 10);
 
     // Verify specific events exist
@@ -86,9 +87,11 @@ async fn test_query_events_by_source(ctx: TestContext) -> color_eyre::eyre::Resu
         )
         .await?;
 
-    // Query filesystem events using TestContext helpers
+    // Query filesystem events using direct repository access
     let filesystem_events = ctx
-        .get_events_by_source(&EventSource::from_static("fs-watcher"))
+        .pool
+        .events()
+        .get_by_source(&EventSource::from_static("fs-watcher"), Some(100), None)
         .await?;
     assert!(filesystem_events.len() >= 2);
 
@@ -169,9 +172,11 @@ async fn test_ulid_ordering_in_database(ctx: TestContext) -> color_eyre::eyre::R
         tokio::time::sleep(StdDuration::from_millis(1)).await;
     }
 
-    // Query filesystem events to verify they exist
+    // Query filesystem events to verify they exist using direct repository access
     let filesystem_events = ctx
-        .get_events_by_source(&EventSource::from_static("fs-watcher"))
+        .pool
+        .events()
+        .get_by_source(&EventSource::from_static("fs-watcher"), Some(100), None)
         .await?;
     assert!(filesystem_events.len() >= 5);
 

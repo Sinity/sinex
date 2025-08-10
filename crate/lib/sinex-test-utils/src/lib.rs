@@ -79,13 +79,11 @@
 //! ```rust
 //! // Direct repository calls - no wrapper query builders
 //! let recent = ctx.pool.events().get_recent(5).await?;
-//! let by_source = ctx.pool.events().get_by_source(&EventSource::from("fs-watcher"), Some(10), None).await?;
+//! let by_source = ctx.pool.events().get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None).await?;
 //! let count = ctx.pool.events().count_by_event_type(&EventType::from("file.created")).await?;
 //! let single = ctx.pool.events().get_by_id(&event_id).await?;
 //!
-//! // Convenience helpers for common test patterns
-//! let events = ctx.get_recent_events(10).await?;
-//! let fs_events = ctx.get_events_by_source("fs-watcher").await?;
+//! // Use repository methods directly - no wrapper helpers
 //! ```
 //!
 //! ## Fixtures
@@ -564,7 +562,7 @@ mod tests {
         let events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from("fs-watcher"), Some(10), None)
+            .get_by_source(&EventSource::from_static("fs-watcher"), Some(10), None)
             .await?;
         assert!(!events.is_empty());
 
@@ -613,7 +611,7 @@ mod tests {
         let source_events = ctx
             .pool
             .events()
-            .get_by_source(&EventSource::from(source), Some(10), None)
+            .get_by_source(&EventSource::new(source.to_string()), Some(10), None)
             .await?;
         let type_events = ctx
             .pool

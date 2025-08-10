@@ -1,4 +1,7 @@
 //! Filesystem event payloads
+//!
+//! Note: Path fields are kept as String for serialization compatibility.
+//! Use the provided helper methods to convert to domain types like SanitizedPath.
 
 use chrono::{DateTime, Utc};
 use schemars::JsonSchema;

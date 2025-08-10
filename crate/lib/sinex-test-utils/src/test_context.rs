@@ -27,7 +27,7 @@
 //!     ctx.pool.events().insert(event).await?;
 //!     
 //!     // Direct repository queries
-//!     let events = ctx.pool.events().list_recent(10).await?;
+//!     let events = ctx.pool.events().get_recent(10).await?;
 //!     
 //!     // Test utilities that add value (not wrappers)
 //!     ctx.assert("validation")
@@ -43,7 +43,7 @@ use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
 use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::{DbPoolExt, EnhancedRepository, Repository};
+use sinex_core::db::repositories::{DbPoolExt, EnhancedRepository};
 use sinex_core::types::{DbPool, Ulid};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -248,26 +248,6 @@ impl TestContext {
         Ok(inserted)
     }
 
-    /// Get recent events (convenience wrapper around repository)
-    pub async fn get_recent_events(&self, limit: i64) -> Result<Vec<RawEvent>> {
-        self.pool
-            .events()
-            .get_recent(limit)
-            .await
-            .map_err(Into::into)
-    }
-
-    /// Get events by source (convenience wrapper around repository)
-    pub async fn get_events_by_source(
-        &self,
-        source: &sinex_core::types::domain::EventSource,
-    ) -> Result<Vec<RawEvent>> {
-        self.pool
-            .events()
-            .get_by_source(source, Some(100), None)
-            .await
-            .map_err(Into::into)
-    }
 
     /// Assert similar values with detailed diff
     pub fn assert_similar<T>(&self, left: &T, right: &T, msg: &str) -> Result<()>

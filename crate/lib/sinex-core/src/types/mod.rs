@@ -42,6 +42,7 @@
 //! digital experience. Through its satellite constellation architecture and deep
 //! philosophical principles, Sinex creates an external augmentation of human cognition.
 
+pub mod constants;
 pub mod domain;
 pub mod error;
 pub mod events;
