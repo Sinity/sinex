@@ -71,29 +71,22 @@ pub struct CircularDependency {
 /// Memory-efficient cascade analyzer using streaming algorithms
 pub struct StreamingCascadeAnalyzer {
     pool: PgPool,
-    /// Maximum events to analyze in memory at once
-    batch_size: usize,
-    /// Use bloom filter for quick membership tests
-    use_bloom_filter: bool,
 }
 
 impl StreamingCascadeAnalyzer {
     /// Create new analyzer
     pub fn new(pool: PgPool) -> Self {
-        Self {
-            pool,
-            batch_size: 10000,
-            use_bloom_filter: true,
-        }
+        Self { pool }
     }
 
     /// Analyze cascades for a set of events to be modified
     pub async fn analyze_cascades(&self, event_ids: &[Ulid]) -> Result<CascadeAnalysis> {
         info!("Analyzing cascades for {} events", event_ids.len());
 
-        // Create temporary table for analysis
-        let temp_table = format!("cascade_analysis_{}", Ulid::new());
-        self.create_temp_tables(&temp_table).await?;
+        // Use PostgreSQL's built-in temp table mechanism - no SQL injection risk
+        // Temp tables are automatically cleaned up at end of session
+        let temp_table = "temp_cascade_analysis";
+        self.create_temp_tables(temp_table).await?;
 
         // Populate with initial events
         self.populate_initial_events(&temp_table, event_ids).await?;
@@ -127,12 +120,14 @@ impl StreamingCascadeAnalyzer {
         })
     }
 
-    /// Create temporary tables for analysis
+    /// Create temporary tables for analysis  
     async fn create_temp_tables(&self, table_name: &str) -> Result<()> {
+        // Note: PostgreSQL temp tables are session-scoped and auto-cleaned
+        // Using TEMPORARY instead of TEMP for clarity
         let query = format!(
             r#"
-            CREATE TEMP TABLE IF NOT EXISTS {} (
-                event_id ULID PRIMARY KEY,
+            CREATE TEMPORARY TABLE IF NOT EXISTS {} (
+                id ULID PRIMARY KEY,  -- Primary key should just be 'id'
                 depth INT NOT NULL DEFAULT 0,
                 parent_ids ULID[],
                 child_ids ULID[],
@@ -157,7 +152,7 @@ impl StreamingCascadeAnalyzer {
     async fn populate_initial_events(&self, table_name: &str, event_ids: &[Ulid]) -> Result<()> {
         let query = format!(
             r#"
-            INSERT INTO {} (event_id, depth, parent_ids, is_archived)
+            INSERT INTO {} (id, depth, parent_ids, is_archived)
             SELECT 
                 e.event_id,
                 0,
@@ -188,22 +183,22 @@ impl StreamingCascadeAnalyzer {
             let query = format!(
                 r#"
                 WITH current_level AS (
-                    SELECT event_id, parent_ids
+                    SELECT id, parent_ids
                     FROM {}
                     WHERE depth = $1 AND NOT processed
                 ),
                 children AS (
-                    SELECT DISTINCT e.event_id as event_id, e.source_event_ids as parent_ids
+                    SELECT DISTINCT e.event_id, e.source_event_ids as parent_ids
                     FROM core.events e
-                    JOIN current_level cl ON e.source_event_ids && ARRAY[cl.event_id]
+                    JOIN current_level cl ON e.source_event_ids && ARRAY[cl.id]
                     WHERE NOT EXISTS (
-                        SELECT 1 FROM {} t WHERE t.event_id = e.event_id
+                        SELECT 1 FROM {} t WHERE t.id = e.event_id
                     )
                 )
-                INSERT INTO {} (event_id, depth, parent_ids)
+                INSERT INTO {} (id, depth, parent_ids)
                 SELECT event_id, $2, parent_ids
                 FROM children
-                RETURNING event_id
+                RETURNING id
                 "#,
                 table_name, table_name, table_name
             );
@@ -281,15 +276,15 @@ impl StreamingCascadeAnalyzer {
         let query = format!(
             r#"
             WITH archived_set AS (
-                SELECT event_id FROM {} WHERE depth = 0
+                SELECT id FROM {} WHERE depth = 0
             ),
             violations AS (
                 SELECT 
                     e.event_id as live_event_id,
                     unnest(e.source_event_ids) as archived_event_id
                 FROM core.events e
-                WHERE e.source_event_ids && (SELECT array_agg(event_id) FROM archived_set)
-                AND e.event_id NOT IN (SELECT event_id FROM {})
+                WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived_set)
+                AND e.event_id NOT IN (SELECT id FROM {})
             )
             SELECT DISTINCT live_event_id, archived_event_id
             FROM violations
@@ -330,9 +325,9 @@ impl StreamingCascadeAnalyzer {
             r#"
             WITH RECURSIVE cycle_check AS (
                 SELECT 
-                    event_id,
+                    id,
                     parent_ids,
-                    ARRAY[event_id] as path,
+                    ARRAY[id] as path,
                     FALSE as has_cycle
                 FROM {}
                 WHERE depth = 0
@@ -340,12 +335,12 @@ impl StreamingCascadeAnalyzer {
                 UNION ALL
                 
                 SELECT 
-                    t.event_id,
+                    t.id,
                     t.parent_ids,
-                    cc.path || t.event_id,
-                    t.event_id = ANY(cc.path) as has_cycle
+                    cc.path || t.id,
+                    t.id = ANY(cc.path) as has_cycle
                 FROM {} t
-                JOIN cycle_check cc ON t.event_id = ANY(cc.parent_ids)
+                JOIN cycle_check cc ON t.id = ANY(cc.parent_ids)
                 WHERE NOT cc.has_cycle
                 AND array_length(cc.path, 1) < 10
             )
