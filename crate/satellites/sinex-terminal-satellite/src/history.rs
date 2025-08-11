@@ -1,6 +1,7 @@
 //! Shell history file watcher
 //!
 //! Watches shell history files (.bash_history, .zsh_history, fish_history) for new commands
+//! with comprehensive security validation to prevent path traversal and unauthorized access.
 
 use camino::Utf8PathBuf;
 use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
@@ -9,6 +10,9 @@ use sinex_core::types::events::Event;
 use sinex_core::types::events::{
     BashHistoricalCommandPayload, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
 };
+use sinex_core::types::validation::{
+    validate_discovered_file, validate_watch_paths, FileWatchingSecurityPolicy,
+};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::fs::{self, File};
@@ -16,20 +20,57 @@ use std::io::{self, BufRead, BufReader, Seek, SeekFrom};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-/// Shell history file watcher
+/// Shell history file watcher with security validation
 pub struct HistoryWatcher {
     files: Vec<Utf8PathBuf>,
     file_positions: HashMap<Utf8PathBuf, u64>,
     watcher: Option<RecommendedWatcher>,
+    /// Security policy for file watching operations
+    security_policy: FileWatchingSecurityPolicy,
+    /// Validated watch roots for boundary checking
+    validated_watch_roots: Vec<Utf8PathBuf>,
 }
 
 impl HistoryWatcher {
-    /// Create new history watcher
+    /// Create new history watcher with security validation
     pub async fn new(files: Vec<Utf8PathBuf>) -> SatelliteResult<Self> {
+        // SECURITY: Create a specialized policy for shell history files
+        let mut security_policy = FileWatchingSecurityPolicy::default();
+
+        // Allow common shell history locations under user's home
+        security_policy
+            .forbidden_prefixes
+            .remove(&Utf8PathBuf::from("/home"));
+
+        // Convert files to strings for validation
+        let file_strings: Vec<String> = files.iter().map(|f| f.as_str().to_string()).collect();
+
+        // SECURITY: Validate all history file paths before watching
+        let validated_files =
+            validate_watch_paths(&file_strings, &security_policy).map_err(|e| {
+                sinex_satellite_sdk::SatelliteError::Processing(format!(
+                    "History file validation failed: {}",
+                    e
+                ))
+            })?;
+
+        info!(
+            "Validated {} history files for watching",
+            validated_files.len()
+        );
+        for file in &validated_files {
+            info!("  - {}", file.as_str());
+        }
+
         let mut watcher = Self {
-            files,
+            files: validated_files.clone(),
             file_positions: HashMap::new(),
             watcher: None,
+            security_policy,
+            validated_watch_roots: validated_files
+                .iter()
+                .filter_map(|f| f.parent().map(|p| p.to_path_buf()))
+                .collect(),
         };
 
         // Initialize file positions to end of files (to catch only new entries)
@@ -245,20 +286,33 @@ impl HistoryWatcher {
             ))
         })?;
 
-        // Watch all history file directories
+        // SECURITY: Watch only validated history file directories
         let mut watched_dirs = std::collections::HashSet::new();
         for file_path in &self.files {
             if let Some(parent) = file_path.parent() {
                 if parent.exists() && watched_dirs.insert(parent.to_path_buf()) {
-                    watcher
-                        .watch(parent.as_std_path(), RecursiveMode::NonRecursive)
-                        .map_err(|e| {
-                            sinex_satellite_sdk::SatelliteError::Processing(format!(
-                                "Failed to watch directory {}: {}",
-                                parent, e
-                            ))
-                        })?;
-                    info!("Watching directory: {}", parent.as_str());
+                    // SECURITY: Additional validation that parent directory is safe
+                    let parent_str = parent.as_str().to_string();
+                    match validate_watch_paths(&[parent_str], &self.security_policy) {
+                        Ok(_) => {
+                            watcher
+                                .watch(parent.as_std_path(), RecursiveMode::NonRecursive)
+                                .map_err(|e| {
+                                    sinex_satellite_sdk::SatelliteError::Processing(format!(
+                                        "Failed to watch validated directory {}: {}",
+                                        parent, e
+                                    ))
+                                })?;
+                            info!("Watching validated directory: {}", parent.as_str());
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Skipping directory {} due to security policy: {}",
+                                parent.as_str(),
+                                e
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -295,12 +349,37 @@ impl HistoryWatcher {
 
         // Process file change events
         while let Some(event) = notify_rx.recv().await {
-            // Check if the event is for one of our watched files
+            // SECURITY: Validate and check if the event is for one of our watched files
             for path in event.paths {
                 let utf8_path = match Utf8PathBuf::from_path_buf(path.clone()) {
                     Ok(p) => p,
                     Err(_) => continue, // Skip non-UTF8 paths
                 };
+
+                // SECURITY: Validate discovered file against watch roots
+                let mut path_validated = false;
+                for watch_root in &self.validated_watch_roots {
+                    match validate_discovered_file(
+                        utf8_path.as_str(),
+                        watch_root.as_str(),
+                        &self.security_policy,
+                    ) {
+                        Ok(_) => {
+                            path_validated = true;
+                            break;
+                        }
+                        Err(_) => continue,
+                    }
+                }
+
+                if !path_validated {
+                    warn!(
+                        "Rejecting history file event for path outside validated boundaries: {}",
+                        utf8_path.as_str()
+                    );
+                    continue;
+                }
+
                 if self.files.contains(&utf8_path) {
                     match event.kind {
                         EventKind::Modify(_) | EventKind::Create(_) => {

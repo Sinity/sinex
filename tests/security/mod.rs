@@ -15,3 +15,6 @@ pub mod unicode_attack_test;
 
 /// Path validation security testing including path traversal attack prevention
 pub mod path_validation_test;
+
+/// HistoryWatcher security testing including path validation and boundary enforcement
+pub mod history_watcher_security_test;

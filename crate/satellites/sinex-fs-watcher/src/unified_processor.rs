@@ -101,7 +101,9 @@ use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::with_context;
 use sinex_core::types::events::Event;
-use sinex_core::types::validate_path;
+use sinex_core::types::validation::{
+    validate_discovered_file, validate_path, validate_watch_paths, FileWatchingSecurityPolicy,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -201,6 +203,16 @@ pub struct FilesystemConfig {
         message = "Max depth must be reasonable (1-100)"
     ))]
     pub max_depth: Option<usize>,
+
+    /// Security policy for file watching operations
+    ///
+    /// Provides comprehensive security controls for filesystem monitoring:
+    /// - Path validation and sanitization
+    /// - Symlink following policies
+    /// - Directory depth limiting
+    /// - Forbidden path detection
+    /// - System directory protection
+    pub security_policy: FileWatchingSecurityPolicy,
 }
 
 impl Default for FilesystemConfig {
@@ -214,6 +226,7 @@ impl Default for FilesystemConfig {
             ],
             debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
+            security_policy: FileWatchingSecurityPolicy::default(),
         }
     }
 }
@@ -305,6 +318,9 @@ pub struct FilesystemProcessor {
     /// Root directories being watched for validation
     watch_roots: Vec<Utf8PathBuf>,
 
+    /// Validated watch roots for security boundary checking
+    validated_watch_roots: Vec<Utf8PathBuf>,
+
     /// Rename operation tracking for enhanced move detection
     rename_tracker: Arc<Mutex<HashMap<u32, RenameOperation>>>,
 
@@ -325,6 +341,7 @@ impl FilesystemProcessor {
             context: None,
             config: FilesystemConfig::default(),
             watch_roots: Vec::new(),
+            validated_watch_roots: Vec::new(),
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
@@ -338,6 +355,7 @@ impl FilesystemProcessor {
             context: None,
             config,
             watch_roots: Vec::new(),
+            validated_watch_roots: Vec::new(),
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
