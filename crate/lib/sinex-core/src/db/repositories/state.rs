@@ -308,7 +308,7 @@ impl<'a> StateRepository<'a> {
                 created_at,
                 updated_at
             FROM core.processor_checkpoints 
-            WHERE name = $1 AND consumer_group = 'default' AND consumer_name = 'default'
+            WHERE name = $1 AND consumer_group = 'default' AND consumer_name = 'default' AND deleted_at IS NULL
             "#,
             processor_name
         )

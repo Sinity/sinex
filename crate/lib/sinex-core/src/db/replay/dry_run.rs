@@ -193,16 +193,16 @@ pub async fn execute_dry_run(config: ReplayConfig, events: Vec<RawEvent>) -> Res
     // Simulate processing each event
     for event in events {
         // In a real implementation, would check replay rules here
-        executor.simulate_archive(event.event_id.into());
+        if let Some(event_id) = event.id {
+            executor.simulate_archive(event_id);
 
-        // Check for dependencies
-        if !event.source_event_ids.is_empty() {
-            let deps: Vec<Id<RawEvent>> = event
-                .source_event_ids
-                .iter()
-                .map(|id| (*id).into())
-                .collect();
-            executor.check_integrity(event.event_id.into(), deps);
+            // Check for dependencies
+            if let Some(source_ids) = event.get_source_event_ids() {
+                if !source_ids.is_empty() {
+                    let deps: Vec<Id<RawEvent>> = source_ids.to_vec();
+                    executor.check_integrity(event_id, deps);
+                }
+            }
         }
     }
 
