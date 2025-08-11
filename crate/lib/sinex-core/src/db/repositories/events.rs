@@ -504,6 +504,7 @@ impl<'a> EventRepository<'a> {
         Ok(result.unwrap_or(0))
     }
 
+    #[instrument(skip(self), fields(start = %start, end = %end, limit = ?limit, offset = ?offset))]
     pub async fn get_by_time_range(
         &self,
         start: DateTime<Utc>,
@@ -552,6 +553,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
+    #[instrument(skip(self), fields(start = %start, end = %end))]
     pub async fn count_by_time_range(
         &self,
         start: DateTime<Utc>,
