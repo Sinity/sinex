@@ -107,7 +107,11 @@ impl DryRunExecutor {
     }
 
     /// Simulate modifying an event
-    pub fn simulate_modify(&mut self, event_id: Id<RawEvent>, changes: HashMap<String, serde_json::Value>) {
+    pub fn simulate_modify(
+        &mut self,
+        event_id: Id<RawEvent>,
+        changes: HashMap<String, serde_json::Value>,
+    ) {
         let operation = DryRunOperation {
             operation: "MODIFY".to_string(),
             target: event_id.to_string(),
@@ -183,20 +187,18 @@ impl DryRunExecutor {
 }
 
 /// Execute a replay in dry-run mode
-pub async fn execute_dry_run(
-    config: ReplayConfig,
-    events: Vec<RawEvent>,
-) -> Result<DryRunResult> {
+pub async fn execute_dry_run(config: ReplayConfig, events: Vec<RawEvent>) -> Result<DryRunResult> {
     let mut executor = DryRunExecutor::new(config);
 
     // Simulate processing each event
     for event in events {
         // In a real implementation, would check replay rules here
         executor.simulate_archive(event.event_id.into());
-        
+
         // Check for dependencies
         if !event.source_event_ids.is_empty() {
-            let deps: Vec<Id<RawEvent>> = event.source_event_ids
+            let deps: Vec<Id<RawEvent>> = event
+                .source_event_ids
                 .iter()
                 .map(|id| (*id).into())
                 .collect();
@@ -220,17 +222,17 @@ mod tests {
         };
 
         let mut executor = DryRunExecutor::new(config);
-        
+
         let event_id = Id::<RawEvent>::new();
         executor.simulate_archive(event_id);
         executor.simulate_delete(Id::<RawEvent>::new());
-        
+
         let mut changes = HashMap::new();
         changes.insert("status".to_string(), serde_json::json!("processed"));
         executor.simulate_modify(Id::<RawEvent>::new(), changes);
 
         let result = executor.complete();
-        
+
         assert_eq!(result.operations.len(), 3);
         assert_eq!(result.events_to_archive.len(), 1);
         assert_eq!(result.events_to_delete.len(), 1);
@@ -242,12 +244,12 @@ mod tests {
     fn test_dry_run_integrity_check() {
         let config = ReplayConfig::default();
         let mut executor = DryRunExecutor::new(config);
-        
+
         let event_id = Id::<RawEvent>::new();
         let deps = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
-        
+
         executor.check_integrity(event_id, deps);
-        
+
         let result = executor.complete();
         assert_eq!(result.warnings.len(), 1);
         assert!(result.warnings[0].contains("2 dependent events"));

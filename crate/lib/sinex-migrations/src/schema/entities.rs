@@ -45,7 +45,11 @@ impl Entities {
             )
             .col(ColumnDef::new(Alias::new(Self::TYPE)).text().not_null())
             .col(ColumnDef::new(Alias::new(Self::NAME)).text().not_null())
-            .col(ColumnDef::new(Alias::new(Self::CANONICAL_NAME)).text().not_null())
+            .col(
+                ColumnDef::new(Alias::new(Self::CANONICAL_NAME))
+                    .text()
+                    .not_null(),
+            )
             .col(
                 ColumnDef::new(Alias::new(Self::ALIASES))
                     .array(sea_query::ColumnType::Text)
@@ -134,9 +138,11 @@ impl EntityRelations {
     pub const TO_ENTITY_ID: &'static str = "to_entity_id";
     pub const RELATION_TYPE: &'static str = "relation_type";
     pub const STRENGTH: &'static str = "strength";
-    pub const PROPERTIES: &'static str = "properties";
+    pub const METADATA: &'static str = "metadata";
+    pub const VALID_FROM: &'static str = "valid_from";
+    pub const VALID_UNTIL: &'static str = "valid_until";
     pub const CREATED_AT: &'static str = "created_at";
-    pub const UPDATED_AT: &'static str = "updated_at";
+    pub const CREATED_FROM_EVENT_ID: &'static str = "created_from_event_id";
 
     /// Create the entity relations table
     pub fn create_table() -> String {
@@ -159,30 +165,37 @@ impl EntityRelations {
                     .custom(Alias::new("ULID"))
                     .not_null(),
             )
-            .col(ColumnDef::new(Alias::new(Self::RELATION_TYPE)).text().not_null())
+            .col(
+                ColumnDef::new(Alias::new(Self::RELATION_TYPE))
+                    .text()
+                    .not_null(),
+            )
             .col(
                 ColumnDef::new(Alias::new(Self::STRENGTH))
                     .float()
+                    .not_null()
                     .default(1.0),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::PROPERTIES))
+                ColumnDef::new(Alias::new(Self::METADATA))
                     .json_binary()
                     .not_null()
                     .default(Expr::cust("'{}'::jsonb")),
             )
+            .col(
+                ColumnDef::new(Alias::new(Self::VALID_FROM))
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .col(ColumnDef::new(Alias::new(Self::VALID_UNTIL)).timestamp_with_time_zone())
             .col(
                 ColumnDef::new(Alias::new(Self::CREATED_AT))
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(
-                ColumnDef::new(Alias::new(Self::UPDATED_AT))
-                    .timestamp_with_time_zone()
-                    .not_null()
-                    .default(Expr::current_timestamp()),
-            )
+            .col(ColumnDef::new(Alias::new(Self::CREATED_FROM_EVENT_ID)).custom(Alias::new("ULID")))
             .build(PostgresQueryBuilder)
     }
 

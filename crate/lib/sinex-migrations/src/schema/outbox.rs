@@ -170,11 +170,7 @@ impl OperationsLog {
                     .json_binary()
                     .not_null(),
             )
-            .col(
-                ColumnDef::new(Alias::new(Self::STATE))
-                    .text()
-                    .not_null(),
-            )
+            .col(ColumnDef::new(Alias::new(Self::STATE)).text().not_null())
             .col(ColumnDef::new(Alias::new(Self::PREVIEW_SUMMARY)).json_binary())
             .col(ColumnDef::new(Alias::new(Self::CHECKPOINT)).json_binary())
             .col(ColumnDef::new(Alias::new(Self::APPROVED_BY)).text())

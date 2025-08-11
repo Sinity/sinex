@@ -10,5 +10,5 @@ pub mod logging;
 
 // Re-export commonly used types
 pub use config::{BatchConfig, CascadeConfig, ReplayConfig};
-pub use dry_run::{DryRunResult, DryRunOperation, DryRunExecutor, execute_dry_run};
+pub use dry_run::{execute_dry_run, DryRunExecutor, DryRunOperation, DryRunResult};
 pub use invariants::{InvariantViolation, ViolationSeverity, ViolationType};

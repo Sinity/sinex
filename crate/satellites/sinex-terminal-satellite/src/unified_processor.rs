@@ -583,30 +583,31 @@ impl TerminalProcessor {
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
 
             // Query actual data from Atuin SQLite database
-            let (estimated_entries, last_entry_timestamp) = if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_path()) {
-                // Count entries
-                let count: u64 = conn
-                    .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
-                    .unwrap_or(0);
-                
-                // Get most recent timestamp
-                let last_timestamp: Option<i64> = conn
-                    .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
-                    .ok();
-                
-                let last_entry = last_timestamp.and_then(|ts| {
-                    // Atuin stores timestamps in nanoseconds since epoch
-                    let seconds = ts / 1_000_000_000;
-                    let nanos = (ts % 1_000_000_000) as u32;
-                    DateTime::from_timestamp(seconds, nanos)
-                });
-                
-                (count, last_entry)
-            } else {
-                // Fallback to estimate if we can't open the database
-                let estimated_entries = db_size_bytes / 100;
-                (estimated_entries, None)
-            };
+            let (estimated_entries, last_entry_timestamp) =
+                if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_path()) {
+                    // Count entries
+                    let count: u64 = conn
+                        .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+                        .unwrap_or(0);
+
+                    // Get most recent timestamp
+                    let last_timestamp: Option<i64> = conn
+                        .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
+                        .ok();
+
+                    let last_entry = last_timestamp.and_then(|ts| {
+                        // Atuin stores timestamps in nanoseconds since epoch
+                        let seconds = ts / 1_000_000_000;
+                        let nanos = (ts % 1_000_000_000) as u32;
+                        DateTime::from_timestamp(seconds, nanos)
+                    });
+
+                    (count, last_entry)
+                } else {
+                    // Fallback to estimate if we can't open the database
+                    let estimated_entries = db_size_bytes / 100;
+                    (estimated_entries, None)
+                };
 
             AtuinStatus {
                 db_exists: true,

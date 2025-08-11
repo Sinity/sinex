@@ -105,7 +105,7 @@ impl StreamingCascadeAnalyzer {
     pub fn new(pool: PgPool) -> Self {
         Self::with_config(pool, CascadeAnalyzerConfig::default())
     }
-    
+
     /// Create new analyzer with custom configuration
     pub fn with_config(pool: PgPool, config: CascadeAnalyzerConfig) -> Self {
         Self { pool, config }
@@ -122,23 +122,32 @@ impl StreamingCascadeAnalyzer {
         );
 
         // Start a transaction for the entire analysis
-        let mut tx = self.pool.begin().await
+        let mut tx = self
+            .pool
+            .begin()
+            .await
             .map_err(|e| db_error(e, "begin cascade analysis transaction"))?;
 
         // Execute analysis within transaction
-        let result = self.analyze_cascades_in_transaction(&mut tx, event_ids, &session_id).await;
+        let result = self
+            .analyze_cascades_in_transaction(&mut tx, event_ids, &session_id)
+            .await;
 
         // Commit or rollback based on result
         match result {
             Ok(analysis) => {
-                tx.commit().await
+                tx.commit()
+                    .await
                     .map_err(|e| db_error(e, "commit cascade analysis transaction"))?;
                 Ok(analysis)
             }
             Err(e) => {
                 // Rollback automatically happens on drop, but be explicit
                 if let Err(rollback_err) = tx.rollback().await {
-                    warn!("Failed to rollback cascade analysis transaction: {}", rollback_err);
+                    warn!(
+                        "Failed to rollback cascade analysis transaction: {}",
+                        rollback_err
+                    );
                 }
                 Err(e)
             }
@@ -156,7 +165,8 @@ impl StreamingCascadeAnalyzer {
         let temp_table = self.create_temp_tables_tx(tx, session_id).await?;
 
         // Populate with initial events
-        self.populate_initial_events_tx(tx, &temp_table, event_ids).await?;
+        self.populate_initial_events_tx(tx, &temp_table, event_ids)
+            .await?;
 
         // Build dependency graph iteratively
         let max_depth = self.build_dependency_graph_tx(tx, &temp_table).await?;
@@ -169,7 +179,9 @@ impl StreamingCascadeAnalyzer {
         let integrity_violations = self.find_integrity_violations_tx(tx, &temp_table).await?;
 
         // Detect circular dependencies
-        let circular_dependencies = self.detect_circular_dependencies_tx(tx, &temp_table).await?;
+        let circular_dependencies = self
+            .detect_circular_dependencies_tx(tx, &temp_table)
+            .await?;
 
         // Clean up temp tables (within transaction)
         self.cleanup_temp_tables_tx(tx, &temp_table).await?;
@@ -194,7 +206,7 @@ impl StreamingCascadeAnalyzer {
         session_id: &str,
     ) -> Result<String> {
         let table_name = format!("cascade_analysis_{}", session_id);
-        
+
         let create_table_sql = format!(
             r#"
             CREATE TEMP TABLE {} (
@@ -383,7 +395,7 @@ impl StreamingCascadeAnalyzer {
             // Process events in batches to avoid memory issues
             let mut total_inserted = 0;
             let mut batch_offset = 0;
-            
+
             loop {
                 // Find children of current depth events in batches
                 let query = format!(
@@ -420,22 +432,25 @@ impl StreamingCascadeAnalyzer {
                     .fetch_all(&self.pool)
                     .await
                     .map_err(|e| db_error(e, "build dependency graph - insert children"))?;
-                
+
                 let batch_count = inserted.len();
                 total_inserted += batch_count;
-                
+
                 if batch_count < batch_size {
                     // No more events at this offset
                     break;
                 }
-                
+
                 batch_offset += batch_size;
-                
+
                 // Check memory limit if configured
                 if let Some(memory_limit) = self.config.memory_limit_bytes {
                     let estimated_memory = self.estimate_memory_usage(table_name).await?;
                     if estimated_memory > memory_limit {
-                        warn!("Memory limit exceeded: {} > {}", estimated_memory, memory_limit);
+                        warn!(
+                            "Memory limit exceeded: {} > {}",
+                            estimated_memory, memory_limit
+                        );
                         return Err(eyre!("Analysis would exceed memory limit"));
                     }
                 }
@@ -479,15 +494,15 @@ impl StreamingCascadeAnalyzer {
             "#,
             table_name
         );
-        
+
         let result = sqlx::query_as::<_, (i64, Option<f64>)>(&query)
             .fetch_one(&self.pool)
             .await
             .map_err(|e| db_error(e, "estimate memory usage"))?;
-        
+
         let (count, avg_size) = result;
         let estimated_bytes = (count as f64 * avg_size.unwrap_or(100.0)) as usize;
-        
+
         Ok(estimated_bytes)
     }
 

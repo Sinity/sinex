@@ -409,14 +409,16 @@ impl KittyWatcher {
                             .as_millis() as u64
                     } else {
                         // Estimate based on last prompt time if we don't have exact start
-                        window_state.last_prompt_time
+                        window_state
+                            .last_prompt_time
                             .and_then(|t| SystemTime::now().duration_since(t).ok())
                             .map(|d| d.as_millis() as u64)
                             .unwrap_or(0)
                     };
 
                     // Get current shell PID (might have changed)
-                    let shell_pid = window.foreground_process
+                    let shell_pid = window
+                        .foreground_process
                         .as_ref()
                         .map(|p| p.pid)
                         .or(window_state.shell_pid)

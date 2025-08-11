@@ -7,7 +7,10 @@ pub struct Migration;
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // 1. Fix operations_log table structure
-        manager.get_connection().execute_unprepared(r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             -- Drop old columns if they exist
             ALTER TABLE core.operations_log 
             DROP COLUMN IF EXISTS operation_id,
@@ -44,22 +47,16 @@ impl MigrationTrait for Migration {
             ALTER COLUMN actor DROP DEFAULT,
             ALTER COLUMN scope DROP DEFAULT,
             ALTER COLUMN state DROP DEFAULT;
-        "#).await?;
+        "#,
+            )
+            .await?;
 
-        // 2. Fix processor_manifests table
-        manager.get_connection().execute_unprepared(r#"
-            -- Rename name column to processor_name if it exists
-            DO $$ 
-            BEGIN
-                IF EXISTS (SELECT 1 FROM information_schema.columns 
-                          WHERE table_schema = 'core' 
-                          AND table_name = 'processor_manifests' 
-                          AND column_name = 'name') THEN
-                    ALTER TABLE core.processor_manifests RENAME COLUMN name TO processor_name;
-                END IF;
-            END $$;
-            
-            -- Add missing columns
+        // 2. Fix processor_manifests table - just add missing columns, keep 'name' as is
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+            -- Add missing columns (but keep 'name' column as is)
             ALTER TABLE core.processor_manifests
             ADD COLUMN IF NOT EXISTS processor_version TEXT,
             ADD COLUMN IF NOT EXISTS processor_type TEXT,
@@ -68,22 +65,16 @@ impl MigrationTrait for Migration {
             ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ,
             ADD COLUMN IF NOT EXISTS config JSONB,
             ADD COLUMN IF NOT EXISTS metadata JSONB;
-        "#).await?;
+        "#,
+            )
+            .await?;
 
-        // 3. Fix source_material_registry table
+        // 3. Fix source_material_registry table - keep original column names
         manager.get_connection().execute_unprepared(r#"
-            -- Rename columns
+            -- Keep original column names, just add/modify as needed
             DO $$ 
             BEGIN
-                -- Rename id to source_material_id
-                IF EXISTS (SELECT 1 FROM information_schema.columns 
-                          WHERE table_schema = 'raw' 
-                          AND table_name = 'source_material_registry' 
-                          AND column_name = 'id') THEN
-                    ALTER TABLE raw.source_material_registry RENAME COLUMN id TO source_material_id;
-                END IF;
-                
-                -- Rename source to source_uri
+                -- Rename source to source_uri if needed
                 IF EXISTS (SELECT 1 FROM information_schema.columns 
                           WHERE table_schema = 'raw' 
                           AND table_name = 'source_material_registry' 
@@ -91,7 +82,7 @@ impl MigrationTrait for Migration {
                     ALTER TABLE raw.source_material_registry RENAME COLUMN source TO source_uri;
                 END IF;
                 
-                -- Rename acquisition_time to ingestion_time
+                -- Rename acquisition_time to ingestion_time if needed
                 IF EXISTS (SELECT 1 FROM information_schema.columns 
                           WHERE table_schema = 'raw' 
                           AND table_name = 'source_material_registry' 
@@ -99,7 +90,7 @@ impl MigrationTrait for Migration {
                     ALTER TABLE raw.source_material_registry RENAME COLUMN acquisition_time TO ingestion_time;
                 END IF;
                 
-                -- Rename blob_storage_id to optional_blob_id
+                -- Rename blob_storage_id to optional_blob_id if needed
                 IF EXISTS (SELECT 1 FROM information_schema.columns 
                           WHERE table_schema = 'raw' 
                           AND table_name = 'source_material_registry' 
@@ -141,7 +132,10 @@ impl MigrationTrait for Migration {
         "#).await?;
 
         // 4. Create core.entities table
-        manager.get_connection().execute_unprepared(r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             CREATE TABLE IF NOT EXISTS core.entities (
                 id ULID PRIMARY KEY DEFAULT gen_ulid(),
                 type TEXT NOT NULL,
@@ -159,7 +153,9 @@ impl MigrationTrait for Migration {
             CREATE INDEX IF NOT EXISTS idx_entities_type ON core.entities(type);
             CREATE INDEX IF NOT EXISTS idx_entities_canonical_name ON core.entities(canonical_name);
             CREATE INDEX IF NOT EXISTS idx_entities_metadata ON core.entities USING GIN (metadata);
-        "#).await?;
+        "#,
+            )
+            .await?;
 
         // 5. Create core.entity_relations table
         manager.get_connection().execute_unprepared(r#"
@@ -168,10 +164,12 @@ impl MigrationTrait for Migration {
                 from_entity_id ULID NOT NULL REFERENCES core.entities(id) ON DELETE CASCADE,
                 to_entity_id ULID NOT NULL REFERENCES core.entities(id) ON DELETE CASCADE,
                 relation_type TEXT NOT NULL,
-                strength FLOAT DEFAULT 1.0,
-                properties JSONB NOT NULL DEFAULT '{}',
+                strength FLOAT NOT NULL DEFAULT 1.0,
+                metadata JSONB NOT NULL DEFAULT '{}',
+                valid_from TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                valid_until TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_from_event_id ULID
             );
             
             CREATE INDEX IF NOT EXISTS idx_entity_relations_from ON core.entity_relations(from_entity_id);
@@ -181,7 +179,10 @@ impl MigrationTrait for Migration {
         "#).await?;
 
         // 6. Add unique_processor_consumer constraint
-        manager.get_connection().execute_unprepared(r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             -- Drop existing unique index if it exists
             DROP INDEX IF EXISTS core.idx_processor_checkpoints_unique;
             
@@ -197,24 +198,31 @@ impl MigrationTrait for Migration {
                     UNIQUE (processor_name, consumer_group, consumer_name);
                 END IF;
             END $$;
-        "#).await?;
+        "#,
+            )
+            .await?;
 
         Ok(())
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Reverse the changes in opposite order
-        
+
         // 1. Remove unique_processor_consumer constraint
         manager.get_connection().execute_unprepared(r#"
             ALTER TABLE core.processor_checkpoints DROP CONSTRAINT IF EXISTS unique_processor_consumer;
         "#).await?;
 
         // 2. Drop entity tables
-        manager.get_connection().execute_unprepared(r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             DROP TABLE IF EXISTS core.entity_relations;
             DROP TABLE IF EXISTS core.entities;
-        "#).await?;
+        "#,
+            )
+            .await?;
 
         // 3. Revert source_material_registry changes
         manager.get_connection().execute_unprepared(r#"
@@ -260,7 +268,10 @@ impl MigrationTrait for Migration {
         "#).await?;
 
         // 4. Revert processor_manifests changes
-        manager.get_connection().execute_unprepared(r#"
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
             DO $$ 
             BEGIN
                 IF EXISTS (SELECT 1 FROM information_schema.columns 
@@ -270,11 +281,13 @@ impl MigrationTrait for Migration {
                     ALTER TABLE core.processor_manifests RENAME COLUMN processor_name TO name;
                 END IF;
             END $$;
-        "#).await?;
+        "#,
+            )
+            .await?;
 
         // 5. Revert operations_log changes
         // Note: This is complex and would need the original schema
-        
+
         Ok(())
     }
 }

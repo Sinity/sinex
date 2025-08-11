@@ -274,9 +274,10 @@ impl SensdFilesystemProcessor {
                     .join(&blob.annex_key[0..2])
                     .join(&blob.annex_key[2..4])
                     .join(&blob.annex_key);
-                
+
                 if annex_path.exists() {
-                    tokio::fs::read(&annex_path).await
+                    tokio::fs::read(&annex_path)
+                        .await
                         .map_err(|e| eyre!("Failed to read annex file: {}", e))
                 } else {
                     Err(eyre!("Annex file not found at {:?}", annex_path))
@@ -285,16 +286,15 @@ impl SensdFilesystemProcessor {
             "filesystem" => {
                 // Load from filesystem path stored in annex_key
                 let path = std::path::Path::new(&blob.annex_key);
-                tokio::fs::read(path).await
+                tokio::fs::read(path)
+                    .await
                     .map_err(|e| eyre!("Failed to read file: {}", e))
             }
             "s3" => {
                 // S3 support would go here
                 Err(eyre!("S3 storage backend not yet implemented"))
             }
-            backend => {
-                Err(eyre!("Unknown storage backend: {}", backend))
-            }
+            backend => Err(eyre!("Unknown storage backend: {}", backend)),
         }
     }
 

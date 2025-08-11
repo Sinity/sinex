@@ -47,7 +47,11 @@ impl SourceMaterials {
                     .primary_key()
                     .default(Expr::cust("gen_ulid()")),
             )
-            .col(ColumnDef::new(Alias::new(Self::MATERIAL_TYPE)).text().not_null())
+            .col(
+                ColumnDef::new(Alias::new(Self::MATERIAL_TYPE))
+                    .text()
+                    .not_null(),
+            )
             .col(ColumnDef::new(Alias::new(Self::SOURCE_URI)).text())
             .col(
                 ColumnDef::new(Alias::new(Self::INGESTION_TIME))
@@ -110,7 +114,10 @@ impl SourceMaterials {
             // Index on optional_blob_id
             format!(
                 "CREATE INDEX idx_source_material_blob ON {}.{} ({}) WHERE {} IS NOT NULL",
-                Self::SCHEMA, Self::TABLE, Self::OPTIONAL_BLOB_ID, Self::OPTIONAL_BLOB_ID
+                Self::SCHEMA,
+                Self::TABLE,
+                Self::OPTIONAL_BLOB_ID,
+                Self::OPTIONAL_BLOB_ID
             ),
         ]
     }
