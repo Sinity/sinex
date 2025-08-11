@@ -194,7 +194,7 @@ impl<'a> CheckpointRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.processor_checkpoints 
-            WHERE processor_name = $1
+            WHERE processor_name = $1 AND deleted_at IS NULL
             ORDER BY updated_at DESC
             LIMIT 1
             "#,
@@ -232,6 +232,7 @@ impl<'a> CheckpointRepository<'a> {
             WHERE processor_name = $1 
               AND consumer_group = $2 
               AND consumer_name = $3
+              AND deleted_at IS NULL
             "#,
             processor_name.as_str(),
             consumer_group.as_str(),

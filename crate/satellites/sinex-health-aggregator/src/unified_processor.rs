@@ -354,13 +354,15 @@ impl StatefulStreamProcessor for HealthAggregator {
         let mut synthesis_events = Vec::new();
 
         for event in events {
-            match self.process_heartbeat(&event).await {
-                Ok(_) => {
-                    successful_ids.push(event.event_id);
-                }
-                Err(e) => {
-                    warn!("Failed to process heartbeat event {}: {}", event.event_id, e);
-                    failed_ids.push((event.event_id, e.to_string()));
+            if let Some(event_id) = event.id {
+                match self.process_heartbeat(&event).await {
+                    Ok(_) => {
+                        successful_ids.push(event_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to process heartbeat event {}: {}", event_id, e);
+                        failed_ids.push((event_id, e.to_string()));
+                    }
                 }
             }
         }
