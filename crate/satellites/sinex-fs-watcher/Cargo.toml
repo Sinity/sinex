@@ -8,6 +8,10 @@ authors.workspace = true
 name = "sinex-fs-watcher"
 path = "src/main.rs"
 
+[[bin]]
+name = "sensd-example"
+path = "src/bin/sensd_example.rs"
+
 [dependencies]
 camino = { workspace = true }
 mimalloc = { workspace = true }

@@ -97,23 +97,26 @@ fn extract_provenance(
     Option<uuid::Uuid>,      // source_material_id
     Option<i64>,             // source_material_offset_start
     Option<i64>,             // source_material_offset_end
+    Option<i64>,             // anchor_byte
 ) {
     match &event.provenance {
-        Some(Provenance::Events(ids)) => {
-            let uuids = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
-            (Some(uuids), None, None, None)
+        Provenance::Synthesis { source_event_ids, .. } => {
+            let uuids = source_event_ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+            (Some(uuids), None, None, None, None)
         }
-        Some(Provenance::Material {
+        Provenance::Material {
             id,
+            anchor_byte,
             offset_start,
             offset_end,
-        }) => (
+            ..
+        } => (
             None,
             Some(ulid_to_uuid(*id.as_ulid())),
             *offset_start,
             *offset_end,
+            Some(*anchor_byte),
         ),
-        None => (None, None, None, None),
     }
 }
 
@@ -288,7 +291,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
-            event.anchor_byte,
+            anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
             None::<String>  // payload_schema_version
@@ -954,7 +957,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
-            event.anchor_byte,
+            anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
             None::<String>  // payload_schema_version
@@ -1086,7 +1089,7 @@ impl<'a> EventRepository<'a> {
                 source_material_id,
                 offset_start,
                 offset_end,
-                event.anchor_byte,
+                anchor_byte,
                 associated_blob_ids.as_deref(),
                 None::<String>, // payload_schema_name
                 None::<String>  // payload_schema_version

@@ -1,7 +1,7 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
-//! without wrapping production APIs. Tests use production `RawEvent::new()`
+//! without wrapping production APIs. Tests use production `RawEvent::test_event()`
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
@@ -18,7 +18,7 @@
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> Result<()> {
 //!     // Direct production API - no wrapper
-//!     let event = RawEvent::new(
+//!     let event = RawEvent::test_event(
 //!         "fs-watcher",
 //!         "file.created",
 //!         json!({"path": "/test/file.txt", "size": 1024})
@@ -106,7 +106,7 @@ impl TestContext {
         S: AsRef<str>,
         T: AsRef<str>,
     {
-        let event = RawEvent::new(source.as_ref(), event_type.as_ref(), payload);
+        let event = RawEvent::test_event(source.as_ref(), event_type.as_ref(), payload);
         let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());

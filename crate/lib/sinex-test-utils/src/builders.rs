@@ -130,7 +130,7 @@ impl TestScenarioBuilder {
         count: usize,
     ) -> Self {
         for i in 0..count {
-            let event = RawEvent::new(
+            let event = RawEvent::test_event(
                 source.clone(),
                 event_type.clone(),
                 json!({
