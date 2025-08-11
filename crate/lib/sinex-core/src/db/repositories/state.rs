@@ -391,14 +391,13 @@ impl<'a> StateRepository<'a> {
                 .scope(serde_json::json!({
                     "operation_type": "delete_checkpoint",
                     "processor_name": processor_name,
-                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "checkpoint_id": checkpoint.id.to_string(),
                     "reason": reason
                 }))
                 .state("completed".to_string())
                 .outcome("success".to_string())
                 .started_at(Utc::now())
                 .finished_at(Utc::now())
-                .created_at(Utc::now())
                 .build();
 
             let mut repo_tx = StateRepositoryTx { tx: &mut tx };
@@ -412,17 +411,16 @@ impl<'a> StateRepository<'a> {
                     "processor_name": processor_name,
                     "consumer_group": checkpoint.consumer_group,
                     "consumer_name": checkpoint.consumer_name,
-                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "checkpoint_id": checkpoint.id.to_string(),
                     "last_processed_count": checkpoint.processed_count,
                     "deleted_by": actor,
                     "reason": reason
-                })
+                }),
             )
             .with_host(HostName::new("sinex.state".to_string()));
 
             self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
-                .await
-                .map_err(|e| db_error(e, "emit checkpoint deleted event"))?;
+                .await?;
 
             // Now perform the actual hard deletion
             let result = sqlx::query!(

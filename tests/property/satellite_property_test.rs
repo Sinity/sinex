@@ -263,7 +263,7 @@ proptest! {
         _batch_size in 1usize..10000usize,
         _timeout_secs in 1u64..3600u64,
     ) {
-        use sinex_satellite_sdk::config::SatelliteConfig;
+        use sinex_satellite_sdk::SatelliteConfig;
 
         // Test config creation with various valid parameters
         let config = SatelliteConfig::builder()

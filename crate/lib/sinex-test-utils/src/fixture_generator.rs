@@ -502,7 +502,10 @@ mod benches {
     fn bench_generate_small_dataset() -> color_eyre::eyre::Result<()> {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
+        #[cfg(feature = "bench")]
         divan::black_box(events);
+        #[cfg(not(feature = "bench"))]
+        drop(events);
         Ok(())
     }
 
@@ -511,7 +514,10 @@ mod benches {
         let mut gen = FixtureGenerator::new(DatasetConfig::small());
         let events = gen.generate_events();
         let sql = gen.generate_sql(&events);
+        #[cfg(feature = "bench")]
         divan::black_box(sql);
+        #[cfg(not(feature = "bench"))]
+        drop(sql);
         Ok(())
     }
 }

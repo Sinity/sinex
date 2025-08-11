@@ -405,14 +405,22 @@ impl<'a> CheckpointRepository<'a> {
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
     ) -> DbResult<bool> {
-        self.delete_with_context(
-            processor_name,
-            consumer_group,
-            consumer_name,
-            "system",
-            "Checkpoint cleanup",
+        let result = sqlx::query!(
+            r#"
+            DELETE FROM core.processor_checkpoints 
+            WHERE processor_name = $1 
+            AND consumer_group = $2 
+            AND consumer_name = $3
+            "#,
+            processor_name.as_ref(),
+            consumer_group.as_ref(),
+            consumer_name.as_ref()
         )
+        .execute(self.pool)
         .await
+        .map_err(|e| db_error(e, "delete checkpoint"))?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     // Removed: soft delete functionality - use hard delete with operations_log instead

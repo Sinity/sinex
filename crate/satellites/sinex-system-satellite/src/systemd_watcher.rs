@@ -11,9 +11,9 @@ use sinex_core::types::events::{
     SystemdUnitStatusPayload, SystemdUnitStoppedPayload, SystemdUnitStoppingPayload,
 };
 use sinex_satellite_sdk::SatelliteResult;
-use tokio::process::{Command, Stdio};
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Command, Stdio};
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};

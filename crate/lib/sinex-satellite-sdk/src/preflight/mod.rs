@@ -23,6 +23,10 @@ pub mod resources;
 pub mod services;
 pub mod verification;
 
+pub use configuration::validate_toml_file;
+pub use services::verify_service_dependencies;
+pub use verification::run_preflight_checks;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum VerificationStatus {
     Pass,

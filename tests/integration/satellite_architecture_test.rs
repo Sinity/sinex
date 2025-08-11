@@ -331,7 +331,7 @@ async fn test_phase2_sensd_integration(ctx: TestContext) -> color_eyre::eyre::Re
 
 /// Helper function to create test event source configuration
 fn create_test_event_source_config() -> EventSourceConfig {
-    use sinex_satellite_sdk::config::SatelliteConfig;
+    use sinex_satellite_sdk::SatelliteConfig;
     use std::collections::HashMap;
     use std::path::PathBuf;
 

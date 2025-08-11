@@ -456,14 +456,16 @@ async fn verify_event_source_config(source_name: &str, description: &str) -> Res
 
 async fn check_clipboard_availability() -> bool {
     // Check if we can access clipboard tools
-    std::process::Command::new("which")
+    tokio::process::Command::new("which")
         .arg("xclip")
         .output()
+        .await
         .map(|output| output.status.success())
         .unwrap_or(false)
-        || std::process::Command::new("which")
+        || tokio::process::Command::new("which")
             .arg("wl-clipboard")
             .output()
+            .await
             .map(|output| output.status.success())
             .unwrap_or(false)
 }
@@ -471,9 +473,10 @@ async fn check_clipboard_availability() -> bool {
 async fn check_kitty_availability() -> bool {
     // Check if Kitty is available and has socket support
     std::env::var("KITTY_LISTEN_ON").is_ok()
-        || std::process::Command::new("which")
+        || tokio::process::Command::new("which")
             .arg("kitty")
             .output()
+            .await
             .map(|output| output.status.success())
             .unwrap_or(false)
 }
@@ -481,9 +484,10 @@ async fn check_kitty_availability() -> bool {
 async fn check_hyprland_availability() -> bool {
     // Check if Hyprland is running
     std::env::var("HYPRLAND_INSTANCE_SIGNATURE").is_ok()
-        || std::process::Command::new("hyprctl")
+        || tokio::process::Command::new("hyprctl")
             .arg("version")
             .output()
+            .await
             .map(|output| output.status.success())
             .unwrap_or(false)
 }

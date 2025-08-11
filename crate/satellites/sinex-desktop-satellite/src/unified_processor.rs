@@ -29,11 +29,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn, Span};
 
-use crate::{
-    window_manager::WindowManagerType,
-    ClipboardWatcher,
-    WindowManagerWatcher,
-};
+use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
 
 /// Desktop monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -328,8 +324,12 @@ impl StatefulStreamProcessor for DesktopProcessor {
             self.config.window_manager_enabled = enabled;
         }
 
-        if let Some(wm_type) = parse_config_value::<String>("window_manager_type", &ctx) {
-            self.config.window_manager_type = wm_type;
+        if let Some(wm_type_str) = parse_config_value::<String>("window_manager_type", &ctx) {
+            if let Ok(wm_type) = wm_type_str.parse::<WindowManagerType>() {
+                self.config.window_manager_type = wm_type;
+            } else {
+                warn!("Invalid window manager type: {}", wm_type_str);
+            }
         }
 
         if let Some(interval) = parse_config_value::<u64>("clipboard_poll_interval_secs", &ctx) {

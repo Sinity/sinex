@@ -1856,10 +1856,14 @@ impl<'a> EventRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Delete a test event (soft delete)
+    /// Delete a test event (hard delete for test cleanup)
     pub async fn delete_test_event(&self, id: Id<RawEvent>) -> DbResult<bool> {
-        self.delete_event_with_context(id, "test_system", "Test cleanup")
+        let result = sqlx::query!("DELETE FROM core.events WHERE id = $1", *id.as_ulid() as _)
+            .execute(self.pool)
             .await
+            .map_err(|e| db_error(e, "delete test event"))?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     /// Cleanup test events by source and type (soft delete)

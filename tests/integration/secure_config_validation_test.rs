@@ -10,8 +10,8 @@ use sinex_core::types::validation::{
     deserialize_validated_utf8_path, PathValidationLevel, SecurePath,
 };
 use sinex_core::types::{SanitizedPath, ValidationError};
-use sinex_ingestd::config::IngestdConfig;
-use sinex_satellite_sdk::config::SatelliteConfig;
+use sinex_ingestd::IngestdConfig;
+use sinex_satellite_sdk::SatelliteConfig;
 use sinex_sensd::config::SensdConfig;
 use sinex_test_utils::{sinex_test, TestContext};
 

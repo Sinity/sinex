@@ -1492,7 +1492,10 @@ mod benches {
         }
 
         let stats = db.get_stats().await?;
+        #[cfg(feature = "bench")]
         divan::black_box(stats);
+        #[cfg(not(feature = "bench"))]
+        drop(stats);
         Ok(())
     }
 }

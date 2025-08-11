@@ -7,7 +7,7 @@ use sinex_core::db::{create_pool, query_helpers::db_error};
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::SinexError;
 use sinex_satellite_sdk::annex::BlobManager;
-use sinex_satellite_sdk::grpc_client::IngestClient;
+use sinex_satellite_sdk::IngestClient;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
 use std::time::Duration;

@@ -156,6 +156,14 @@ pub use stream_processor::{
 };
 pub use version::{SatelliteInstance, SatelliteVersion};
 
+// Re-export commonly used annex types
+
+// Re-export preflight utilities
+pub use annex::{AnnexConfig, AnnexKey, BlobManager, BlobMetadata, GitAnnex};
+pub use preflight::{
+    run_preflight_checks, validate_toml_file, verify_service_dependencies, VerificationStatus,
+};
+
 /// Version information for satellite components
 #[derive(Debug, Clone)]
 pub struct VersionInfo {

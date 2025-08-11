@@ -4,7 +4,7 @@
 //! including AnalyticsService, ContentService, PkmService, and SearchService.
 
 use color_eyre::eyre::Result;
-use sinex_gateway::service_container::ServiceContainer;
+use sinex_gateway::ServiceContainer;
 use sinex_test_utils::sinex_test;
 use std::env;
 use std::sync::Arc;

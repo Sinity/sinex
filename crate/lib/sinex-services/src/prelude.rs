@@ -14,7 +14,7 @@
 // All service types
 pub use crate::{AnalyticsService, ContentService, PkmService, SearchService};
 
-// Search-related types  
+// Search-related types
 pub use crate::{SearchQuery, SearchResult};
 
 // PKM-related types

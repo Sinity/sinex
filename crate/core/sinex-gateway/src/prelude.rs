@@ -16,9 +16,7 @@
 pub use crate::ServiceContainer;
 
 // Replay system
-pub use crate::{
-    ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine,
-};
+pub use crate::{ReplayCheckpoint, ReplayOperation, ReplayScope, ReplayState, ReplayStateMachine};
 
 // Cascade analysis
 pub use crate::{

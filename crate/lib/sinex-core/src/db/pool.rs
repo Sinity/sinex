@@ -59,7 +59,6 @@ pub async fn get_pool() -> Result<&'static DbPool> {
     get_pool_with_config(None).await
 }
 
-
 /// Get or create the global database pool with custom configuration
 pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static DbPool> {
     // Check if pool is already initialized
@@ -73,9 +72,8 @@ pub async fn get_pool_with_config(config: Option<PoolConfig>) -> Result<&'static
         None => crate::create_pool_strict().await?,
     };
 
-    info\!("Global database pool initialized");
-    
+    info!("Global database pool initialized");
+
     // Try to set the pool, using get_or_init to handle race condition
     Ok(POOL.get_or_init(|| pool))
 }
-EOF < /dev/null

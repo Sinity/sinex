@@ -13,7 +13,7 @@ mod window_manager;
 pub mod unified_processor;
 
 pub use clipboard::ClipboardWatcher;
-pub use window_manager::WindowManagerWatcher;
+pub use window_manager::{WindowManagerType, WindowManagerWatcher};
 
 // Re-export the new unified processor as the primary interface
 pub use unified_processor::{ClipboardStatus, DesktopProcessor, DesktopState, WindowManagerStatus};

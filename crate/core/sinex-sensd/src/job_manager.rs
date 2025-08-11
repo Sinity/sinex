@@ -14,11 +14,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_core::types::Ulid;
 use sqlx::{PgPool, Type};
-use std::{
-    fmt,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{fmt, str::FromStr, sync::Arc};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
