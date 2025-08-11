@@ -3,9 +3,7 @@
 //! This module provides a self-contained test that verifies the full sensd flow
 
 use crate::{
-    grpc_server::SensdGrpcService,
-    job_manager::JobManager,
-    material_stream::MaterialSliceStream,
+    grpc_server::SensdGrpcService, job_manager::JobManager, material_stream::MaterialSliceStream,
     temporal_ledger::TemporalLedger,
 };
 use color_eyre::eyre::Result;
@@ -57,11 +55,14 @@ impl SensdIntegrationTest {
         // 3. Test MaterialSliceStream
         let mut stream = MaterialSliceStream::new(self.db_pool.clone(), material_id, 10);
         let mut slice_count = 0;
-        
+
         while let Some(slice) = stream.next_slice().await? {
             info!(
                 "Retrieved slice: material_id={}, offset={}..{}, data_len={}",
-                slice.material_id, slice.offset_start, slice.offset_end, slice.data.len()
+                slice.material_id,
+                slice.offset_start,
+                slice.offset_end,
+                slice.data.len()
             );
             slice_count += 1;
         }
@@ -134,7 +135,8 @@ impl SensdIntegrationTest {
                 serde_json::json!({
                     "chunk_index": i,
                     "test": true
-                }).to_string(),
+                })
+                .to_string(),
             )
             .execute(&self.db_pool)
             .await?;

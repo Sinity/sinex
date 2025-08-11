@@ -7,9 +7,7 @@ use tracing::info;
 #[tokio::main]
 async fn main() -> Result<()> {
     // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("debug")
-        .init();
+    tracing_subscriber::fmt().with_env_filter("debug").init();
 
     info!("Starting fs-watcher with sensd integration example");
 

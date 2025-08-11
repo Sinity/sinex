@@ -100,8 +100,13 @@ fn extract_provenance(
     Option<i64>,             // anchor_byte
 ) {
     match &event.provenance {
-        Provenance::Synthesis { source_event_ids, .. } => {
-            let uuids = source_event_ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+        Provenance::Synthesis {
+            source_event_ids, ..
+        } => {
+            let uuids = source_event_ids
+                .iter()
+                .map(|id| ulid_to_uuid(*id.as_ulid()))
+                .collect();
             (Some(uuids), None, None, None, None)
         }
         Provenance::Material {
