@@ -72,13 +72,15 @@ impl Events {
         ]
     }
 
-    /// Create XOR constraint for provenance fields
+    /// Create XOR constraint for provenance fields with anchor_byte requirement
     pub fn create_provenance_constraint() -> String {
         r#"ALTER TABLE core.events 
            ADD CONSTRAINT chk_events_provenance_xor 
            CHECK (
-               (source_material_id IS NOT NULL AND source_event_ids IS NULL) OR
-               (source_material_id IS NULL AND source_event_ids IS NOT NULL)
+               -- Material events: MUST have source_material_id AND anchor_byte
+               (source_material_id IS NOT NULL AND anchor_byte IS NOT NULL AND source_event_ids IS NULL) OR
+               -- Synthesis events: MUST have source_event_ids, NO material fields
+               (source_event_ids IS NOT NULL AND source_material_id IS NULL AND anchor_byte IS NULL)
            )"#
         .to_string()
     }

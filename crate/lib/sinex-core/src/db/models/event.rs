@@ -47,6 +47,8 @@ pub struct Event<T = JsonValue> {
     pub ts_orig: OptionalTimestamp,
 
     /// Hostname where the event was generated
+    /// TODO: Consider removing - might be redundant for local-only capture
+    /// Could move to payload for specific event types that need it
     #[serde(default = "get_hostname")]
     pub host: HostName,
 
@@ -114,9 +116,11 @@ pub struct Operation;
 
 impl Provenance {
     /// Create material provenance from source material
+    ///
+    /// anchor_byte is REQUIRED - this ensures Material events always have valid anchor
     pub fn from_material(
         id: impl Into<Id<SourceMaterial>>,
-        anchor_byte: i64,
+        anchor_byte: i64, // Non-optional - enforces invariant at type level
         offset_start: Option<i64>,
         offset_end: Option<i64>,
     ) -> Self {
