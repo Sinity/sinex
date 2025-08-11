@@ -1,8 +1,9 @@
 //! Schema definitions for processors and coordination tables
 
 use sea_query::{ColumnDef, Iden, Table};
+use crate::schema::TableDef;
 
-#[derive(Iden)]
+#[derive(Iden, Copy, Clone)]
 pub enum ProcessorCheckpoints {
     Table,
     Id,
@@ -59,6 +60,20 @@ impl ProcessorManifests {
 
     pub fn create_indexes() -> Vec<String> {
         vec![]
+    }
+}
+
+impl TableDef for ProcessorCheckpoints {
+    fn table_name() -> &'static str {
+        "processor_checkpoints"
+    }
+
+    fn schema_name() -> &'static str {
+        "core"
+    }
+
+    fn primary_key() -> &'static str {
+        "id"
     }
 }
 

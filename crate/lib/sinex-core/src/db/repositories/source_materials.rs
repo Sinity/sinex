@@ -29,7 +29,7 @@ pub struct SourceMaterial {
     pub source_uri: Option<String>,
     pub encoding: Option<String>,
     pub metadata: Option<JsonValue>,
-    pub blob_id: Option<Id<crate::models::Blob>>,
+    pub blob_id: Option<Id<crate::Blob>>,
     pub content_preview: Option<String>,
     pub retention_policy: Option<String>,
 }
@@ -114,7 +114,7 @@ impl SourceMaterial {
     }
 
     /// Fluent method to set blob ID
-    pub fn with_blob_id(mut self, blob_id: Id<crate::models::Blob>) -> Self {
+    pub fn with_blob_id(mut self, blob_id: Id<crate::Blob>) -> Self {
         self.blob_id = Some(blob_id);
         self
     }
@@ -249,7 +249,7 @@ impl<'a> SourceMaterialRepository<'a> {
     /// Find source material by blob ID
     pub async fn find_by_blob_id(
         &self,
-        blob_id: Id<crate::models::Blob>,
+        blob_id: Id<crate::Blob>,
     ) -> DbResult<Option<SourceMaterialRecord>> {
         sqlx::query_as!(
             SourceMaterialRecord,
@@ -565,7 +565,7 @@ impl<'a> SourceMaterialRepository<'a> {
     pub async fn finalize_in_flight(
         &self,
         id: Id<SourceMaterialRecord>,
-        blob_id: Option<Id<crate::models::Blob>>,
+        blob_id: Option<Id<crate::Blob>>,
         encoding: Option<&str>,
         content_preview: Option<String>,
     ) -> DbResult<()> {
@@ -634,7 +634,7 @@ impl<'a> SourceMaterialRepositoryTx<'a> {
 
     pub async fn find_by_blob_id(
         &self,
-        blob_id: Id<crate::models::Blob>,
+        blob_id: Id<crate::Blob>,
     ) -> DbResult<Option<SourceMaterialRecord>> {
         SourceMaterialRepository::new(self.pool)
             .find_by_blob_id(blob_id)

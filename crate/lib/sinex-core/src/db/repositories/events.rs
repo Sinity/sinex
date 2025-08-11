@@ -32,27 +32,38 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 }
 
 // Extension methods for EventRecord from sinex-migrations
-trait EventRecordExt {
+pub(crate) trait EventRecordExt {
     fn to_event(self) -> RawEvent;
 }
 
 impl EventRecordExt for EventRecord {
     /// Convert database record to domain Event
     fn to_event(self) -> RawEvent {
+        use crate::db::models::event::{EventId, OffsetKind, Provenance, SourceMaterial};
+        
         // Reconstruct provenance from separate fields
-        let provenance = match (self.source_event_ids, self.source_material_id) {
-            (Some(event_ids), None) if !event_ids.is_empty() => Some(Provenance::Events(
-                event_ids
+        let provenance = match (self.source_event_ids, self.source_material_id, self.anchor_byte) {
+            (Some(event_ids), None, _) if !event_ids.is_empty() => Provenance::Synthesis {
+                source_event_ids: event_ids
                     .into_iter()
-                    .map(|uuid| Id::<RawEvent>::from(uuid_to_ulid(uuid)))
+                    .map(|uuid| EventId::from(uuid_to_ulid(uuid)))
                     .collect(),
-            )),
-            (None, Some(material_id)) => Some(Provenance::Material {
+                operation_id: None,
+            },
+            (None, Some(material_id), Some(anchor_byte)) => Provenance::Material {
                 id: Id::<SourceMaterial>::from(uuid_to_ulid(material_id)),
+                anchor_byte,
                 offset_start: self.source_material_offset_start,
                 offset_end: self.source_material_offset_end,
-            }),
-            _ => None,
+                offset_kind: OffsetKind::default(),
+            },
+            _ => {
+                // Default to empty synthesis if no provenance (shouldn't happen in production)
+                Provenance::Synthesis {
+                    source_event_ids: vec![],
+                    operation_id: None,
+                }
+            }
         };
 
         let associated_blob_ids = self
@@ -60,7 +71,7 @@ impl EventRecordExt for EventRecord {
             .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
 
         RawEvent {
-            id: Some(Id::<RawEvent>::from_uuid(self.id)),
+            id: Some(EventId::from_uuid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
@@ -69,7 +80,6 @@ impl EventRecordExt for EventRecord {
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id.map(uuid_to_ulid),
             provenance,
-            anchor_byte: self.anchor_byte,
             associated_blob_ids,
         }
     }
@@ -219,6 +229,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
+            anchor_byte,
         ) = extract_provenance(&event);
 
         let associated_blob_ids = event
@@ -884,6 +895,7 @@ impl<'a> EventRepository<'a> {
             source_material_id,
             source_material_offset_start,
             source_material_offset_end,
+            anchor_byte,
         ) = extract_provenance(&event);
 
         let associated_blob_ids = event

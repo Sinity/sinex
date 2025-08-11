@@ -8,14 +8,8 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // First, update the existing source_materials table to the full schema
-        // Drop and recreate since the current implementation is incomplete
-        manager
-            .get_connection()
-            .execute_unprepared("DROP TABLE IF EXISTS raw.source_materials CASCADE")
-            .await?;
-
         // Create raw.source_material_registry table with full schema
+        // Note: This creates a new table alongside the existing source_materials table
         manager
             .create_table(SourceMaterials::create_table_statement())
             .await?;
@@ -141,20 +135,10 @@ impl MigrationTrait for Migration {
             .execute_unprepared("DROP TABLE IF EXISTS raw.sensor_jobs CASCADE")
             .await?;
 
-        // Revert source_material_registry to old simple schema
+        // Drop the source_material_registry table (leaves original source_materials intact)
         manager
             .get_connection()
             .execute_unprepared("DROP TABLE IF EXISTS raw.source_material_registry CASCADE")
-            .await?;
-
-        // Recreate the old simple source_materials table for backwards compatibility
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"CREATE TABLE IF NOT EXISTS raw.source_materials (
-                    id UUID PRIMARY KEY NOT NULL
-                )"#,
-            )
             .await?;
 
         Ok(())

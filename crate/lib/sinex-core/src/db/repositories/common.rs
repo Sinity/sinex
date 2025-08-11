@@ -1,6 +1,6 @@
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::error::{Result as SinexResult, SinexError};
-use crate::types::ulid::Ulid;
+use crate::Ulid;
 use chrono::{DateTime, Utc};
 use sea_query::{Expr, PostgresQueryBuilder, Query};
 use serde_json::Value as JsonValue;
