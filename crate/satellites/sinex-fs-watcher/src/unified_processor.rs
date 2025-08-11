@@ -831,7 +831,7 @@ impl FilesystemProcessor {
         for base_path in &validated_paths {
             // Create directory if it doesn't exist (for testing)
             // Using create_dir_all which is atomic - it either succeeds or fails safely
-            match std::fs::create_dir_all(base_path) {
+            match tokio::fs::create_dir_all(base_path).await {
                 Ok(()) => {
                     debug!("Ensured directory exists: {}", base_path.as_str());
                 }
@@ -1342,8 +1342,10 @@ impl StatefulStreamProcessor for FilesystemProcessor {
             let path = camino::Utf8Path::new(target);
             if path.exists() {
                 // Quick estimate by counting entries
-                if let Ok(entries) = std::fs::read_dir(path) {
-                    estimated_events += entries.count() as u64;
+                if let Ok(mut entries) = tokio::fs::read_dir(path).await {
+                    while let Ok(Some(_)) = entries.next_entry().await {
+                        estimated_events += 1;
+                    }
                 }
             } else {
                 warnings.push(format!("Cannot access path: {}", target));
@@ -1545,7 +1547,7 @@ mod tests {
 
         // Test with no validated watch roots (should return empty events)
         let test_path = Utf8Path::new("test_file.rs");
-        let metadata = std::fs::Metadata::from(std::fs::metadata(".").unwrap());
+        let metadata = tokio::fs::metadata(".").await.unwrap();
 
         let result = processor.create_discovery_events(test_path, &metadata);
         assert!(result.is_ok());
@@ -1570,7 +1572,7 @@ mod tests {
         };
 
         let test_file_in_temp = temp_path.join("test_file.rs");
-        std::fs::write(&test_file_in_temp, "// test file")?;
+        tokio::fs::write(&test_file_in_temp, "// test file").await?;
         let result = processor_with_roots.create_discovery_events(&test_file_in_temp, &metadata);
         assert!(result.is_ok());
         assert!(

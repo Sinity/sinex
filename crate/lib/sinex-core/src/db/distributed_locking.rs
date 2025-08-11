@@ -11,6 +11,7 @@ use crate::DbPool;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::time::Duration;
+use tracing::instrument;
 use uuid::Uuid;
 
 /// PostgreSQL advisory lock implementation
@@ -23,6 +24,7 @@ pub struct AdvisoryLock {
 
 impl AdvisoryLock {
     /// Try to acquire an advisory lock immediately (non-blocking)
+    #[instrument(skip(pool), fields(key = key))]
     pub async fn try_acquire(pool: &DbPool, key: &str) -> CoreResult<Option<ResourceGuard<Self>>> {
         let lock_id = hash_key_to_i64(key);
 
@@ -62,6 +64,7 @@ impl AdvisoryLock {
     }
 
     /// Acquire an advisory lock, blocking until available or timeout
+    #[instrument(skip(pool), fields(key = key, timeout_secs = timeout.as_secs()))]
     pub async fn acquire_or_wait(
         pool: &DbPool,
         key: &str,
@@ -105,6 +108,7 @@ impl AdvisoryLock {
     }
 
     /// Check if a lock is currently held by any session
+    #[instrument(skip(pool), fields(key = key))]
     pub async fn is_locked(pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
 
@@ -120,6 +124,7 @@ impl AdvisoryLock {
     }
 
     /// Force release a lock (use with caution - should only be used for cleanup)
+    #[instrument(skip(pool), fields(key = key))]
     pub async fn force_release(pool: &DbPool, key: &str) -> CoreResult<bool> {
         let lock_id = hash_key_to_i64(key);
 
@@ -159,6 +164,7 @@ impl DistributedCoordination {
     }
 
     /// Leader election pattern - try to become leader for a service
+    #[instrument(skip(self), fields(service = service_name))]
     pub async fn try_become_leader(
         &self,
         service_name: &str,
@@ -168,6 +174,7 @@ impl DistributedCoordination {
     }
 
     /// Singleton job pattern - acquire exclusive access to process a job
+    #[instrument(skip(self), fields(job_id = job_id))]
     pub async fn acquire_job_lock(
         &self,
         job_id: &str,
@@ -221,6 +228,7 @@ impl LeadershipGuard {
     }
 
     /// Record leadership in database for monitoring/debugging
+    #[instrument(skip(self, pool), fields(service = %self.service_name, instance = %self.instance_id))]
     pub async fn record_leadership(&self, pool: &DbPool) -> CoreResult<()> {
         sqlx::query(
             "INSERT INTO core.service_leadership (service_name, instance_id, acquired_at, last_heartbeat, version)
@@ -237,6 +245,7 @@ impl LeadershipGuard {
     }
 
     /// Update leadership heartbeat
+    #[instrument(skip(self, pool), fields(service = %self.service_name))]
     pub async fn heartbeat(&self, pool: &DbPool) -> CoreResult<()> {
         sqlx::query(
             "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1",

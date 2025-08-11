@@ -165,8 +165,8 @@ impl UdevWatcher {
             let mut current_devices = std::collections::HashSet::new();
 
             // Scan /sys/class for device changes
-            if let Ok(entries) = std::fs::read_dir("/sys/class") {
-                for entry in entries.flatten() {
+            if let Ok(mut entries) = tokio::fs::read_dir("/sys/class").await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
                     let class_name = entry.file_name().to_string_lossy().to_string();
 
                     // Focus on interesting device classes
@@ -174,8 +174,8 @@ impl UdevWatcher {
                         continue;
                     }
 
-                    if let Ok(class_entries) = std::fs::read_dir(entry.path()) {
-                        for device_entry in class_entries.flatten() {
+                    if let Ok(mut class_entries) = tokio::fs::read_dir(entry.path()).await {
+                        while let Ok(Some(device_entry)) = class_entries.next_entry().await {
                             let device_name =
                                 device_entry.file_name().to_string_lossy().to_string();
                             let device_path = device_entry.path().to_string_lossy().to_string();

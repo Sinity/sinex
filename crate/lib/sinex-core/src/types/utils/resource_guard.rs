@@ -109,25 +109,26 @@ where
         }
     }
 
-    pub fn resource(&self) -> Option<&T> {
-        self.resource.as_ref()
+    pub fn resource(&self) -> &T {
+        self.resource.as_ref().expect("Resource already taken")
     }
 
-    pub fn resource_mut(&mut self) -> Option<&mut T> {
-        self.resource.as_mut()
+    pub fn resource_mut(&mut self) -> &mut T {
+        self.resource.as_mut().expect("Resource already taken")
     }
 
-    /// Run cleanup on the resource immediately, consuming the guard
-    /// This method runs cleanup and doesn't return the resource since it was consumed
-    pub fn consume_with_cleanup(mut self) {
-        if let (Some(resource), Some(cleanup)) = (self.resource.take(), self.cleanup.take()) {
+    /// Take resource and run cleanup immediately
+    pub fn take(mut self) -> T {
+        let resource = self.resource.take().expect("Resource already taken");
+        if let Some(cleanup) = self.cleanup.take() {
             cleanup(resource);
         }
+        panic!("Resource consumed by cleanup")
     }
 
     /// Release resource without cleanup
-    pub fn release(mut self) -> Option<T> {
-        self.resource.take()
+    pub fn release(mut self) -> T {
+        self.resource.take().expect("Resource already taken")
     }
 }
 
