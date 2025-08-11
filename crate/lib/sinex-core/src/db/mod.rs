@@ -17,7 +17,7 @@ pub mod replay;
 pub mod repositories;
 
 // Database schema definitions using SeaQuery
-pub use sinex_migrations::schema;
+pub use sinex_schema::schema;
 pub mod schema_migrations;
 pub mod seaquery_helpers;
 

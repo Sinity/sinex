@@ -13,7 +13,12 @@ impl ArchivedEvents {
         Table::create()
             .table(ArchivedEvents::Table)
             .if_not_exists()
-            .col(ColumnDef::new(ArchivedEvents::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(ArchivedEvents::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

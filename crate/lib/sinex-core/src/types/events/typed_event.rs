@@ -5,7 +5,7 @@
 //! event processing while maintaining compatibility with `RawEvent` for
 //! heterogeneous processing scenarios.
 
-use crate::db::models::event::{OptionalTimestamp, Timestamp};
+use crate::db::models::event::{OptionalTimestamp, SourceMaterial, Timestamp};
 use crate::db::models::{Provenance, RawEvent};
 use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::events::EventPayload;
@@ -81,10 +81,35 @@ pub struct Event<T: EventPayload> {
 }
 
 impl<T: EventPayload> Event<T> {
+    /// Create a first-order typed event from Source Material
+    ///
+    /// This ensures the event has proper external provenance from the start.
+    pub fn from_material(
+        payload: T,
+        material_id: impl Into<Id<SourceMaterial>>,
+        anchor_byte: i64,
+    ) -> Self {
+        Self::new(payload)
+            .with_provenance(Provenance::from_material(material_id.into(), None, None))
+            .with_anchor_byte(Some(anchor_byte))
+    }
+
+    /// Create a synthesized typed event from other events
+    ///
+    /// This ensures the event has proper internal provenance from the start.
+    pub fn from_events<I>(payload: T, parent_ids: I) -> Self
+    where
+        I: IntoIterator<Item = Id<RawEvent>>,
+    {
+        Self::new(payload).with_provenance(Provenance::from_events(parent_ids))
+    }
     /// Create a new typed event from a payload
     ///
-    /// This is the primary constructor for typed events. The source and event_type
-    /// are automatically derived from the payload type's associated constants.
+    /// WARNING: This creates an event WITHOUT provenance, which violates the architecture!
+    /// You MUST call `.with_provenance()` to set either Material or Events provenance.
+    ///
+    /// Consider using `from_material()` or `from_events()` instead, which ensure
+    /// proper provenance from the start.
     pub fn new(payload: T) -> Self {
         Self {
             id: None,

@@ -13,7 +13,12 @@ impl EventRelations {
         Table::create()
             .table(EventRelations::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EventRelations::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EventRelations::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

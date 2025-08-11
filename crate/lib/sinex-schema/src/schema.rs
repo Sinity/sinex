@@ -31,7 +31,7 @@ pub use outbox::*;
 pub use processors::*;
 pub use records::*;
 // Re-export key record types for backwards compatibility
-pub use records::{EventRecord, BlobRecord, SourceMaterialRecord};
+pub use records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub use schemas::*;
 pub use source_materials::*;
 

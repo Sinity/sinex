@@ -4501,7 +4501,7 @@ dependencies = [
  "serde_path_to_error",
  "sha2",
  "sinex-macros",
- "sinex-migrations",
+ "sinex-schema",
  "sinex-test-utils",
  "sqlx",
  "strum",
@@ -4709,22 +4709,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sinex-migrations"
-version = "0.4.2"
-dependencies = [
- "async-trait",
- "chrono",
- "color-eyre",
- "sea-orm-migration",
- "sea-query 0.30.7",
- "serde_json",
- "sqlx",
- "tokio",
- "ulid",
- "uuid",
-]
-
-[[package]]
 name = "sinex-pkm-automaton"
 version = "0.1.0"
 dependencies = [
@@ -4809,6 +4793,28 @@ dependencies = [
  "uuid",
  "validator 0.18.1",
  "which 6.0.3",
+]
+
+[[package]]
+name = "sinex-schema"
+version = "0.4.2"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "color-eyre",
+ "lazy_static",
+ "proptest",
+ "rand 0.8.5",
+ "schemars",
+ "sea-orm-migration",
+ "sea-query 0.30.7",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.12",
+ "tokio",
+ "ulid",
+ "uuid",
 ]
 
 [[package]]

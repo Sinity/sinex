@@ -8,7 +8,7 @@ use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaV
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sinex_migrations::schema::EventRecord;
+use sinex_schema::schema::EventRecord;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
 

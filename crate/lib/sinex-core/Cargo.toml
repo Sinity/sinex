@@ -10,7 +10,7 @@ description = "Core types and database layer for Sinex - unified from sinex-core
 [dependencies]
 # Core dependencies merged from both crates
 sinex-macros = { path = "../sinex-macros", optional = true }
-sinex-migrations = { path = "../sinex-migrations" }
+sinex-schema = { path = "../sinex-schema" }
 
 # Database dependencies (from sinex-core)
 camino = { workspace = true }

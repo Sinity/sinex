@@ -142,7 +142,7 @@ impl MigrationTrait for Migration {
         }
 
         // Create events constraints
-        // Add Provenance XOR CHECK constraint - ensures event has either source_material_id OR source_event_ids, not both
+        // Add Provenance XOR CHECK constraint - ensures event has exactly one of source_material_id OR source_event_ids, never both, never neither
         manager
             .get_connection()
             .execute_unprepared(
@@ -152,8 +152,6 @@ impl MigrationTrait for Migration {
                     (source_material_id IS NOT NULL AND source_event_ids IS NULL)
                     OR
                     (source_material_id IS NULL AND source_event_ids IS NOT NULL)
-                    OR
-                    (source_material_id IS NULL AND source_event_ids IS NULL)
                 );
                 "#,
             )

@@ -45,19 +45,19 @@
 pub mod domain;
 pub mod error;
 pub mod events;
-pub mod ids;
-pub mod ulid;
 pub mod utils;
 pub mod validation;
 
+// Import core types from sinex-schema
+pub use sinex_schema::ids::Id;
+pub use sinex_schema::ulid::Ulid;
+
 use chrono::{DateTime, Utc};
 pub use error::{Result as SinexResult, SinexError};
-pub use ids::Id;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fmt::Display;
 use std::time::Duration;
-pub use ulid::Ulid;
 pub use utils::*;
 pub use validation::{
     deserialize_optional_sanitized_path, deserialize_optional_validated_utf8_path,

@@ -25,11 +25,20 @@ impl ProcessorCheckpoints {
         Table::create()
             .table(ProcessorCheckpoints::Table)
             .if_not_exists()
-            .col(ColumnDef::new(ProcessorCheckpoints::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(ProcessorCheckpoints::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
+        vec![]
+    }
+
+    pub fn create_constraints() -> Vec<String> {
         vec![]
     }
 }
@@ -39,7 +48,12 @@ impl ProcessorManifests {
         Table::create()
             .table(ProcessorManifests::Table)
             .if_not_exists()
-            .col(ColumnDef::new(ProcessorManifests::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(ProcessorManifests::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -53,7 +67,12 @@ impl OperationsLog {
         Table::create()
             .table(OperationsLog::Table)
             .if_not_exists()
-            .col(ColumnDef::new(OperationsLog::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(OperationsLog::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

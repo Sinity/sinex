@@ -4,6 +4,6 @@ use sea_orm_migration::prelude::*;
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
-    cli::run_cli(sinex_migrations::Migrator).await;
+    cli::run_cli(sinex_schema::Migrator).await;
     Ok(())
 }

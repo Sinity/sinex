@@ -1,6 +1,6 @@
 //! Schema definitions for core events tables
 
-use sea_query::{Alias, ColumnDef, DeferredForeignKey, ForeignKey, ForeignKeyAction, Index, Iden, Table};
+use sea_query::{ColumnDef, Iden, Table};
 
 /// Events table (main events storage)
 #[derive(Iden)]
@@ -28,12 +28,7 @@ impl Events {
         Table::create()
             .table(Events::Table)
             .if_not_exists()
-            .col(
-                ColumnDef::new(Events::Id)
-                    .uuid()
-                    .not_null()
-                    .primary_key(),
-            )
+            .col(ColumnDef::new(Events::Id).uuid().not_null().primary_key())
             .col(
                 ColumnDef::new(Events::CreatedAt)
                     .timestamp_with_time_zone()
@@ -46,10 +41,7 @@ impl Events {
                     .not_null()
                     .default("NOW()"),
             )
-            .col(
-                ColumnDef::new(Events::TsOrig)
-                    .timestamp_with_time_zone(),
-            )
+            .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone())
             .col(ColumnDef::new(Events::Source).text().not_null())
             .col(ColumnDef::new(Events::EventType).text().not_null())
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())

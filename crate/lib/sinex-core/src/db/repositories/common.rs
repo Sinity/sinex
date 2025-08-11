@@ -75,8 +75,8 @@ pub trait TransactionSupport {
     fn with_tx<'a>(self, tx: &'a mut Transaction<'_, Postgres>) -> Self::Item;
 }
 
-// Re-export TableDef from migration crate
-pub use sinex_migrations::schema::TableDef;
+// Re-export TableDef from schema crate
+pub use sinex_schema::schema::TableDef;
 
 /// Enhanced repository trait with generic operations
 pub trait EnhancedRepository<'a>: Repository<'a> {

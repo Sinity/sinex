@@ -33,7 +33,12 @@ impl EntityRelations {
         Table::create()
             .table(EntityRelations::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EntityRelations::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EntityRelations::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

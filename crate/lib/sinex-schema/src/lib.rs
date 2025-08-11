@@ -1,6 +1,10 @@
-//! Database migrations for the Sinex event-driven data capture system.
+//! Schema definitions and database migrations for the Sinex event-driven data capture system.
 //!
-//! This crate contains all database schema migrations using SeaORM migration framework.
+//! This crate contains:
+//! - Database schema migrations using SeaORM migration framework
+//! - Schema definitions and Record types for database tables
+//! - Core type definitions (IDs, ULIDs) used across the system
+//!
 //! Migrations are organized chronologically and handle the evolution of the database schema
 //! for the core Sinex data substrate (PostgreSQL + TimescaleDB).
 //!
@@ -13,6 +17,13 @@
 //! - Comprehensive indexing for query performance
 
 pub use sea_orm_migration::prelude::*;
+
+// Core type definitions
+pub mod ids;
+pub mod ulid;
+
+// Schema definitions
+pub mod schema;
 
 /// Macro to create migration vector with less boilerplate
 macro_rules! migrations {

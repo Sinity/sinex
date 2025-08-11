@@ -96,18 +96,17 @@ The `sinex_schemas.validation_cache` table has a schema mismatch:
 
 ### 1. Post-Commit Publish Implementation
 
-**Status**: CORRECTLY IMPLEMENTED
+**Status**: PARTIALLY IMPLEMENTED
 
-The system properly implements the transactional outbox pattern:
-- Satellites communicate via gRPC to ingestd (not direct NATS)
-- ingestd writes events and outbox entries in same transaction
-- Background task processes outbox entries after commit
-- NATS publishing only occurs for committed events
+The ingestion service correctly applies the transactional outbox pattern for events it receives, but the overall system still permits bypass paths:
+- ingestd writes events and outbox entries in the same transaction; a background task publishes to NATS post-commit.
+- The Satellite SDK still supports direct NATS publishing (and some CLI flows default to it), which breaks the single-writer and post-commit guarantees when used.
+- Some content paths (BlobManager) emit events directly to the DB, bypassing ingestd entirely.
 
 **Evidence**:
-- `IngestService::batch_write_to_db()` atomically writes to both tables
-- `process_outbox()` runs asynchronously every 100ms
-- Uses `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent processing
+- `IngestService::batch_write_to_db()` atomically writes to both tables; `process_outbox()` runs periodically.
+- `crate/lib/sinex-satellite-sdk/src/event_processor.rs` includes `NatsPublisher` path and defaults.
+- `crate/lib/sinex-satellite-sdk/src/annex/blob_manager.rs` inserts `RawEvent` via repositories.
 
 ### 2. Archive-on-Delete Pattern
 
@@ -115,7 +114,7 @@ The system properly implements the transactional outbox pattern:
 
 The `audit.archived_events` table serves a legitimate purpose:
 - Preserves complete event data when deleted from `core.events`
-- Maintains audit trail with who/when/why metadata
+- Maintains audit trail with who/when/why metadata at the row level (per canonical target: `archived_by`, `archive_reason`, `superseded_by_event_id` alongside `operation_id`). Operation narratives remain in `operations_log`.
 - Supports "rebuildability via replay" principle
 - NOT redundant with `operations_log` (which tracks operational metadata)
 
@@ -176,10 +175,7 @@ Clean separation between domain models and database access:
 
 ### 1. NATS Migration Status
 
-Initial audit claimed satellites publish directly to NATS. Investigation revealed:
-- All satellites use gRPC to communicate with ingestd
-- No satellites have direct NATS clients
-- The system correctly implements post-commit publish
+The SDK currently supports both gRPC→ingestd and direct NATS publishing, and some CLI flows default to NATS. This creates a potential violation of Invariant #1 (single-writer) and Invariant #2 (post-commit) when the direct NATS path is used. Action: default to gRPC and feature-gate or remove direct NATS publish for event creation.
 
 ### 2. Duplicate State Tracking
 
@@ -191,10 +187,30 @@ Initial audit claimed `archived_events` duplicates `operations_log`. Analysis sh
 
 ### 3. Parallel Processor Implementations
 
-Initial concern about `StageAsYouGoProcessor` creating a parallel system. Investigation revealed:
-- It's an optional helper, not a replacement
-- All processors still implement `StatefulStreamProcessor`
-- Provides additional capability for specific use cases
+Initial concern about `StageAsYouGoProcessor` creating a parallel system. Investigation revealed it's an optional helper, not a replacement. The unified model is largely adopted, but remnants of NATS-centric processing paths remain in the SDK; ensure run loops are unified under `StatefulStreamProcessor` and outputs go through ingestd.
+
+## Additional Critical Corrections
+
+### A. Database Constraint Accuracy
+
+- Provenance XOR: The current migration’s CHECK permits the invalid `(source_material_id IS NULL AND source_event_ids IS NULL)` state. Tighten to exact XOR per canonical target.
+- Idempotency index: The unique index includes `id` (`(source_material_id, anchor_byte, id)`), defeating idempotency. Replace with a partial unique index on `(source_material_id, anchor_byte)` where both are non-null.
+
+### B. Ingest Path Bypass via BlobManager
+
+`BlobManager` directly inserts `RawEvent` via repositories, bypassing ingestd’s outbox/publish pipeline. Route these through ingestd’s gRPC client to preserve invariants.
+
+### C. Missing sensd DDL (Temporal Ledger)
+
+`sensd` uses `raw.temporal_ledger`, but no corresponding DDL exists in migrations. Add the table and append-only trigger with recommended indexes per canonical target.
+
+### D. Environment Namespacing
+
+`SINEX_ENVIRONMENT`-scoped namespacing for DB names, NATS subjects, sockets, and paths is not yet implemented. Add a central helper and thread through services and SDK.
+
+### E. Gateway RPC Path Mismatch
+
+Gateway serves JSON-RPC at `/rpc`, while the CLI defaults to posting to the base URL. Either set `SINEX_RPC_URL` to include `/rpc` by default or have gateway accept `/` for compatibility.
 
 ### 4. Provenance Model Understanding
 
@@ -290,13 +306,107 @@ The provenance violation is serious - it undermines the "Source Material is Grou
 
 From the canonical architecture, current compliance status:
 
-1. **Single-Writer Ingest**: ✅ All events flow through ingestd
-2. **Post-Commit Publish**: ✅ Transactional outbox pattern implemented
-3. **Dual-Layer Provenance**: ❌ XOR constraint violated - (NULL, NULL) events exist
-4. **Archive-on-Delete**: ✅ Trigger moves deleted events to audit table
-5. **Unified Processor Model**: ✅ All satellites use StatefulStreamProcessor
+1. **Single-Writer Ingest**: ❌ SDK allows direct NATS and some code paths bypass ingestd (BlobManager)
+2. **Post-Commit Publish**: ⚠️ Ingestd enforces it, but bypass paths exist
+3. **Dual-Layer Provenance**: ❌ CHECK too permissive; (NULL, NULL) allowed and used
+4. **Archive-on-Delete**: ✅ Trigger moves deleted events to audit table with required context
+5. **Unified Processor Model**: ⚠️ Largely adopted; remove remaining NATS-direct output paths
 
 The critical violation is Invariant #3 - the system currently allows events without any provenance, which violates the fundamental "Source Material is Ground Truth" principle. This must be fixed by:
 1. Completing sensd to capture all raw observations as Source Material
 2. Ensuring all first-order events reference their Source Material
 3. Enforcing the XOR constraint to prevent (NULL, NULL) states
+
+## Critical Event Emission Bypass Issue
+
+### F. State Change Events Bypass Ingestd
+
+**Status**: CRITICAL ARCHITECTURAL VIOLATION
+
+**Problem**: The event emission implementation for state changes directly inserts events into `core.events`, completely bypassing ingestd:
+
+```rust
+async fn emit_state_change_event_tx(
+    &self,
+    tx: &mut Transaction<'_, Postgres>,
+    event: RawEvent,
+) -> DbResult<RawEvent> {
+    let event_repo = EventRepository::new(self.pool);
+    event_repo.insert_with_tx(tx, event).await  // BYPASSES INGESTD!
+}
+```
+
+**Violations**:
+- Bypasses schema validation and sanitization
+- Bypasses telemetry and monitoring
+- Bypasses NATS publication (events invisible to message bus)
+- Violates Single-Writer Ingest invariant (#1)
+- Violates Post-Commit Publish invariant (#2)
+
+**Evidence**:
+- `/realm/project/sinex/crate/lib/sinex-core/src/db/repositories/state.rs` - `emit_state_change_event_tx()` directly inserts
+- Checkpoint operations emit `checkpoint.save_intent` and `checkpoint.saved` events
+- Schema lifecycle changes emit `schema.status_changed` events
+- Processor status changes emit `processor.status_changed` events
+- All bypass the entire ingestd pipeline
+
+**Required Fix**:
+1. **Option A**: Remove event emission for internal state changes entirely
+2. **Option B**: Route through ingestd's gRPC interface like all other events
+3. **Option C**: Use separate `internal.state_events` table for internal tracking
+
+This is a critical violation that defeats the purpose of having ingestd as the central coordinator and single point of truth for event ingestion.
+
+## Additional Critical Architectural Violations
+
+### G. Direct Event Insertion in Distributed Locking
+
+**Status**: CRITICAL ARCHITECTURAL VIOLATION
+
+**Problem**: The distributed locking module directly inserts events into the database, completely bypassing ingestd:
+
+```rust
+// In crate/lib/sinex-core/src/db/distributed_locking.rs
+async fn record_leadership(&self, pool: &DbPool) -> CoreResult<()> {
+    // ...
+    let event_repo = EventRepository::new(pool);
+    event_repo
+        .insert_with_tx(&mut tx, leadership_intent_event)
+        .await  // BYPASSES INGESTD!
+        .map_err(SinexError::from)?;
+    // ...
+}
+```
+
+**Evidence**:
+- Lines 268-270: Leadership intent events inserted directly
+- Lines 298-301: Leadership acquired events inserted directly  
+- Lines 337-340: Heartbeat intent events inserted directly
+- Lines 364-367: Heartbeat updated events inserted directly
+
+**Violations**:
+- Bypasses Single-Writer Ingest invariant (#1)
+- Bypasses Post-Commit Publish invariant (#2)
+- No schema validation via pg_jsonschema
+- No NATS publication (events invisible to subscribers)
+- No telemetry or monitoring
+
+### H. SDK Default to Direct NATS Publishing
+
+**Status**: ARCHITECTURAL VIOLATION (PARTIAL)
+
+**Problem**: While the SDK has gRPC client support, it still allows direct NATS publishing which bypasses ingestd:
+
+```rust
+// In crate/lib/sinex-satellite-sdk/src/grpc_client.rs
+// Good: Proper gRPC client implementation exists
+pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String>
+
+// But SDK still supports direct NATS path elsewhere
+```
+
+**Required Fixes**:
+1. Remove all direct database event insertion paths
+2. Remove or feature-gate direct NATS publishing in SDK
+3. Route ALL events through ingestd's gRPC interface
+4. Ensure distributed locking events go through proper channels

@@ -9,7 +9,7 @@ use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
-use sinex_migrations::schema::records::SourceMaterialRecord;
+use sinex_schema::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
 
 /// Material type constants

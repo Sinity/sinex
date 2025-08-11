@@ -1,19 +1,19 @@
-//! Schema definitions for source materials tables
+//! Schema definitions for outbox pattern tables
 
 use sea_query::{ColumnDef, Iden, Table};
 
 #[derive(Iden)]
-pub enum SourceMaterials {
+pub enum Outbox {
     Table,
     Id,
 }
 
-impl SourceMaterials {
+impl Outbox {
     pub fn create_table() -> String {
         Table::create()
-            .table(SourceMaterials::Table)
+            .table(Outbox::Table)
             .if_not_exists()
-            .col(ColumnDef::new(SourceMaterials::Id).uuid().not_null().primary_key())
+            .col(ColumnDef::new(Outbox::Id).uuid().not_null().primary_key())
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

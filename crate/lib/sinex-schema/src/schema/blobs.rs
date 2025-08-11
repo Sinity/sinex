@@ -21,12 +21,7 @@ impl Blobs {
         Table::create()
             .table(Blobs::Table)
             .if_not_exists()
-            .col(
-                ColumnDef::new(Blobs::Id)
-                    .uuid()
-                    .not_null()
-                    .primary_key(),
-            )
+            .col(ColumnDef::new(Blobs::Id).uuid().not_null().primary_key())
             .col(
                 ColumnDef::new(Blobs::CreatedAt)
                     .timestamp_with_time_zone()
@@ -49,7 +44,8 @@ impl Blobs {
 
     pub fn create_indexes() -> Vec<String> {
         vec![
-            "CREATE INDEX IF NOT EXISTS idx_blobs_content_hash ON blobs (content_hash);".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_blobs_content_hash ON blobs (content_hash);"
+                .to_string(),
         ]
     }
 }

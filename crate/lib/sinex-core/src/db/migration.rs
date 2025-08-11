@@ -5,7 +5,7 @@ use color_eyre::eyre::Result;
 #[cfg(feature = "migration")]
 use sea_orm_migration::prelude::*;
 #[cfg(feature = "migration")]
-use sinex_migrations;
+use sinex_schema;
 #[cfg(feature = "migration")]
 use sqlx::PgPool;
 
@@ -25,7 +25,7 @@ pub async fn run_migrations(_pool: &PgPool) -> Result<()> {
     let conn: DatabaseConnection = Database::connect(opt).await?;
 
     // Run migrations
-    sinex_migrations::Migrator::up(&conn, None).await?;
+    sinex_schema::Migrator::up(&conn, None).await?;
 
     Ok(())
 }
@@ -43,7 +43,7 @@ pub async fn get_pending_migrations(_pool: &PgPool) -> Result<Vec<String>> {
 
     let conn: DatabaseConnection = Database::connect(opt).await?;
 
-    let pending = sinex_migrations::Migrator::get_pending_migrations(&conn).await?;
+    let pending = sinex_schema::Migrator::get_pending_migrations(&conn).await?;
     Ok(pending.iter().map(|m| m.name().to_string()).collect())
 }
 
@@ -60,7 +60,7 @@ pub async fn get_applied_migrations(_pool: &PgPool) -> Result<Vec<String>> {
 
     let conn: DatabaseConnection = Database::connect(opt).await?;
 
-    let applied = sinex_migrations::Migrator::get_applied_migrations(&conn).await?;
+    let applied = sinex_schema::Migrator::get_applied_migrations(&conn).await?;
     Ok(applied.iter().map(|m| m.name().to_string()).collect())
 }
 

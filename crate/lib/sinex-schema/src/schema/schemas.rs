@@ -31,7 +31,12 @@ impl EventPayloadSchemas {
         Table::create()
             .table(EventPayloadSchemas::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EventPayloadSchemas::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EventPayloadSchemas::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -45,7 +50,12 @@ impl SchemaCompatibility {
         Table::create()
             .table(SchemaCompatibility::Table)
             .if_not_exists()
-            .col(ColumnDef::new(SchemaCompatibility::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(SchemaCompatibility::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -59,7 +69,12 @@ impl GitopsSchemaSource {
         Table::create()
             .table(GitopsSchemaSource::Table)
             .if_not_exists()
-            .col(ColumnDef::new(GitopsSchemaSource::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(GitopsSchemaSource::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -73,7 +88,12 @@ impl ValidationCache {
         Table::create()
             .table(ValidationCache::Table)
             .if_not_exists()
-            .col(ColumnDef::new(ValidationCache::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(ValidationCache::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

@@ -13,7 +13,12 @@ impl EventAnnotations {
         Table::create()
             .table(EventAnnotations::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EventAnnotations::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EventAnnotations::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

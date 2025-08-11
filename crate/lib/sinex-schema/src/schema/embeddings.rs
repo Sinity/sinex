@@ -37,7 +37,12 @@ impl EmbeddingCache {
         Table::create()
             .table(EmbeddingCache::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EmbeddingCache::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EmbeddingCache::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -51,7 +56,12 @@ impl EmbeddingModels {
         Table::create()
             .table(EmbeddingModels::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EmbeddingModels::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EmbeddingModels::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -65,7 +75,12 @@ impl EventEmbeddings {
         Table::create()
             .table(EventEmbeddings::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EventEmbeddings::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EventEmbeddings::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -79,7 +94,12 @@ impl EventClusters {
         Table::create()
             .table(EventClusters::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EventClusters::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EventClusters::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
@@ -93,7 +113,12 @@ impl EventClusterMembers {
         Table::create()
             .table(EventClusterMembers::Table)
             .if_not_exists()
-            .col(ColumnDef::new(EventClusterMembers::Id).uuid().not_null().primary_key())
+            .col(
+                ColumnDef::new(EventClusterMembers::Id)
+                    .uuid()
+                    .not_null()
+                    .primary_key(),
+            )
             .to_string(sea_query::PostgresQueryBuilder)
     }
 

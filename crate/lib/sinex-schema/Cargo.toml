@@ -1,15 +1,15 @@
 [package]
-name = "sinex-migrations"
+name = "sinex-schema"
 version.workspace = true
 edition.workspace = true
 authors.workspace = true
 repository.workspace = true
 license.workspace = true
 publish = false
-description = "Database migrations for Sinex"
+description = "Schema definitions and database migrations for Sinex"
 
 [lib]
-name = "sinex_migrations"
+name = "sinex_schema"
 path = "src/lib.rs"
 
 [dependencies]
@@ -26,5 +26,18 @@ serde_json = { workspace = true }
 uuid = { workspace = true }
 ulid = { workspace = true }
 
+# Dependencies for ID and ULID modules
+serde = { workspace = true }
+thiserror = { workspace = true }
+lazy_static = "1.5"
+rand = { workspace = true }
+
+# Optional dependencies (used conditionally)
+schemars = { workspace = true, optional = true }
+proptest = { workspace = true, optional = true }
+
 [features]
-default = []
+default = ["sqlx", "json-schema"]
+sqlx = []
+arbitrary = ["dep:proptest"]
+json-schema = ["dep:schemars"]
