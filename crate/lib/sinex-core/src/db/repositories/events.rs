@@ -1106,7 +1106,8 @@ impl<'a> EventRepository<'a> {
         }
 
         // Execute batch insert using UNNEST
-        sqlx::query!(
+        // Note: Using sqlx::query instead of sqlx::query! because of ULID type handling issues
+        sqlx::query(
             r#"
             INSERT INTO core.events (
                 id, source, event_type, host, payload,
@@ -1123,23 +1124,23 @@ impl<'a> EventRepository<'a> {
                 $15::text[], $16::text[]
             )
             "#,
-            &event_ids,
-            &sources,
-            &event_types,
-            &hosts,
-            &payloads,
-            &ts_origs,
-            &ingestor_versions,
-            &payload_schema_ids,
-            &source_event_id_arrays,
-            &source_material_ids,
-            &source_material_offset_starts,
-            &source_material_offset_ends,
-            &anchor_bytes,
-            &associated_blob_id_arrays,
-            &vec![None::<&str>; events.len()], // payload_schema_name
-            &vec![None::<&str>; events.len()]  // payload_schema_version
         )
+        .bind(&event_ids)
+        .bind(&sources)
+        .bind(&event_types)
+        .bind(&hosts)
+        .bind(&payloads)
+        .bind(&ts_origs)
+        .bind(&ingestor_versions)
+        .bind(&payload_schema_ids)
+        .bind(&source_event_id_arrays)
+        .bind(&source_material_ids)
+        .bind(&source_material_offset_starts)
+        .bind(&source_material_offset_ends)
+        .bind(&anchor_bytes)
+        .bind(&associated_blob_id_arrays)
+        .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
+        .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
         .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "batch insert with unnest"))?;

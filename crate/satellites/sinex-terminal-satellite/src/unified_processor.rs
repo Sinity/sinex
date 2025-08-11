@@ -155,25 +155,15 @@ fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validate a single path for basic correctness
+/// Validate a single path for security and correctness using comprehensive validation
 fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
     let path_str = path.as_str();
 
-    if path_str.is_empty() {
-        return Err(ValidationError::new("empty_path"));
+    // Use the comprehensive path validation from sinex-core
+    match sinex_core::types::validate_path(path_str) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(ValidationError::new("invalid_path")),
     }
-
-    // Check for dangerous path traversal patterns
-    if path_str.contains("../") || path_str.contains("..\\") {
-        return Err(ValidationError::new("path_traversal"));
-    }
-
-    // Check for null bytes or other dangerous characters
-    if path_str.contains('\0') {
-        return Err(ValidationError::new("null_byte_in_path"));
-    }
-
-    Ok(())
 }
 
 /// Terminal state snapshot for exploration and diagnostics
@@ -548,6 +538,15 @@ impl TerminalProcessor {
 
     /// Helper function to get file metadata and status
     fn get_file_metadata_and_status(history_file: &Utf8PathBuf) -> HistoryFileStatus {
+        // Validate path before file operations to prevent path traversal
+        if validate_path(history_file.as_str()).is_err() {
+            warn!(
+                path = %history_file,
+                "Skipping invalid or dangerous history file path"
+            );
+            return HistoryFileStatus::NonExistent;
+        }
+
         if history_file.exists() {
             let metadata = std::fs::metadata(history_file).ok();
             let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);

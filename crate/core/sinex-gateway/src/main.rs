@@ -46,8 +46,8 @@ enum Commands {
     /// Start RPC server for CLI communication
     RpcServer {
         /// Socket path (currently unused, binds to 127.0.0.1:9999)
-        #[arg(long, default_value = "/tmp/sinex-host.sock")]
-        socket: Utf8PathBuf,
+        #[arg(long, default_value = "/tmp/sinex-host.sock", value_parser = validate_socket_path)]
+        socket: SanitizedPath,
 
         /// Database URL
         #[arg(long, env = "DATABASE_URL")]
