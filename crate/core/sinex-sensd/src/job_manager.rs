@@ -63,7 +63,7 @@ impl FromStr for SensorType {
 pub struct SensorJob {
     pub job_id: Ulid,
     pub sensor_type: SensorType,
-    pub target_path: String,
+    pub target_uri: String,
     pub config: Value,
     pub status: JobStatus,
     pub created_at: DateTime<Utc>,
@@ -74,6 +74,7 @@ pub struct SensorJob {
 }
 
 /// Job manager
+#[derive(Clone)]
 pub struct JobManager {
     db_pool: PgPool,
     temporal_ledger: Arc<TemporalLedger>,
@@ -146,8 +147,8 @@ impl JobManager {
             SELECT 
                 job_id as "job_id: Ulid",
                 sensor_type,
-                target_path,
-                config,
+                target_uri,
+                parameters as config,
                 status as "status: JobStatus",
                 created_at,
                 started_at,
@@ -165,7 +166,7 @@ impl JobManager {
         .await?;
 
         for job in pending_jobs {
-            debug!("Processing job: {} for {}", job.job_id, job.target_path);
+            debug!("Processing job: {} for {}", job.job_id, job.target_uri);
 
             // Mark job as running
             self.update_job_status(&job.job_id, JobStatus::Running, None)
@@ -199,7 +200,7 @@ impl JobManager {
         append_sensor: Option<Arc<AppendStreamSensor>>,
         tree_sensor: Option<Arc<TreeWatchSensor>>,
     ) -> Result<()> {
-        info!("Executing job {} for {}", job.job_id, job.target_path);
+        info!("Executing job {} for {}", job.job_id, job.target_uri);
 
         let result = match job.sensor_type {
             SensorType::AppendStream => {

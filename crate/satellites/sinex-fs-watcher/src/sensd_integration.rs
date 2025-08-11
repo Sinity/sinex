@@ -90,18 +90,20 @@ impl SensdFilesystemProcessor {
         sqlx::query!(
             r#"
             INSERT INTO raw.sensor_jobs (
-                job_id, sensor_type, target_path, 
-                config, status, created_at
+                job_id, sensor_type, target_uri, source_identifier,
+                acquisition_mode, parameters, status, created_at
             )
-            VALUES ($1::ulid, 'tree_watch', $2, $3, 'pending', NOW())
+            VALUES ($1::ulid, 'tree_watch', $2, $3, $4, $5, 'pending', NOW())
             "#,
             job_id as Ulid,
-            path,
+            path,                            // target_uri
+            format!("fs-watch:{}", path),    // source_identifier
+            json!({ "mode": "continuous" }), // acquisition_mode
             json!({
                 "recursive": true,
                 "follow_symlinks": false,
                 "max_depth": 10,
-            }),
+            }), // parameters
         )
         .execute(&self.db_pool)
         .await?;
@@ -165,9 +167,8 @@ impl SensdFilesystemProcessor {
                         tl.material_id as "material_id: Ulid",
                         tl.offset_start,
                         tl.offset_end,
-                        tl.ts_capture_start,
-                        tl.ts_capture_end,
-                        tl.capture_metadata,
+                        tl.ts_capture,
+                        tl.note,
                         sm.optional_blob_id as "blob_id?: Ulid",
                         sm.data as "inline_data?: Vec<u8>"
                     FROM raw.temporal_ledger tl
@@ -227,10 +228,10 @@ impl SensdFilesystemProcessor {
                                 material_id: record.material_id,
                                 offset_start: record.offset_start,
                                 offset_end: record.offset_end,
-                                ts_capture_start: record.ts_capture_start,
-                                ts_capture_end: record.ts_capture_end,
+                                ts_capture_start: record.ts_capture,
+                                ts_capture_end: record.ts_capture, // Same timestamp
                                 data,
-                                metadata: record.capture_metadata,
+                                metadata: serde_json::from_str(&record.note.unwrap_or("{}".to_string())).unwrap_or_default(),
                             };
 
                             offset = record.offset_end;
@@ -345,10 +346,9 @@ impl SensdFilesystemProcessor {
             .ts_orig(Some(slice.ts_capture_start))
             .provenance(Provenance::Material {
                 id: Id::from(slice.material_id),
-                offset_start: Some(slice.offset_start),
-                offset_end: Some(slice.offset_end),
+                anchor_byte: slice.offset_start,
+                offset_kind: "byte".to_string(),
             })
-            .anchor_byte(slice.offset_start)
             .build();
 
         events.push(raw_event);

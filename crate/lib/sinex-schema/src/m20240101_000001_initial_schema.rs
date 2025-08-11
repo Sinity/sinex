@@ -146,16 +146,7 @@ impl MigrationTrait for Migration {
         // Add Provenance XOR CHECK constraint - ensures event has exactly one of source_material_id OR source_event_ids, never both, never neither
         manager
             .get_connection()
-            .execute_unprepared(
-                r#"
-                ALTER TABLE core.events
-                ADD CONSTRAINT events_provenance_xor CHECK (
-                    (source_material_id IS NOT NULL AND source_event_ids IS NULL)
-                    OR
-                    (source_material_id IS NULL AND source_event_ids IS NOT NULL)
-                );
-                "#,
-            )
+            .execute_unprepared(&Events::create_provenance_constraint())
             .await?;
 
         // Create archived events

@@ -18,10 +18,12 @@ pub struct LedgerEntry {
     pub material_id: Ulid,
     pub offset_start: i64,
     pub offset_end: i64,
-    pub ts_capture_start: DateTime<Utc>,
-    pub ts_capture_end: DateTime<Utc>,
-    pub slice_hash: Option<String>,
-    pub capture_metadata: serde_json::Value,
+    pub ts_capture: DateTime<Utc>,
+    pub offset_kind: String,
+    pub precision: String,
+    pub clock: String,
+    pub source_type: String,
+    pub note: Option<String>,
 }
 
 /// Temporal ledger manager
@@ -106,18 +108,19 @@ impl TemporalLedger {
                 r#"
                 INSERT INTO raw.temporal_ledger (
                     material_id, offset_start, offset_end,
-                    ts_capture_start, ts_capture_end, 
-                    slice_hash, capture_metadata
+                    offset_kind, ts_capture, precision, clock, source_type, note
                 )
-                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7)
+                VALUES ($1::ulid, $2, $3, $4, $5, $6, $7, $8, $9)
                 "#,
                 entry.material_id as Ulid,
                 entry.offset_start,
                 entry.offset_end,
-                entry.ts_capture_start,
-                entry.ts_capture_end,
-                entry.slice_hash,
-                entry.capture_metadata,
+                entry.offset_kind,
+                entry.ts_capture,
+                entry.precision,
+                entry.clock,
+                entry.source_type,
+                entry.note,
             )
             .execute(&mut *tx)
             .await?;
@@ -134,21 +137,23 @@ impl TemporalLedger {
     /// Create a new material record
     pub async fn create_material(
         &self,
+        source_identifier: &str,
         source_type: &str,
-        source_path: &str,
+        source_path: Option<&str>,
         content_type: Option<&str>,
     ) -> Result<Ulid> {
         let material_id = Ulid::new();
 
         sqlx::query!(
             r#"
-            INSERT INTO raw.source_materials (
-                material_id, source_type, source_path,
+            INSERT INTO raw.source_material_registry (
+                blob_id, source_identifier, source_type, source_path,
                 content_type, status, created_at
             )
-            VALUES ($1::ulid, $2, $3, $4, 'sensing', NOW())
+            VALUES ($1::ulid, $2, $3, $4, $5, 'sensing', NOW())
             "#,
             material_id as Ulid,
+            source_identifier,
             source_type,
             source_path,
             content_type,
@@ -156,7 +161,10 @@ impl TemporalLedger {
         .execute(&self.db_pool)
         .await?;
 
-        info!("Created new material: {} for {}", material_id, source_path);
+        info!(
+            "Created new material: {} for {}",
+            material_id, source_identifier
+        );
 
         Ok(material_id)
     }
@@ -166,15 +174,15 @@ impl TemporalLedger {
         &self,
         material_id: Ulid,
         status: &str,
-        total_bytes: i64,
+        total_bytes: Option<i64>,
     ) -> Result<()> {
         sqlx::query!(
             r#"
-            UPDATE raw.source_materials
+            UPDATE raw.source_material_registry
             SET status = $2, 
                 finalized_at = NOW(),
                 total_bytes = $3
-            WHERE material_id = $1::ulid
+            WHERE blob_id = $1::ulid
             "#,
             material_id as Ulid,
             status,

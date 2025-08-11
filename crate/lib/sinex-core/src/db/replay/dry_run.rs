@@ -2,7 +2,7 @@
 //!
 //! Simulates replay operations without making actual database changes.
 
-use crate::db::models::event::{RawEvent, Provenance};
+use crate::db::models::event::{Provenance, RawEvent};
 use crate::db::replay::{config::ReplayConfig, logging::ReplayLogger};
 use crate::types::{Id, Ulid};
 use color_eyre::eyre::Result;
@@ -201,7 +201,10 @@ pub async fn execute_dry_run(config: ReplayConfig, events: Vec<RawEvent>) -> Res
             executor.simulate_archive(event_id.clone());
 
             // Check for dependencies
-            if let Provenance::Synthesis { source_event_ids, .. } = &event.provenance {
+            if let Provenance::Synthesis {
+                source_event_ids, ..
+            } = &event.provenance
+            {
                 if !source_event_ids.is_empty() {
                     let deps: Vec<Id<RawEvent>> = source_event_ids.to_vec();
                     executor.check_integrity(event_id.clone(), deps);

@@ -13,29 +13,26 @@ pub struct SourceMaterial;
 #[derive(Debug, Clone, FromRow)]
 pub struct EventRecord {
     pub id: uuid::Uuid,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub ts_ingest: DateTime<Utc>, // Generated column from ULID
     pub ts_orig: Option<DateTime<Utc>>,
     pub source: String,
     pub event_type: String,
-    pub host: String, // Missing field
+    pub host: String,
     pub payload: JsonValue,
-    #[sqlx(rename = "payload_schema_id")]
+    pub ingestor_version: Option<String>,
     pub payload_schema_id: Option<uuid::Uuid>,
-    pub processed_at: Option<DateTime<Utc>>,
+    pub payload_schema_name: Option<String>,
+    pub payload_schema_version: Option<String>,
 
     // Provenance fields
     pub source_event_ids: Option<Vec<uuid::Uuid>>,
     pub source_material_id: Option<uuid::Uuid>,
-    pub source_material_offset_start: Option<i64>, // Missing field
-    pub source_material_offset_end: Option<i64>,   // Missing field
-    pub anchor_byte: Option<i64>,                  // Missing field
+    pub source_material_offset_start: Option<i64>,
+    pub source_material_offset_end: Option<i64>,
+    pub anchor_byte: Option<i64>,
 
-    pub ingestor_version: Option<String>, // Missing field
-    pub processor_name: Option<String>,
-    pub processor_version: Option<String>,
+    // Associated data
     pub associated_blob_ids: Option<Vec<uuid::Uuid>>,
-    pub event_cluster_id: Option<uuid::Uuid>,
 }
 
 impl EventRecord {

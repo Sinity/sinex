@@ -109,9 +109,7 @@ pub mod payloads {
 
 // Type aliases for complex generic types to reduce verbosity
 pub type EventId = Id<RawEvent>;
-// Create a placeholder Blob type for now
-pub struct Blob;
-pub type BlobId = Id<Blob>;
+pub type BlobId = Id<models::Blob>;
 pub type EntityId = Id<Entity>;
 pub type SourceMaterialId = Id<SourceMaterial>;
 pub type CheckpointId = Id<CheckpointRecord>;
@@ -132,7 +130,7 @@ pub use db::{
 };
 
 // Re-export the most commonly used database models at crate root
-pub use db::models::{Entity, EntityRelation, Provenance, RawEvent, SourceMaterial};
+pub use db::models::{Blob, Entity, EntityRelation, Provenance, RawEvent, SourceMaterial};
 
 // Re-export the unified Event type (EventId is already defined above as type alias)
 pub use db::models::event::Event;

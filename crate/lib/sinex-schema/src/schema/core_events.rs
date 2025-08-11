@@ -1,67 +1,85 @@
 //! Schema definitions for core events tables
 
-use sea_query::{ColumnDef, Iden, Table};
+use sea_query::{Alias, ColumnDef, Iden, Table};
 
 /// Events table (main events storage)
 #[derive(Iden)]
 pub enum Events {
     Table,
     Id,
-    CreatedAt,
-    UpdatedAt,
+    TsIngest,
     TsOrig,
     Source,
     EventType,
+    Host,
     Payload,
+    IngestorVersion,
     PayloadSchemaId,
-    ProcessedAt,
+    PayloadSchemaName,
+    PayloadSchemaVersion,
     SourceEventIds,
     SourceMaterialId,
-    ProcessorName,
-    ProcessorVersion,
+    SourceMaterialOffsetStart,
+    SourceMaterialOffsetEnd,
+    AnchorByte,
     AssociatedBlobIds,
-    EventClusterId,
 }
 
 impl Events {
     pub fn create_table() -> String {
         Table::create()
-            .table(Events::Table)
+            .table((Alias::new("core"), Events::Table))
             .if_not_exists()
-            .col(ColumnDef::new(Events::Id).uuid().not_null().primary_key())
+            // Primary key - ULID for time-ordered distribution
             .col(
-                ColumnDef::new(Events::CreatedAt)
-                    .timestamp_with_time_zone()
+                ColumnDef::new(Events::Id)
+                    .custom(Alias::new("ULID"))
                     .not_null()
-                    .default("NOW()"),
+                    .primary_key(),
             )
-            .col(
-                ColumnDef::new(Events::UpdatedAt)
-                    .timestamp_with_time_zone()
-                    .not_null()
-                    .default("NOW()"),
-            )
+            // Timestamp columns
             .col(ColumnDef::new(Events::TsOrig).timestamp_with_time_zone())
+            // Basic event metadata
             .col(ColumnDef::new(Events::Source).text().not_null())
             .col(ColumnDef::new(Events::EventType).text().not_null())
+            .col(ColumnDef::new(Events::Host).text().not_null())
+            // Payload and schema
             .col(ColumnDef::new(Events::Payload).json_binary().not_null())
+            .col(ColumnDef::new(Events::IngestorVersion).text())
             .col(ColumnDef::new(Events::PayloadSchemaId).uuid())
-            .col(ColumnDef::new(Events::ProcessedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(Events::PayloadSchemaName).text())
+            .col(ColumnDef::new(Events::PayloadSchemaVersion).text())
+            // Provenance fields (XOR constraint)
             .col(ColumnDef::new(Events::SourceEventIds).array(sea_query::ColumnType::Uuid))
             .col(ColumnDef::new(Events::SourceMaterialId).uuid())
-            .col(ColumnDef::new(Events::ProcessorName).text())
-            .col(ColumnDef::new(Events::ProcessorVersion).text())
+            .col(ColumnDef::new(Events::SourceMaterialOffsetStart).big_integer())
+            .col(ColumnDef::new(Events::SourceMaterialOffsetEnd).big_integer())
+            .col(ColumnDef::new(Events::AnchorByte).big_integer())
+            // Associated data
             .col(ColumnDef::new(Events::AssociatedBlobIds).array(sea_query::ColumnType::Uuid))
-            .col(ColumnDef::new(Events::EventClusterId).uuid())
+            .to_owned()
             .to_string(sea_query::PostgresQueryBuilder)
     }
 
     pub fn create_indexes() -> Vec<String> {
         vec![
-            "CREATE INDEX IF NOT EXISTS idx_events_created_at ON events (created_at);".to_string(),
-            "CREATE INDEX IF NOT EXISTS idx_events_source ON events (source);".to_string(),
-            "CREATE INDEX IF NOT EXISTS idx_events_event_type ON events (event_type);".to_string(),
-            "CREATE INDEX IF NOT EXISTS idx_events_ts_orig ON events (ts_orig);".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_core_events_ts_ingest ON core.events (ts_ingest);".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_core_events_source ON core.events (source);".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_core_events_event_type ON core.events (event_type);".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_core_events_ts_orig ON core.events (ts_orig) WHERE ts_orig IS NOT NULL;".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_core_events_source_material ON core.events (source_material_id) WHERE source_material_id IS NOT NULL;".to_string(),
+            "CREATE INDEX IF NOT EXISTS idx_core_events_source_events ON core.events USING GIN (source_event_ids) WHERE source_event_ids IS NOT NULL;".to_string(),
         ]
+    }
+
+    /// Create XOR constraint for provenance fields
+    pub fn create_provenance_constraint() -> String {
+        r#"ALTER TABLE core.events 
+           ADD CONSTRAINT chk_events_provenance_xor 
+           CHECK (
+               (source_material_id IS NOT NULL AND source_event_ids IS NULL) OR
+               (source_material_id IS NULL AND source_event_ids IS NOT NULL)
+           )"#
+        .to_string()
     }
 }

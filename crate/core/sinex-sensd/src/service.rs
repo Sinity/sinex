@@ -108,10 +108,14 @@ impl SensdService {
         // Start gRPC server for MaterialSliceStream
         let grpc_handle = {
             let config = self.config.clone();
+            let db_pool = self.db_pool.clone();
             let temporal_ledger = self.temporal_ledger.clone();
+            let job_manager = self.job_manager.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = Self::run_grpc_server(config, temporal_ledger).await {
+                if let Err(e) =
+                    Self::run_grpc_server(config, db_pool, temporal_ledger, job_manager).await
+                {
                     error!("gRPC server error: {}", e);
                 }
             })
@@ -126,15 +130,14 @@ impl SensdService {
     /// Run gRPC server for MaterialSliceStream
     async fn run_grpc_server(
         config: SensdConfig,
+        db_pool: PgPool,
         temporal_ledger: Arc<TemporalLedger>,
+        job_manager: Arc<JobManager>,
     ) -> Result<()> {
-        // TODO: Implement gRPC server
-        // This will provide the MaterialSliceStream interface to ingestors
-        info!("gRPC server would run on port {}", config.grpc_port);
+        let addr = format!("0.0.0.0:{}", config.grpc_port)
+            .parse()
+            .map_err(|e| eyre!("Invalid gRPC address: {}", e))?;
 
-        // For now, just sleep
-        loop {
-            tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-        }
+        crate::grpc_server::run_grpc_server(addr, db_pool, temporal_ledger, job_manager).await
     }
 }

@@ -40,9 +40,13 @@ impl EventRecordExt for EventRecord {
     /// Convert database record to domain Event
     fn to_event(self) -> RawEvent {
         use crate::db::models::event::{EventId, OffsetKind, Provenance, SourceMaterial};
-        
+
         // Reconstruct provenance from separate fields
-        let provenance = match (self.source_event_ids, self.source_material_id, self.anchor_byte) {
+        let provenance = match (
+            self.source_event_ids,
+            self.source_material_id,
+            self.anchor_byte,
+        ) {
             (Some(event_ids), None, _) if !event_ids.is_empty() => Provenance::Synthesis {
                 source_event_ids: event_ids
                     .into_iter()

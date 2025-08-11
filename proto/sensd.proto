@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package sinex.sensd;
+
+// Material metadata
+message MaterialMetadata {
+    string material_id = 1;
+    string source_identifier = 2;
+    string source_type = 3;
+    int64 size_bytes = 4;
+    string content_type = 5;
+    string created_at = 6;
+    string staged_at = 7;
+    string status = 8;
+    string metadata_json = 9; // JSON string
+}
+
+// Material slice for streaming
+message MaterialSlice {
+    string material_id = 1;
+    int64 offset_start = 2;
+    int64 offset_end = 3;
+    string ts_capture_start = 4;
+    string ts_capture_end = 5;
+    bytes data = 6;
+    string metadata_json = 7; // JSON string
+}
+
+// Stream frame types
+message StreamFrame {
+    oneof frame {
+        MaterialSlice slice = 1;
+        RotationBoundary rotation = 2;
+        EndOfMaterial end_of_material = 3;
+        GapIndicator gap = 4;
+    }
+}
+
+message RotationBoundary {
+    string old_material_id = 1;
+    string new_material_id = 2;
+    string rotation_reason = 3;
+}
+
+message EndOfMaterial {
+    string material_id = 1;
+    int64 final_offset = 2;
+}
+
+message GapIndicator {
+    string material_id = 1;
+    int64 gap_start_offset = 2;
+    int64 gap_end_offset = 3;
+    string reason = 4;
+}
+
+// Requests and responses
+message GetMaterialStreamRequest {
+    string material_id = 1;
+    int64 start_offset = 2;
+    int32 batch_size = 3;
+}
+
+message ListMaterialsRequest {
+    string source_identifier = 1;
+    string source_type = 2;
+    string status = 3;
+    int32 limit = 4;
+}
+
+message ListMaterialsResponse {
+    repeated MaterialMetadata materials = 1;
+}
+
+message GetMaterialMetadataRequest {
+    string material_id = 1;
+}
+
+// Sensor job management
+message CreateJobRequest {
+    string sensor_type = 1;
+    string target_uri = 2;
+    string source_identifier = 3;
+    string acquisition_mode_json = 4;
+    string parameters_json = 5;
+    string owner = 6;
+    int32 priority = 7;
+}
+
+message CreateJobResponse {
+    string job_id = 1;
+    bool success = 2;
+    string error = 3;
+}
+
+message GetJobStatusRequest {
+    string job_id = 1;
+}
+
+message JobStatus {
+    string job_id = 1;
+    string sensor_type = 2;
+    string status = 3;
+    string created_at = 4;
+    string started_at = 5;
+    string completed_at = 6;
+    string error_message = 7;
+    string material_id = 8;
+}
+
+// Service definition
+service SensdService {
+    // Material streaming
+    rpc GetMaterialStream(GetMaterialStreamRequest) returns (stream StreamFrame);
+    rpc ListMaterials(ListMaterialsRequest) returns (ListMaterialsResponse);
+    rpc GetMaterialMetadata(GetMaterialMetadataRequest) returns (MaterialMetadata);
+    
+    // Job management
+    rpc CreateJob(CreateJobRequest) returns (CreateJobResponse);
+    rpc GetJobStatus(GetJobStatusRequest) returns (JobStatus);
+}

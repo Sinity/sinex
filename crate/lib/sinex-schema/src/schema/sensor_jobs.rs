@@ -68,7 +68,7 @@ impl SensorJobs {
                 ColumnDef::new(SensorJobs::Parameters)
                     .json_binary()
                     .not_null()
-                    .default("'{}'"),
+                    .default("{}"),
             )
             // Ownership and limits
             .col(ColumnDef::new(SensorJobs::Owner).text())

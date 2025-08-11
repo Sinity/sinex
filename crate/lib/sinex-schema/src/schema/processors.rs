@@ -1,7 +1,7 @@
 //! Schema definitions for processors and coordination tables
 
-use sea_query::{ColumnDef, Iden, Table};
 use crate::schema::TableDef;
+use sea_query::{ColumnDef, Iden, Table};
 
 #[derive(Iden, Copy, Clone)]
 pub enum ProcessorCheckpoints {

@@ -12,13 +12,17 @@ pub struct Blob;
 #[derive(Debug, Clone, FromRow)]
 pub struct BlobRecord {
     pub id: uuid::Uuid, // Still UUID at boundary for SQLx compatibility
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    pub content_hash: String,
+    pub annex_key: String,
+    pub original_filename: Option<String>,
     pub size_bytes: i64,
-    pub stored_at: Option<DateTime<Utc>>,
-    pub content_type: Option<String>,
+    pub mime_type: Option<String>,
+    pub checksum_sha256: Option<String>,
+    pub checksum_blake3: Option<String>,
+    pub storage_backend: String,
     pub metadata: Option<JsonValue>,
+    pub created_at: DateTime<Utc>,
+    pub last_verified_at: Option<DateTime<Utc>>,
+    pub verification_status: Option<String>,
 }
 
 impl BlobRecord {

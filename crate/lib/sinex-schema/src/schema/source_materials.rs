@@ -85,7 +85,7 @@ impl SourceMaterials {
             .col(
                 ColumnDef::new(SourceMaterials::Metadata)
                     .json_binary()
-                    .default("'{}'"),
+                    .default("{}"),
             )
             // Optional inline data storage for small materials
             .col(ColumnDef::new(SourceMaterials::Data).binary())
@@ -183,7 +183,7 @@ impl SourceMaterials {
             .col(
                 ColumnDef::new(SourceMaterials::Metadata)
                     .json_binary()
-                    .default("'{}'"),
+                    .default("{}"),
             )
             // Optional inline data storage for small materials
             .col(ColumnDef::new(SourceMaterials::Data).binary())

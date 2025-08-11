@@ -80,8 +80,8 @@
 //! ```
 
 use crate::types::error::{Result as SinexResult, SinexError};
-use crate::Ulid;
 use crate::types::{retry, timeouts};
+use crate::Ulid;
 use crate::{DbPool, DbPoolRef};
 use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 use sqlx::{Error as SqlxError, Postgres, Transaction};

@@ -1,10 +1,10 @@
 //! Extensions for EventRepository to add missing query methods
 
 use crate::db::repositories::common::{db_error, DbResult, Repository};
-use crate::db::repositories::events::{EventRepository, EventRecordExt};
-use crate::EventRecord;
+use crate::db::repositories::events::{EventRecordExt, EventRepository};
 use crate::models::RawEvent;
 use crate::types::domain::EventSource;
+use crate::EventRecord;
 use chrono::{DateTime, Utc};
 use tracing::instrument;
 

@@ -62,7 +62,7 @@ pub type DbPoolRef<'a> = &'a PgPool;
 pub use sqlx::PgPool as SqlxPgPool;
 
 // Import type aliases from types module
-pub use crate::{Timestamp, JsonValue};
+pub use crate::{JsonValue, Timestamp};
 pub type OptionalTimestamp = Option<Timestamp>;
 
 /// Configuration for database connection pool
