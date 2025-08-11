@@ -645,7 +645,12 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 };
 
                 // Initialize runner with gRPC by default (always for dry runs, optional NATS bypass)
-                if args.use_nats && !dry_run {
+                if args.use_nats {
+                    warn!("--use-nats flag is deprecated and ignored. All events now go through gRPC to ingestd to enforce single-writer principle.");
+                }
+
+                // Always use gRPC to enforce single-writer principle through ingestd
+                if false {
                     // Legacy NATS mode - bypasses ingestd single-writer principle
                     warn!("Using legacy NATS mode - bypasses ingestd single-writer principle");
 

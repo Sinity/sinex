@@ -195,8 +195,7 @@ pub mod prelude {
         // Domain types
         ConsumerGroup,
         ConsumerName,
-        // Event types
-        Event,
+        // Event types (Event already imported above, so just EventPayload)
         EventPayload,
         // Utils
         SanitizedPath,

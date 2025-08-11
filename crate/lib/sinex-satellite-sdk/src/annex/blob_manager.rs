@@ -80,25 +80,6 @@ impl BlobManager {
         })
     }
 
-    /// Create BlobManager for testing - creates a dummy IngestClient that will fail if used
-    /// Tests should avoid calling methods that emit events (ingest_file, verify_blob, etc.)
-    #[cfg(test)]
-    pub async fn new_for_testing(annex_config: AnnexConfig, db_pool: DbPool) -> Result<Self> {
-        let annex = GitAnnex::new(annex_config)?;
-
-        // Create a dummy IngestClient that will fail when used
-        // This is a temporary solution for tests - proper mocking should be implemented
-        let dummy_client = IngestClient::new("/tmp/nonexistent-test-socket.sock")
-            .await
-            .unwrap_or_else(|_| panic!("Test IngestClient creation failed as expected"));
-
-        Ok(BlobManager {
-            annex,
-            db_pool,
-            ingest_client: dummy_client,
-        })
-    }
-
     /// Ingest a file into the blob management system
     pub async fn ingest_file(
         &self,

@@ -88,7 +88,7 @@ impl SourceMaterials {
                     .default("'{}'"),
             )
             // Optional inline data storage for small materials
-            .col(ColumnDef::new(SourceMaterials::Data).blob())
+            .col(ColumnDef::new(SourceMaterials::Data).binary())
             // Optional reference to external blob storage
             .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom(Alias::new("ULID")))
             .to_owned()
@@ -186,7 +186,7 @@ impl SourceMaterials {
                     .default("'{}'"),
             )
             // Optional inline data storage for small materials
-            .col(ColumnDef::new(SourceMaterials::Data).blob())
+            .col(ColumnDef::new(SourceMaterials::Data).binary())
             // Optional reference to external blob storage
             .col(ColumnDef::new(SourceMaterials::OptionalBlobId).custom(Alias::new("ULID")))
             .to_owned()
