@@ -1105,77 +1105,56 @@ impl<'a> EventRepository<'a> {
             associated_blob_id_arrays.push(blob_uuids);
         }
 
-        // Execute batch insert using UNNEST
-        // Note: Using sqlx::query instead of sqlx::query! because of ULID type handling issues
-        // Also converting array of arrays to JSON for source_event_ids and associated_blob_ids
-        // because SQLx doesn't support 2D UUID arrays
-        let source_event_ids_json: Vec<Option<serde_json::Value>> = source_event_id_arrays
-            .iter()
-            .map(|opt| opt.as_ref().map(|vec| serde_json::json!(vec)))
-            .collect();
-
-        let associated_blob_ids_json: Vec<Option<serde_json::Value>> = associated_blob_id_arrays
-            .iter()
-            .map(|opt| opt.as_ref().map(|vec| serde_json::json!(vec)))
-            .collect();
-
-        sqlx::query(
-            r#"
-            INSERT INTO core.events (
-                id, source, event_type, host, payload,
-                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
-                source_material_id, source_material_offset_start, source_material_offset_end,
-                anchor_byte, associated_blob_ids,
-                payload_schema_name, payload_schema_version
+        // Insert events one by one within the transaction
+        // We can't use UNNEST with 2D arrays (uuid[][]) because SQLx doesn't support it properly
+        for i in 0..events.len() {
+            sqlx::query!(
+                r#"
+                INSERT INTO core.events (
+                    id, source, event_type, host, payload,
+                    ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                    source_material_id, source_material_offset_start, source_material_offset_end,
+                    anchor_byte, associated_blob_ids,
+                    payload_schema_name, payload_schema_version
+                )
+                VALUES (
+                    ulid_from_uuid($1), $2, $3, $4, $5,
+                    $6, $7, 
+                    CASE WHEN $8::uuid IS NOT NULL THEN ulid_from_uuid($8) ELSE NULL END,
+                    CASE WHEN $9::uuid[] IS NOT NULL 
+                         THEN ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($9::uuid[]) AS elem)
+                         ELSE NULL 
+                    END,
+                    CASE WHEN $10::uuid IS NOT NULL THEN ulid_from_uuid($10) ELSE NULL END,
+                    $11, $12, $13,
+                    CASE WHEN $14::uuid[] IS NOT NULL 
+                         THEN ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($14::uuid[]) AS elem)
+                         ELSE NULL 
+                    END,
+                    $15, $16
+                )
+                "#,
+                event_ids[i],
+                sources[i].as_str(),
+                event_types[i].as_str(),
+                hosts[i].as_str(),
+                &payloads[i],
+                ts_origs[i],
+                ingestor_versions[i],
+                payload_schema_ids[i],
+                source_event_id_arrays[i].as_deref(),
+                source_material_ids[i],
+                source_material_offset_starts[i],
+                source_material_offset_ends[i],
+                anchor_bytes[i],
+                associated_blob_id_arrays[i].as_deref(),
+                None::<&str>, // payload_schema_name
+                None::<&str>  // payload_schema_version
             )
-            SELECT 
-                id::ulid, source, event_type, host, payload,
-                ts_orig, ingestor_version, payload_schema_id, 
-                CASE WHEN source_event_ids IS NOT NULL 
-                     THEN ARRAY(SELECT (e::text)::ulid FROM jsonb_array_elements_text(source_event_ids) e)
-                     ELSE NULL 
-                END,
-                source_material_id::ulid,
-                source_material_offset_start, source_material_offset_end, anchor_byte,
-                CASE WHEN associated_blob_ids IS NOT NULL 
-                     THEN ARRAY(SELECT (e::text)::ulid FROM jsonb_array_elements_text(associated_blob_ids) e)
-                     ELSE NULL 
-                END,
-                payload_schema_name, payload_schema_version
-            FROM UNNEST(
-                $1::uuid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
-                $6::timestamptz[], $7::text[], $8::uuid[], $9::jsonb[],
-                $10::uuid[], $11::bigint[], $12::bigint[],
-                $13::bigint[], $14::jsonb[],
-                $15::text[], $16::text[]
-            ) AS t(
-                id, source, event_type, host, payload,
-                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
-                source_material_id, source_material_offset_start, source_material_offset_end,
-                anchor_byte, associated_blob_ids,
-                payload_schema_name, payload_schema_version
-            )
-            "#,
-        )
-        .bind(&event_ids)
-        .bind(&sources)
-        .bind(&event_types)
-        .bind(&hosts)
-        .bind(&payloads)
-        .bind(&ts_origs)
-        .bind(&ingestor_versions)
-        .bind(&payload_schema_ids)
-        .bind(&source_event_ids_json)
-        .bind(&source_material_ids)
-        .bind(&source_material_offset_starts)
-        .bind(&source_material_offset_ends)
-        .bind(&anchor_bytes)
-        .bind(&associated_blob_ids_json)
-        .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
-        .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "batch insert with unnest"))?;
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, &format!("insert event {} of {}", i + 1, events.len())))?;
+        }
 
         tx.commit()
             .await
