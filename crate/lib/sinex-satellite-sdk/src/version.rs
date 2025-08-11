@@ -142,12 +142,33 @@ pub struct SatelliteInstance {
 }
 
 impl SatelliteInstance {
-    pub fn new(instance_id: String, service_name: String) -> Self {
+    /// Create a new satellite instance
+    ///
+    /// # Errors
+    /// Returns `SatelliteError::Configuration` if version information is invalid
+    #[must_use]
+    pub fn new(instance_id: String, service_name: String) -> crate::SatelliteResult<Self> {
+        let host_name = gethostname::gethostname().to_string_lossy().to_string();
+
+        Ok(Self {
+            instance_id,
+            version: SatelliteVersion::current()?,
+            start_time: SystemTime::now(),
+            service_name,
+            host_name,
+        })
+    }
+
+    /// Create a new satellite instance with fallback version on error
+    ///
+    /// This provides a non-panicking alternative that uses default version info
+    /// if the build metadata is corrupted.
+    pub fn new_or_default(instance_id: String, service_name: String) -> Self {
         let host_name = gethostname::gethostname().to_string_lossy().to_string();
 
         Self {
             instance_id,
-            version: SatelliteVersion::current(),
+            version: SatelliteVersion::current_or_default(),
             start_time: SystemTime::now(),
             service_name,
             host_name,
@@ -240,13 +261,22 @@ pub fn satellite_is_dirty() -> crate::SatelliteResult<bool> {
 
 /// Print version information to stdout (for --version flags)
 pub fn print_version_info() {
-    let version = SatelliteVersion::current();
-    println!("{}", version.full_version);
-    println!("commit: {}", version.commit_hash);
-    println!("branch: {}", version.branch);
-    println!("built: {}", version.build_timestamp);
-    if version.is_dirty {
-        println!("status: dirty");
+    match SatelliteVersion::current() {
+        Ok(version) => {
+            println!("{}", version.full_version);
+            println!("commit: {}", version.commit_hash);
+            println!("branch: {}", version.branch);
+            println!("built: {}", version.build_timestamp);
+            if version.is_dirty {
+                println!("status: dirty");
+            }
+        }
+        Err(e) => {
+            eprintln!("Error reading version information: {}", e);
+            let fallback = SatelliteVersion::current_or_default();
+            println!("{}", fallback.full_version);
+            println!("status: version info corrupted, using fallback");
+        }
     }
 }
 

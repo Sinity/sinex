@@ -1339,16 +1339,55 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
-    // TODO: Implement automaton continuous mode after NatsStreamConsumer removal
-    // This functionality should be moved into the scan method per TARGET_canonical.md
-    //
-    // /// Run automaton in continuous mode with internal NATS management
-    // async fn run_automaton_continuous(&mut self) -> SatelliteResult<()> {
-    //     // REMOVED: This method used NatsStreamConsumer which has been deprecated
-    //     // The functionality should be integrated into the scan method instead
-    //     Err(SatelliteError::Processing(
-    //         "Automaton continuous mode not yet implemented after NatsStreamConsumer removal".to_string()
-    //     ))
+    /// Run automaton in continuous mode
+    async fn run_automaton_continuous_mode(&mut self) -> SatelliteResult<()> {
+        info!("Starting automaton continuous mode");
+
+        // Get current checkpoint to resume from previous state if available
+        let current_checkpoint = self.processor.current_checkpoint().await?;
+
+        // Automata primarily process events in continuous mode
+        // They consume events from message queues or databases
+        if self.processor.capabilities().supports_continuous {
+            info!("Starting continuous event processing for automaton");
+
+            // Use Continuous time horizon for automata
+            // The processor's scan method should handle NATS/database consumption internally
+            let _continuous_report = self
+                .processor
+                .scan(
+                    current_checkpoint,
+                    TimeHorizon::Continuous,
+                    ScanArgs::default(),
+                )
+                .await?;
+
+            info!("Automaton continuous processing completed");
+        } else {
+            // Automata can also run in batch mode for historical processing
+            if self.processor.capabilities().supports_historical {
+                info!("Running automaton in historical batch mode");
+
+                // Process all historical events up to now
+                let _historical_report = self
+                    .processor
+                    .scan(
+                        current_checkpoint,
+                        TimeHorizon::Historical {
+                            end_time: Utc::now(),
+                        },
+                        ScanArgs::default(),
+                    )
+                    .await?;
+
+                info!("Automaton historical processing completed");
+            } else {
+                warn!("Automaton does not support continuous or historical mode");
+            }
+        }
+
+        Ok(())
+    }
     // }
 
     // /// Read a batch of events from NATS (internal helper)

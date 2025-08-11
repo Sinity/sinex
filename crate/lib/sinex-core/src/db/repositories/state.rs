@@ -347,11 +347,33 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get all checkpoints"))
     }
 
-    /// Delete checkpoint for a processor
+    /// Delete checkpoint for a processor (soft delete)
     pub async fn delete_checkpoint(&self, processor_name: &str) -> DbResult<bool> {
+        self.delete_checkpoint_with_context(processor_name, "system", "Processor cleanup")
+            .await
+    }
+
+    /// Delete checkpoint with audit context (soft delete)
+    pub async fn delete_checkpoint_with_context(
+        &self,
+        processor_name: &str,
+        deleted_by: &str,
+        deletion_reason: &str,
+    ) -> DbResult<bool> {
         let result = sqlx::query!(
-            "DELETE FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default'",
-            processor_name
+            r#"
+            UPDATE core.processor_checkpoints 
+            SET deleted_at = NOW(),
+                deleted_by = $2,
+                deletion_reason = $3
+            WHERE processor_name = $1 
+              AND consumer_group = 'default' 
+              AND consumer_name = 'default'
+              AND deleted_at IS NULL
+            "#,
+            processor_name,
+            deleted_by,
+            deletion_reason
         )
         .execute(self.pool)
         .await
