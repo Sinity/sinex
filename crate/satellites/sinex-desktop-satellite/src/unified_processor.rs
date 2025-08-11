@@ -6,8 +6,8 @@
 // Use local facade for common types
 use crate::common::*;
 
-// Desktop-specific event payloads
-use sinex_core::types::events::{
+// Desktop-specific event payloads - now using flattened namespace
+use sinex_core::payloads::{
     ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
     WindowManagerHistoricalPayload,
 };

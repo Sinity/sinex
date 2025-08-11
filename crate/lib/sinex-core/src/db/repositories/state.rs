@@ -195,12 +195,12 @@ impl<'a> StateRepository<'a> {
             .map_err(|e| db_error(e, "begin checkpoint transaction"))?;
 
         // Check if this is an update or create operation
-        let existing_checkpoint = sqlx::query_as::<_, (Ulid, i64, i32)>(
-            "SELECT id, processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3"
+        let existing_checkpoint = sqlx::query!(
+            r#"SELECT id as "id!", processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3"#,
+            checkpoint.processor_name.as_ref(),
+            consumer_group.as_ref(),
+            consumer_name.as_ref()
         )
-        .bind(checkpoint.processor_name.as_ref())
-        .bind(consumer_group.as_ref())
-        .bind(consumer_name.as_ref())
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| db_error(e, "check existing checkpoint"))?;
@@ -392,7 +392,7 @@ impl<'a> StateRepository<'a> {
                 .scope(serde_json::json!({
                     "operation_type": "delete_checkpoint",
                     "processor_name": processor_name,
-                    "checkpoint_id": checkpoint.id.to_string(),
+                    "checkpoint_id": checkpoint.id.as_ulid().to_string(),
                     "reason": reason
                 }))
                 .state("completed".to_string())
@@ -412,7 +412,7 @@ impl<'a> StateRepository<'a> {
                     "processor_name": processor_name,
                     "consumer_group": checkpoint.consumer_group,
                     "consumer_name": checkpoint.consumer_name,
-                    "checkpoint_id": checkpoint.id.to_string(),
+                    "checkpoint_id": checkpoint.id.as_ulid().to_string(),
                     "last_processed_count": checkpoint.processed_count,
                     "deleted_by": actor,
                     "reason": reason
@@ -896,10 +896,10 @@ impl<'a> StateRepository<'a> {
         let row = sqlx::query!(
             r#"
             SELECT 
-                COUNT(*) FILTER (WHERE end_time IS NULL) as "active_count!",
-                COUNT(*) FILTER (WHERE end_time IS NOT NULL) as "inactive_count!",
+                COUNT(*) FILTER (WHERE deployment_status != 'inactive') as "active_count!",
+                COUNT(*) FILTER (WHERE deployment_status = 'inactive') as "inactive_count!",
                 COUNT(DISTINCT processor_name) as "unique_processors!",
-                MIN(start_time) FILTER (WHERE end_time IS NULL) as oldest_heartbeat
+                MIN(created_at) FILTER (WHERE deployment_status != 'inactive') as oldest_heartbeat
             FROM core.processor_manifests
             "#
         )

@@ -7,12 +7,9 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use serde_json::json;
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
 use sinex_test_utils::prelude::*;
-use std::collections::HashSet;
+
+// Additional specific imports
 use std::str::FromStr;
 use std::sync::Arc;
 

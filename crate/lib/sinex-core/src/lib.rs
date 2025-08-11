@@ -88,7 +88,7 @@ pub use types::{
 };
 
 // Re-export event system at crate root for short imports
-pub use types::events::{Event, EventPayload, EventVersion, EventVersionInfo};
+pub use types::events::{Event, EventPayload};
 
 // Create facade for event payloads to flatten hierarchy
 pub mod payloads {
@@ -162,9 +162,7 @@ pub use query_helpers::{
 pub use seaquery_helpers::SeaQueryUlidExt;
 
 // Re-export repository pattern (DbPoolExt already re-exported above)
-pub use repositories::{
-    Checkpoint, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters, NewSchema,
-};
+pub use repositories::DbResult as RepoResult;
 
 /// Prelude module for commonly used types and functions
 ///
@@ -190,17 +188,12 @@ pub mod prelude {
         // Event types
         Event,
         EventPayload,
-        EventVersion,
-        EventVersionInfo,
         // Utils
-        ResourceGuard,
         SanitizedPath,
         SchemaName,
         SchemaVersion,
         // Error types
         SinexError,
-        // Validation
-        ValidationError,
     };
 
     // Database functionality - all commonly used functions and types

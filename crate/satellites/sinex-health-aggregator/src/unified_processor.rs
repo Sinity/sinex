@@ -4,23 +4,14 @@
 //! directly and using RedisStreamConsumer for real-time event consumption, without any
 //! HotlogAutomaton layer.
 
-use async_trait::async_trait;
-use chrono::{DateTime, Duration, Utc};
-use serde::{Deserialize, Serialize};
+// Use local facade for common types
+use crate::common::*;
+
+// Health aggregator specific imports - now using flattened namespace
 use serde_json::json;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::{Id, events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload}};
-use sinex_satellite_sdk::{
-    cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
-    stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon},
-    SatelliteError, SatelliteResult};
-use std::collections::HashMap;
+use sinex_core::{DbPoolExt, Event, HealthStatus, payloads::ComponentHealth, payloads::SystemHealthSummaryPayload};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
 
 /// Health threshold constants
 const HEALTHY_THRESHOLD_MINUTES: i64 = 2;

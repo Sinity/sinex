@@ -402,14 +402,57 @@ pub mod prelude {
         test_context_fixture, test_event_sources, test_event_types, test_paths, test_sources,
     };
 
-    // Core sinex imports that tests always need
-
-    pub use sinex_core::db::models::*;
-    pub use sinex_core::db::repositories::DbPoolExt;
-    pub use sinex_core::types::domain::*;
-    pub use sinex_core::types::error::*;
-    pub use sinex_core::types::events::*;
-    pub use sinex_core::types::{Id, Ulid};
+    // Core sinex imports - now using flattened namespace
+    pub use sinex_core::{
+        validate_json,
+        validate_path,
+        Blob,
+        BlobId,
+        BlobRecord,
+        CheckpointId,
+        CheckpointRepository,
+        ConsumerGroup,
+        ConsumerName,
+        // Database functionality (now available at root)
+        DbPool,
+        DbPoolExt,
+        DbTransaction,
+        Entity,
+        EntityId,
+        EntityRelation,
+        // Event types (now available at root)
+        Event,
+        // Type aliases for convenience
+        EventId,
+        EventPayload,
+        EventRepository,
+        EventResult,
+        // Domain types (now available at root)
+        EventSource,
+        EventType,
+        EventVersion,
+        EventVersionInfo,
+        HostName,
+        // Common utilities (now available at root)
+        Id,
+        JsonValue,
+        OperationId,
+        OptionalTimestamp,
+        ProcessorName,
+        Provenance,
+        // Database models (now available at root)
+        RawEvent,
+        SanitizedPath,
+        SchemaName,
+        SchemaVersion,
+        // Error handling (now available at root)
+        SinexError,
+        SourceMaterial,
+        SourceMaterialId,
+        Timestamp,
+        Ulid,
+        ValidationError,
+    };
 
     // Time handling - very common in tests
     pub use chrono::{Duration as ChronoDuration, Utc};

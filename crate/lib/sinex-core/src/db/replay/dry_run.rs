@@ -8,6 +8,7 @@ use crate::types::Id;
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Results from a dry-run execution
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,7 +157,11 @@ impl DryRunExecutor {
         let mut events_to_modify = Vec::new();
 
         for op in &self.operations {
-            let event_id = Id::<RawEvent>::from_str(&op.target).ok();
+            let event_id = op
+                .target
+                .parse::<Ulid>()
+                .ok()
+                .map(Id::<RawEvent>::from_ulid);
             if let Some(id) = event_id {
                 match op.operation.as_str() {
                     "ARCHIVE" => events_to_archive.push(id),
