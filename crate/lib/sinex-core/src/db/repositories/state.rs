@@ -403,8 +403,10 @@ impl<'a> StateRepository<'a> {
             // Log the deletion operation directly
             let op_id = Id::<Operation>::new();
             let op_started_at = deletion_operation.started_at.unwrap_or_else(Utc::now);
-            let op_state = deletion_operation.state.unwrap_or_else(|| "completed".to_string());
-            
+            let op_state = deletion_operation
+                .state
+                .unwrap_or_else(|| "completed".to_string());
+
             sqlx::query!(
                 r#"
                 INSERT INTO core.operations_log (
@@ -501,10 +503,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             "#,
@@ -539,10 +541,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -568,10 +570,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -637,10 +639,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -675,10 +677,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -714,10 +716,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -1243,10 +1245,10 @@ impl<'a> StateRepositoryTx<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at as "approved_at: Option<DateTime<Utc>>",
+                approved_at,
                 executor_node,
-                started_at as "started_at: Option<DateTime<Utc>>",
-                finished_at as "finished_at: Option<DateTime<Utc>>",
+                started_at,
+                finished_at,
                 outcome,
                 error_details
             "#,
