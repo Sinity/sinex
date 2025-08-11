@@ -368,7 +368,7 @@ async fn create_user_session_fixture(
 
     // Create filesystem events
     for i in 0..event_count / 3 {
-        let event = Event::from_payload(FileCreatedPayload {
+        let event = Event::new(FileCreatedPayload {
             path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
             size: 0,
             created_at: Utc::now(),
@@ -400,7 +400,7 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let event = Event::from_payload(KittyCommandCompletedPayload {
+        let event = Event::new(KittyCommandCompletedPayload {
             command: CommandText::from(cmd.to_string()),
             working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
             exit_status: 0,
@@ -430,7 +430,7 @@ async fn create_user_session_fixture(
     // Create clipboard events
     for i in 0..event_count / 3 {
         let text = format!("Clipboard content {}", i);
-        let event = Event::from_payload(ClipboardCopiedPayload {
+        let event = Event::new(ClipboardCopiedPayload {
             operation: "copy".to_string(),
             content_type: "text/plain".to_string(),
             content_size: text.len(),
@@ -548,15 +548,15 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
     // Create events that would fail validation
     let invalid_events = vec![
         (
-            RawEvent::schemaless(EventSource::from(""), EventType::from("test"), json!({})),
+            RawEvent::new(EventSource::from(""), EventType::from("test"), json!({})),
             "Empty source",
         ),
         (
-            RawEvent::schemaless(EventSource::from("test"), EventType::from(""), json!({})),
+            RawEvent::new(EventSource::from("test"), EventType::from(""), json!({})),
             "Empty event type",
         ),
         (
-            RawEvent::schemaless(
+            RawEvent::new(
                 EventSource::from("test"),
                 EventType::from("test.event"),
                 json!(null),
@@ -655,7 +655,7 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let event = RawEvent::schemaless(
+        let event = RawEvent::new(
             source.clone(),
             event_type.clone(),
             json!({
@@ -798,7 +798,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let event = RawEvent::schemaless(
+        let event = RawEvent::new(
             EventSource::from("performance_test"),
             EventType::from("test.event"),
             json!({
@@ -1341,7 +1341,7 @@ mod tests {
         let mut event_ids = vec![];
 
         // Insert start event
-        let start_event = RawEvent::schemaless(
+        let start_event = RawEvent::new(
             EventSource::from_static("test"),
             EventType::from_static("test.started"),
             json!({}),
@@ -1351,7 +1351,7 @@ mod tests {
 
         // Insert middle events
         for i in 0..5 {
-            let middle_event = RawEvent::schemaless(
+            let middle_event = RawEvent::new(
                 EventSource::from_static("test"),
                 EventType::from_static("test.started"),
                 json!({"index": i}),
@@ -1361,7 +1361,7 @@ mod tests {
         }
 
         // Insert end event
-        let end_event = RawEvent::schemaless(
+        let end_event = RawEvent::new(
             EventSource::from_static("test"),
             EventType::from_static("test.completed"),
             json!({}),

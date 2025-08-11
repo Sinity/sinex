@@ -24,6 +24,7 @@ tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
+indexmap.workspace = true
 
 # Time handling
 chrono.workspace = true

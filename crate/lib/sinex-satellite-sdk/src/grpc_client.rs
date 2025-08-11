@@ -7,7 +7,7 @@ use crate::proto::{
 use crate::{SatelliteError, SatelliteResult};
 use sinex_core::db::models::RawEvent;
 use tonic::transport::{Channel, Endpoint, Uri};
-use tracing::{debug, error, info, instrument, warn, Span};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Default schema version for events
 const DEFAULT_SCHEMA_VERSION: &str = "1.0.0";

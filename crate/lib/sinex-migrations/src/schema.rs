@@ -9,8 +9,29 @@ use sea_query::{ColumnDef, Expr, Index, IndexOrder, IntoIden, Table};
 // Note: artifact_tables module removed as part of Phase 1.3 cleanup
 // The artifact system has been replaced by the synthesis architecture
 
-pub mod event_embeddings;
-pub use event_embeddings::*;
+// Import all schema modules
+// pub mod annotations; // TODO: Missing file
+// pub mod blobs; // TODO: Missing file
+pub mod core_events;
+pub mod embeddings;
+// pub mod event_relations; // TODO: Missing file
+// pub mod knowledge_graph; // TODO: Missing file
+pub mod outbox;
+pub mod processors;
+pub mod schemas;
+pub mod source_materials;
+
+// Re-export everything from modules
+// pub use annotations::*; // TODO: Missing file
+// pub use blobs::*; // TODO: Missing file
+pub use core_events::*;
+pub use embeddings::*;
+// pub use event_relations::*; // TODO: Missing file
+// pub use knowledge_graph::*; // TODO: Missing file
+pub use outbox::*;
+pub use processors::*;
+pub use schemas::*;
+pub use source_materials::*;
 
 /// Trait for table definitions that can be used with generic repository operations
 pub trait TableDef: Copy + Clone {

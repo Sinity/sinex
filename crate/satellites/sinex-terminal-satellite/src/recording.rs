@@ -392,7 +392,7 @@ end
                     }
                 };
 
-                let event: RawEvent = Event::from_payload(AsciinemaSessionStartedPayload {
+                let event: RawEvent = Event::new(AsciinemaSessionStartedPayload {
                     session_id: session_id.clone(),
                     terminal_type: "asciinema".to_string(),
                     terminal_id: path.to_string(),
@@ -450,7 +450,7 @@ end
                         // Emit session ended event
                         let duration = chrono::Utc::now().signed_duration_since(start_time);
 
-                        let event: RawEvent = Event::from_payload(AsciinemaSessionEndedPayload {
+                        let event: RawEvent = Event::new(AsciinemaSessionEndedPayload {
                             session_id: session_id.clone(),
                             terminal_type: "asciinema".to_string(),
                             terminal_id: path.to_string(),

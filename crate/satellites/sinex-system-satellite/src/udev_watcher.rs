@@ -18,7 +18,7 @@ macro_rules! create_udev_event {
     ($payload_type:ident, $action:expr, $device_path:expr, $device_type:expr,
      $subsystem:expr, $devtype:expr, $vendor:expr, $model:expr, $serial:expr,
      $properties:expr, $timestamp:expr) => {
-        Ok(Event::from_payload($payload_type {
+        Ok(Event::new($payload_type {
             action: $action.to_string(),
             device_path: $device_path.to_string(),
             device_type: $device_type.to_string(),

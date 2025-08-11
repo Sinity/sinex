@@ -225,7 +225,7 @@ impl DesktopProcessor {
             info!("Desktop monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event: RawEvent = Event::from_payload(DesktopMonitoringStartedPayload {
+            let sample_event: RawEvent = Event::new(DesktopMonitoringStartedPayload {
                 clipboard_enabled: self.config.clipboard_enabled,
                 window_manager_enabled: self.config.window_manager_enabled,
                 start_time: Utc::now(),
@@ -255,7 +255,7 @@ impl DesktopProcessor {
         if let Some(ref context) = self.context {
             // Example: emit historical desktop state events
             if self.config.clipboard_enabled && emit_events {
-                let event: RawEvent = Event::from_payload(ClipboardHistoricalPayload {
+                let event: RawEvent = Event::new(ClipboardHistoricalPayload {
                     source: "clipboard".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for desktop events".to_string(),
@@ -267,7 +267,7 @@ impl DesktopProcessor {
             }
 
             if self.config.window_manager_enabled && emit_events {
-                let event: RawEvent = Event::from_payload(WindowManagerHistoricalPayload {
+                let event: RawEvent = Event::new(WindowManagerHistoricalPayload {
                     source: "window_manager".to_string(),
                     wm_type: self.config.window_manager_type.clone(),
                     scan_type: "historical".to_string(),
@@ -392,14 +392,13 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent =
-                            Event::from_payload(DesktopSnapshotPayload {
-                                active_watchers,
-                                clipboard_enabled: self.config.clipboard_enabled,
-                                window_manager_enabled: self.config.window_manager_enabled,
-                                snapshot_time: Utc::now(),
-                            })
-                            .into();
+                        let snapshot_event: RawEvent = Event::new(DesktopSnapshotPayload {
+                            active_watchers,
+                            clipboard_enabled: self.config.clipboard_enabled,
+                            window_manager_enabled: self.config.window_manager_enabled,
+                            snapshot_time: Utc::now(),
+                        })
+                        .into();
 
                         context.emit_event(snapshot_event).await.map_err(|e| {
                             error!(error = %e, "Failed to emit desktop snapshot event");

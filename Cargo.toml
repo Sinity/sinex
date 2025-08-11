@@ -120,6 +120,9 @@ mimalloc = { version = "0.1", default-features = false }
 # Builder pattern
 bon = "2.3"
 
+# Data structures
+indexmap = "2.0"
+
 # Retry logic
 tokio-retry = "0.3"
 

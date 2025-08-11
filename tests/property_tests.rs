@@ -499,7 +499,7 @@ mod property {
 // =============================================================================
 
 // NOTE: Event ordering property test removed due to proptest/async incompatibility.
-// This test concept is better served by the dedicated integration test 
+// This test concept is better served by the dedicated integration test
 // `test_ulid_ordering_integration` in integration_tests.rs.
 
 // =============================================================================

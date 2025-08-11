@@ -231,7 +231,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel::<RawEvent>(10);
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
-        let event = RawEvent::schemaless(
+        let event = RawEvent::new(
             sinex_core::types::domain::EventSource::new("test_source"),
             sinex_core::types::domain::EventType::new("test_event"),
             serde_json::json!({}),
@@ -264,7 +264,7 @@ mod tests {
         let sender = create_enhanced_event_sender(tx, "test_source".to_string());
 
         // Fill the channel
-        let event1 = RawEvent::schemaless(
+        let event1 = RawEvent::new(
             sinex_core::types::domain::EventSource::new("test_source"),
             sinex_core::types::domain::EventType::new("test_event"),
             serde_json::json!({}),
@@ -272,7 +272,7 @@ mod tests {
         let _ = sender.send_event(event1, "fill channel").await;
 
         // This should timeout
-        let event2 = RawEvent::schemaless(
+        let event2 = RawEvent::new(
             sinex_core::types::domain::EventSource::new("test_source"),
             sinex_core::types::domain::EventType::new("test_event"),
             serde_json::json!({}),

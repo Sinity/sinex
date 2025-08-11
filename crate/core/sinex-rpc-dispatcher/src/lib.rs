@@ -18,13 +18,22 @@ use tracing::{info, warn};
 /// Configuration for RPC Dispatcher processor
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RpcDispatcherConfig {
-    /// RPC server configuration
+    /// Maximum number of concurrent connections
+    pub max_connections: Option<u32>,
+    /// Request timeout in seconds
+    pub request_timeout_secs: Option<u64>,
+    /// Time range for historical scans in hours
+    pub historical_scan_hours: Option<u64>,
+    /// Additional RPC server configuration
     pub server_config: HashMap<String, serde_json::Value>,
 }
 
 impl Default for RpcDispatcherConfig {
     fn default() -> Self {
         Self {
+            max_connections: Some(1000),
+            request_timeout_secs: Some(30),
+            historical_scan_hours: Some(24),
             server_config: HashMap::new(),
         }
     }
@@ -76,7 +85,9 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
                 info!("RPC dispatcher scanning historical RPC invocations");
                 // In a real implementation, this would scan logs or databases for
                 // historical RPC calls, their responses, and performance metrics
-                warnings.push("RPC dispatcher historical scan is not yet implemented".to_string());
+                return Err(SatelliteError::NotImplemented(
+                    "RPC dispatcher historical scan requires log database access".to_string(),
+                ));
             }
             TimeHorizon::Continuous => {
                 info!("RPC dispatcher starting continuous RPC monitoring");
@@ -91,7 +102,9 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
 
         Ok(ScanReport {
             events_processed,
-            duration: start_time.elapsed().into(),
+            duration: std::time::Duration::from_millis(
+                (Utc::now() - start_time).num_milliseconds() as u64,
+            ),
             final_checkpoint: from,
             time_range: Some((start_time, Utc::now())),
             processor_stats: HashMap::from([

@@ -492,7 +492,13 @@ async fn test_large_payload_handling(ctx: TestContext) -> color_eyre::eyre::Resu
         .expect("Event should exist");
 
     assert_eq!(retrieved.payload, large_payload);
-    assert_eq!(retrieved.payload["data"].as_str().expect("Should extract data field as string").len(), 10_000);
+    assert_eq!(
+        retrieved.payload["data"]
+            .as_str()
+            .expect("Should extract data field as string")
+            .len(),
+        10_000
+    );
 
     Ok(())
 }

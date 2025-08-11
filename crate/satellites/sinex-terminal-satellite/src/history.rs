@@ -231,19 +231,19 @@ impl HistoryWatcher {
         let source_file_str = source_file.to_string();
 
         let event: RawEvent = if source_file_str.contains("fish") {
-            Event::from_payload(FishHistoricalCommandPayload {
+            Event::new(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
             .into()
         } else if source_file_str.contains("zsh") {
-            Event::from_payload(ZshHistoricalCommandPayload {
+            Event::new(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
             .into()
         } else {
-            Event::from_payload(BashHistoricalCommandPayload {
+            Event::new(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })

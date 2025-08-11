@@ -220,7 +220,7 @@ impl JournalWatcher {
                 duration_ms: start_time.elapsed().as_millis() as u64,
             };
 
-            let sync_event: RawEvent = Event::from_payload(EventJournalSyncCompletedPayload {
+            let sync_event: RawEvent = Event::new(EventJournalSyncCompletedPayload {
                 sync_type: sync_payload.sync_type,
                 start_cursor: sync_payload.start_cursor,
                 end_cursor: sync_payload.end_cursor,
@@ -515,7 +515,7 @@ impl JournalWatcher {
             fields,
         };
 
-        let event: RawEvent = Event::from_payload(EventJournalEntryWrittenPayload {
+        let event: RawEvent = Event::new(EventJournalEntryWrittenPayload {
             cursor: payload.cursor,
             timestamp_us: payload.timestamp_us,
             timestamp: payload.timestamp,

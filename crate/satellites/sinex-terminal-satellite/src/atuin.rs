@@ -276,21 +276,20 @@ impl AtuinWatcher {
         let duration_secs = entry.duration_ns as f64 / 1_000_000_000.0;
         let ts_start = ts_end - chrono::Duration::milliseconds((duration_secs * 1000.0) as i64);
 
-        let event: RawEvent =
-            Event::from_payload(sinex_core::types::events::AtuinCommandExecutedPayload {
-                command_string: CommandText::from(entry.command.clone()),
-                cwd: SanitizedPath::from(entry.cwd.clone()),
-                exit_code: entry.exit_code,
-                duration_ns: entry.duration_ns,
-                atuin_history_id: entry.id.clone(),
-                atuin_session_id: entry.session.clone(),
-                timestamp: entry.timestamp_ns,
-                ts_start_orig: ts_start,
-                ts_end_orig: ts_end,
-                hostname: HostName::from(entry.hostname.clone()),
-                terminal_session_ulid: None, // Could be enhanced later
-            })
-            .into();
+        let event: RawEvent = Event::new(sinex_core::types::events::AtuinCommandExecutedPayload {
+            command_string: CommandText::from(entry.command.clone()),
+            cwd: SanitizedPath::from(entry.cwd.clone()),
+            exit_code: entry.exit_code,
+            duration_ns: entry.duration_ns,
+            atuin_history_id: entry.id.clone(),
+            atuin_session_id: entry.session.clone(),
+            timestamp: entry.timestamp_ns,
+            ts_start_orig: ts_start,
+            ts_end_orig: ts_end,
+            hostname: HostName::from(entry.hostname.clone()),
+            terminal_session_ulid: None, // Could be enhanced later
+        })
+        .into();
 
         Ok(event)
     }

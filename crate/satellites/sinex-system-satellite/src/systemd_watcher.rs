@@ -91,7 +91,7 @@ impl SystemdWatcher {
                 };
 
                 return Some(
-                    Event::from_payload(SystemdUnitStatusPayload {
+                    Event::new(SystemdUnitStatusPayload {
                         unit_name: unit_name.to_string(),
                         unit_type: unit_type.to_string(),
                         description: description.to_string(),
@@ -110,7 +110,7 @@ impl SystemdWatcher {
 
             return match status {
                 "active" => Some(
-                    Event::from_payload(SystemdUnitStartedPayload {
+                    Event::new(SystemdUnitStartedPayload {
                         unit_name: "unknown".to_string(), // Will be filled by journal monitoring
                         unit_type: "unknown".to_string(),
                         main_pid: None,
@@ -120,7 +120,7 @@ impl SystemdWatcher {
                     .into(),
                 ),
                 "inactive" => Some(
-                    Event::from_payload(SystemdUnitStoppedPayload {
+                    Event::new(SystemdUnitStoppedPayload {
                         unit_name: "unknown".to_string(),
                         unit_type: "unknown".to_string(),
                         exit_code: None,
@@ -130,7 +130,7 @@ impl SystemdWatcher {
                     .into(),
                 ),
                 "failed" => Some(
-                    Event::from_payload(SystemdUnitFailedPayload {
+                    Event::new(SystemdUnitFailedPayload {
                         unit_name: "unknown".to_string(),
                         message: status_part.to_string(),
                         cursor: "unknown".to_string(),
@@ -142,7 +142,7 @@ impl SystemdWatcher {
                     .into(),
                 ),
                 "activating" => Some(
-                    Event::from_payload(SystemdUnitStartingPayload {
+                    Event::new(SystemdUnitStartingPayload {
                         status: status.to_string(),
                         status_detail: status_part.to_string(),
                         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -150,7 +150,7 @@ impl SystemdWatcher {
                     .into(),
                 ),
                 "deactivating" => Some(
-                    Event::from_payload(SystemdUnitStoppingPayload {
+                    Event::new(SystemdUnitStoppingPayload {
                         status: status.to_string(),
                         status_detail: status_part.to_string(),
                         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -158,7 +158,7 @@ impl SystemdWatcher {
                     .into(),
                 ),
                 _ => Some(
-                    Event::from_payload(SystemdUnitStateChangedPayload {
+                    Event::new(SystemdUnitStateChangedPayload {
                         status: status.to_string(),
                         status_detail: status_part.to_string(),
                         timestamp: chrono::Utc::now().to_rfc3339(),
@@ -336,7 +336,7 @@ impl SystemdWatcher {
                         .unwrap_or("unknown");
 
                     Some(
-                        Event::from_payload(SystemdUnitStartedPayload {
+                        Event::new(SystemdUnitStartedPayload {
                             unit_name: unit_name.unwrap_or("unknown").to_string(),
                             unit_type: unit_type.to_string(),
                             main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
@@ -361,7 +361,7 @@ impl SystemdWatcher {
                         .unwrap_or("unknown");
 
                     Some(
-                        Event::from_payload(SystemdUnitStoppedPayload {
+                        Event::new(SystemdUnitStoppedPayload {
                             unit_name: unit_name.unwrap_or("unknown").to_string(),
                             unit_type: unit_type.to_string(),
                             exit_code: None,
@@ -372,7 +372,7 @@ impl SystemdWatcher {
                     )
                 } else if message.contains("Failed ") {
                     Some(
-                        Event::from_payload(SystemdUnitFailedPayload {
+                        Event::new(SystemdUnitFailedPayload {
                             unit_name: unit_name.unwrap_or("unknown").to_string(),
                             message: message.to_string(),
                             cursor: cursor.to_string(),
@@ -387,7 +387,7 @@ impl SystemdWatcher {
                     )
                 } else if message.contains("Reloaded ") {
                     Some(
-                        Event::from_payload(SystemdUnitReloadedPayload {
+                        Event::new(SystemdUnitReloadedPayload {
                             unit_name: unit_name.map(String::from),
                             message: message.to_string(),
                             cursor: cursor.to_string(),
@@ -402,7 +402,7 @@ impl SystemdWatcher {
                     )
                 } else if message.contains("Triggered ") {
                     Some(
-                        Event::from_payload(SystemdTimerTriggeredPayload {
+                        Event::new(SystemdTimerTriggeredPayload {
                             unit_name: unit_name.map(String::from),
                             message: message.to_string(),
                             cursor: cursor.to_string(),

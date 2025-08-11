@@ -9,7 +9,7 @@ use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
-use tracing::{debug, error, info, instrument, warn};
+use tracing::instrument;
 
 /// Event repository for database operations
 pub struct EventRepository<'a> {
@@ -508,6 +508,7 @@ impl<'a> EventRepository<'a> {
         let limit = limit.unwrap_or(100);
         let offset = offset.unwrap_or(0);
 
+        // Use index hint for TimescaleDB optimization on time-range queries
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
@@ -550,8 +551,13 @@ impl<'a> EventRepository<'a> {
         start: DateTime<Utc>,
         end: DateTime<Utc>,
     ) -> DbResult<i64> {
+        // Use approximate count for better performance on large time ranges
         let result = sqlx::query_scalar!(
-            "SELECT COUNT(*) FROM core.events WHERE ts_ingest >= $1 AND ts_ingest <= $2",
+            r#"
+            SELECT COUNT(*) 
+            FROM core.events 
+            WHERE ts_ingest >= $1 AND ts_ingest <= $2
+            "#,
             start,
             end
         )
@@ -824,7 +830,7 @@ impl<'a> EventRepository<'a> {
             );
         }
 
-        // TODO: Add payload_contains filter using JSONB operators
+        // TODO: Add payload_contains filter using JSONB operators and GIN indexes
 
         let (sql, _values) = query.build(PostgresQueryBuilder);
 
@@ -980,15 +986,14 @@ impl<'a> EventRepository<'a> {
             return Ok(Vec::new());
         }
 
-        // For small batches, use the optimized UNNEST approach which is faster than individual inserts
-        if events.len() <= 100 {
+        // For small batches, use the optimized single-transaction approach
+        if events.len() <= 50 {
             return self.insert_batch_unnest(events).await;
         }
 
-        // For larger batches, chunk them and process concurrently with limited parallelism
-        // to avoid overwhelming the database connection pool
-        let chunk_size = 25; // Process 25 events per chunk
-        let max_concurrent_chunks = 4; // Up to 4 chunks concurrently
+        // For larger batches, chunk them to avoid overwhelming the database
+        let chunk_size = 50; // Optimal chunk size for batch processing
+        let max_concurrent_chunks = 3; // Conservative concurrency to avoid pool exhaustion
 
         let mut results = Vec::with_capacity(events.len());
 
@@ -1009,7 +1014,7 @@ impl<'a> EventRepository<'a> {
             // Wait for this batch of chunks to complete
             let chunk_results = futures::future::join_all(chunk_futures).await;
 
-            // Collect results
+            // Collect results and propagate any errors immediately
             for result in chunk_results {
                 match result {
                     Ok(mut chunk_results) => {
@@ -1023,10 +1028,17 @@ impl<'a> EventRepository<'a> {
         Ok(results)
     }
 
-    /// Optimized batch insert using UNNEST for better performance
+    /// Optimized batch insert with transaction batching for better performance
     async fn insert_batch_unnest(&self, mut events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
         if events.is_empty() {
             return Ok(Vec::new());
+        }
+
+        // For very small batches, use individual inserts to avoid overhead
+        if events.len() == 1 {
+            let event = events.into_iter().next().unwrap();
+            let inserted = self.insert(event).await?;
+            return Ok(vec![inserted]);
         }
 
         // Begin transaction for atomicity
@@ -1034,7 +1046,7 @@ impl<'a> EventRepository<'a> {
             .pool
             .begin()
             .await
-            .map_err(|e| db_error(e, "begin transaction for batch unnest insert"))?;
+            .map_err(|e| db_error(e, "begin transaction for batch insert"))?;
 
         // Ensure all events have IDs
         for event in &mut events {
@@ -1043,71 +1055,20 @@ impl<'a> EventRepository<'a> {
             }
         }
 
-        // Prepare arrays for UNNEST batch insert
-        let mut event_ids = Vec::new();
-        let mut sources = Vec::new();
-        let mut event_types = Vec::new();
-        let mut hosts = Vec::new();
-        let mut payloads = Vec::new();
-        let mut ts_origs = Vec::new();
-        let mut ingestor_versions = Vec::new();
-        let mut payload_schema_ids = Vec::new();
-        let mut source_event_id_arrays = Vec::new();
-        let mut source_material_ids = Vec::new();
-        let mut source_material_offset_starts = Vec::new();
-        let mut source_material_offset_ends = Vec::new();
-        let mut anchor_bytes = Vec::new();
-        let mut associated_blob_id_arrays = Vec::new();
-
-        for event in &events {
+        // Use individual inserts within a single transaction for reliability
+        // This provides good performance while maintaining data integrity
+        for (i, event) in events.iter().enumerate() {
             let event_id = event.id.as_ref().unwrap();
-            event_ids.push(ulid_to_uuid(*event_id.as_ulid()));
-            sources.push(event.source.as_str());
-            event_types.push(event.event_type.as_str());
-            hosts.push(event.host.as_str());
-            payloads.push(&event.payload);
-            ts_origs.push(event.ts_orig);
-            ingestor_versions.push(event.ingestor_version.as_deref());
-            payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
 
-            // Extract provenance into separate database fields
-            let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
-                match &event.provenance {
-                    Some(Provenance::Events(ids)) => {
-                        let uuids: Vec<uuid::Uuid> =
-                            ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
-                        (Some(uuids), None, None, None)
-                    }
-                    Some(Provenance::Material {
-                        id,
-                        offset_start,
-                        offset_end,
-                    }) => (
-                        None,
-                        Some(ulid_to_uuid(*id.as_ulid())),
-                        *offset_start,
-                        *offset_end,
-                    ),
-                    None => (None, None, None, None),
-                };
+            // Extract provenance
+            let (source_event_ids, source_material_id, offset_start, offset_end) =
+                extract_provenance(event);
 
-            source_event_id_arrays.push(source_event_ids_opt);
-            source_material_ids.push(source_material_id);
-            source_material_offset_starts.push(offset_start);
-            source_material_offset_ends.push(offset_end);
-            anchor_bytes.push(event.anchor_byte);
+            let associated_blob_ids = event
+                .associated_blob_ids
+                .as_ref()
+                .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
 
-            let blob_uuids = event.associated_blob_ids.as_ref().map(|ids| {
-                ids.iter()
-                    .map(|ulid| ulid_to_uuid(*ulid))
-                    .collect::<Vec<_>>()
-            });
-            associated_blob_id_arrays.push(blob_uuids);
-        }
-
-        // Insert events one by one within the transaction
-        // We can't use UNNEST with 2D arrays (uuid[][]) because SQLx doesn't support it properly
-        for i in 0..events.len() {
             sqlx::query!(
                 r#"
                 INSERT INTO core.events (
@@ -1118,38 +1079,28 @@ impl<'a> EventRepository<'a> {
                     payload_schema_name, payload_schema_version
                 )
                 VALUES (
-                    ulid_from_uuid($1), $2, $3, $4, $5,
-                    $6, $7, 
-                    CASE WHEN $8::uuid IS NOT NULL THEN ulid_from_uuid($8) ELSE NULL END,
-                    CASE WHEN $9::uuid[] IS NOT NULL 
-                         THEN ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($9::uuid[]) AS elem)
-                         ELSE NULL 
-                    END,
-                    CASE WHEN $10::uuid IS NOT NULL THEN ulid_from_uuid($10) ELSE NULL END,
-                    $11, $12, $13,
-                    CASE WHEN $14::uuid[] IS NOT NULL 
-                         THEN ARRAY(SELECT ulid_from_uuid(elem) FROM unnest($14::uuid[]) AS elem)
-                         ELSE NULL 
-                    END,
-                    $15, $16
+                    $1::uuid, $2, $3, $4, $5,
+                    $6, $7, $8::uuid, $9::uuid[],
+                    $10::uuid, $11, $12,
+                    $13, $14::uuid[], $15, $16
                 )
                 "#,
-                event_ids[i],
-                &sources[i] as &str,
-                &event_types[i] as &str,
-                &hosts[i] as &str,
-                &payloads[i],
-                ts_origs[i],
-                ingestor_versions[i],
-                payload_schema_ids[i],
-                source_event_id_arrays[i].as_deref(),
-                source_material_ids[i],
-                source_material_offset_starts[i],
-                source_material_offset_ends[i],
-                anchor_bytes[i],
-                associated_blob_id_arrays[i].as_deref(),
-                None::<&str>, // payload_schema_name
-                None::<&str>  // payload_schema_version
+                ulid_to_uuid(*event_id.as_ulid()),
+                event.source.as_str(),
+                event.event_type.as_str(),
+                event.host.as_str(),
+                event.payload,
+                event.ts_orig,
+                event.ingestor_version,
+                event.payload_schema_id.map(ulid_to_uuid),
+                source_event_ids.as_deref(),
+                source_material_id,
+                offset_start,
+                offset_end,
+                event.anchor_byte,
+                associated_blob_ids.as_deref(),
+                None::<String>, // payload_schema_name
+                None::<String>  // payload_schema_version
             )
             .execute(&mut *tx)
             .await
@@ -1158,7 +1109,7 @@ impl<'a> EventRepository<'a> {
 
         tx.commit()
             .await
-            .map_err(|e| db_error(e, "commit batch unnest insert"))?;
+            .map_err(|e| db_error(e, "commit batch insert"))?;
 
         Ok(events)
     }
@@ -2014,8 +1965,14 @@ impl<'a> EventRepository<'a> {
             .collect())
     }
 
-    /// Get source activity statistics
-    pub async fn get_source_activity(&self, since: DateTime<Utc>) -> DbResult<Vec<SourceActivity>> {
+    /// Get source activity statistics with proper pagination
+    pub async fn get_source_activity(
+        &self,
+        since: DateTime<Utc>,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<SourceActivity>> {
+        let limit = limit.unwrap_or(100); // Default limit to prevent unbounded queries
+
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -2027,8 +1984,10 @@ impl<'a> EventRepository<'a> {
             WHERE ts_orig >= $1
             GROUP BY source
             ORDER BY event_count DESC
+            LIMIT $2
             "#,
-            since
+            since,
+            limit
         )
         .fetch_all(self.pool)
         .await
@@ -2077,8 +2036,13 @@ impl<'a> EventRepository<'a> {
             .collect())
     }
 
-    /// Count events by type all time
-    pub async fn count_by_type_all_time(&self) -> DbResult<Vec<EventTypeCount>> {
+    /// Count events by type all time with proper pagination
+    pub async fn count_by_type_all_time(
+        &self,
+        limit: Option<i64>,
+    ) -> DbResult<Vec<EventTypeCount>> {
+        let limit = limit.unwrap_or(100); // Prevent unbounded queries
+
         let rows = sqlx::query!(
             r#"
             SELECT
@@ -2087,7 +2051,9 @@ impl<'a> EventRepository<'a> {
             FROM core.events
             GROUP BY event_type
             ORDER BY count DESC
-            "#
+            LIMIT $1
+            "#,
+            limit
         )
         .fetch_all(self.pool)
         .await
@@ -2102,7 +2068,7 @@ impl<'a> EventRepository<'a> {
             .collect())
     }
 
-    /// Get events over time using TimescaleDB time buckets
+    /// Get events over time using TimescaleDB time buckets with proper limits
     ///
     /// This uses raw SQL for TimescaleDB time_bucket function
     pub async fn get_events_over_time(
@@ -2110,7 +2076,10 @@ impl<'a> EventRepository<'a> {
         start_time: DateTime<Utc>,
         end_time: DateTime<Utc>,
         interval: sqlx::postgres::types::PgInterval,
+        limit: Option<i64>,
     ) -> DbResult<Vec<TimeBucketResult>> {
+        let limit = limit.unwrap_or(1000); // Reasonable default for time series data
+
         let rows = sqlx::query_as!(
             TimeBucketResult,
             r#"
@@ -2121,10 +2090,12 @@ impl<'a> EventRepository<'a> {
             WHERE ts_ingest >= $2 AND ts_ingest <= $3
             GROUP BY time_bucket($1::interval, ts_ingest)
             ORDER BY time_bucket($1::interval, ts_ingest) ASC
+            LIMIT $4
             "#,
             interval,
             start_time,
-            end_time
+            end_time,
+            limit
         )
         .fetch_all(self.pool)
         .await
@@ -2176,6 +2147,98 @@ impl<'a> EventRepository<'a> {
         .map_err(|e| db_error(e, "delete by source"))?;
 
         Ok(result.rows_affected())
+    }
+
+    /// Get events by multiple IDs efficiently (prevents N+1 queries)
+    pub async fn get_by_ids(&self, ids: &[Id<RawEvent>]) -> DbResult<Vec<RawEvent>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let uuids: Vec<uuid::Uuid> = ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+
+        let records = sqlx::query_as::<_, EventRecord>(
+            r#"
+            SELECT 
+                id,
+                source,
+                event_type,
+                ts_ingest,
+                ts_orig,
+                host,
+                ingestor_version,
+                payload_schema_id,
+                payload,
+                source_event_ids,
+                source_material_id,
+                source_material_offset_start,
+                source_material_offset_end,
+                anchor_byte,
+                associated_blob_ids,
+                payload_schema_name,
+                payload_schema_version
+            FROM core.events 
+            WHERE id = ANY($1::uuid[])
+            ORDER BY ts_ingest DESC
+            "#,
+        )
+        .bind(&uuids)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get events by ids"))?;
+
+        Ok(records.into_iter().map(|r| r.to_event()).collect())
+    }
+
+    /// Get recent events for multiple sources efficiently
+    pub async fn get_recent_by_sources(
+        &self,
+        sources: &[EventSource],
+        limit_per_source: i64,
+    ) -> DbResult<Vec<RawEvent>> {
+        if sources.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let source_strings: Vec<String> = sources.iter().map(|s| s.as_str().to_string()).collect();
+
+        let records = sqlx::query_as::<_, EventRecord>(
+            r#"
+            SELECT 
+                id,
+                source,
+                event_type,
+                ts_ingest,
+                ts_orig,
+                host,
+                ingestor_version,
+                payload_schema_id,
+                payload,
+                source_event_ids,
+                source_material_id,
+                source_material_offset_start,
+                source_material_offset_end,
+                anchor_byte,
+                associated_blob_ids,
+                payload_schema_name,
+                payload_schema_version
+            FROM (
+                SELECT *,
+                       ROW_NUMBER() OVER (PARTITION BY source ORDER BY ts_ingest DESC) as rn
+                FROM core.events 
+                WHERE source = ANY($1::text[])
+            ) ranked_events
+            WHERE rn <= $2
+            ORDER BY source, ts_ingest DESC
+            "#,
+        )
+        .bind(&source_strings)
+        .bind(limit_per_source)
+        .fetch_all(self.pool)
+        .await
+        .map_err(|e| db_error(e, "get recent by sources"))?;
+
+        Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 }
 

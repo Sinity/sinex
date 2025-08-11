@@ -103,4 +103,7 @@ impl Default for SearchProcessor {
     }
 }
 
-default_exploration_provider!(SearchProcessor, "Search processor");
+default_exploration_provider!(
+    SearchProcessor,
+    "Search automaton for indexing and query processing"
+);

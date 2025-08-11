@@ -95,7 +95,7 @@ impl TestScenarioBuilder {
         count: usize,
     ) -> Self {
         for i in 0..count {
-            let event = RawEvent::schemaless(
+            let event = RawEvent::new(
                 source.clone(),
                 event_type.clone(),
                 json!({

@@ -111,7 +111,6 @@ pub use sinex_macros::{
     SatelliteProcessor,
 };
 
-// pub mod automaton; // REMOVED - use StatefulStreamProcessor instead
 pub mod annex;
 pub mod checkpoint;
 pub mod cli;
@@ -133,6 +132,7 @@ pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
+pub use crate::default_exploration_provider;
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
@@ -150,6 +150,9 @@ pub use stream_processor::{
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
     StreamProcessorRunner, TimeHorizon,
 };
+
+pub use crate::define_automaton_processor;
+pub use automaton::{BaseAutomatonConfig, BaseAutomatonProcessor};
 
 /// Version information for satellite components
 #[derive(Debug, Clone)]
@@ -346,6 +349,9 @@ pub enum SatelliteError {
 
     #[error("Lifecycle error: {0}")]
     Lifecycle(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 impl From<SatelliteError> for sinex_core::error::SinexError {
@@ -371,6 +377,9 @@ impl From<SatelliteError> for sinex_core::error::SinexError {
             SatelliteError::Automaton(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::Checkpoint(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::Lifecycle(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::NotImplemented(_) => {
+                sinex_core::error::SinexError::unknown(e.to_string())
+            }
         }
     }
 }
