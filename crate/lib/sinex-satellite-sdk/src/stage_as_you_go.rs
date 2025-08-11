@@ -55,11 +55,11 @@
 
 use crate::{grpc_client::IngestClient, SatelliteError, SatelliteResult};
 use color_eyre::eyre::eyre;
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::events::Event;
 use sinex_core::types::{ulid::Ulid, Id};
+use sinex_core::DbPoolExt;
+use sinex_core::RawEvent;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info};
@@ -122,7 +122,7 @@ impl StageAsYouGoContext {
         offset_end: Option<i64>,
     ) -> SatelliteResult<String> {
         // Attach source material provenance to the event
-        event.provenance = Some(sinex_core::db::models::Provenance::Material {
+        event.provenance = Some(sinex_core::Provenance::Material {
             id: source_material_id.into(),
             offset_start,
             offset_end,
@@ -176,7 +176,7 @@ impl StageAsYouGoContext {
 
         source_material_repo
             .finalize_in_flight(
-                Id::<sinex_core::db::repositories::SourceMaterialRecord>::from_ulid(id),
+                Id::<sinex_core::SourceMaterialRecord>::from_ulid(id),
                 blob_id,
                 encoding,
                 content_preview,

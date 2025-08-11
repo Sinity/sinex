@@ -6,9 +6,9 @@ use crate::replay_progress::{ProgressTracker, ReplayPhase};
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
 use sinex_core::db::{repositories::DbPoolExt, DbPool as PgPool};
-use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::RawEvent;
+use sinex_core::{EventSource, EventType};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
@@ -317,7 +317,7 @@ impl ReplayManager {
                         // For complex queries, use get_recent and filter
 
                         // get_recent doesn't support offset, use search instead
-                        use sinex_core::db::repositories::EventSearchFilters;
+                        use sinex_core::EventSearchFilters;
                         self.pool
                             .events()
                             .search(EventSearchFilters {
@@ -345,7 +345,7 @@ impl ReplayManager {
                     // Use get_recent as base query and apply filters
 
                     // get_recent doesn't support offset, use search instead
-                    use sinex_core::db::repositories::EventSearchFilters;
+                    use sinex_core::EventSearchFilters;
                     self.pool
                         .events()
                         .search(EventSearchFilters {

@@ -268,7 +268,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         let event_types = vec![schema_name.clone()];
 
         // Parse source and event_type from schema_name (format: "source.event_type")
-        let (source, event_type) = if let Some(dot_pos) = schema_name.find('.') {
+        let (_source, _event_type) = if let Some(dot_pos) = schema_name.find('.') {
             (&schema_name[..dot_pos], &schema_name[dot_pos + 1..])
         } else {
             ("unknown", schema_name.as_str())
@@ -279,7 +279,7 @@ async fn sync_schemas_to_db(pool: &PgPool, schemas: HashMap<String, Value>) -> R
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&schema_text);
-        let content_hash = format!("{:x}", hasher.finalize());
+        let _content_hash = format!("{:x}", hasher.finalize());
 
         // Insert or update schema
         let id = sqlx::query_scalar!(

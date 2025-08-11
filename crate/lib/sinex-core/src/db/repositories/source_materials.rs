@@ -9,26 +9,8 @@ use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
+use sinex_migrations::schema::records::SourceMaterialRecord;
 use sqlx::PgPool;
-
-/// Source material record matching raw.source_material_registry
-#[derive(Debug, Clone, sqlx::FromRow, Serialize, Deserialize)]
-pub struct SourceMaterialRecord {
-    pub id: Id<SourceMaterialRecord>,
-    pub material_type: String,
-    pub source_uri: Option<String>,
-    pub ingestion_time: DateTime<Utc>,
-    pub encoding: Option<String>,
-    pub metadata: JsonValue,
-    pub content_preview: Option<String>,
-    pub is_archived: bool,
-    pub archive_time: Option<DateTime<Utc>>,
-    pub retention_policy: Option<String>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
-    #[sqlx(rename = "optional_blob_id")]
-    pub blob_id: Option<Id<crate::models::Blob>>,
-}
 
 /// Material type constants
 pub mod material_types {

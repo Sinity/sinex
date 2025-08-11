@@ -549,6 +549,7 @@ async fn check_systemd_compatibility() -> Result<Value> {
     let systemd_version = tokio::process::Command::new("systemctl")
         .arg("--version")
         .output()
+        .await
         .wrap_err("Failed to check systemd version")?;
 
     if !systemd_version.status.success() {
@@ -588,7 +589,7 @@ async fn check_nixos_compatibility() -> Result<Value> {
     }
 }
 
-async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
+pub async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
     // Validate path before file operation to prevent path traversal
     let validated_path = validate_path(path.as_str())
         .wrap_err_with(|| format!("Invalid or dangerous path: {:?}", path))?;

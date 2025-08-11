@@ -31,9 +31,9 @@
 
 use camino::Utf8PathBuf;
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_core::types::events::{AsciinemaSessionEndedPayload, AsciinemaSessionStartedPayload};
+use sinex_core::RawEvent;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::time::{Duration, SystemTime};

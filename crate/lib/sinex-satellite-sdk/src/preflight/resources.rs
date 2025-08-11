@@ -12,6 +12,7 @@ use camino::Utf8Path;
 use color_eyre::eyre::{bail, Context, ContextCompat, Result};
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::net::ToSocketAddrs;
 use tracing::info;
 
 use super::VerificationStatus;

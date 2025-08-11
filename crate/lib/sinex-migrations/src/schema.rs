@@ -15,6 +15,7 @@ pub mod event_relations;
 pub mod knowledge_graph;
 pub mod outbox;
 pub mod processors;
+pub mod records;
 pub mod schemas;
 pub mod source_materials;
 
@@ -28,6 +29,7 @@ pub use event_relations::*;
 pub use knowledge_graph::*;
 pub use outbox::*;
 pub use processors::*;
+pub use records::*;
 pub use schemas::*;
 pub use source_materials::*;
 

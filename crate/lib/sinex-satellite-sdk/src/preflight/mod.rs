@@ -23,7 +23,7 @@ pub mod resources;
 pub mod services;
 pub mod verification;
 
-pub use configuration::validate_toml_file;
+// validate_toml_file is now private to the configuration module
 pub use services::verify_service_dependencies;
 pub use verification::run_preflight_checks;
 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
+use sinex_core::{RawEvent, SystemHealthSummaryPayload, HealthStatus as PayloadHealthStatus, ComponentHealth};
 use sinex_satellite_sdk::{
     automaton::{
         EventFilter, HotlogAutomaton, HotlogAutomatonContext, HotlogAutomatonEvent,

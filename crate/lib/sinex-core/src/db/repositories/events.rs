@@ -8,6 +8,7 @@ use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaV
 use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
+use sinex_migrations::schema::EventRecord;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
 
@@ -30,34 +31,7 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
     type Table = Events;
 }
 
-/// Database record for events table
-///
-/// This struct matches the database schema exactly and is used for
-/// sqlx query_as! macros. It serves as an intermediate representation
-/// between the database and the domain model.
-#[derive(Debug, FromRow)]
-pub struct EventRecord {
-    pub id: uuid::Uuid,
-    pub source: String,
-    pub event_type: String,
-    pub host: String,
-    pub payload: JsonValue,
-    pub ts_orig: Option<DateTime<Utc>>,
-    pub ts_ingest: DateTime<Utc>,
-    pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<uuid::Uuid>,
-    // Provenance fields - separate in database
-    pub source_event_ids: Option<Vec<uuid::Uuid>>,
-    pub source_material_id: Option<uuid::Uuid>,
-    pub source_material_offset_start: Option<i64>,
-    pub source_material_offset_end: Option<i64>,
-    pub anchor_byte: Option<i64>,
-    pub associated_blob_ids: Option<Vec<uuid::Uuid>>,
-    // Schema fields
-    pub payload_schema_name: Option<String>,
-    pub payload_schema_version: Option<String>,
-}
-
+// Extension methods for EventRecord from sinex-migrations
 impl EventRecord {
     /// Convert database record to domain Event
     pub fn to_event(self) -> RawEvent {
@@ -1261,16 +1235,82 @@ impl<'a> EventRepository<'a> {
         id: Id<EventPayloadSchema>,
         is_active: bool,
     ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            "UPDATE sinex_schemas.event_payload_schemas SET is_active = $2, updated_at = NOW() WHERE id = $1",
-            *id.as_ulid() as _,
-            is_active
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "set schema active status"))?;
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema status update transaction"))?;
 
-        Ok(result.rows_affected() > 0)
+        // Get current schema details for event emission
+        let schema_details = sqlx::query!(
+            "SELECT schema_name, schema_version, is_active FROM sinex_schemas.event_payload_schemas WHERE id = $1",
+            *id.as_ulid() as _
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "get schema details for status update"))?;
+
+        if let Some(schema) = schema_details {
+            // Emit schema status change intent event BEFORE state change
+            let schema_status_intent_event = RawEvent::new(
+                EventSource::new("sinex.schema.lifecycle".to_string()),
+                EventType::new("schema.status_change_intent".to_string()),
+                serde_json::json!({
+                    "schema_id": id.as_ulid().to_string(),
+                    "schema_name": schema.schema_name,
+                    "schema_version": schema.schema_version,
+                    "current_status": schema.is_active,
+                    "new_status": is_active,
+                    "change_type": if is_active { "activate" } else { "deactivate" }
+                }),
+            )
+            .with_host(HostName::new("sinex.schema".to_string()));
+
+            self.insert_with_tx(&mut tx, schema_status_intent_event)
+                .await?;
+
+            // Perform the status update
+            let result = sqlx::query!(
+                "UPDATE sinex_schemas.event_payload_schemas SET is_active = $2, updated_at = NOW() WHERE id = $1",
+                *id.as_ulid() as _,
+                is_active
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "set schema active status"))?;
+
+            let rows_affected = result.rows_affected() > 0;
+
+            if rows_affected {
+                // Emit schema status changed confirmation event after successful update
+                let schema_status_changed_event = RawEvent::new(
+                    EventSource::new("sinex.schema.lifecycle".to_string()),
+                    EventType::new("schema.status_changed".to_string()),
+                    serde_json::json!({
+                        "schema_id": id.as_ulid().to_string(),
+                        "schema_name": schema.schema_name,
+                        "schema_version": schema.schema_version,
+                        "previous_status": schema.is_active,
+                        "new_status": is_active,
+                        "change_type": if is_active { "activate" } else { "deactivate" }
+                    }),
+                )
+                .with_host(HostName::new("sinex.schema".to_string()));
+
+                self.insert_with_tx(&mut tx, schema_status_changed_event)
+                    .await?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit schema status update transaction"))?;
+
+            Ok(rows_affected)
+        } else {
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     /// Deprecate a schema with reason
@@ -1279,24 +1319,90 @@ impl<'a> EventRepository<'a> {
         id: Id<EventPayloadSchema>,
         deprecation_reason: &str,
     ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE sinex_schemas.event_payload_schemas 
-            SET 
-                is_active = false,
-                deprecated_at = NOW(),
-                deprecation_reason = $2,
-                updated_at = NOW()
-            WHERE id = $1
-            "#,
-            *id.as_ulid() as _,
-            deprecation_reason
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "deprecate schema"))?;
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin schema deprecation transaction"))?;
 
-        Ok(result.rows_affected() > 0)
+        // Get current schema details for event emission
+        let schema_details = sqlx::query!(
+            "SELECT schema_name, schema_version, is_active, deprecated_at FROM sinex_schemas.event_payload_schemas WHERE id = $1",
+            *id.as_ulid() as _
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "get schema details for deprecation"))?;
+
+        if let Some(schema) = schema_details {
+            // Emit schema deprecation intent event BEFORE state change
+            let schema_deprecation_intent_event = RawEvent::new(
+                EventSource::new("sinex.schema.lifecycle".to_string()),
+                EventType::new("schema.deprecation_intent".to_string()),
+                serde_json::json!({
+                    "schema_id": id.as_ulid().to_string(),
+                    "schema_name": schema.schema_name,
+                    "schema_version": schema.schema_version,
+                    "current_status": schema.is_active,
+                    "already_deprecated": schema.deprecated_at.is_some(),
+                    "deprecation_reason": deprecation_reason
+                }),
+            )
+            .with_host(HostName::new("sinex.schema".to_string()));
+
+            self.insert_with_tx(&mut tx, schema_deprecation_intent_event)
+                .await?;
+
+            // Perform the deprecation
+            let result = sqlx::query!(
+                r#"
+                UPDATE sinex_schemas.event_payload_schemas 
+                SET 
+                    is_active = false,
+                    deprecated_at = NOW(),
+                    deprecation_reason = $2,
+                    updated_at = NOW()
+                WHERE id = $1
+                "#,
+                *id.as_ulid() as _,
+                deprecation_reason
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "deprecate schema"))?;
+
+            let rows_affected = result.rows_affected() > 0;
+
+            if rows_affected {
+                // Emit schema deprecated confirmation event after successful deprecation
+                let schema_deprecated_event = RawEvent::new(
+                    EventSource::new("sinex.schema.lifecycle".to_string()),
+                    EventType::new("schema.deprecated".to_string()),
+                    serde_json::json!({
+                        "schema_id": id.as_ulid().to_string(),
+                        "schema_name": schema.schema_name,
+                        "schema_version": schema.schema_version,
+                        "previous_status": schema.is_active,
+                        "was_already_deprecated": schema.deprecated_at.is_some(),
+                        "deprecation_reason": deprecation_reason
+                    }),
+                )
+                .with_host(HostName::new("sinex.schema".to_string()));
+
+                self.insert_with_tx(&mut tx, schema_deprecated_event)
+                    .await?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit schema deprecation transaction"))?;
+
+            Ok(rows_affected)
+        } else {
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     /// List schemas with optional filters

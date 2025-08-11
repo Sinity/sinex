@@ -44,10 +44,10 @@ use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
 use sinex_core::db::telemetry::telemetry::TelemetryAccumulator;
 use sinex_core::db::SqlxPgPool as PgPool;
 use sinex_core::types::ulid::Ulid;
+use sinex_core::RawEvent;
 use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -649,13 +649,7 @@ pub trait StatefulStreamProcessor: Send + Sync {
         )))
     }
 
-    // TODO: Define event filtering after NatsStreamConsumer removal
-    // Event filtering should be integrated into the scan method per TARGET_canonical.md
-    //
-    // /// Get event filters for NATS consumption (automata only)
-    // fn event_filters(&self) -> Vec<EventFilter> {
-    //     Vec::new()
-    // }
+    // Event filtering is now integrated into scan methods per satellite architecture
 
     /// Graceful shutdown
     async fn shutdown(&mut self) -> SatelliteResult<()> {

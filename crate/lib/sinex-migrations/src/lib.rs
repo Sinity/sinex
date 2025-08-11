@@ -35,7 +35,6 @@ mod m20250810_000001_create_outbox_table;
 mod m20250810_000006_add_archive_trigger;
 mod m20250810_132050_drop_obsolete_artifact_tables;
 mod m20250811_000002_add_path_validation_functions;
-pub mod schema;
 
 pub struct Migrator;
 

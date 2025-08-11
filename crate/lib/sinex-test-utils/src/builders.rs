@@ -72,8 +72,8 @@ impl TestCheckpointBuilder {
 
     /// Insert the checkpoint
     pub async fn insert(self, pool: &DbPool) -> Result<()> {
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
 
         let processor_name = ProcessorName::new(&self.processor_name);
         let group = ConsumerGroup::new(

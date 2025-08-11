@@ -195,16 +195,6 @@ impl HealthAggregator {
         Ok(Some(event))
     }
 
-    // TODO: Remove event_filters after NatsStreamConsumer removal
-    // /// Get event filters for this automaton
-    // fn event_filters() -> Vec<NatsEventFilter> {
-    //     vec![
-    //         NatsEventFilter {
-    //             sources: vec!["journald".to_string()],
-    //             event_types: vec!["satellite.heartbeat".to_string()],
-    //         },
-    //     ]
-    // }
 }
 
 

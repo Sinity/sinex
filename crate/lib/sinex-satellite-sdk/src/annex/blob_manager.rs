@@ -43,20 +43,20 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::Utc;
 use color_eyre::eyre::{bail, eyre, Context, Result};
-use sinex_core::db::models::{Blob, RawEvent};
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::DbPool;
 use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, Event, StorageStatisticsPayload,
 };
 use sinex_core::types::{ulid::Ulid, validate_path, Id};
+use sinex_core::DbPoolExt;
+use sinex_core::{Blob, RawEvent};
 use std::time::Instant;
 use tracing::{debug, info};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
 
 // Re-export Blob type for compatibility
-pub use sinex_core::db::models::Blob as BlobMetadata;
+pub use sinex_core::Blob as BlobMetadata;
 
 #[derive(Debug)]
 pub struct BlobManager {
@@ -189,7 +189,7 @@ impl BlobManager {
         content_type: &str,
     ) -> Result<BlobMetadata> {
         info!("Ingesting {} bytes as {}", content.len(), filename);
-        let start = Instant::now();
+        let _start = Instant::now();
 
         // Compute BLAKE3 hash for deduplication
         let blake3_hash = blake3::hash(content).to_hex().to_string();
@@ -295,7 +295,7 @@ impl BlobManager {
 
     /// Retrieve blob content as bytes
     pub async fn retrieve_content(&self, annex_key: &str) -> Result<Vec<u8>> {
-        let start = Instant::now();
+        let _start = Instant::now();
 
         // Ensure content is available locally
         self.annex.get_content(annex_key).await?;
@@ -328,7 +328,7 @@ impl BlobManager {
 
     /// Retrieve a blob's content path
     pub async fn get_blob_path(&self, blob_id: &Ulid) -> Result<Utf8PathBuf> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let blob = self.get_blob_metadata(blob_id).await?;
 
         // Ensure content is available locally
@@ -355,7 +355,7 @@ impl BlobManager {
 
     /// Verify blob integrity
     pub async fn verify_blob(&self, blob_id: &Ulid) -> Result<bool> {
-        let start = Instant::now();
+        let _start = Instant::now();
         let _blob = self.get_blob_metadata(blob_id).await?;
 
         // Run git-annex fsck on specific key
@@ -498,7 +498,7 @@ impl BlobManager {
 
         let blob_count = stats.total_blobs;
         let total_size = stats.total_size_bytes;
-        let failed_count = stats.failed_verifications.unwrap_or(0);
+        let failed_count = 0; // TODO: Add failed_verifications field to StorageStats if needed
 
         // Insert metric event using EventRepository
         let new_event: RawEvent = Event::new(StorageStatisticsPayload {

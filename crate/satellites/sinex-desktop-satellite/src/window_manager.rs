@@ -554,7 +554,7 @@ impl WindowManagerWatcher {
                     window_id: window_address.to_string(),
                     window_class: class.to_string(),
                     window_title: title.to_string(),
-                    workspace_id: 0, // TODO: Get actual workspace ID
+                    workspace_id: 0, // TODO(desktop-satellite): Get actual workspace ID from Hyprland IPC
                     previous_window_id: self.current_focused_window.clone(),
                 })
                 .into();
@@ -589,14 +589,14 @@ impl WindowManagerWatcher {
                     window_class: window_class.to_string(),
                     window_title: window_title.to_string(),
                     workspace_id: self.parse_id(&workspace_id, "workspace_id"),
-                    monitor_id: 0, // TODO: Get actual monitor ID
+                    monitor_id: 0, // TODO(desktop-satellite): Get actual monitor ID from Hyprland IPC
                     geometry: sinex_core::types::events::WindowGeometry {
                         x: 0,
                         y: 0,
                         width: 0,
                         height: 0,
-                    }, // TODO: Get actual geometry
-                    floating: false, // TODO: Get actual floating state
+                    }, // TODO(desktop-satellite): Get actual geometry from window info
+                    floating: false, // TODO(desktop-satellite): Get actual floating state from window info
                 })
                 .into();
 
@@ -633,9 +633,9 @@ impl WindowManagerWatcher {
 
         let event: RawEvent = Event::new(sinex_core::types::events::HyprlandWindowClosedPayload {
             window_id: window_address.to_string(),
-            window_class: String::new(), // TODO: Get from cache
-            window_title: String::new(), // TODO: Get from cache
-            workspace_id: 0,             // TODO: Get from cache
+            window_class: String::new(), // TODO(desktop-satellite): Get from cached window info
+            window_title: String::new(), // TODO(desktop-satellite): Get from cached window info
+            workspace_id: 0,             // TODO(desktop-satellite): Get from cached workspace info
             close_reason: None,
         })
         .into();
@@ -697,8 +697,8 @@ impl WindowManagerWatcher {
                     .map(|w| self.parse_id(w, "current_workspace_id"))
                     .unwrap_or(0),
                 to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
-                monitor_id: 0,          // TODO: Get actual monitor ID
-                active_window_id: None, // TODO: Get active window
+                monitor_id: 0,          // TODO(desktop-satellite): Get actual monitor ID from Hyprland
+                active_window_id: None, // TODO(desktop-satellite): Get active window from workspace state
             },
         )
         .into();

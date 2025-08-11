@@ -29,12 +29,15 @@ use crate::test_context::TestContext;
 use chrono::{Duration, Utc};
 use futures::future::BoxFuture;
 use serde_json::json;
-use sinex_core::db::models::*;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sinex_core::types::events::payloads::{
     ClipboardCopiedPayload, FileCreatedPayload, KittyCommandCompletedPayload,
 };
 use sinex_core::types::events::Event;
+use sinex_core::{
+    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+    OperationRecord, Provenance, RawEvent, SourceMaterial,
+};
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -793,7 +796,7 @@ pub(crate) async fn pre_warmed_database(
 }
 
 async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
-    use sinex_core::types::domain::*;
+    use sinex_core::*;
 
     let event_count = 5000;
     let checkpoint_count = 10;
@@ -1194,7 +1197,7 @@ mod tests {
         let count = ctx
             .pool
             .events()
-            .count_by_source(&sinex_core::types::domain::EventSource::from("test"))
+            .count_by_source(&sinex_core::EventSource::from("test"))
             .await?;
         assert_eq!(count, 0, "Test data should be cleaned");
 
@@ -1212,7 +1215,7 @@ mod tests {
 
         // Verify checkpoints exist
         for name in &fixture.processor_names {
-            let processor_name = sinex_core::types::domain::ProcessorName::from(name.as_str());
+            let processor_name = sinex_core::ProcessorName::from(name.as_str());
             let checkpoint = ctx
                 .pool
                 .checkpoints()
@@ -1314,7 +1317,7 @@ mod tests {
         assert_eq!(result, 42);
 
         // Transaction should be rolled back
-        let source_ref = sinex_core::types::domain::EventSource::from("tx_test");
+        let source_ref = sinex_core::EventSource::from("tx_test");
         let count = ctx.pool.events().count_by_source(&source_ref).await? as usize;
         assert_eq!(count, 0, "Transaction should be rolled back");
 
@@ -1379,7 +1382,7 @@ mod tests {
         assert_eq!(event_ids.len(), 7); // 1 + 5 + 1
 
         // Verify all events exist
-        let source_ref = sinex_core::types::domain::EventSource::from("scenario");
+        let source_ref = sinex_core::EventSource::from("scenario");
         let events = ctx
             .pool
             .events()
@@ -1433,7 +1436,7 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_error_propagation(ctx: TestContext) -> Result<()> {
         // Test error propagation by trying to query non-existent data
-        let id = sinex_core::types::Id::<sinex_core::db::models::RawEvent>::new();
+        let id = sinex_core::types::Id::<sinex_core::RawEvent>::new();
         let result = ctx.pool.events().get_by_id(id).await;
 
         assert!(result.is_err());

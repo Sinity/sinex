@@ -241,7 +241,7 @@ impl LifecycleManager {
                                 service = %service_name,
                                 "Status mutex was poisoned during health check failure, recovering"
                             );
-                            *poisoned.get_mut() = ServiceStatus::Failed;
+                            **poisoned.get_mut() = ServiceStatus::Failed;
                         }
                     }
 

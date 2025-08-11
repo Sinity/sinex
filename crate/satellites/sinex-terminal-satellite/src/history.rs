@@ -5,7 +5,6 @@
 
 use camino::Utf8PathBuf;
 use notify::{Config, Event as NotifyEvent, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_core::types::events::{
     BashHistoricalCommandPayload, FishHistoricalCommandPayload, ZshHistoricalCommandPayload,
@@ -13,6 +12,7 @@ use sinex_core::types::events::{
 use sinex_core::types::validation::{
     validate_discovered_file, validate_watch_paths, FileWatchingSecurityPolicy,
 };
+use sinex_core::RawEvent;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::HashMap;
 use std::fs::{self, File};

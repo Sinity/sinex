@@ -8,12 +8,12 @@ use dbus::channel::MatchingReceiver;
 use dbus::message::{MatchRule, MessageType};
 use dbus_tokio::connection;
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::{
     DbusBluetoothDeviceChangedPayload, DbusDeviceConnectedPayload, DbusMediaStateChangedPayload,
     DbusMethodCalledPayload, DbusMountEventPayload, DbusNetworkStateChangedPayload,
     DbusNotificationSentPayload, DbusPowerStateChangedPayload, DbusSignalPayload, Event,
 };
+use sinex_core::RawEvent;
 use sinex_satellite_sdk::SatelliteResult;
 use std::{collections::HashMap, fmt, str::FromStr, time::Duration};
 use tokio::sync::mpsc;

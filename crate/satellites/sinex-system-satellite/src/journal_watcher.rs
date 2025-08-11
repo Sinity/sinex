@@ -3,8 +3,8 @@
 //! This module provides systemd journal monitoring with historical import,
 //! cursor-based position tracking, rich metadata extraction, and batch processing.
 
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
+use sinex_core::RawEvent;
 
 use crate::payloads::*;
 use sinex_core::types::events::{

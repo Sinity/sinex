@@ -210,6 +210,28 @@ impl<'a> StateRepository<'a> {
             "create"
         };
 
+        // Emit checkpoint save event BEFORE state change
+        let checkpoint_save_intent_event = RawEvent::new(
+            EventSource::new("sinex.state.checkpoint".to_string()),
+            EventType::new("checkpoint.save_intent".to_string()),
+            serde_json::json!({
+                "processor_name": checkpoint.processor_name.as_ref(),
+                "consumer_group": consumer_group.as_ref(),
+                "consumer_name": consumer_name.as_ref(),
+                "operation_type": operation_type,
+                "last_processed_id": checkpoint.last_processed_id.as_ref().map(|id| id.as_ulid().to_string()),
+                "last_processed_ts": checkpoint.last_processed_ts,
+                "checkpoint_data": checkpoint.checkpoint_data,
+                "state_data": checkpoint.state_data,
+                "existing_checkpoint_id": existing_checkpoint.as_ref().map(|cp| cp.id.to_string()),
+                "existing_version": existing_checkpoint.as_ref().map(|cp| cp.checkpoint_version)
+            })
+        )
+        .with_host(HostName::new("sinex.state".to_string()));
+
+        self.emit_state_change_event_tx(&mut tx, checkpoint_save_intent_event)
+            .await?;
+
         // Perform the checkpoint upsert
         let result = sqlx::query_as!(
             CheckpointRecord,
@@ -256,7 +278,7 @@ impl<'a> StateRepository<'a> {
         .await
         .map_err(|e| db_error(e, "save checkpoint"))?;
 
-        // Emit checkpoint saved event AFTER the state change (but still in transaction)
+        // Emit checkpoint saved confirmation event AFTER the state change (but still in transaction)
         // This ensures the checkpoint_id is available from the RETURNING clause
         let checkpoint_saved_event = RawEvent::new(
             EventSource::new("sinex.state.checkpoint".to_string()),
@@ -385,6 +407,25 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "fetch checkpoint before deletion"))?;
 
         if let Some(checkpoint) = checkpoint_to_delete {
+            // Emit checkpoint delete intent event BEFORE state change
+            let checkpoint_delete_intent_event = RawEvent::new(
+                EventSource::new("sinex.state.checkpoint".to_string()),
+                EventType::new("checkpoint.delete_intent".to_string()),
+                serde_json::json!({
+                    "processor_name": processor_name,
+                    "consumer_group": checkpoint.consumer_group,
+                    "consumer_name": checkpoint.consumer_name,
+                    "checkpoint_id": checkpoint.id.as_ulid().to_string(),
+                    "last_processed_count": checkpoint.processed_count,
+                    "deleted_by": actor,
+                    "reason": reason
+                }),
+            )
+            .with_host(HostName::new("sinex.state".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, checkpoint_delete_intent_event)
+                .await?;
+
             // Log the deletion operation to operations_log
             let deletion_operation = Operation::builder()
                 .actor(actor.to_string())
@@ -430,25 +471,6 @@ impl<'a> StateRepository<'a> {
             .await
             .map_err(|e| db_error(e, "log deletion operation"))?;
 
-            // Emit checkpoint deleted event for event sourcing
-            let checkpoint_deleted_event = RawEvent::new(
-                EventSource::new("sinex.state.checkpoint".to_string()),
-                EventType::new("checkpoint.deleted".to_string()),
-                serde_json::json!({
-                    "processor_name": processor_name,
-                    "consumer_group": checkpoint.consumer_group,
-                    "consumer_name": checkpoint.consumer_name,
-                    "checkpoint_id": checkpoint.id.as_ulid().to_string(),
-                    "last_processed_count": checkpoint.processed_count,
-                    "deleted_by": actor,
-                    "reason": reason
-                }),
-            )
-            .with_host(HostName::new("sinex.state".to_string()));
-
-            self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
-                .await?;
-
             // Now perform the actual hard deletion
             let result = sqlx::query!(
                 r#"
@@ -462,6 +484,26 @@ impl<'a> StateRepository<'a> {
             .execute(&mut *tx)
             .await
             .map_err(|e| db_error(e, "delete checkpoint"))?;
+
+            // Emit checkpoint deleted confirmation event after successful deletion
+            let checkpoint_deleted_event = RawEvent::new(
+                EventSource::new("sinex.state.checkpoint".to_string()),
+                EventType::new("checkpoint.deleted".to_string()),
+                serde_json::json!({
+                    "processor_name": processor_name,
+                    "consumer_group": checkpoint.consumer_group,
+                    "consumer_name": checkpoint.consumer_name,
+                    "checkpoint_id": checkpoint.id.as_ulid().to_string(),
+                    "last_processed_count": checkpoint.processed_count,
+                    "deleted_by": actor,
+                    "reason": reason,
+                    "rows_affected": result.rows_affected()
+                }),
+            )
+            .with_host(HostName::new("sinex.state".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
+                .await?;
 
             tx.commit()
                 .await
@@ -482,10 +524,39 @@ impl<'a> StateRepository<'a> {
         // Validate the scope
         Self::validate_replay_scope(&operation.scope)?;
 
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin operation logging transaction"))?;
+
         let id = Id::<Operation>::new();
         let started_at = operation.started_at.unwrap_or_else(Utc::now);
         let state = operation.state.unwrap_or_else(|| "planning".to_string());
 
+        // Emit operation log intent event BEFORE state change
+        let operation_log_intent_event = RawEvent::new(
+            EventSource::new("sinex.operations.log".to_string()),
+            EventType::new("operation.log_intent".to_string()),
+            serde_json::json!({
+                "operation_id": id.as_ulid().to_string(),
+                "actor": operation.actor,
+                "scope": operation.scope,
+                "state": state,
+                "preview_summary": operation.preview_summary,
+                "started_at": started_at,
+                "finished_at": operation.finished_at,
+                "outcome": operation.outcome,
+                "error_details": operation.error_details
+            })
+        )
+        .with_host(HostName::new("sinex.operations".to_string()));
+
+        self.emit_state_change_event_tx(&mut tx, operation_log_intent_event)
+            .await?;
+
+        // Perform the operation logging
         let result = sqlx::query_as!(
             OperationRecord,
             r#"
@@ -520,9 +591,34 @@ impl<'a> StateRepository<'a> {
             operation.outcome,
             operation.error_details
         )
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| db_error(e, "log operation"))?;
+
+        // Emit operation logged confirmation event after successful logging
+        let operation_logged_event = RawEvent::new(
+            EventSource::new("sinex.operations.log".to_string()),
+            EventType::new("operation.logged".to_string()),
+            serde_json::json!({
+                "operation_id": result.id.as_ulid().to_string(),
+                "actor": result.actor,
+                "scope": result.scope,
+                "state": result.state,
+                "preview_summary": result.preview_summary,
+                "started_at": result.started_at,
+                "finished_at": result.finished_at,
+                "outcome": result.outcome,
+                "error_details": result.error_details
+            })
+        )
+        .with_host(HostName::new("sinex.operations".to_string()));
+
+        self.emit_state_change_event_tx(&mut tx, operation_logged_event)
+            .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit operation logging transaction"))?;
 
         Ok(result)
     }
@@ -883,25 +979,138 @@ impl<'a> StateRepository<'a> {
         version: &str,
         status: &str,
     ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE core.processor_manifests
-            SET deployment_status = $1, updated_at = NOW()
-            WHERE processor_name = $2 AND version = $3
-            "#,
-            status,
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin processor status update transaction"))?;
+
+        // Get current processor details for event emission
+        let processor_details = sqlx::query!(
+            "SELECT deployment_status, processor_type, description FROM core.processor_manifests WHERE processor_name = $1 AND version = $2",
             processor_name.as_ref(),
             version
         )
-        .execute(self.pool)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| db_error(e, "update processor status"))?;
+        .map_err(|e| db_error(e, "get processor details for status update"))?;
 
-        Ok(result.rows_affected() > 0)
+        if let Some(processor) = processor_details {
+            // Emit processor status change intent event BEFORE state change
+            let processor_status_intent_event = RawEvent::new(
+                EventSource::new("sinex.processor.lifecycle".to_string()),
+                EventType::new("processor.status_change_intent".to_string()),
+                serde_json::json!({
+                    "processor_name": processor_name.as_ref(),
+                    "version": version,
+                    "processor_type": processor.processor_type,
+                    "description": processor.description,
+                    "current_status": processor.deployment_status,
+                    "new_status": status
+                }),
+            )
+            .with_host(HostName::new("sinex.processor".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, processor_status_intent_event)
+                .await?;
+
+            // Perform the status update
+            let result = sqlx::query!(
+                r#"
+                UPDATE core.processor_manifests
+                SET deployment_status = $1, updated_at = NOW()
+                WHERE processor_name = $2 AND version = $3
+                "#,
+                status,
+                processor_name.as_ref(),
+                version
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "update processor status"))?;
+
+            let rows_affected = result.rows_affected() > 0;
+
+            if rows_affected {
+                // Emit processor status changed confirmation event after successful update
+                let processor_status_changed_event = RawEvent::new(
+                    EventSource::new("sinex.processor.lifecycle".to_string()),
+                    EventType::new("processor.status_changed".to_string()),
+                    serde_json::json!({
+                        "processor_name": processor_name.as_ref(),
+                        "version": version,
+                        "processor_type": processor.processor_type,
+                        "description": processor.description,
+                        "previous_status": processor.deployment_status,
+                        "new_status": status
+                    }),
+                )
+                .with_host(HostName::new("sinex.processor".to_string()));
+
+                self.emit_state_change_event_tx(&mut tx, processor_status_changed_event)
+                    .await?;
+            }
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit processor status update transaction"))?;
+
+            Ok(rows_affected)
+        } else {
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     /// Mark stale processors as inactive
     pub async fn mark_stale_processors(&self, stale_threshold: DateTime<Utc>) -> DbResult<i64> {
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin mark stale processors transaction"))?;
+
+        // Get stale processors for event emission
+        let stale_processors = sqlx::query!(
+            r#"
+            SELECT processor_name, version, deployment_status, processor_type, description, updated_at
+            FROM core.processor_manifests 
+            WHERE deployment_status != 'inactive' AND updated_at < $1
+            "#,
+            stale_threshold
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "get stale processors"))?;
+
+        if !stale_processors.is_empty() {
+            // Emit bulk processor stale marking intent event BEFORE state change
+            let stale_processors_intent_event = RawEvent::new(
+                EventSource::new("sinex.processor.lifecycle".to_string()),
+                EventType::new("processors.mark_stale_intent".to_string()),
+                serde_json::json!({
+                    "stale_threshold": stale_threshold,
+                    "processor_count": stale_processors.len(),
+                    "processors": stale_processors.iter().map(|p| {
+                        serde_json::json!({
+                            "processor_name": p.processor_name,
+                            "version": p.version,
+                            "current_status": p.deployment_status,
+                            "processor_type": p.processor_type,
+                            "last_updated": p.updated_at
+                        })
+                    }).collect::<Vec<_>>()
+                }),
+            )
+            .with_host(HostName::new("sinex.processor".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, stale_processors_intent_event)
+                .await?;
+        }
+
+        // Perform the bulk status update
         let result = sqlx::query!(
             r#"
             UPDATE core.processor_manifests
@@ -910,11 +1119,42 @@ impl<'a> StateRepository<'a> {
             "#,
             stale_threshold
         )
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "mark stale processors"))?;
 
-        Ok(result.rows_affected() as i64)
+        let rows_affected = result.rows_affected();
+
+        if rows_affected > 0 {
+            // Emit processors marked stale confirmation event after successful update
+            let processors_marked_stale_event = RawEvent::new(
+                EventSource::new("sinex.processor.lifecycle".to_string()),
+                EventType::new("processors.marked_stale".to_string()),
+                serde_json::json!({
+                    "stale_threshold": stale_threshold,
+                    "processors_affected": rows_affected,
+                    "processors": stale_processors.iter().map(|p| {
+                        serde_json::json!({
+                            "processor_name": p.processor_name,
+                            "version": p.version,
+                            "previous_status": p.deployment_status,
+                            "new_status": "inactive",
+                            "processor_type": p.processor_type
+                        })
+                    }).collect::<Vec<_>>()
+                }),
+            )
+            .with_host(HostName::new("sinex.processor".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, processors_marked_stale_event)
+                .await?;
+        }
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit mark stale processors transaction"))?;
+
+        Ok(rows_affected as i64)
     }
 
     /// Get processor health status

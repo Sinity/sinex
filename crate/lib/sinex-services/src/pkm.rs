@@ -3,12 +3,12 @@
 use crate::error::{Result as ServiceResult, SinexError};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::db::models::Entity as DbEntity;
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
 use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::types::Id;
+use sinex_core::Entity as DbEntity;
+use sinex_core::RawEvent;
+use sinex_core::{CreateEntity, CreateEntityRelation, DbPoolExt, SourceMaterial};
 use std::collections::HashMap;
 use std::convert::From;
 use tracing::{debug, info};
@@ -323,7 +323,7 @@ impl PkmService {
         mime_type: Option<&str>,
     ) -> ServiceResult<()> {
         use sha2::{Digest, Sha256};
-        use sinex_core::db::models::Blob;
+        use sinex_core::Blob;
 
         let (blake3_checksum, sha256_checksum) = calculate_checksums(content);
 

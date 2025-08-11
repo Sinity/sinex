@@ -43,9 +43,9 @@ use crate::timing_utils::TimingUtils;
 use color_eyre::eyre::Result;
 use parking_lot::Mutex;
 use serde_json::Value as JsonValue;
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::{DbPoolExt, EnhancedRepository};
 use sinex_core::types::{DbPool, Ulid};
+use sinex_core::RawEvent;
+use sinex_core::{DbPoolExt, EnhancedRepository};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 

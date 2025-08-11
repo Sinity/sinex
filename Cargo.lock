@@ -4713,10 +4713,15 @@ name = "sinex-migrations"
 version = "0.4.2"
 dependencies = [
  "async-trait",
+ "chrono",
  "color-eyre",
  "sea-orm-migration",
  "sea-query 0.30.7",
+ "serde_json",
+ "sqlx",
  "tokio",
+ "ulid",
+ "uuid",
 ]
 
 [[package]]

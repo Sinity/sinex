@@ -19,7 +19,7 @@
 //!
 //! Access repositories through the `DbPoolExt` trait:
 //! ```rust
-//! use sinex_core::db::repositories::DbPoolExt;
+//! use sinex_core::DbPoolExt;
 //!
 //! let events = pool.events().get_recent(100).await?;
 //! let checkpoint = pool.checkpoints().get_latest("processor").await?;
@@ -52,8 +52,7 @@ pub use knowledge_graph::{
     EntityRelationRecord, EntityType, KnowledgeGraphRepository,
 };
 pub use source_materials::{
-    material_types, SourceMaterial, SourceMaterialExt, SourceMaterialRecord,
-    SourceMaterialRepository,
+    material_types, SourceMaterial, SourceMaterialExt, SourceMaterialRepository,
 };
 pub use state::{
     Operation, OperationRecord, OperationStatistics, StateRepository, SystemHealthReport,

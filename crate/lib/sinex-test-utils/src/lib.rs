@@ -517,12 +517,12 @@ pub fn test_event_types() -> Vec<(&'static str, &'static str)> {
 }
 
 #[fixture]
-pub fn test_event_sources() -> Vec<sinex_core::types::domain::EventSource> {
+pub fn test_event_sources() -> Vec<sinex_core::EventSource> {
     vec![
-        sinex_core::types::domain::EventSource::from_static("fs-watcher"),
-        sinex_core::types::domain::EventSource::from_static("terminal"),
-        sinex_core::types::domain::EventSource::from_static("desktop"),
-        sinex_core::types::domain::EventSource::from_static("system"),
+        sinex_core::EventSource::from_static("fs-watcher"),
+        sinex_core::EventSource::from_static("terminal"),
+        sinex_core::EventSource::from_static("desktop"),
+        sinex_core::EventSource::from_static("system"),
     ]
 }
 
@@ -570,12 +570,15 @@ mod tests {
     use crate::sinex_test;
     use rstest::rstest;
     use serde_json::json;
-    use sinex_core::db::models::*;
-    use sinex_core::db::repositories::DbPoolExt;
-    use sinex_core::types::domain::*;
     use sinex_core::types::error::*;
     use sinex_core::types::events::*;
     use sinex_core::types::{Id, Ulid};
+    use sinex_core::DbPoolExt;
+    use sinex_core::*;
+    use sinex_core::{
+        Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+        OperationRecord, Provenance, RawEvent, SourceMaterial,
+    };
 
     // ==== Self-Tests: Demonstrating sinex-test-utils capabilities ====
     //

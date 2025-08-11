@@ -27,7 +27,7 @@ use crate::proto::{
     RawEvent as ProtoRawEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
-use sinex_core::db::models::RawEvent;
+use sinex_core::RawEvent;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -194,9 +194,12 @@ impl IngestClient {
     /// Send a single event to ingestd with retry and circuit breaker
     #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String> {
+        let event_clone = event.clone();
         self.execute_with_retry_and_circuit_breaker(
-            || async {
-                let proto_event = self.convert_to_proto(event)?;
+            move || {
+                let event = event_clone.clone();
+                async move {
+                    let proto_event = self.convert_to_proto(&event)?;
                 let request = tonic::Request::new(proto_event);
 
                 let response = tokio::time::timeout(
@@ -225,6 +228,7 @@ impl IngestClient {
                         error_msg
                     )))
                 }
+                }
             }
         ).await
     }
@@ -242,17 +246,20 @@ impl IngestClient {
             });
         }
 
-        self.execute_with_retry_and_circuit_breaker(|| async {
-            let mut proto_events = Vec::with_capacity(events.len());
-            for event in events {
-                proto_events.push(self.convert_to_proto(event)?);
-            }
-            let batch = EventBatch {
-                events: proto_events,
-            };
+        let events_clone = events.to_vec();
+        self.execute_with_retry_and_circuit_breaker(move || {
+            let events = events_clone.clone();
+            async move {
+                let mut proto_events = Vec::with_capacity(events.len());
+                for event in &events {
+                    proto_events.push(self.convert_to_proto(event)?);
+                }
+                let batch = EventBatch {
+                    events: proto_events,
+                };
 
-            let request = tonic::Request::new(batch);
-            let response = tokio::time::timeout(
+                let request = tonic::Request::new(batch);
+                let response = tokio::time::timeout(
                 self.config.operation_timeout,
                 self.client.ingest_batch(request),
             )
@@ -263,21 +270,22 @@ impl IngestClient {
                 SatelliteError::Processing(format!("gRPC error: {}", e))
             })?;
 
-            let inner = response.into_inner();
-            info!(
-                processed_count = inner.processed_count,
-                failed_count = inner.failed_count,
-                success = inner.success,
-                "Batch ingestion completed"
-            );
+                let inner = response.into_inner();
+                info!(
+                    processed_count = inner.processed_count,
+                    failed_count = inner.failed_count,
+                    success = inner.success,
+                    "Batch ingestion completed"
+                );
 
-            Ok(BatchResult {
-                success: inner.success,
-                event_ids: inner.event_ids,
-                processed_count: inner.processed_count,
-                failed_count: inner.failed_count,
-                error: inner.error,
-            })
+                Ok(BatchResult {
+                    success: inner.success,
+                    event_ids: inner.event_ids,
+                    processed_count: inner.processed_count,
+                    failed_count: inner.failed_count,
+                    error: inner.error,
+                })
+            }
         })
         .await
     }

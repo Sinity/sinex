@@ -4,6 +4,9 @@
 //! functionality. Advisory locks are perfect for leader election, singleton job processing,
 //! and resource coordination across multiple processes/instances.
 
+use crate::models::RawEvent;
+use crate::repositories::events::EventRepository;
+use crate::types::domain::{EventSource, EventType, HostName};
 use crate::types::error::SinexError;
 use crate::types::utils::ResourceGuard;
 use crate::types::Result as CoreResult;
@@ -230,6 +233,43 @@ impl LeadershipGuard {
     /// Record leadership in database for monitoring/debugging
     #[instrument(skip(self, pool), fields(service = %self.service_name, instance = %self.instance_id))]
     pub async fn record_leadership(&self, pool: &DbPool) -> CoreResult<()> {
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = pool.begin().await.map_err(SinexError::from)?;
+
+        // Check if there's an existing leader for this service
+        let existing_leader = sqlx::query!(
+            "SELECT instance_id, acquired_at FROM core.service_leadership WHERE service_name = $1",
+            &self.service_name
+        )
+        .fetch_optional(&mut *tx)
+        .await?;
+
+        let operation_type = if existing_leader.is_some() {
+            "leadership_transfer"
+        } else {
+            "leadership_acquisition"
+        };
+
+        // Emit leadership acquisition intent event BEFORE state change
+        let leadership_intent_event = RawEvent::new(
+            EventSource::new("sinex.distributed.leadership".to_string()),
+            EventType::new("leadership.acquisition_intent".to_string()),
+            serde_json::json!({
+                "service_name": self.service_name,
+                "new_leader_instance_id": self.instance_id,
+                "operation_type": operation_type,
+                "previous_leader": existing_leader.as_ref().map(|l| l.instance_id),
+                "previous_leader_acquired_at": existing_leader.as_ref().map(|l| l.acquired_at)
+            })
+        )
+        .with_host(HostName::new("sinex.distributed".to_string()));
+
+        let event_repo = EventRepository::new(pool);
+        event_repo.insert_with_tx(&mut tx, leadership_intent_event)
+            .await
+            .map_err(SinexError::from)?;
+
+        // Perform the leadership record update
         sqlx::query(
             "INSERT INTO core.service_leadership (service_name, instance_id, acquired_at, last_heartbeat, version)
              VALUES ($1, $2, NOW(), NOW(), 'unknown')
@@ -238,8 +278,27 @@ impl LeadershipGuard {
         )
         .bind(&self.service_name)
         .bind(&self.instance_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+        // Emit leadership acquired confirmation event after successful recording
+        let leadership_acquired_event = RawEvent::new(
+            EventSource::new("sinex.distributed.leadership".to_string()),
+            EventType::new("leadership.acquired".to_string()),
+            serde_json::json!({
+                "service_name": self.service_name,
+                "leader_instance_id": self.instance_id,
+                "operation_type": operation_type,
+                "previous_leader": existing_leader.as_ref().map(|l| l.instance_id)
+            })
+        )
+        .with_host(HostName::new("sinex.distributed".to_string()));
+
+        event_repo.insert_with_tx(&mut tx, leadership_acquired_event)
+            .await
+            .map_err(SinexError::from)?;
+
+        tx.commit().await.map_err(SinexError::from)?;
 
         Ok(())
     }
@@ -247,12 +306,67 @@ impl LeadershipGuard {
     /// Update leadership heartbeat
     #[instrument(skip(self, pool), fields(service = %self.service_name))]
     pub async fn heartbeat(&self, pool: &DbPool) -> CoreResult<()> {
-        sqlx::query(
-            "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1",
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = pool.begin().await.map_err(SinexError::from)?;
+
+        // Get current heartbeat details for event emission
+        let current_heartbeat = sqlx::query!(
+            "SELECT last_heartbeat FROM core.service_leadership WHERE service_name = $1 AND instance_id = $2",
+            &self.service_name,
+            &self.instance_id
         )
-        .bind(&self.service_name)
-        .execute(pool)
+        .fetch_optional(&mut *tx)
         .await?;
+
+        if let Some(heartbeat_info) = current_heartbeat {
+            // Emit heartbeat intent event BEFORE state change
+            let heartbeat_intent_event = RawEvent::new(
+                EventSource::new("sinex.distributed.heartbeat".to_string()),
+                EventType::new("leadership.heartbeat_intent".to_string()),
+                serde_json::json!({
+                    "service_name": self.service_name,
+                    "leader_instance_id": self.instance_id,
+                    "previous_heartbeat": heartbeat_info.last_heartbeat
+                })
+            )
+            .with_host(HostName::new("sinex.distributed".to_string()));
+
+            let event_repo = EventRepository::new(pool);
+            event_repo.insert_with_tx(&mut tx, heartbeat_intent_event)
+                .await
+                .map_err(SinexError::from)?;
+
+            // Perform the heartbeat update
+            let result = sqlx::query!(
+                "UPDATE core.service_leadership SET last_heartbeat = NOW() WHERE service_name = $1 AND instance_id = $2",
+                &self.service_name,
+                &self.instance_id
+            )
+            .execute(&mut *tx)
+            .await?;
+
+            if result.rows_affected() > 0 {
+                // Emit heartbeat updated confirmation event after successful update
+                let heartbeat_updated_event = RawEvent::new(
+                    EventSource::new("sinex.distributed.heartbeat".to_string()),
+                    EventType::new("leadership.heartbeat_updated".to_string()),
+                    serde_json::json!({
+                        "service_name": self.service_name,
+                        "leader_instance_id": self.instance_id,
+                        "previous_heartbeat": heartbeat_info.last_heartbeat
+                    })
+                )
+                .with_host(HostName::new("sinex.distributed".to_string()));
+
+                event_repo.insert_with_tx(&mut tx, heartbeat_updated_event)
+                    .await
+                    .map_err(SinexError::from)?;
+            }
+
+            tx.commit().await.map_err(SinexError::from)?;
+        } else {
+            tx.rollback().await.ok();
+        }
 
         Ok(())
     }

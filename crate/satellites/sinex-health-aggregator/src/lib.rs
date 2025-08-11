@@ -170,7 +170,7 @@ impl ExplorationProvider for HealthAggregator {
 
     fn export_data(
         &self,
-        _path: &sinex_core::types::domain::SanitizedPath,
+        _path: &sinex_core::SanitizedPath,
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         Ok(())

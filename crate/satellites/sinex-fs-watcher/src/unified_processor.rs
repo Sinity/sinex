@@ -97,13 +97,13 @@ use chrono::{DateTime, Utc};
 use color_eyre::eyre::eyre;
 use notify::{Event as NotifyEvent, Watcher};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::with_context;
 use sinex_core::types::events::Event;
 use sinex_core::types::validation::{
     validate_discovered_file, validate_path, validate_watch_paths, FileWatchingSecurityPolicy,
 };
+use sinex_core::RawEvent;
+use sinex_core::SanitizedPath;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -1473,7 +1473,7 @@ impl ExplorationProvider for FilesystemProcessor {
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         // Validate export path for security

@@ -658,7 +658,7 @@ impl ExplorationProvider for DesktopProcessor {
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {

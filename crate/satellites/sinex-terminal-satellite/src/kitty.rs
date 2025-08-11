@@ -23,9 +23,9 @@
 
 use camino::Utf8Path;
 use regex::Regex;
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::domain::{CommandText, SanitizedPath};
 use sinex_core::types::events::Event;
+use sinex_core::RawEvent;
+use sinex_core::{CommandText, SanitizedPath};
 use sinex_satellite_sdk::{
     error_helpers::{
         io_error_with_context, json_error_with_context, processing_error, utf8_error_with_context,

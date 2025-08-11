@@ -40,8 +40,8 @@
 use crate::{stream_processor::Checkpoint, SatelliteError, SatelliteResult};
 use serde::{Deserialize, Serialize};
 use sinex_core::db::{repositories::DbPoolExt, SqlxPgPool as PgPool};
-use sinex_core::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
 use sinex_core::types::ulid::Ulid;
+use sinex_core::{ConsumerGroup, ConsumerName, ProcessorName};
 use tracing::{debug, info, warn};
 
 // Database record structures for query results
@@ -396,8 +396,7 @@ impl CheckpointManager {
                 &processor_name,
                 &consumer_group,
                 &consumer_name,
-                last_processed_id
-                    .map(|id| sinex_core::Id::<sinex_core::db::models::RawEvent>::from_ulid(id)),
+                last_processed_id.map(|id| sinex_core::Id::<sinex_core::RawEvent>::from_ulid(id)),
                 Some(state.last_activity),
                 Some(checkpoint_data),
                 state.data.clone(),

@@ -7,13 +7,13 @@ use async_trait::async_trait;
 use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::error::with_context;
 use sinex_core::types::events::{
     Event, TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
     TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
 };
 use sinex_core::types::validate_path;
+use sinex_core::RawEvent;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -156,9 +156,7 @@ fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
 }
 
 /// Validate a single path for security and correctness using comprehensive validation
-fn validate_single_path(
-    path: &sinex_core::types::domain::SanitizedPath,
-) -> Result<(), ValidationError> {
+fn validate_single_path(path: &sinex_core::SanitizedPath) -> Result<(), ValidationError> {
     let path_str = path.as_str();
 
     // Use the comprehensive path validation from sinex-core
@@ -578,9 +576,7 @@ impl TerminalProcessor {
     }
 
     /// Helper function to get Atuin database status
-    async fn get_atuin_status(
-        atuin_path: &sinex_core::types::domain::SanitizedPath,
-    ) -> AtuinStatus {
+    async fn get_atuin_status(atuin_path: &sinex_core::SanitizedPath) -> AtuinStatus {
         if atuin_path.exists() {
             let metadata = tokio::fs::metadata(atuin_path).await.ok();
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
@@ -1088,7 +1084,7 @@ impl ExplorationProvider for TerminalProcessor {
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         // Validate export path for security

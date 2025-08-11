@@ -48,22 +48,22 @@ pub struct SatelliteCoordination {
 }
 
 impl SatelliteCoordination {
-    pub fn new(service_name: String, instance_id: String, pool: DbPool) -> Self {
-        let instance = SatelliteInstance::new(instance_id, service_name);
+    pub fn new(service_name: String, instance_id: String, pool: DbPool) -> crate::SatelliteResult<Self> {
+        let instance = SatelliteInstance::new(instance_id, service_name)?;
         let coordination = DistributedCoordination::new(pool.clone());
         let failure_coordinator = CoordinationPrimitive::synchronizer(format!(
             "failure_detection_{}",
             instance.service_name
         ));
 
-        Self {
+        Ok(Self {
             instance,
             pool,
             coordination,
             current_mode: InstanceMode::Standby,
             handoff_receiver: None,
             failure_coordinator,
-        }
+        })
     }
 
     /// Run the coordination loop - main entry point
@@ -505,9 +505,7 @@ impl SatelliteCoordination {
         let start = std::time::Instant::now();
 
         // Signal any running tasks to complete
-        if let Some(handle) = &self.heartbeat_handle {
-            handle.signal_shutdown();
-        }
+        // TODO: Add heartbeat_handle field and signal_shutdown functionality if needed
 
         // Wait for in-flight operations to complete
         while start.elapsed() < timeout {

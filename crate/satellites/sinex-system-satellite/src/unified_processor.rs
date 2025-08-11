@@ -95,12 +95,11 @@ pub struct SystemProcessor {
 impl SystemProcessor {
     /// Create a new unified system processor
     pub fn new() -> Self {
-        // TODO: Complete implementation of system satellite processor
-        // Issue: #XXX - Implement D-Bus, journal, and udev monitoring
-        // This should:
-        // 1. Monitor D-Bus for system events
-        // 2. Follow systemd journal for logs
-        // 3. Track udev hardware changes
+        // TODO(system-satellite): Complete implementation of system satellite processor
+        // Needs: D-Bus, journal, and udev monitoring
+        // - Monitor D-Bus for system events (org.freedesktop.systemd1, NetworkManager, etc.)
+        // - Follow systemd journal for logs and service state changes
+        // - Track udev hardware changes (USB, network interfaces, storage)
 
         Self {
             config: SystemConfig::default(),
@@ -722,7 +721,7 @@ impl ExplorationProvider for SystemProcessor {
 
     fn export_data(
         &self,
-        path: &sinex_core::types::domain::SanitizedPath,
+        path: &sinex_core::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {

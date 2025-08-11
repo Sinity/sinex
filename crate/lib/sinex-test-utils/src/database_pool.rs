@@ -1056,7 +1056,7 @@ mod tests {
                     let db = acquire_test_database().await?;
 
                     // Each should have clean database
-                    use sinex_core::db::repositories::*;
+                    use sinex_core::*;
                     let count = db.pool().events().count_all().await?;
                     assert_eq!(count, 0, "Database {} should be clean", i);
 
@@ -1094,9 +1094,12 @@ mod tests {
 
     #[sinex_test]
     async fn test_database_cleanup_on_drop() -> Result<()> {
-        use sinex_core::db::models::*;
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
+        use sinex_core::{
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+            OperationRecord, Provenance, RawEvent, SourceMaterial,
+        };
 
         let db_name;
 
@@ -1192,9 +1195,12 @@ mod tests {
         let db = acquire_test_database().await?;
 
         // Insert data with foreign key relationships
-        use sinex_core::db::models::*;
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
+        use sinex_core::{
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+            OperationRecord, Provenance, RawEvent, SourceMaterial,
+        };
 
         let repo = db.pool.events();
         let event_to_insert = RawEvent::builder()
@@ -1253,9 +1259,12 @@ mod tests {
                 let db = acquire_test_database().await?;
 
                 // Do some work
-                use sinex_core::db::models::*;
-                use sinex_core::db::repositories::*;
-                use sinex_core::types::domain::*;
+                use sinex_core::*;
+                use sinex_core::*;
+                use sinex_core::{
+                    Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation,
+                    Operation, OperationRecord, Provenance, RawEvent, SourceMaterial,
+                };
 
                 let repo = db.pool.events();
                 for _j in 0..5 {
@@ -1270,7 +1279,7 @@ mod tests {
 
                 // Verify isolation
                 let repo = db.pool.events();
-                let source = sinex_core::types::domain::EventSource::new(&format!("task_{}", i));
+                let source = sinex_core::EventSource::new(&format!("task_{}", i));
                 let count = repo.count_by_source(&source).await?;
 
                 assert_eq!(count, 5);
@@ -1429,9 +1438,12 @@ mod benches {
         let pool = db.pool();
 
         // Insert test data
-        use sinex_core::db::models::*;
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
+        use sinex_core::{
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+            OperationRecord, Provenance, RawEvent, SourceMaterial,
+        };
 
         let repo = pool.events();
         for i in 0..100 {
@@ -1476,9 +1488,12 @@ mod benches {
 
         // Insert some varied data
         let pool = db.pool();
-        use sinex_core::db::models::*;
-        use sinex_core::db::repositories::*;
-        use sinex_core::types::domain::*;
+        use sinex_core::*;
+        use sinex_core::*;
+        use sinex_core::{
+            Blob, BlobRecord, CheckpointRecord, Entity, EntityRecord, EntityRelation, Operation,
+            OperationRecord, Provenance, RawEvent, SourceMaterial,
+        };
 
         let repo = pool.events();
         for i in 0..50 {

@@ -9,10 +9,10 @@ use chrono::Utc;
 use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::{DocumentIngestedPayload, Event};
 use sinex_core::types::validate_path;
+use sinex_core::RawEvent;
+use sinex_core::SanitizedPath;
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,

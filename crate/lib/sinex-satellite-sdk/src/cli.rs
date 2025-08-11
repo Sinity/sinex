@@ -8,7 +8,7 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use serde::{Deserialize, Serialize};
-use sinex_core::types::domain::SanitizedPath;
+use sinex_core::SanitizedPath;
 use std::collections::HashMap;
 use std::str::FromStr;
 use tracing::info;
@@ -433,7 +433,7 @@ macro_rules! default_exploration_provider {
 
             fn export_data(
                 &self,
-                _path: &sinex_core::types::domain::SanitizedPath,
+                _path: &sinex_core::SanitizedPath,
                 _format: $crate::cli::ExportFormat,
             ) -> color_eyre::eyre::Result<()> {
                 Ok(())

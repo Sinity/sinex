@@ -2,8 +2,8 @@
 //!
 //! Monitors systemd services, timers, and unit state changes
 
-use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
+use sinex_core::RawEvent;
 
 use sinex_core::types::events::{
     SystemdTimerTriggeredPayload, SystemdUnitFailedPayload, SystemdUnitReloadedPayload,

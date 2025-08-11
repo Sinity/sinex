@@ -4,8 +4,9 @@
 //! mechanism (NATS JetStream or gRPC to ingestd).
 
 use crate::{grpc_client::IngestClient, nats::publisher::NatsPublisher, SatelliteResult};
-use sinex_core::db::models::RawEvent;
+use sinex_core::RawEvent;
 use std::time::Duration;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
