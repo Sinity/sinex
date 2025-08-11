@@ -576,7 +576,6 @@ impl<'a> EventRepository<'a> {
         Ok(result.unwrap_or(0))
     }
 
-
     pub async fn get_events_by_type_and_time_range(
         &self,
         event_type: &EventType,
@@ -1851,7 +1850,6 @@ impl<'a> EventRepository<'a> {
         self.delete_event_with_context(id, "test_system", "Test cleanup")
             .await
     }
-
 
     /// Cleanup test events by source and type (soft delete)
     pub async fn cleanup_test_events(
