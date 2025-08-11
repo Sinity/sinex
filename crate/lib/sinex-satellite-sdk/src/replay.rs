@@ -1,5 +1,7 @@
 //! Replay mode for historical event processing
 
+use crate::replay_control::ReplayController;
+use crate::replay_metrics::ReplayMetrics;
 use crate::replay_progress::{ProgressTracker, ReplayPhase};
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
@@ -64,6 +66,8 @@ pub struct ReplayManager {
     pool: PgPool,
     mode: ReplayMode,
     batch_size: usize,
+    controller: Option<ReplayController>,
+    metrics: Option<ReplayMetrics>,
 }
 
 impl ReplayManager {
@@ -73,6 +77,8 @@ impl ReplayManager {
             pool,
             mode,
             batch_size: 1000,
+            controller: None,
+            metrics: None,
         }
     }
 
@@ -80,6 +86,28 @@ impl ReplayManager {
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
+    }
+
+    /// Set replay controller for pause/resume/cancel functionality
+    pub fn with_controller(mut self, controller: ReplayController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    /// Get the replay controller (if set)
+    pub fn controller(&self) -> Option<&ReplayController> {
+        self.controller.as_ref()
+    }
+
+    /// Set metrics collector
+    pub fn with_metrics(mut self, metrics: ReplayMetrics) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Get the metrics collector (if set)
+    pub fn metrics(&self) -> Option<&ReplayMetrics> {
+        self.metrics.as_ref()
     }
 
     /// Check if replay mode is enabled
@@ -168,10 +196,17 @@ impl ReplayManager {
                 total_processed: 0,
                 total_batches: 0,
                 errors: vec![],
+                metrics: None,
+                aggregated_data: None,
             });
         }
 
         info!("Starting replay mode processing with progress tracking");
+
+        // Start metrics collection if enabled
+        if let Some(ref mut metrics) = self.metrics {
+            metrics.start();
+        }
 
         let stats = self.get_replay_stats().await?;
         info!(
@@ -199,6 +234,12 @@ impl ReplayManager {
         tracker.set_phase(ReplayPhase::Processing).await;
 
         loop {
+            // Check for pause/cancel before fetching next batch
+            if let Some(ref controller) = self.controller {
+                controller.wait_if_paused().await?;
+                controller.check_cancelled()?;
+            }
+
             // Fetch events using the query system based on mode
             let events: Vec<RawEvent> = match &self.mode {
                 ReplayMode::TimeRange {
@@ -324,6 +365,14 @@ impl ReplayManager {
             }
 
             let batch_size = events.len();
+            let batch_start = std::time::Instant::now();
+
+            // Calculate batch size in bytes (approximate)
+            let batch_bytes = events
+                .iter()
+                .map(|e| e.payload.to_string().len() as u64 + 100) // +100 for metadata overhead
+                .sum::<u64>();
+
             {
                 // Process the batch
                 match processor(events).await {
@@ -338,6 +387,15 @@ impl ReplayManager {
 
                         // Update progress tracker
                         tracker.increment_processed(processed as u64).await;
+
+                        // Record metrics
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_batch(
+                                processed as u64,
+                                batch_start.elapsed(),
+                                batch_bytes,
+                            );
+                        }
                     }
                     Err(e) => {
                         warn!(
@@ -349,6 +407,12 @@ impl ReplayManager {
 
                         // Update failed count
                         tracker.increment_failed(batch_size as u64).await;
+
+                        // Record failure metrics
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_failures(batch_size as u64);
+                            metrics.record_error("batch_processing");
+                        }
                     }
                 }
             }
@@ -389,10 +453,18 @@ impl ReplayManager {
         let summary = tracker.get_summary().await;
         info!("{}", summary.format_report());
 
+        // Get final metrics report
+        if let Some(ref metrics) = self.metrics {
+            let snapshot = metrics.snapshot();
+            info!("Metrics report:\n{}", snapshot.format_report());
+        }
+
         Ok(ReplayResult {
             total_processed,
             total_batches,
             errors,
+            metrics: self.metrics.as_ref().map(|m| m.snapshot()),
+            aggregated_data: None, // Would need to be collected during processing
         })
     }
 
@@ -583,12 +655,14 @@ pub struct ReplayStats {
     pub estimated_batches: usize,
 }
 
-/// Replay processing result
-#[derive(Debug, Clone)]
+/// Replay processing result with aggregation support
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayResult {
     pub total_processed: usize,
     pub total_batches: usize,
     pub errors: Vec<String>,
+    pub metrics: Option<crate::replay_metrics::MetricsSnapshot>,
+    pub aggregated_data: Option<AggregatedResults>,
 }
 
 impl ReplayResult {
@@ -600,5 +674,159 @@ impl ReplayResult {
     /// Get error count
     pub fn error_count(&self) -> usize {
         self.errors.len()
+    }
+
+    /// Merge with another replay result (for aggregation)
+    pub fn merge(&mut self, other: ReplayResult) {
+        self.total_processed += other.total_processed;
+        self.total_batches += other.total_batches;
+        self.errors.extend(other.errors);
+
+        // Merge aggregated data if present
+        if let Some(other_data) = other.aggregated_data {
+            if let Some(ref mut our_data) = self.aggregated_data {
+                our_data.merge(other_data);
+            } else {
+                self.aggregated_data = Some(other_data);
+            }
+        }
+    }
+
+    /// Create empty result
+    pub fn empty() -> Self {
+        Self {
+            total_processed: 0,
+            total_batches: 0,
+            errors: vec![],
+            metrics: None,
+            aggregated_data: None,
+        }
+    }
+}
+
+/// Aggregated results from replay processing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatedResults {
+    /// Count of events by type
+    pub events_by_type: HashMap<String, usize>,
+
+    /// Count of events by source
+    pub events_by_source: HashMap<String, usize>,
+
+    /// Count of events by hour
+    pub events_by_hour: HashMap<String, usize>,
+
+    /// Unique hosts encountered
+    pub unique_hosts: std::collections::HashSet<String>,
+
+    /// Processing statistics
+    pub processing_stats: ProcessingStats,
+}
+
+impl AggregatedResults {
+    /// Create new aggregated results
+    pub fn new() -> Self {
+        Self {
+            events_by_type: HashMap::new(),
+            events_by_source: HashMap::new(),
+            events_by_hour: HashMap::new(),
+            unique_hosts: std::collections::HashSet::new(),
+            processing_stats: ProcessingStats::default(),
+        }
+    }
+
+    /// Add event to aggregation
+    pub fn add_event(&mut self, event: &RawEvent) {
+        // Count by type
+        *self
+            .events_by_type
+            .entry(event.event_type.to_string())
+            .or_insert(0) += 1;
+
+        // Count by source
+        *self
+            .events_by_source
+            .entry(event.source.to_string())
+            .or_insert(0) += 1;
+
+        // Count by hour
+        if let Some(ts) = event.ts_orig {
+            let hour_key = ts.format("%Y-%m-%d %H:00").to_string();
+            *self.events_by_hour.entry(hour_key).or_insert(0) += 1;
+        }
+
+        // Track unique hosts
+        self.unique_hosts.insert(event.host.to_string());
+
+        // Update stats
+        self.processing_stats.event_count += 1;
+        let payload_size = event.payload.to_string().len();
+        self.processing_stats.total_bytes += payload_size;
+        self.processing_stats.max_payload_size =
+            self.processing_stats.max_payload_size.max(payload_size);
+        self.processing_stats.min_payload_size =
+            self.processing_stats.min_payload_size.min(payload_size);
+    }
+
+    /// Merge with another aggregated result
+    pub fn merge(&mut self, other: AggregatedResults) {
+        // Merge event counts
+        for (k, v) in other.events_by_type {
+            *self.events_by_type.entry(k).or_insert(0) += v;
+        }
+
+        for (k, v) in other.events_by_source {
+            *self.events_by_source.entry(k).or_insert(0) += v;
+        }
+
+        for (k, v) in other.events_by_hour {
+            *self.events_by_hour.entry(k).or_insert(0) += v;
+        }
+
+        // Merge hosts
+        self.unique_hosts.extend(other.unique_hosts);
+
+        // Merge stats
+        self.processing_stats.merge(other.processing_stats);
+    }
+}
+
+impl Default for AggregatedResults {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Processing statistics for aggregation
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProcessingStats {
+    pub event_count: usize,
+    pub total_bytes: usize,
+    pub max_payload_size: usize,
+    pub min_payload_size: usize,
+}
+
+impl ProcessingStats {
+    /// Merge with another stats object
+    pub fn merge(&mut self, other: ProcessingStats) {
+        self.event_count += other.event_count;
+        self.total_bytes += other.total_bytes;
+        self.max_payload_size = self.max_payload_size.max(other.max_payload_size);
+        if other.min_payload_size > 0 {
+            if self.min_payload_size == 0 {
+                self.min_payload_size = other.min_payload_size;
+            } else {
+                self.min_payload_size = self.min_payload_size.min(other.min_payload_size);
+            }
+        }
+    }
+
+    /// Get average payload size
+    pub fn avg_payload_size(&self) -> usize {
+        if self.event_count > 0 {
+            self.total_bytes / self.event_count
+        } else {
+            0
+        }
     }
 }

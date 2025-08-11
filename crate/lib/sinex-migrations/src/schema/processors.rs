@@ -22,7 +22,7 @@ impl ProcessorManifests {
     pub const SCHEMA: &'static str = "core";
 
     pub const ID: &'static str = "id";
-    pub const NAME: &'static str = "name";
+    pub const NAME: &'static str = "processor_name";
     pub const VERSION: &'static str = "version";
     pub const DESCRIPTION: &'static str = "description";
     pub const PROCESSOR_TYPE: &'static str = "processor_type";

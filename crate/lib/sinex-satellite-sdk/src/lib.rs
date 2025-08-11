@@ -128,6 +128,8 @@ pub mod nats;
 pub mod preflight;
 pub mod processor_runner;
 pub mod replay;
+pub mod replay_control;
+pub mod replay_metrics;
 pub mod replay_progress;
 pub mod stage_as_you_go;
 pub mod stream_processor;
@@ -347,6 +349,9 @@ pub enum SatelliteError {
     #[error("Lifecycle error: {0}")]
     Lifecycle(String),
 
+    #[error("Operation cancelled: {0}")]
+    OperationCancelled(String),
+
     #[error("Not implemented: {0}")]
     NotImplemented(String),
 }
@@ -374,6 +379,9 @@ impl From<SatelliteError> for sinex_core::error::SinexError {
             SatelliteError::Automaton(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::Checkpoint(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::Lifecycle(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::OperationCancelled(_) => {
+                sinex_core::error::SinexError::unknown(e.to_string())
+            }
             SatelliteError::NotImplemented(_) => {
                 sinex_core::error::SinexError::unknown(e.to_string())
             }

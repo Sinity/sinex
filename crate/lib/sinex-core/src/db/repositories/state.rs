@@ -32,11 +32,10 @@ pub struct OperationRecord {
     pub approved_by: Option<String>,
     pub approved_at: Option<DateTime<Utc>>,
     pub executor_node: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
+    pub started_at: DateTime<Utc>, // Changed to non-optional, as it's NOT NULL in DB
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
     pub error_details: Option<String>,
-    pub created_at: DateTime<Utc>,
 }
 
 /// Operation log entry matching core.operations_log per TARGET_canonical.md
@@ -308,7 +307,7 @@ impl<'a> StateRepository<'a> {
                 created_at,
                 updated_at
             FROM core.processor_checkpoints 
-            WHERE name = $1 AND consumer_group = 'default' AND consumer_name = 'default' AND deleted_at IS NULL
+            WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default' AND deleted_at IS NULL
             "#,
             processor_name
         )
@@ -468,8 +467,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             "#,
             *id.as_ulid() as _,
             operation.actor,
@@ -507,8 +505,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE id = $1
             "#,
@@ -537,8 +534,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             ORDER BY created_at DESC
             LIMIT $1
@@ -607,8 +603,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE scope @> $1
             ORDER BY created_at DESC
@@ -646,8 +641,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE actor = $1
             ORDER BY created_at DESC
@@ -686,8 +680,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE outcome = 'error' AND created_at > $1
             ORDER BY created_at DESC
@@ -751,13 +744,13 @@ impl<'a> StateRepository<'a> {
             ProcessorManifest,
             r#"
             INSERT INTO core.processor_manifests (
-                name, processor_version, processor_type, hostname
+                processor_name, processor_version, processor_type, hostname
             ) VALUES (
                 $1, $2, $3, $4
             )
             RETURNING 
                 id,
-                name as "processor_name!",
+                processor_name as "processor_name!",
                 processor_version,
                 processor_type,
                 hostname,
@@ -784,7 +777,7 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id,
-                name as "processor_name!",
+                processor_name as "processor_name!",
                 processor_version,
                 processor_type,
                 hostname,
@@ -795,7 +788,7 @@ impl<'a> StateRepository<'a> {
                 created_at
             FROM core.processor_manifests
             WHERE end_time IS NULL
-            ORDER BY name, hostname
+            ORDER BY processor_name, hostname
             "#
         )
         .fetch_all(self.pool)
@@ -813,7 +806,7 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id,
-                name as "processor_name!",
+                processor_name as "processor_name!",
                 processor_version,
                 processor_type,
                 hostname,
@@ -824,7 +817,7 @@ impl<'a> StateRepository<'a> {
                 created_at
             FROM core.processor_manifests
             WHERE processor_type = $1 AND end_time IS NULL
-            ORDER BY name, hostname
+            ORDER BY processor_name, hostname
             "#,
             processor_type
         )
@@ -844,7 +837,7 @@ impl<'a> StateRepository<'a> {
             r#"
             UPDATE core.processor_manifests
             SET end_time = NOW()
-            WHERE name = $1 AND hostname = $2 AND end_time IS NULL
+            WHERE processor_name = $1 AND hostname = $2 AND end_time IS NULL
             "#,
             processor_name.as_ref(),
             hostname
@@ -859,7 +852,7 @@ impl<'a> StateRepository<'a> {
             INSERT INTO core.processor_manifests (processor_name, processor_version, processor_type, hostname)
             SELECT processor_name, processor_version, processor_type, hostname
             FROM core.processor_manifests
-            WHERE name = $1 AND hostname = $2
+            WHERE processor_name = $1 AND hostname = $2
             ORDER BY created_at DESC
             LIMIT 1
             "#,
@@ -897,7 +890,7 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 COUNT(*) FILTER (WHERE end_time IS NULL) as "active_count!",
                 COUNT(*) FILTER (WHERE end_time IS NOT NULL) as "inactive_count!",
-                COUNT(DISTINCT name) as "unique_processors!",
+                COUNT(DISTINCT processor_name) as "unique_processors!",
                 MIN(start_time) FILTER (WHERE end_time IS NULL) as oldest_heartbeat
             FROM core.processor_manifests
             "#
@@ -1150,7 +1143,7 @@ impl<'a> StateRepositoryTx<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                name as "processor_name!", consumer_group, consumer_name,
+                processor_name as "processor_name!", consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
@@ -1223,8 +1216,7 @@ impl<'a> StateRepositoryTx<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             "#,
             *id.as_ulid() as _,
             operation.actor,

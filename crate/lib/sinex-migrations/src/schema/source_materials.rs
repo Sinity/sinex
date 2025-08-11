@@ -21,7 +21,7 @@ impl SourceMaterials {
     pub const TABLE: &'static str = "source_material_registry";
     pub const SCHEMA: &'static str = "raw";
 
-    pub const ID: &'static str = "id";
+    pub const ID: &'static str = "source_material_id";
     pub const SOURCE_URI: &'static str = "source_uri";
     pub const INGESTION_TIME: &'static str = "ingestion_time";
     pub const ENCODING: &'static str = "encoding";
