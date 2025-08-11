@@ -7,6 +7,8 @@
 use camino::Utf8PathBuf;
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
+use sinex_core::types::domain::SanitizedPath;
+use std::str::FromStr;
 use tracing::info;
 
 #[cfg(not(target_env = "msvc"))]
@@ -22,6 +24,14 @@ mod rpc_server;
 mod service_container;
 
 use service_container::ServiceContainer;
+
+/// Validate and parse socket path for RPC server
+pub fn validate_socket_path(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Socket path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
+}
 
 #[derive(Parser)]
 #[command(name = "sinex-gateway")]

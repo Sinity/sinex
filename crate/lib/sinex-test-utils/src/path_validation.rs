@@ -14,6 +14,7 @@ use camino::{Utf8Path, Utf8PathBuf};
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::SinexError;
 use std::env;
+use std::str::FromStr;
 
 /// Result type for path validation operations
 pub type PathValidationResult<T> = Result<T, SinexError>;

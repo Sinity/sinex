@@ -9,6 +9,14 @@ use sinex_fs_watcher::{
 use std::str::FromStr;
 use tracing::info;
 
+/// Validate and parse filesystem path for watching
+pub fn validate_watch_path(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Watch path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -21,8 +29,8 @@ enum Commands {
     /// Run with traditional direct filesystem monitoring
     Direct {
         /// Paths to watch
-        #[arg(value_name = "PATH")]
-        paths: Vec<String>,
+        #[arg(value_name = "PATH", value_parser = validate_watch_path)]
+        paths: Vec<SanitizedPath>,
         
         /// Debounce delay in milliseconds
         #[arg(long, default_value_t = 100)]

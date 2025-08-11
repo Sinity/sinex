@@ -4,7 +4,7 @@
 //! Includes secure path deserialization that validates all path fields during config loading.
 
 use crate::types::domain::SanitizedPath;
-use crate::types::validation::{validate_path, Result as ValidationResult};
+use crate::types::validation::validate_path;
 use camino::Utf8PathBuf;
 use serde::{
     de::{self, Visitor},

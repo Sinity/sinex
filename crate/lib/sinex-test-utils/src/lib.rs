@@ -357,6 +357,7 @@ mod fixture_config;
 mod fixtures;
 mod path_validation;
 mod property_testing;
+pub mod resources;
 mod satellite_management_utils;
 mod test_context;
 #[macro_use]

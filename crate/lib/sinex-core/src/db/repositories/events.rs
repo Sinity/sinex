@@ -1116,10 +1116,10 @@ impl<'a> EventRepository<'a> {
                 payload_schema_name, payload_schema_version
             )
             SELECT * FROM UNNEST(
-                $1::uuid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
-                $6::timestamptz[], $7::text[], $8::uuid[], $9::uuid[][],
-                $10::uuid[], $11::bigint[], $12::bigint[],
-                $13::bigint[], $14::uuid[][],
+                $1::ulid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
+                $6::timestamptz[], $7::text[], $8::ulid[], $9::ulid[][],
+                $10::ulid[], $11::bigint[], $12::bigint[],
+                $13::bigint[], $14::ulid[][],
                 $15::text[], $16::text[]
             )
             "#,
