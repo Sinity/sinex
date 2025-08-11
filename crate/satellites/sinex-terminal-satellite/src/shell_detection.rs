@@ -221,14 +221,12 @@ fn get_shell_version_impl(shell_type: &ShellType) -> Result<String, Box<dyn std:
 
 /// Get parent process ID using sysinfo crate for cross-platform compatibility
 fn get_parent_pid() -> Option<u32> {
-    use sysinfo::{ProcessExt, SystemExt};
-
     let mut system = sysinfo::System::new();
     system.refresh_processes();
 
     let current_pid = std::process::id();
     system
-        .process(current_pid.into())?
+        .process(sysinfo::Pid::from_u32(current_pid))?
         .parent()
         .map(|pid| pid.as_u32())
 }

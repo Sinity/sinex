@@ -4,6 +4,7 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
 use sinex_core::db::{create_pool, query_helpers::db_error};
+use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::SinexError;
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_satellite_sdk::grpc_client::IngestClient;
@@ -15,7 +16,7 @@ use tokio::sync::mpsc;
 const TELEMETRY_INTERVAL_SECS: u64 = 300;
 
 /// Container holding all service instances
-#[derive(Clone)]
+#[derive(Clone, bon::Builder)]
 pub struct ServiceContainer {
     pub analytics: Arc<AnalyticsService>,
     pub content: Arc<ContentService>,
@@ -40,9 +41,11 @@ impl ServiceContainer {
             .map_err(|e| db_error(e, "Failed to create database pool"))?;
 
         // Create blob manager for content service
-        let annex_path = Utf8PathBuf::from(
-            std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| "/tmp/sinex-annex".to_string()),
-        );
+        let annex_path_str =
+            std::env::var("SINEX_ANNEX_PATH").unwrap_or_else(|_| "/tmp/sinex-annex".to_string());
+        let annex_path = SanitizedPath::from_str_validated(&annex_path_str)
+            .map_err(|e| SinexError::validation(format!("Invalid SINEX_ANNEX_PATH: {}", e)))?;
+        let annex_path = Utf8PathBuf::from(annex_path.as_str());
 
         // Ensure the annex directory exists
         std::fs::create_dir_all(&annex_path).map_err(|e| {
@@ -62,8 +65,8 @@ impl ServiceContainer {
 
         // Initialize telemetry
         let telemetry = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
-            // Create channel for telemetry events
-            let (tx, mut rx) = mpsc::unbounded_channel();
+            // Create bounded channel for telemetry events (capacity: 500 for telemetry forwarding)
+            let (tx, mut rx) = mpsc::channel(500);
 
             // Spawn task to forward telemetry events to ingestd
             let ingest_socket_clone = ingest_socket.clone();

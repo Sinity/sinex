@@ -11,6 +11,7 @@ pub mod blobs;
 pub mod checkpoints;
 pub mod common;
 pub mod events;
+pub mod events_extensions;
 pub mod knowledge_graph;
 pub mod source_materials;
 pub mod state;

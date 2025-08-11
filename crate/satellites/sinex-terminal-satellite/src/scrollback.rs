@@ -405,7 +405,7 @@ impl ScrollbackWatcher {
         };
 
         // Create event
-        let event: RawEvent = Event::from_payload(ShellOutputCapturedPayload {
+        let event: RawEvent = Event::new(ShellOutputCapturedPayload {
             window_id: window.id.to_string(),
             terminal_type: "kitty".to_string(),
             cwd: window.cwd.clone(),

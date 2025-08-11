@@ -89,7 +89,7 @@ async fn test_blob_manager_path_validation(ctx: TestContext) -> color_eyre::eyre
     // Create temporary directory and files for testing
     let temp_dir = TempDir::new()?;
     let temp_file = temp_dir.path().join("test_file.txt");
-    std::fs::write(&temp_file, b"test content")?;
+    tokio::fs::write(&temp_file, b"test content").await?;
 
     // Create blob manager
     let annex_config = AnnexConfig {
@@ -132,13 +132,13 @@ async fn test_configuration_file_validation(_ctx: TestContext) -> color_eyre::ey
 
     // Create a legitimate TOML file
     let valid_toml_path = temp_dir.path().join("valid_config.toml");
-    std::fs::write(
+    tokio::fs::write(
         &valid_toml_path,
         r#"
         [section]
         key = "value"
         "#,
-    )?;
+    ).await?;
 
     // Test with valid path - should work
     let valid_utf8_path = camino::Utf8PathBuf::try_from(valid_toml_path)?;

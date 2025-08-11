@@ -121,7 +121,7 @@ async fn test_ulid_generation_with_system_clock_regression(ctx: TestContext) -> 
 async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     // Simulate multiple processes generating ULIDs simultaneously
     let mut process_handles = Vec::new();
-    let ulids = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ulids = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
     for process_id in 0..5 {
         let ulids_clone = ulids.clone();
@@ -138,7 +138,7 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> color_eyre::
             }
 
             // Collect all ULIDs
-            ulids_clone.lock().unwrap().extend(local_ulids);
+            ulids_clone.lock().extend(local_ulids);
         });
 
         process_handles.push(handle);
@@ -149,7 +149,7 @@ async fn test_ulid_uniqueness_across_processes(ctx: TestContext) -> color_eyre::
         handle.join().unwrap();
     }
 
-    let all_ulids = ulids.lock().unwrap();
+    let all_ulids = ulids.lock();
     let unique_ulids: HashSet<_> = all_ulids.iter().collect();
 
     println!(
@@ -412,7 +412,7 @@ async fn test_ulid_extreme_future_date(ctx: TestContext) -> color_eyre::eyre::Re
 #[sinex_test]
 async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> color_eyre::eyre::Result<()> {
     let generated = Arc::new(AtomicU64::new(0));
-    let ulids = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let ulids = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
     // Use barrier to synchronize thread starts
     let barrier = Arc::new(std::sync::Barrier::new(10));
@@ -429,7 +429,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> color_eyre::e
 
             // Generate ULID as fast as possible
             let ulid = Ulid::new();
-            ulids_clone.lock().unwrap().push(ulid);
+            ulids_clone.lock().push(ulid);
             generated_clone.fetch_add(1, Ordering::SeqCst);
         });
 
@@ -440,7 +440,7 @@ async fn test_ulid_generation_same_nanosecond(ctx: TestContext) -> color_eyre::e
         handle.join().unwrap();
     }
 
-    let ulids = ulids.lock().unwrap();
+    let ulids = ulids.lock();
     let unique: HashSet<_> = ulids.iter().map(|u| u.to_string()).collect();
 
     println!("Generated {} ULIDs, {} unique", ulids.len(), unique.len());

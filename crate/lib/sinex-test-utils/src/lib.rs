@@ -56,8 +56,8 @@
 //! // Using convenience helper for simple test events
 //! ctx.create_test_event("fs-watcher", "file.modified", json!({"path": "/tmp/test"})).await?;
 //!
-//! // Using production Event::from_payload() with actual payload types
-//! let event = Event::from_payload(FileCreatedPayload {
+//! // Using production Event::new() with actual payload types
+//! let event = Event::new(FileCreatedPayload {
 //!     path: "/data/document.pdf".to_string(),
 //!     size: 1024,
 //!     created_at: Utc::now(),
@@ -211,7 +211,7 @@
 //! ).await?;
 //!
 //! // Create validated events using production API
-//! let event = Event::from_payload(FileCreatedPayload {
+//! let event = Event::new(FileCreatedPayload {
 //!     path: "/test".to_string(),
 //!     size: 100,
 //!     // ... other required fields
@@ -924,7 +924,7 @@ mod tests {
         // Batch insert and verify
         let batch_events = (0..10)
             .map(|i| {
-                RawEvent::schemaless(
+                RawEvent::new(
                     EventSource::from("count-test"),
                     EventType::from("batch"),
                     json!({"batch_index": i}),

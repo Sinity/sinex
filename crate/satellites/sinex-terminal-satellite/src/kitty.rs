@@ -41,6 +41,24 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
+// Static regex patterns for prompt matching - compiled once for performance
+lazy_static::lazy_static! {
+    static ref PROMPT_PATTERNS: Vec<Regex> = vec![
+        // Basic bash/zsh prompts
+        Regex::new(r"^\$ (.+)$").unwrap(),
+        Regex::new(r"^# (.+)$").unwrap(),
+        // Starship prompt
+        Regex::new(r"^❯ (.+)$").unwrap(),
+        // Oh-my-zsh variations
+        Regex::new(r"^➜\s+[^\s]+\s+(.+)$").unwrap(),
+        Regex::new(r"^.*%\s+(.+)$").unwrap(),
+        // Fish shell
+        Regex::new(r"^.*>\s+(.+)$").unwrap(),
+        // Custom prompts with timestamps
+        Regex::new(r"^\[\d{2}:\d{2}:\d{2}\].*\$\s+(.+)$").unwrap(),
+    ];
+}
+
 /// Kitty window information
 #[derive(Debug, Clone)]
 struct KittyWindow {
@@ -64,10 +82,12 @@ struct KittyWindowState {
     tab_id: String,
     last_command: Option<String>,
     last_prompt_time: Option<SystemTime>,
+    command_start_time: Option<SystemTime>,
+    shell_pid: Option<u32>,
 }
 
 /// Process information for tracking changes
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 pub struct KittyProcessInfo {
     pid: u32,
     name: String,
@@ -104,7 +124,6 @@ pub struct KittyWatcher {
     socket_path: Option<String>,
     poll_interval: Duration,
     window_states: HashMap<String, KittyWindowState>,
-    prompt_patterns: Vec<Regex>,
     last_scrollback_line_counts: HashMap<String, u32>,
     last_focused_tab: Option<String>,
     process_states: HashMap<String, KittyProcessInfo>,
@@ -117,7 +136,6 @@ impl KittyWatcher {
             socket_path: None,
             poll_interval: Duration::from_millis(500),
             window_states: HashMap::with_capacity(20),
-            prompt_patterns: Self::create_prompt_patterns(),
             last_scrollback_line_counts: HashMap::with_capacity(20),
             last_focused_tab: None,
             process_states: HashMap::with_capacity(50),
@@ -134,23 +152,6 @@ impl KittyWatcher {
         }
 
         Ok(watcher)
-    }
-
-    fn create_prompt_patterns() -> Vec<Regex> {
-        vec![
-            // Basic bash/zsh prompts
-            Regex::new(r"^\$ (.+)$").unwrap(),
-            Regex::new(r"^# (.+)$").unwrap(),
-            // Starship prompt
-            Regex::new(r"^❯ (.+)$").unwrap(),
-            // Oh-my-zsh variations
-            Regex::new(r"^➜\s+[^\s]+\s+(.+)$").unwrap(),
-            Regex::new(r"^.*%\s+(.+)$").unwrap(),
-            // Fish shell
-            Regex::new(r"^.*>\s+(.+)$").unwrap(),
-            // Custom prompts with timestamps
-            Regex::new(r"^\[\d{2}:\d{2}:\d{2}\].*\$\s+(.+)$").unwrap(),
-        ]
     }
 
     async fn discover_kitty_socket(&mut self) -> SatelliteResult<String> {
@@ -268,7 +269,7 @@ impl KittyWatcher {
                     tabs.push((
                         tab_id_str.clone(),
                         tab_title.to_string(),
-                        tab_index as u32,
+                        tab_index.min(u32::MAX as usize) as u32,
                         is_focused,
                     ));
 
@@ -282,7 +283,7 @@ impl KittyWatcher {
                                 .unwrap_or_default()
                                 .into_iter()
                                 .map(|process| KittyProcess {
-                                    pid: process.pid as u32,
+                                    pid: process.pid.min(u32::MAX as u64) as u32,
                                     name: process.name,
                                 })
                                 .collect();
@@ -293,7 +294,7 @@ impl KittyWatcher {
                                 foreground_processes,
                                 last_cmd_exit_status: window_json
                                     .last_cmd_exit_status
-                                    .map(|s| s as i32),
+                                    .map(|s| s.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
                                 parent_tab_id: tab_id_str.clone(),
                             });
                         }
@@ -307,6 +308,57 @@ impl KittyWatcher {
 
     async fn get_last_command_output(&self, window_id: &str) -> SatelliteResult<String> {
         self.get_kitty_text(window_id, "last_cmd_output").await
+    }
+
+    async fn get_last_stderr(&self, window_id: &str) -> SatelliteResult<String> {
+        // Kitty shell integration can capture stderr separately with proper configuration
+        // Try to get stderr using last_cmd_stderr extent (requires shell integration)
+        match self.get_kitty_text(window_id, "last_cmd_stderr").await {
+            Ok(stderr) => Ok(stderr),
+            Err(_) => {
+                // Fallback: Try to extract stderr from combined output
+                // This is less reliable but better than nothing
+                self.extract_stderr_from_combined_output(window_id).await
+            }
+        }
+    }
+
+    async fn extract_stderr_from_combined_output(
+        &self,
+        window_id: &str,
+    ) -> SatelliteResult<String> {
+        // Get the last command output which may contain interleaved stderr
+        let output = self.get_kitty_text(window_id, "last_cmd_output").await?;
+
+        // Common stderr patterns to look for
+        // This is a heuristic approach - not perfect but useful
+        let stderr_lines: Vec<String> = output
+            .lines()
+            .filter(|line| {
+                // Common stderr indicators
+                line.starts_with("Error:")
+                    || line.starts_with("ERROR:")
+                    || line.starts_with("Warning:")
+                    || line.starts_with("WARNING:")
+                    || line.starts_with("Fatal:")
+                    || line.starts_with("FATAL:")
+                    || line.contains("error:")
+                    || line.contains("warning:")
+                    || line.contains("failed")
+                    || line.contains("cannot")
+                    || line.contains("unable to")
+                    || line.contains("permission denied")
+                    || line.contains("not found")
+                    || line.contains("No such")
+            })
+            .map(|s| s.to_string())
+            .collect();
+
+        if stderr_lines.is_empty() {
+            Ok(String::new())
+        } else {
+            Ok(stderr_lines.join("\n"))
+        }
     }
 
     async fn get_kitty_text(&self, window_id: &str, extent: &str) -> SatelliteResult<String> {
@@ -356,7 +408,7 @@ impl KittyWatcher {
                 let previous_process = self.process_states.get(&window_id).cloned();
 
                 let process_event: RawEvent =
-                    Event::from_payload(sinex_core::types::events::KittyProcessChangedPayload {
+                    Event::new(sinex_core::types::events::KittyProcessChangedPayload {
                         kitty_window_id: window_id.clone(),
                         kitty_tab_id: window.parent_tab_id.clone(),
                         previous_process: previous_process
@@ -389,41 +441,67 @@ impl KittyWatcher {
                             tab_id: window.parent_tab_id.clone(),
                             last_command: None,
                             last_prompt_time: None,
+                            command_start_time: None,
+                            shell_pid: window.foreground_process.as_ref().map(|p| p.pid),
                         });
 
                 // Try to extract command from the output (look for prompt patterns)
                 let extracted_command =
-                    Self::extract_command_from_output(&self.prompt_patterns, &last_output);
+                    Self::extract_command_from_output(&PROMPT_PATTERNS, &last_output);
 
                 if let Some(command_text) = extracted_command {
                     // Create command completion event with both command and output
-                    // Create command completion event
+                    // Calculate command duration
+                    let duration_ms = if let Some(start_time) = window_state.command_start_time {
+                        SystemTime::now()
+                            .duration_since(start_time)
+                            .unwrap_or_default()
+                            .as_millis()
+                            .min(u64::MAX as u128) as u64
+                    } else {
+                        // Estimate based on last prompt time if we don't have exact start
+                        window_state
+                            .last_prompt_time
+                            .and_then(|t| SystemTime::now().duration_since(t).ok())
+                            .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
+                            .unwrap_or(0)
+                    };
 
-                    let completion_event: RawEvent = Event::from_payload(
-                        sinex_core::types::events::KittyCommandCompletedPayload {
+                    // Get current shell PID (might have changed)
+                    let shell_pid = window
+                        .foreground_process
+                        .as_ref()
+                        .map(|p| p.pid)
+                        .or(window_state.shell_pid)
+                        .unwrap_or(0);
+
+                    // Create command completion event
+                    let completion_event: RawEvent =
+                        Event::new(sinex_core::types::events::KittyCommandCompletedPayload {
                             command: CommandText::new(command_text.clone()),
                             working_directory: SanitizedPath::new_unchecked(
                                 window.cwd.clone().unwrap_or_default(),
                             ),
                             exit_status: window.last_cmd_exit_status.unwrap_or(0),
-                            duration_ms: 0, // TODO: Requires tracking command start times
-                            shell_pid: 0,   // TODO: Get actual shell PID
+                            duration_ms,
+                            shell_pid,
                             kitty_window_id: window_id.clone(),
                             kitty_tab_id: window_state.tab_id.clone(),
                             output_lines: Some(last_output.lines().count() as u32),
-                            error_output: None, // TODO: Separate stderr capture
-                        },
-                    )
-                    .into();
+                            error_output: self.get_last_stderr(&window_id).await.ok(),
+                        })
+                        .into();
 
                     if tx.send(completion_event).is_err() {
                         warn!("Event channel closed");
                         return Ok(());
                     }
 
-                    // Update state
+                    // Update state for next command
                     window_state.last_command = Some(command_text);
                     window_state.last_prompt_time = Some(SystemTime::now());
+                    window_state.command_start_time = Some(SystemTime::now());
+                    window_state.shell_pid = Some(shell_pid);
                 }
             }
         }
@@ -462,11 +540,11 @@ impl KittyWatcher {
                 // Create tab focused event
 
                 let tab_focused_event: RawEvent =
-                    Event::from_payload(sinex_core::types::events::KittyTabFocusedPayload {
+                    Event::new(sinex_core::types::events::KittyTabFocusedPayload {
                         kitty_tab_id: focused_tab_id.clone(),
                         kitty_window_id: "unknown".to_string(),
                         tab_title: title.clone(),
-                        tab_index: *index as usize,
+                        tab_index: (*index as usize).min(usize::MAX),
                         previous_tab_id: previous_tab_id,
                         focus_timestamp: timestamp,
                     })
@@ -495,7 +573,7 @@ impl KittyWatcher {
         // Get current scrollback content
         let scrollback = self.get_kitty_text(&window_id, "all").await?;
         let current_lines: Vec<&str> = scrollback.lines().collect();
-        let current_line_count = current_lines.len() as u32;
+        let current_line_count = current_lines.len().min(u32::MAX as usize) as u32;
 
         // Get previous line count for this window
         let previous_line_count = self
@@ -515,7 +593,7 @@ impl KittyWatcher {
             // Create content streamed event
 
             let scrollback_event: RawEvent =
-                Event::from_payload(sinex_core::types::events::KittyContentStreamedPayload {
+                Event::new(sinex_core::types::events::KittyContentStreamedPayload {
                     kitty_window_id: window_id.clone(),
                     new_lines: new_lines,
                     line_start_offset: previous_line_count as usize,
@@ -528,10 +606,10 @@ impl KittyWatcher {
                 return Ok(());
             }
 
+            let new_line_count = current_line_count.saturating_sub(previous_line_count);
             debug!(
                 "Captured {} new lines for window {}",
-                current_line_count - previous_line_count,
-                window_id
+                new_line_count, window_id
             );
         }
 

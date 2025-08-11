@@ -33,7 +33,7 @@ impl MigrationTrait for Migration {
                               )
                             RETURNING *
                         ), inserted AS (
-                            INSERT INTO core.archived_events
+                            INSERT INTO audit.archived_events
                             SELECT *, NOW(), 'age_based_archival'
                             FROM archived
                             RETURNING id

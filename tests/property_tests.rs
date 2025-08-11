@@ -9,9 +9,8 @@
 use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_core::db::models::RawEvent as DbEvent;
-use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::{Id, Ulid};
+// Using shorter imports from sinex-core's re-exports
+use sinex_core::{EventSource, EventType, HostName, Id, RawEvent as DbEvent, Ulid};
 use sinex_test_utils::sinex_test;
 
 // =============================================================================
@@ -51,7 +50,7 @@ fn test_ulid_string_properties() -> color_eyre::eyre::Result<()> {
         // Property: Valid ULID strings should always parse successfully
         let ulid_result = ulid_str.parse::<Ulid>();
         if ulid_result.is_ok() {
-            let ulid = ulid_result.unwrap();
+            let ulid = ulid_result.expect("ULID parsing should succeed for valid string");
             // Property: Round-trip conversion should be identity
             prop_assert_eq!(ulid.to_string(), ulid_str);
         }
@@ -177,13 +176,13 @@ fn test_event_json_serialization_properties() -> color_eyre::eyre::Result<()> {
         let json_result = serde_json::to_string(&original_event);
         prop_assert!(json_result.is_ok());
 
-        let json_str = json_result.unwrap();
+        let json_str = json_result.expect("JSON serialization should succeed for valid event");
 
         // Property: Deserialization should be inverse of serialization
         let deserialize_result = serde_json::from_str::<DbEvent>(&json_str);
         prop_assert!(deserialize_result.is_ok());
 
-        let deserialized_event = deserialize_result.unwrap();
+        let deserialized_event = deserialize_result.expect("JSON deserialization should succeed for valid JSON");
 
         // Property: Round-trip should preserve all fields
         prop_assert_eq!(deserialized_event.source, original_event.source);
@@ -317,54 +316,9 @@ fn test_id_ulid_conversion_properties() -> color_eyre::eyre::Result<()> {
 // DATABASE INTEGRATION PROPERTY TESTS - Real database operations
 // =============================================================================
 
-// Temporarily disabled due to proptest/async incompatibility
-// TODO: Fix async proptest pattern
-/* #[sinex_test]
-async fn test_batch_insertion_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    proptest!(|(
-        batch_size in 1..50usize,
-        source in "[a-zA-Z0-9_-]{1,20}"
-    )| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        rt.block_on(async {
-            // Create batch of events
-            for i in 0..batch_size {
-                ctx.create_test_event(
-                    source.as_str(),
-                    "batch.test",
-                    json!({
-                        "index": i,
-                        "batch_size": batch_size
-                    })
-                ).await.unwrap();
-            }
-
-            // Property: All events should be retrievable
-            let retrieved = ctx.pool.events()
-                .get_by_source(&EventSource::new(&source), Some(batch_size as i64 + 10), None)
-                .await
-                .unwrap();
-
-            prop_assert_eq!(retrieved.len(), batch_size);
-
-            // Property: All events should have unique IDs (check by iteration)
-            let ids: Vec<_> = retrieved.iter().filter_map(|e| e.id.clone()).collect();
-            for (i, id1) in ids.iter().enumerate() {
-                for id2 in ids.iter().skip(i + 1) {
-                    prop_assert_ne!(id1, id2);
-                }
-            }
-
-            // Property: All events should have correct source
-            for event in &retrieved {
-                prop_assert_eq!(event.source.as_str(), source.as_str());
-            }
-
-            Ok::<(), proptest::test_runner::TestCaseError>(())
-        })?
-    });
-    Ok(())
-} */
+// NOTE: Batch insertion property test removed due to proptest/async incompatibility.
+// Async proptest requires special patterns that are not yet implemented in this test suite.
+// Consider using integration_tests.rs for async batch insertion testing instead.
 
 // =============================================================================
 // EDGE CASE PROPERTY TESTS - Boundary conditions and special cases
@@ -459,7 +413,8 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
         thread_count in 2..10usize,
         operations_per_thread in 10..100usize
     )| {
-        use std::sync::{Arc, Mutex};
+        use parking_lot::Mutex;
+        use std::sync::Arc;
         use std::thread;
 
         let results = Arc::new(Mutex::new(Vec::new()));
@@ -473,7 +428,7 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
                 for _ in 0..operations_per_thread {
                     thread_ulids.push(Ulid::new());
                 }
-                results_clone.lock().unwrap().extend(thread_ulids);
+                results_clone.lock().extend(thread_ulids);
             });
             handles.push(handle);
         }
@@ -482,7 +437,7 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
             handle.join().unwrap();
         }
 
-        let final_results = results.lock().unwrap();
+        let final_results = results.lock();
         let expected_count = thread_count * operations_per_thread;
 
         // Property: Should have expected number of ULIDs
@@ -543,54 +498,9 @@ mod property {
 // REGRESSION PROPERTY TESTS - Preserve important system invariants
 // =============================================================================
 
-// Temporarily disabled due to proptest/async incompatibility
-// TODO: Fix async proptest pattern
-/* #[sinex_test]
-async fn test_event_ordering_properties(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    proptest!(|(
-        event_count in 2..100usize
-    )| {
-        let rt = tokio::runtime::Runtime::new().expect("Failed to create runtime");
-        rt.block_on(async {
-            let mut event_ids = Vec::new();
-
-            // Create events with small delays
-            for i in 0..event_count {
-                let event = ctx.create_test_event(
-                    "ordering-prop-test",
-                    "ordering.test",
-                    json!({"sequence": i})
-                ).await.unwrap();
-
-                event_ids.push(event.id.unwrap());
-
-                // Small delay to ensure ordering
-                tokio::time::sleep(tokio::time::Duration::from_millis(1)).await;
-            }
-
-            // Property: Event IDs should be in temporal order (compare by string)
-            for window in event_ids.windows(2) {
-                prop_assert!(window[0].to_string() <= window[1].to_string());
-            }
-
-            // Property: Retrieved events should maintain order
-            let retrieved = ctx.pool.events()
-                .get_by_source(&EventSource::from_static("ordering-prop-test"), Some(event_count as i64 + 10), None)
-                .await
-                .unwrap();
-
-            prop_assert_eq!(retrieved.len(), event_count);
-
-            // Property: Database ordering should match insertion order
-            for i in 1..retrieved.len() {
-                prop_assert!(retrieved[i-1].ts_ingest <= retrieved[i].ts_ingest);
-            }
-
-            Ok::<(), proptest::test_runner::TestCaseError>(())
-        })?
-    });
-    Ok(())
-} */
+// NOTE: Event ordering property test removed due to proptest/async incompatibility.
+// This test concept is better served by the dedicated integration test
+// `test_ulid_ordering_integration` in integration_tests.rs.
 
 // =============================================================================
 // Include modernized event property tests

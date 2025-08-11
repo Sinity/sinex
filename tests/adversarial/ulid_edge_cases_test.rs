@@ -10,7 +10,8 @@ use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use sinex_core::types::ulid::Ulid;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, Mutex};
+use parking_lot::Mutex;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::task::JoinSet;
 
@@ -156,7 +157,7 @@ async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> color_
                 local_ulids.push(ulid);
             }
 
-            ulids.lock().unwrap().extend(local_ulids);
+            ulids.lock().extend(local_ulids);
 
             println!("Thread {} completed", thread_id);
         });
@@ -169,7 +170,7 @@ async fn test_ulid_monotonic_generation_extreme_rate(ctx: TestContext) -> color_
     }
 
     let elapsed = start.elapsed();
-    let all_ulids = generated_ulids.lock().unwrap();
+    let all_ulids = generated_ulids.lock();
     let total_ulids = all_ulids.len();
     let rate = total_ulids as f64 / elapsed.as_secs_f64();
 
@@ -213,7 +214,7 @@ async fn test_ulid_generation_same_millisecond_ordering(ctx: TestContext) -> col
     let start_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis() as u64;
+        .as_millis().min(u64::MAX as u128) as u64;
 
     // Generate ULIDs until we get a different millisecond
     while std::time::SystemTime::now()

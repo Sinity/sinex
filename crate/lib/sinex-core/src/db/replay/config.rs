@@ -104,6 +104,10 @@ pub struct ReplayConfig {
     pub collect_metrics: bool,
     /// Whether to use advisory locks for coordination
     pub use_advisory_locks: bool,
+    /// Whether to run in dry-run mode (no actual changes)
+    pub dry_run: bool,
+    /// Whether to log all operations that would be performed in dry-run
+    pub dry_run_verbose: bool,
 }
 
 impl Default for ReplayConfig {
@@ -115,6 +119,8 @@ impl Default for ReplayConfig {
             enforce_invariants: true,
             collect_metrics: true,
             use_advisory_locks: true,
+            dry_run: false,
+            dry_run_verbose: false,
         }
     }
 }

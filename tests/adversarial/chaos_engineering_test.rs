@@ -1194,7 +1194,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Re
     Ok(())
 }
 
-// TODO: Rewrite this test to use real network tools or testcontainers
+// NOTE: Network partition test removed - requires real network simulation tools
 // /// Test network partition resilience
 // // #[sinex_test]
 // // async fn test_network_partition_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -1303,7 +1303,7 @@ async fn test_redis_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Re
 //     Ok(())
 // }
 //
-// // TODO: Rewrite this test to use real services or chaos proxies
+// // NOTE: Cascading failure test removed - requires real service orchestration
 // // /// Test cascading failure resilience
 // // #[sinex_test]
 // // async fn test_cascading_failure_resilience(ctx: TestContext) -> color_eyre::eyre::Result<()> {

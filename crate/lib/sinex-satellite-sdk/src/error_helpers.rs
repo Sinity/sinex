@@ -4,7 +4,7 @@
 //! across satellites. These helpers provide consistent error context and conversion patterns.
 
 use crate::{stream_processor::StreamProcessorContext, SatelliteError};
-use std::{collections::HashMap, io};
+use std::io;
 
 /// Convert IO errors to SatelliteError with context
 ///

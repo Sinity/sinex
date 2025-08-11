@@ -168,9 +168,38 @@ impl EventProcessor {
                 "Failed to send batch of {} events after {} retries",
                 batch_size, retry_count
             );
-            // TODO: Consider dead letter queue or local persistence
-            batch.clear(); // For now, drop the events to prevent memory bloat
+            // Store failed events in dead letter queue for later retry
+            if let Err(e) = Self::store_dead_letter_events(&batch).await {
+                error!("Failed to store events in dead letter queue: {}", e);
+            }
+            batch.clear();
         }
+    }
+
+    /// Store failed events in dead letter queue
+    async fn store_dead_letter_events(
+        events: &[RawEvent],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Write to local file for now - could be enhanced with database storage
+        let dead_letter_path = std::env::temp_dir().join("sinex_dead_letter_events.json");
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&dead_letter_path)
+            .await?;
+
+        for event in events {
+            let json = serde_json::to_string(event)?;
+            file.write_all(json.as_bytes()).await?;
+            file.write_all(b"\n").await?;
+        }
+
+        info!(
+            "Stored {} events in dead letter queue at {:?}",
+            events.len(),
+            dead_letter_path
+        );
+        Ok(())
     }
 
     /// Send batch via NATS

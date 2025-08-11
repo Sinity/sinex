@@ -1,6 +1,5 @@
 use camino::{Utf8Component as Component, Utf8Path as Path, Utf8PathBuf as PathBuf};
 use serde_json::Value;
-use std::collections::HashSet;
 use thiserror::Error;
 
 // Error types for validation

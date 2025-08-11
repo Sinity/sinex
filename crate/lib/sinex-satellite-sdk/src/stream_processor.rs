@@ -431,7 +431,6 @@ impl std::fmt::Debug for StreamProcessorContext {
 
 impl StreamProcessorContext {
     /// Send an event through the event channel
-    // TODO: Fix macro to use sinex_core instead of sinex_db
     #[cfg_attr(
         feature = "macros",
         sinex_macros::auto_event_metrics(event_type = "emit")
@@ -690,6 +689,15 @@ pub enum ProcessorType {
     Automaton,
 }
 
+impl std::fmt::Display for ProcessorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ingestor => write!(f, "ingestor"),
+            Self::Automaton => write!(f, "automaton"),
+        }
+    }
+}
+
 /// Processor capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessorCapabilities {
@@ -791,11 +799,11 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -814,8 +822,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Create telemetry accumulator
         let telemetry = if !dry_run {
-            // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
+            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -892,11 +900,11 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -915,8 +923,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Create telemetry accumulator
         let telemetry = if !dry_run {
-            // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
+            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -993,11 +1001,11 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -1016,8 +1024,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Create telemetry accumulator
         let telemetry = if !dry_run {
-            // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
+            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -1104,11 +1112,11 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         work_dir: std::path::PathBuf,
         dry_run: bool,
     ) -> SatelliteResult<()> {
-        // Create event channel
-        let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
+        // Create bounded event channel (capacity: 1000 for high-throughput event processing)
+        let (event_sender, event_receiver) = mpsc::channel::<RawEvent>(1000);
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -1127,8 +1135,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
 
         // Create telemetry accumulator
         let telemetry = if !dry_run {
-            // Create event sender for telemetry (bounded channel as expected by telemetry)
-            let (telemetry_tx, mut telemetry_rx) = mpsc::unbounded_channel::<RawEvent>();
+            // Create bounded event sender for telemetry (capacity: 500 for telemetry events)
+            let (telemetry_tx, mut telemetry_rx) = mpsc::channel::<RawEvent>(500);
 
             // Spawn task to forward telemetry events to main event channel
             let main_event_sender = event_sender.clone();
@@ -1272,10 +1280,8 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
                 self.run_ingestor_startup_sequence().await
             }
             ProcessorType::Automaton => {
-                // TODO: Implement automaton continuous mode after NatsStreamConsumer removal
-                // This functionality should be moved into the scan method per TARGET_canonical.md
-                warn!("Automaton continuous mode not yet implemented after NatsStreamConsumer removal");
-                Ok(())
+                // Automaton startup: consume events from NATS streams
+                self.run_automaton_continuous_mode().await
             }
         }
     }
@@ -1342,16 +1348,55 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         Ok(())
     }
 
-    // TODO: Implement automaton continuous mode after NatsStreamConsumer removal
-    // This functionality should be moved into the scan method per TARGET_canonical.md
-    //
-    // /// Run automaton in continuous mode with internal NATS management
-    // async fn run_automaton_continuous(&mut self) -> SatelliteResult<()> {
-    //     // REMOVED: This method used NatsStreamConsumer which has been deprecated
-    //     // The functionality should be integrated into the scan method instead
-    //     Err(SatelliteError::Processing(
-    //         "Automaton continuous mode not yet implemented after NatsStreamConsumer removal".to_string()
-    //     ))
+    /// Run automaton in continuous mode
+    async fn run_automaton_continuous_mode(&mut self) -> SatelliteResult<()> {
+        info!("Starting automaton continuous mode");
+
+        // Get current checkpoint to resume from previous state if available
+        let current_checkpoint = self.processor.current_checkpoint().await?;
+
+        // Automata primarily process events in continuous mode
+        // They consume events from message queues or databases
+        if self.processor.capabilities().supports_continuous {
+            info!("Starting continuous event processing for automaton");
+
+            // Use Continuous time horizon for automata
+            // The processor's scan method should handle NATS/database consumption internally
+            let _continuous_report = self
+                .processor
+                .scan(
+                    current_checkpoint,
+                    TimeHorizon::Continuous,
+                    ScanArgs::default(),
+                )
+                .await?;
+
+            info!("Automaton continuous processing completed");
+        } else {
+            // Automata can also run in batch mode for historical processing
+            if self.processor.capabilities().supports_historical {
+                info!("Running automaton in historical batch mode");
+
+                // Process all historical events up to now
+                let _historical_report = self
+                    .processor
+                    .scan(
+                        current_checkpoint,
+                        TimeHorizon::Historical {
+                            end_time: Utc::now(),
+                        },
+                        ScanArgs::default(),
+                    )
+                    .await?;
+
+                info!("Automaton historical processing completed");
+            } else {
+                warn!("Automaton does not support continuous or historical mode");
+            }
+        }
+
+        Ok(())
+    }
     // }
 
     // /// Read a batch of events from NATS (internal helper)

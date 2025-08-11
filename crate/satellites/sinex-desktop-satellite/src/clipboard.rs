@@ -31,6 +31,7 @@ use camino::Utf8PathBuf;
 use chrono::Utc;
 use copypasta::{ClipboardContext, ClipboardProvider};
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::Event;
 use sinex_core::types::Timestamp;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
@@ -150,8 +151,17 @@ impl ClipboardWatcher {
     async fn initialize_blob_manager(&self) -> Option<BlobManager> {
         // Try to get database URL from environment
         let db_url = std::env::var("DATABASE_URL").ok()?;
-        let annex_path = std::env::var("SINEX_ANNEX_PATH")
+        let annex_path_str = std::env::var("SINEX_ANNEX_PATH")
             .unwrap_or_else(|_| "/tmp/sinex-clipboard-annex".to_string());
+
+        // Validate annex path
+        let annex_path = match SanitizedPath::from_str_validated(&annex_path_str) {
+            Ok(path) => Utf8PathBuf::from(path.as_str()),
+            Err(e) => {
+                warn!("Invalid SINEX_ANNEX_PATH '{}': {}", annex_path_str, e);
+                return None;
+            }
+        };
 
         // Create database pool
         let pool = match sqlx::postgres::PgPoolOptions::new()
@@ -542,23 +552,22 @@ impl ClipboardWatcher {
 
         let file_count = content.file_paths.as_ref().map(|paths| paths.len());
 
-        let event: RawEvent =
-            Event::from_payload(sinex_core::types::events::ClipboardCopiedPayload {
-                operation: operation.to_string(),
-                content_type: content.content_type.clone(),
-                content_size: content.size_bytes,
-                text_preview,
-                file_count,
-                file_paths: content.file_paths.clone(),
-                source_app: content.source_app.clone(),
-                window_title: content.window_title.clone(),
-                content_hash: content.hash.clone(),
-                original_hash,
-                annex_key,
-                blob_id,
-            })
-            .with_ts_orig(Some(content.timestamp))
-            .into();
+        let event: RawEvent = Event::new(sinex_core::types::events::ClipboardCopiedPayload {
+            operation: operation.to_string(),
+            content_type: content.content_type.clone(),
+            content_size: content.size_bytes,
+            text_preview,
+            file_count,
+            file_paths: content.file_paths.clone(),
+            source_app: content.source_app.clone(),
+            window_title: content.window_title.clone(),
+            content_hash: content.hash.clone(),
+            original_hash,
+            annex_key,
+            blob_id,
+        })
+        .with_ts_orig(Some(content.timestamp))
+        .into();
 
         Ok(event)
     }
@@ -578,20 +587,19 @@ impl ClipboardWatcher {
         // Handle large content with blob storage
         let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
 
-        let event: RawEvent =
-            Event::from_payload(sinex_core::types::events::ClipboardSelectedPayload {
-                selection_type: "primary".to_string(),
-                content_type: content.content_type.clone(),
-                content_size: content.size_bytes,
-                text_preview,
-                source_app: content.source_app.clone(),
-                content_hash: content.hash.clone(),
-                original_hash,
-                annex_key,
-                blob_id,
-            })
-            .with_ts_orig(Some(content.timestamp))
-            .into();
+        let event: RawEvent = Event::new(sinex_core::types::events::ClipboardSelectedPayload {
+            selection_type: "primary".to_string(),
+            content_type: content.content_type.clone(),
+            content_size: content.size_bytes,
+            text_preview,
+            source_app: content.source_app.clone(),
+            content_hash: content.hash.clone(),
+            original_hash,
+            annex_key,
+            blob_id,
+        })
+        .with_ts_orig(Some(content.timestamp))
+        .into();
 
         Ok(event)
     }

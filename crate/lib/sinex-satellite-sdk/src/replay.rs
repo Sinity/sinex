@@ -1,5 +1,8 @@
 //! Replay mode for historical event processing
 
+use crate::replay_control::ReplayController;
+use crate::replay_metrics::ReplayMetrics;
+use crate::replay_progress::{ProgressTracker, ReplayPhase};
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -8,6 +11,12 @@ use sinex_core::db::{repositories::DbPoolExt, DbPool as PgPool};
 use sinex_core::types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+
+/// Get epoch timestamp as a safe fallback
+fn epoch_timestamp() -> DateTime<Utc> {
+    DateTime::from_timestamp(0, 0)
+        .expect("Failed to create epoch timestamp - this should never fail")
+}
 
 /// Replay mode configuration
 #[derive(Debug, Clone)]
@@ -36,7 +45,7 @@ pub enum ReplayMode {
 }
 
 /// Flexible filters for custom replay
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct ReplayFilters {
     /// Source patterns (supports wildcards)
     pub sources: Option<Vec<String>>,
@@ -63,6 +72,8 @@ pub struct ReplayManager {
     pool: PgPool,
     mode: ReplayMode,
     batch_size: usize,
+    controller: Option<ReplayController>,
+    metrics: Option<ReplayMetrics>,
 }
 
 impl ReplayManager {
@@ -72,6 +83,8 @@ impl ReplayManager {
             pool,
             mode,
             batch_size: 1000,
+            controller: None,
+            metrics: None,
         }
     }
 
@@ -79,6 +92,28 @@ impl ReplayManager {
     pub fn with_batch_size(mut self, batch_size: usize) -> Self {
         self.batch_size = batch_size;
         self
+    }
+
+    /// Set replay controller for pause/resume/cancel functionality
+    pub fn with_controller(mut self, controller: ReplayController) -> Self {
+        self.controller = Some(controller);
+        self
+    }
+
+    /// Get the replay controller (if set)
+    pub fn controller(&self) -> Option<&ReplayController> {
+        self.controller.as_ref()
+    }
+
+    /// Set metrics collector
+    pub fn with_metrics(mut self, metrics: ReplayMetrics) -> Self {
+        self.metrics = Some(metrics);
+        self
+    }
+
+    /// Get the metrics collector (if set)
+    pub fn metrics(&self) -> Option<&ReplayMetrics> {
+        self.metrics.as_ref()
     }
 
     /// Check if replay mode is enabled
@@ -111,8 +146,7 @@ impl ReplayManager {
                     self.pool.events().count_by_source(&event_source).await? as u64
                 } else {
                     // Use a complex query for source with time range
-                    let start_time =
-                        start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                    let start_time = start_time.unwrap_or_else(epoch_timestamp);
                     let end_time = end_time.unwrap_or_else(Utc::now);
 
                     let event_source = EventSource::new(source);
@@ -150,8 +184,14 @@ impl ReplayManager {
         })
     }
 
-    /// Process events in replay mode
-    pub async fn replay_events<F, Fut>(&self, mut processor: F) -> SatelliteResult<ReplayResult>
+    /// Process events in replay mode with progress tracking
+    pub async fn replay_events_with_progress<F, Fut>(
+        &self,
+        mut processor: F,
+        progress_callback: Option<
+            impl Fn(&crate::replay_progress::ReplayProgress) + Send + Sync + 'static,
+        >,
+    ) -> SatelliteResult<ReplayResult>
     where
         F: FnMut(Vec<RawEvent>) -> Fut,
         Fut: std::future::Future<Output = SatelliteResult<usize>>,
@@ -161,10 +201,17 @@ impl ReplayManager {
                 total_processed: 0,
                 total_batches: 0,
                 errors: vec![],
+                metrics: None,
+                aggregated_data: None,
             });
         }
 
-        info!("Starting replay mode processing");
+        info!("Starting replay mode processing with progress tracking");
+
+        // Start metrics collection if enabled
+        if let Some(ref mut metrics) = self.metrics {
+            metrics.start();
+        }
 
         let stats = self.get_replay_stats().await?;
         info!(
@@ -174,12 +221,30 @@ impl ReplayManager {
             "Replay statistics"
         );
 
+        // Create progress tracker
+        let mut tracker = ProgressTracker::new(stats.total_events, stats.estimated_batches);
+        if let Some(callback) = progress_callback {
+            tracker = tracker.with_callback(callback);
+        }
+
+        // Initialize phase
+        tracker.set_phase(ReplayPhase::Initializing).await;
+
         let mut total_processed = 0;
         let mut total_batches = 0;
         let mut errors = Vec::new();
         let mut offset = 0;
 
+        // Start processing phase
+        tracker.set_phase(ReplayPhase::Processing).await;
+
         loop {
+            // Check for pause/cancel before fetching next batch
+            if let Some(ref controller) = self.controller {
+                controller.wait_if_paused().await?;
+                controller.check_cancelled()?;
+            }
+
             // Fetch events using the query system based on mode
             let events: Vec<RawEvent> = match &self.mode {
                 ReplayMode::TimeRange {
@@ -188,18 +253,15 @@ impl ReplayManager {
                 } => {
                     let end_time = end_time.unwrap_or_else(Utc::now);
 
-                    // TODO: Add time range query to repository
-                    // For now, use search with filters
-                    use sinex_core::db::repositories::{DbPoolExt, EventSearchFilters};
+                    // Use the existing time range query method
                     self.pool
                         .events()
-                        .search(EventSearchFilters {
-                            after: Some(*start_time),
-                            before: Some(end_time),
-                            limit: Some(self.batch_size as u64),
-                            offset: Some(offset as u64),
-                            ..Default::default()
-                        })
+                        .get_by_time_range(
+                            *start_time,
+                            end_time,
+                            Some(self.batch_size as i64),
+                            Some(offset as i64),
+                        )
                         .await?
                 }
                 ReplayMode::Source {
@@ -219,23 +281,20 @@ impl ReplayManager {
                             .await?
                     } else {
                         // For source with time range, use time range query and filter
-                        let start_time =
-                            start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                        let start_time = start_time.unwrap_or_else(epoch_timestamp);
                         let end_time = end_time.unwrap_or_else(Utc::now);
 
-                        // TODO: Add time range query with source filter to repository
-                        // For now, use search with filters
-                        use sinex_core::db::repositories::EventSearchFilters;
+                        // Use the new source + time range query method
+                        let event_source = EventSource::new(source);
                         self.pool
                             .events()
-                            .search(EventSearchFilters {
-                                source: Some(EventSource::new(source)),
-                                after: Some(start_time),
-                                before: Some(end_time),
-                                limit: Some(self.batch_size as u64),
-                                offset: Some(offset as u64),
-                                ..Default::default()
-                            })
+                            .get_by_source_and_time_range(
+                                &event_source,
+                                start_time,
+                                end_time,
+                                Some(self.batch_size as i64),
+                                Some(offset as i64),
+                            )
                             .await?
                     }
                 }
@@ -309,6 +368,15 @@ impl ReplayManager {
                 break;
             }
 
+            let batch_size = events.len();
+            let batch_start = std::time::Instant::now();
+
+            // Calculate batch size in bytes (approximate)
+            let batch_bytes = events
+                .iter()
+                .map(|e| e.payload.to_string().len() as u64 + 100) // +100 for metadata overhead
+                .sum::<u64>();
+
             {
                 // Process the batch
                 match processor(events).await {
@@ -320,6 +388,18 @@ impl ReplayManager {
                             total = total_processed,
                             "Processed replay batch"
                         );
+
+                        // Update progress tracker
+                        tracker.increment_processed(processed as u64).await;
+
+                        // Record metrics
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_batch(
+                                processed as u64,
+                                batch_start.elapsed(),
+                                batch_bytes,
+                            );
+                        }
                     }
                     Err(e) => {
                         warn!(
@@ -328,6 +408,15 @@ impl ReplayManager {
                             "Failed to process replay batch"
                         );
                         errors.push(format!("Batch {} error: {}", total_batches + 1, e));
+
+                        // Update failed count
+                        tracker.increment_failed(batch_size as u64).await;
+
+                        // Record failure metrics
+                        if let Some(ref metrics) = self.metrics {
+                            metrics.record_failures(batch_size as u64);
+                            metrics.record_error("batch_processing");
+                        }
                     }
                 }
             }
@@ -335,16 +424,27 @@ impl ReplayManager {
             total_batches += 1;
             offset += self.batch_size;
 
-            // Log progress every 10 batches
+            // Update batch completion in tracker
+            tracker.complete_batch().await;
+
+            // Save checkpoint periodically (every 10 batches)
             if total_batches % 10 == 0 {
-                info!(
-                    batches = total_batches,
-                    processed = total_processed,
-                    estimated_remaining = stats.estimated_batches.saturating_sub(total_batches),
-                    "Replay progress"
-                );
+                let last_event_id = None; // Would need to extract from events
+                tracker
+                    .save_checkpoint(
+                        last_event_id,
+                        offset as u64,
+                        serde_json::json!({
+                            "mode": format!("{:?}", self.mode),
+                            "batch_size": self.batch_size,
+                        }),
+                    )
+                    .await;
             }
         }
+
+        // Set completion phase
+        tracker.set_phase(ReplayPhase::Completed).await;
 
         info!(
             total_processed = total_processed,
@@ -353,11 +453,36 @@ impl ReplayManager {
             "Replay processing completed"
         );
 
+        // Get final summary
+        let summary = tracker.get_summary().await;
+        info!("{}", summary.format_report());
+
+        // Get final metrics report
+        if let Some(ref metrics) = self.metrics {
+            let snapshot = metrics.snapshot();
+            info!("Metrics report:\n{}", snapshot.format_report());
+        }
+
         Ok(ReplayResult {
             total_processed,
             total_batches,
             errors,
+            metrics: self.metrics.as_ref().map(|m| m.snapshot()),
+            aggregated_data: None, // Would need to be collected during processing
         })
+    }
+
+    /// Process events in replay mode (backwards compatibility)
+    pub async fn replay_events<F, Fut>(&self, processor: F) -> SatelliteResult<ReplayResult>
+    where
+        F: FnMut(Vec<RawEvent>) -> Fut,
+        Fut: std::future::Future<Output = SatelliteResult<usize>>,
+    {
+        self.replay_events_with_progress(
+            processor,
+            None::<fn(&crate::replay_progress::ReplayProgress)>,
+        )
+        .await
     }
 
     /// Apply custom filters to an event
@@ -453,12 +578,76 @@ impl ReplayManager {
             }
         }
 
-        // TODO: Implement payload filters when needed
-        // if let Some(payload_filters) = &filters.payload_filters {
-        //     // Complex JSON filtering logic would go here
-        // }
+        // Apply payload filters
+        if let Some(payload_filters) = &filters.payload_filters {
+            // Check each filter against the event payload
+            for (key, expected_value) in payload_filters {
+                // Use JSON pointer syntax for nested field access (e.g., "/field/nested")
+                let actual_value = if key.starts_with('/') {
+                    // JSON pointer style access
+                    event.payload.pointer(key)
+                } else {
+                    // Direct field access
+                    event.payload.get(key)
+                };
+
+                match actual_value {
+                    Some(actual) => {
+                        // Check if values match (handles different JSON value types)
+                        if !json_values_match(actual, expected_value) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        // If field doesn't exist and we're not checking for null, filter out
+                        if !expected_value.is_null() {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
 
         true
+    }
+}
+
+/// Helper function to compare JSON values with type coercion
+fn json_values_match(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    match (actual, expected) {
+        // Exact matches
+        (a, e) if a == e => true,
+
+        // String contains matching for partial searches
+        (Value::String(a), Value::String(e)) if e.starts_with('*') && e.ends_with('*') => {
+            let pattern = &e[1..e.len() - 1];
+            a.contains(pattern)
+        }
+        (Value::String(a), Value::String(e)) if e.starts_with('*') => {
+            let suffix = &e[1..];
+            a.ends_with(suffix)
+        }
+        (Value::String(a), Value::String(e)) if e.ends_with('*') => {
+            let prefix = &e[..e.len() - 1];
+            a.starts_with(prefix)
+        }
+
+        // Number comparisons (handle int/float differences)
+        (Value::Number(a), Value::Number(e)) => {
+            // Try to compare as floats for compatibility
+            match (a.as_f64(), e.as_f64()) {
+                (Some(av), Some(ev)) => (av - ev).abs() < f64::EPSILON,
+                _ => false,
+            }
+        }
+
+        // Array contains check
+        (Value::Array(arr), single) => arr.iter().any(|item| json_values_match(item, single)),
+
+        // Default to false for type mismatches
+        _ => false,
     }
 }
 
@@ -470,12 +659,14 @@ pub struct ReplayStats {
     pub estimated_batches: usize,
 }
 
-/// Replay processing result
-#[derive(Debug, Clone)]
+/// Replay processing result with aggregation support
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayResult {
     pub total_processed: usize,
     pub total_batches: usize,
     pub errors: Vec<String>,
+    pub metrics: Option<crate::replay_metrics::MetricsSnapshot>,
+    pub aggregated_data: Option<AggregatedResults>,
 }
 
 impl ReplayResult {
@@ -487,5 +678,159 @@ impl ReplayResult {
     /// Get error count
     pub fn error_count(&self) -> usize {
         self.errors.len()
+    }
+
+    /// Merge with another replay result (for aggregation)
+    pub fn merge(&mut self, other: ReplayResult) {
+        self.total_processed += other.total_processed;
+        self.total_batches += other.total_batches;
+        self.errors.extend(other.errors);
+
+        // Merge aggregated data if present
+        if let Some(other_data) = other.aggregated_data {
+            if let Some(ref mut our_data) = self.aggregated_data {
+                our_data.merge(other_data);
+            } else {
+                self.aggregated_data = Some(other_data);
+            }
+        }
+    }
+
+    /// Create empty result
+    pub fn empty() -> Self {
+        Self {
+            total_processed: 0,
+            total_batches: 0,
+            errors: vec![],
+            metrics: None,
+            aggregated_data: None,
+        }
+    }
+}
+
+/// Aggregated results from replay processing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AggregatedResults {
+    /// Count of events by type
+    pub events_by_type: HashMap<String, usize>,
+
+    /// Count of events by source
+    pub events_by_source: HashMap<String, usize>,
+
+    /// Count of events by hour
+    pub events_by_hour: HashMap<String, usize>,
+
+    /// Unique hosts encountered
+    pub unique_hosts: std::collections::HashSet<String>,
+
+    /// Processing statistics
+    pub processing_stats: ProcessingStats,
+}
+
+impl AggregatedResults {
+    /// Create new aggregated results
+    pub fn new() -> Self {
+        Self {
+            events_by_type: HashMap::new(),
+            events_by_source: HashMap::new(),
+            events_by_hour: HashMap::new(),
+            unique_hosts: std::collections::HashSet::new(),
+            processing_stats: ProcessingStats::default(),
+        }
+    }
+
+    /// Add event to aggregation
+    pub fn add_event(&mut self, event: &RawEvent) {
+        // Count by type
+        *self
+            .events_by_type
+            .entry(event.event_type.to_string())
+            .or_insert(0) += 1;
+
+        // Count by source
+        *self
+            .events_by_source
+            .entry(event.source.to_string())
+            .or_insert(0) += 1;
+
+        // Count by hour
+        if let Some(ts) = event.ts_orig {
+            let hour_key = ts.format("%Y-%m-%d %H:00").to_string();
+            *self.events_by_hour.entry(hour_key).or_insert(0) += 1;
+        }
+
+        // Track unique hosts
+        self.unique_hosts.insert(event.host.to_string());
+
+        // Update stats
+        self.processing_stats.event_count += 1;
+        let payload_size = event.payload.to_string().len();
+        self.processing_stats.total_bytes += payload_size;
+        self.processing_stats.max_payload_size =
+            self.processing_stats.max_payload_size.max(payload_size);
+        self.processing_stats.min_payload_size =
+            self.processing_stats.min_payload_size.min(payload_size);
+    }
+
+    /// Merge with another aggregated result
+    pub fn merge(&mut self, other: AggregatedResults) {
+        // Merge event counts
+        for (k, v) in other.events_by_type {
+            *self.events_by_type.entry(k).or_insert(0) += v;
+        }
+
+        for (k, v) in other.events_by_source {
+            *self.events_by_source.entry(k).or_insert(0) += v;
+        }
+
+        for (k, v) in other.events_by_hour {
+            *self.events_by_hour.entry(k).or_insert(0) += v;
+        }
+
+        // Merge hosts
+        self.unique_hosts.extend(other.unique_hosts);
+
+        // Merge stats
+        self.processing_stats.merge(other.processing_stats);
+    }
+}
+
+impl Default for AggregatedResults {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Processing statistics for aggregation
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ProcessingStats {
+    pub event_count: usize,
+    pub total_bytes: usize,
+    pub max_payload_size: usize,
+    pub min_payload_size: usize,
+}
+
+impl ProcessingStats {
+    /// Merge with another stats object
+    pub fn merge(&mut self, other: ProcessingStats) {
+        self.event_count += other.event_count;
+        self.total_bytes += other.total_bytes;
+        self.max_payload_size = self.max_payload_size.max(other.max_payload_size);
+        if other.min_payload_size > 0 {
+            if self.min_payload_size == 0 {
+                self.min_payload_size = other.min_payload_size;
+            } else {
+                self.min_payload_size = self.min_payload_size.min(other.min_payload_size);
+            }
+        }
+    }
+
+    /// Get average payload size
+    pub fn avg_payload_size(&self) -> usize {
+        if self.event_count > 0 {
+            self.total_bytes / self.event_count
+        } else {
+            0
+        }
     }
 }

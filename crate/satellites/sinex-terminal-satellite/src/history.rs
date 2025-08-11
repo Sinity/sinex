@@ -82,27 +82,25 @@ impl HistoryWatcher {
     /// Initialize file positions to current end of files
     fn initialize_positions(&mut self) -> SatelliteResult<()> {
         for file_path in &self.files {
-            if file_path.exists() {
-                match fs::metadata(file_path) {
-                    Ok(metadata) => {
-                        self.file_positions
-                            .insert(file_path.clone(), metadata.len());
-                        info!(
-                            "Tracking history file: {} (starting at byte {})",
-                            file_path.as_str(),
-                            metadata.len()
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to get metadata for {}: {}", file_path.as_str(), e);
-                    }
+            // Use direct metadata call without existence check to avoid TOCTOU race
+            // This is atomic and handles non-existent files gracefully
+            match fs::metadata(file_path) {
+                Ok(metadata) => {
+                    self.file_positions
+                        .insert(file_path.clone(), metadata.len());
+                    info!(
+                        "Tracking history file: {} (starting at byte {})",
+                        file_path.as_str(),
+                        metadata.len()
+                    );
                 }
-            } else {
-                info!(
-                    "History file does not exist (will watch if created): {}",
-                    file_path.as_str()
-                );
-                self.file_positions.insert(file_path.clone(), 0);
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("History file does not exist yet: {}", file_path.as_str());
+                    // File doesn't exist yet, will be handled when it's created
+                }
+                Err(e) => {
+                    warn!("Failed to get metadata for {}: {}", file_path.as_str(), e);
+                }
             }
         }
         Ok(())
@@ -231,19 +229,19 @@ impl HistoryWatcher {
         let source_file_str = source_file.to_string();
 
         let event: RawEvent = if source_file_str.contains("fish") {
-            Event::from_payload(FishHistoricalCommandPayload {
+            Event::new(FishHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
             .into()
         } else if source_file_str.contains("zsh") {
-            Event::from_payload(ZshHistoricalCommandPayload {
+            Event::new(ZshHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
             .into()
         } else {
-            Event::from_payload(BashHistoricalCommandPayload {
+            Event::new(BashHistoricalCommandPayload {
                 command_string: command,
                 source_file: source_file_str,
             })
@@ -263,14 +261,21 @@ impl HistoryWatcher {
             self.files.len()
         );
 
-        // Set up file watcher
-        let (notify_tx, mut notify_rx) = mpsc::unbounded_channel::<NotifyEvent>();
+        // Set up file watcher (capacity: 100 for file notification events)
+        let (notify_tx, mut notify_rx) = mpsc::channel::<NotifyEvent>(100);
 
         let mut watcher = RecommendedWatcher::new(
             move |result: Result<NotifyEvent, notify::Error>| match result {
                 Ok(event) => {
-                    if let Err(e) = notify_tx.send(event) {
-                        error!("Failed to send notify event: {}", e);
+                    if let Err(e) = notify_tx.try_send(event) {
+                        match e {
+                            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                                warn!("File notification channel full, dropping event");
+                            }
+                            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                                error!("File notification channel closed");
+                            }
+                        }
                     }
                 }
                 Err(e) => {

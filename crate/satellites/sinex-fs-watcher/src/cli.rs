@@ -9,6 +9,37 @@ use sinex_fs_watcher::{
 use std::str::FromStr;
 use tracing::info;
 
+/// Extension trait for SensdIntegrationConfig construction
+trait SensdIntegrationConfigExt {
+    fn from_args(
+        database_url: Option<String>,
+        grpc_endpoint: String,
+        batch_size: usize,
+        processing_interval_ms: u64,
+    ) -> Self;
+}
+
+impl SensdIntegrationConfigExt for SensdIntegrationConfig {
+    fn from_args(
+        database_url: Option<String>,
+        grpc_endpoint: String,
+        batch_size: usize,
+        processing_interval_ms: u64,
+    ) -> Self {
+        let mut config = SensdIntegrationConfig::default();
+        
+        if let Some(db_url) = database_url {
+            config.database_url = db_url;
+        }
+        
+        config.sensd_grpc_endpoint = grpc_endpoint;
+        config.batch_size = batch_size;
+        config.processing_interval_ms = processing_interval_ms;
+        
+        config
+    }
+}
+
 /// Validate and parse filesystem path for watching
 pub fn validate_watch_path(s: &str) -> Result<SanitizedPath, String> {
     if s.is_empty() {
@@ -62,39 +93,48 @@ pub async fn run() -> Result<()> {
     
     match args.command {
         Commands::Direct { paths, debounce_ms } => {
-            info!("Running fs-watcher in direct mode");
-            info!("Watching paths: {:?}", paths);
-            info!("Debounce: {}ms", debounce_ms);
-            
-            // Run traditional fs-watcher
-            // This would use the existing FilesystemProcessor
-            return Err(color_eyre::eyre::eyre!("Direct mode not yet supported in CLI"));
+            run_direct_mode(paths, debounce_ms).await
         }
-        
         Commands::Sensd {
             database_url,
             grpc_endpoint,
             batch_size,
             processing_interval_ms,
         } => {
-            info!("Running fs-watcher with sensd integration");
-            
-            let mut config = SensdIntegrationConfig::default();
-            
-            if let Some(db_url) = database_url {
-                config.database_url = db_url;
-            }
-            
-            config.sensd_grpc_endpoint = grpc_endpoint;
-            config.batch_size = batch_size;
-            config.processing_interval_ms = processing_interval_ms;
-            
-            info!("Configuration: {:?}", config);
-            
-            // Run with sensd integration
-            run_with_sensd(config).await?;
+            run_sensd_mode(database_url, grpc_endpoint, batch_size, processing_interval_ms).await
         }
     }
+}
+
+/// Run in direct filesystem watching mode
+async fn run_direct_mode(paths: Vec<SanitizedPath>, debounce_ms: u64) -> Result<()> {
+    info!("Running fs-watcher in direct mode");
+    info!("Watching paths: {:?}", paths);
+    info!("Debounce: {}ms", debounce_ms);
     
-    Ok(())
+    // Run traditional fs-watcher
+    // This would use the existing FilesystemProcessor
+    Err(color_eyre::eyre::eyre!("Direct mode not supported"))
+}
+
+/// Run with sensd integration mode
+async fn run_sensd_mode(
+    database_url: Option<String>,
+    grpc_endpoint: String,
+    batch_size: usize,
+    processing_interval_ms: u64,
+) -> Result<()> {
+    info!("Running fs-watcher with sensd integration");
+    
+    let config = SensdIntegrationConfig::from_args(
+        database_url,
+        grpc_endpoint,
+        batch_size,
+        processing_interval_ms,
+    );
+    
+    info!("Configuration: {:?}", config);
+    
+    // Run with sensd integration
+    run_with_sensd(config).await
 }

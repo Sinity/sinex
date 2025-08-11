@@ -70,8 +70,8 @@ impl FixtureRegistry {
         }
     }
 
-    /// Get or create a cached fixture
-    async fn get_or_create<T, F, Fut>(&mut self, key: String, creator: F) -> Arc<T>
+    /// Get or create a cached fixture with proper error handling
+    async fn get_or_create<T, F, Fut>(&mut self, key: String, creator: F) -> Result<Arc<T>>
     where
         T: Send + Sync + 'static,
         F: FnOnce() -> Fut,
@@ -80,24 +80,31 @@ impl FixtureRegistry {
         let type_id = TypeId::of::<T>();
         let cache_key = (type_id, key.clone());
 
+        // First check: return cached fixture if it exists
         if let Some(cached) = self.cache.get(&cache_key) {
             self.ref_counts
                 .entry(cache_key.clone())
                 .and_modify(|c| *c += 1);
-            return cached.clone().downcast::<T>().unwrap();
+            return Ok(cached.clone().downcast::<T>().unwrap());
         }
 
-        // Create new fixture
-        let fixture = creator().await.expect("Fixture creation failed");
+        // Create new fixture with proper error propagation
+        // This avoids panicking and poisoning the mutex
+        let fixture = creator().await.map_err(|e| {
+            SinexError::service("Failed to create fixture")
+                .with_source(e)
+                .with_context("key", &key)
+        })?;
         let arc_fixture = Arc::new(fixture);
 
+        // Insert the successfully created fixture
         self.cache.insert(
             cache_key.clone(),
             arc_fixture.clone() as Arc<dyn Any + Send + Sync>,
         );
         self.ref_counts.insert(cache_key, 1);
 
-        arc_fixture
+        Ok(arc_fixture)
     }
 
     /// Register a cleanup function for a fixture
@@ -234,7 +241,7 @@ pub(crate) async fn standard_user_session(
                 .await
             }
         })
-        .await;
+        .await?;
 
     Ok(fixture)
 }
@@ -260,7 +267,7 @@ pub(crate) async fn user_session_with_params(
         async move {
             create_user_session_fixture(&pool, event_count, checkpoint_interval).await
         }
-    }).await;
+    }).await?;
 
     Ok(fixture)
 }
@@ -295,7 +302,7 @@ pub(crate) async fn populated_checkpoints(
             let _pool = pool.clone();
             async move { create_populated_checkpoints_fixture(&pool).await }
         })
-        .await;
+        .await?;
 
     Ok(fixture)
 }
@@ -315,7 +322,7 @@ pub(crate) async fn error_scenarios(
             let _pool = pool.clone();
             async move { create_error_scenarios_fixture(&pool).await }
         })
-        .await;
+        .await?;
 
     Ok(fixture)
 }
@@ -348,7 +355,7 @@ pub(crate) async fn performance_dataset_with_size(
             let _pool = pool.clone();
             async move { create_performance_dataset_fixture(&pool, event_count).await }
         })
-        .await;
+        .await?;
 
     Ok(fixture)
 }
@@ -368,7 +375,7 @@ async fn create_user_session_fixture(
 
     // Create filesystem events
     for i in 0..event_count / 3 {
-        let event = Event::from_payload(FileCreatedPayload {
+        let event = Event::new(FileCreatedPayload {
             path: SanitizedPath::from(format!("/home/{}/documents/file_{}.txt", user_id, i)),
             size: 0,
             created_at: Utc::now(),
@@ -400,7 +407,7 @@ async fn create_user_session_fixture(
     ];
     for i in 0..event_count / 3 {
         let cmd = commands[i % commands.len()];
-        let event = Event::from_payload(KittyCommandCompletedPayload {
+        let event = Event::new(KittyCommandCompletedPayload {
             command: CommandText::from(cmd.to_string()),
             working_directory: SanitizedPath::from(format!("/home/{}/projects", user_id)),
             exit_status: 0,
@@ -430,7 +437,7 @@ async fn create_user_session_fixture(
     // Create clipboard events
     for i in 0..event_count / 3 {
         let text = format!("Clipboard content {}", i);
-        let event = Event::from_payload(ClipboardCopiedPayload {
+        let event = Event::new(ClipboardCopiedPayload {
             operation: "copy".to_string(),
             content_type: "text/plain".to_string(),
             content_size: text.len(),
@@ -548,15 +555,15 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
     // Create events that would fail validation
     let invalid_events = vec![
         (
-            RawEvent::schemaless(EventSource::from(""), EventType::from("test"), json!({})),
+            RawEvent::new(EventSource::from(""), EventType::from("test"), json!({})),
             "Empty source",
         ),
         (
-            RawEvent::schemaless(EventSource::from("test"), EventType::from(""), json!({})),
+            RawEvent::new(EventSource::from("test"), EventType::from(""), json!({})),
             "Empty event type",
         ),
         (
-            RawEvent::schemaless(
+            RawEvent::new(
                 EventSource::from("test"),
                 EventType::from("test.event"),
                 json!(null),
@@ -655,7 +662,7 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let event = RawEvent::schemaless(
+        let event = RawEvent::new(
             source.clone(),
             event_type.clone(),
             json!({
@@ -780,7 +787,7 @@ pub(crate) async fn pre_warmed_database(
             let _pool = pool.clone();
             async move { create_pre_warmed_fixture(&pool).await }
         })
-        .await;
+        .await?;
 
     Ok(fixture)
 }
@@ -798,7 +805,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let event = RawEvent::schemaless(
+        let event = RawEvent::new(
             EventSource::from("performance_test"),
             EventType::from("test.event"),
             json!({
@@ -1020,7 +1027,7 @@ pub(crate) async fn schema_violations(ctx: &TestContext) -> Result<SchemaViolati
                 })
             }
         })
-        .await;
+        .await?;
 
     Ok((*fixture).clone())
 }
@@ -1061,7 +1068,7 @@ pub(crate) async fn malformed_events(ctx: &TestContext) -> Result<MalformedEvent
                 })
             }
         })
-        .await;
+        .await?;
 
     Ok((*fixture).clone())
 }
@@ -1103,7 +1110,7 @@ macro_rules! fixture {
                     let _pool = pool.clone();
                     async move { $setup(pool).await }
                 })
-                .await;
+                .await?;
 
             // Register teardown if provided
             let teardown_fn = $teardown;
@@ -1341,7 +1348,7 @@ mod tests {
         let mut event_ids = vec![];
 
         // Insert start event
-        let start_event = RawEvent::schemaless(
+        let start_event = RawEvent::new(
             EventSource::from_static("test"),
             EventType::from_static("test.started"),
             json!({}),
@@ -1351,7 +1358,7 @@ mod tests {
 
         // Insert middle events
         for i in 0..5 {
-            let middle_event = RawEvent::schemaless(
+            let middle_event = RawEvent::new(
                 EventSource::from_static("test"),
                 EventType::from_static("test.started"),
                 json!({"index": i}),
@@ -1361,7 +1368,7 @@ mod tests {
         }
 
         // Insert end event
-        let end_event = RawEvent::schemaless(
+        let end_event = RawEvent::new(
             EventSource::from_static("test"),
             EventType::from_static("test.completed"),
             json!({}),

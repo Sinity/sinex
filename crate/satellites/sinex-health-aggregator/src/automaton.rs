@@ -170,7 +170,7 @@ impl HealthAggregatorAutomaton {
         };
 
         // Create synthesis event with typed payload
-        let mut synthesis_event: RawEvent = Event::from_payload(SystemHealthSummaryPayload {
+        let mut synthesis_event: RawEvent = Event::new(SystemHealthSummaryPayload {
             overall_status,
             healthy_components: healthy_count,
             degraded_components: degraded_count,

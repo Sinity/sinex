@@ -35,7 +35,7 @@ use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 pub use crate::SystemConfig;
 
 /// System state snapshot for exploration and diagnostics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct SystemState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,
@@ -245,7 +245,7 @@ impl SystemProcessor {
             info!("System monitoring context available");
 
             // Create a sample event to show the interface works
-            let sample_event: RawEvent = Event::from_payload(SystemMonitoringStartedPayload {
+            let sample_event: RawEvent = Event::new(SystemMonitoringStartedPayload {
                 dbus_enabled: self.config.dbus_enabled,
                 journal_enabled: self.config.journal_enabled,
                 udev_enabled: self.config.udev_enabled,
@@ -275,7 +275,7 @@ impl SystemProcessor {
         if let Some(ref context) = self.context {
             // Journal can provide historical entries
             if self.config.journal_enabled && emit_events {
-                let event: RawEvent = Event::from_payload(JournaldHistoricalPayload {
+                let event: RawEvent = Event::new(JournaldHistoricalPayload {
                     source: "journal".to_string(),
                     scan_type: "historical".to_string(),
                     note: "Journal can provide historical entries".to_string(),
@@ -288,7 +288,7 @@ impl SystemProcessor {
 
             // systemd can provide unit state history
             if self.config.systemd_enabled && emit_events {
-                let event: RawEvent = Event::from_payload(SystemdUnitsHistoricalPayload {
+                let event: RawEvent = Event::new(SystemdUnitsHistoricalPayload {
                     source: "systemd".to_string(),
                     scan_type: "historical".to_string(),
                     note: "systemd can provide unit state history".to_string(),
@@ -301,7 +301,7 @@ impl SystemProcessor {
 
             // D-Bus and udev are typically real-time only
             if (self.config.dbus_enabled || self.config.udev_enabled) && emit_events {
-                let event: RawEvent = Event::from_payload(UdevDeviceHistoricalPayload {
+                let event: RawEvent = Event::new(UdevDeviceHistoricalPayload {
                     sources: vec!["dbus".to_string(), "udev".to_string()],
                     scan_type: "historical".to_string(),
                     note: "D-Bus and udev are typically real-time sources with limited historical data".to_string(),
@@ -454,7 +454,7 @@ impl StatefulStreamProcessor for SystemProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent = Event::from_payload(SystemSnapshotPayload {
+                        let snapshot_event: RawEvent = Event::new(SystemSnapshotPayload {
                             active_watchers,
                             dbus_enabled: self.config.dbus_enabled,
                             journal_enabled: self.config.journal_enabled,
@@ -739,7 +739,7 @@ impl ExplorationProvider for SystemProcessor {
 
     fn export_data(
         &self,
-        path: &Utf8PathBuf,
+        path: &sinex_core::types::domain::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {

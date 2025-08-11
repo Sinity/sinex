@@ -20,8 +20,8 @@ impl MigrationTrait for Migration {
                     component TEXT;
                     depth INTEGER := 0;
                 BEGIN
-                    -- Check for null bytes
-                    IF position(E'\x00' in path_input) > 0 THEN
+                    -- Check for null bytes (using chr(0) to avoid encoding issues)
+                    IF position(chr(0) in path_input) > 0 THEN
                         RETURN FALSE;
                     END IF;
                     
@@ -77,7 +77,7 @@ impl MigrationTrait for Migration {
                     sanitized TEXT;
                 BEGIN
                     -- Remove null bytes
-                    sanitized := replace(path_input, E'\x00', '');
+                    sanitized := replace(path_input, chr(0), '');
                     
                     -- Remove path traversal sequences
                     sanitized := regexp_replace(sanitized, '\.\./|\.\.\\', '', 'g');

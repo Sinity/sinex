@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sinex.dev/schemas/v1/processor/processor_heartbeat.json",
+  "title": "Processor Heartbeat Event",
+  "description": "Event emitted when a processor updates its heartbeat",
+  "type": "object",
+  "properties": {
+    "processor_name": {
+      "type": "string",
+      "description": "Name of the processor",
+      "minLength": 1
+    },
+    "hostname": {
+      "type": "string",
+      "description": "Hostname where the processor is running",
+      "minLength": 1
+    },
+    "previous_manifest_id": {
+      "type": ["integer", "null"],
+      "description": "ID of the previous manifest entry that was ended"
+    },
+    "new_manifest_id": {
+      "type": "integer",
+      "description": "ID of the new manifest entry created"
+    },
+    "heartbeat_time": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When the heartbeat occurred"
+    },
+    "processor_version": {
+      "type": "string",
+      "description": "Version of the processor",
+      "minLength": 1
+    },
+    "processor_type": {
+      "type": "string",
+      "description": "Type of the processor",
+      "minLength": 1
+    },
+    "uptime_seconds": {
+      "type": ["number", "null"],
+      "description": "How long the processor has been running",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "processor_name",
+    "hostname",
+    "new_manifest_id",
+    "heartbeat_time",
+    "processor_version",
+    "processor_type"
+  ],
+  "additionalProperties": false
+}

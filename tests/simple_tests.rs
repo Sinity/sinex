@@ -3,8 +3,8 @@
 //! Basic tests to verify the test infrastructure is working
 
 use serde_json::json;
-use sinex_core::types::domain::EventSource;
-use sinex_core::types::Ulid;
+// Using shorter imports from sinex-core's re-exports
+use sinex_core::{EventSource, Ulid};
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]

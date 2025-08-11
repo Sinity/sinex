@@ -101,7 +101,7 @@ mod tests {
 
         assert_eq!(SourceMaterials::table_name(), "source_material_registry");
         assert_eq!(SourceMaterials::schema_name(), "raw");
-        assert_eq!(SourceMaterials::primary_key(), "source_material_id");
+        assert_eq!(SourceMaterials::primary_key(), "id");
 
         assert_eq!(OperationsLog::table_name(), "operations_log");
         assert_eq!(OperationsLog::schema_name(), "core");

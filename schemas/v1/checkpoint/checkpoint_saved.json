@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sinex.dev/schemas/v1/checkpoint/checkpoint_saved.json",
+  "title": "Checkpoint Saved Event",
+  "description": "Event emitted when a processor checkpoint is saved or updated",
+  "type": "object",
+  "properties": {
+    "processor_name": {
+      "type": "string",
+      "description": "Name of the processor that saved the checkpoint",
+      "minLength": 1
+    },
+    "consumer_group": {
+      "type": "string",
+      "description": "Consumer group for the checkpoint",
+      "default": "default"
+    },
+    "consumer_name": {
+      "type": "string", 
+      "description": "Consumer name for the checkpoint",
+      "default": "default"
+    },
+    "checkpoint_id": {
+      "type": "string",
+      "description": "ULID of the checkpoint record",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "last_processed_id": {
+      "type": ["string", "null"],
+      "description": "ULID of the last processed event",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "last_processed_ts": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "Timestamp of the last processed event"
+    },
+    "processed_count": {
+      "type": "integer",
+      "description": "Total number of events processed by this checkpoint",
+      "minimum": 0
+    },
+    "checkpoint_version": {
+      "type": "integer",
+      "description": "Version number of this checkpoint",
+      "minimum": 1
+    },
+    "operation_type": {
+      "type": "string",
+      "enum": ["create", "update"],
+      "description": "Whether this was a new checkpoint or update to existing"
+    },
+    "checkpoint_data": {
+      "type": ["object", "null"],
+      "description": "Additional checkpoint-specific data"
+    },
+    "state_data": {
+      "type": ["object", "null"],
+      "description": "Processor state data for resume operations"
+    }
+  },
+  "required": [
+    "processor_name",
+    "consumer_group", 
+    "consumer_name",
+    "checkpoint_id",
+    "processed_count",
+    "checkpoint_version",
+    "operation_type"
+  ],
+  "additionalProperties": false
+}

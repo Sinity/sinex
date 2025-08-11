@@ -48,6 +48,32 @@ impl ReplayLogger {
         );
     }
 
+    /// Log dry-run mode operation
+    pub fn dry_run_operation(operation: &str, target: &str, details: &serde_json::Value) {
+        info!(
+            mode = "DRY_RUN",
+            operation = operation,
+            target = target,
+            details = %details,
+            "Would perform operation (dry-run mode)"
+        );
+    }
+
+    /// Log dry-run summary
+    pub fn dry_run_summary(
+        total_operations: usize,
+        events_affected: usize,
+        estimated_duration_ms: u64,
+    ) {
+        info!(
+            mode = "DRY_RUN",
+            total_operations = total_operations,
+            events_affected = events_affected,
+            estimated_duration_ms = estimated_duration_ms,
+            "Dry-run complete - no changes made"
+        );
+    }
+
     /// Log the completion of a replay operation
     pub fn complete_replay(
         operation_id: &Id<crate::db::repositories::state::Operation>,

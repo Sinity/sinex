@@ -6,8 +6,9 @@
 use crate::domain::{EventSource, EventType};
 use crate::ulid::Ulid;
 use once_cell::sync::Lazy;
+use parking_lot::RwLock;
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 /// Information about a payload type collected by inventory
 pub struct PayloadInfo {
@@ -42,7 +43,7 @@ pub async fn lookup_schema_id(
 
     // Check cache first
     {
-        let cache = SCHEMA_CACHE.read().unwrap();
+        let cache = SCHEMA_CACHE.read();
         if let Some(&id) = cache.get(&schema_name) {
             return Some(id);
         }
@@ -67,7 +68,7 @@ pub async fn lookup_schema_id(
 
     // Update cache if found
     if let Some(id) = result {
-        let mut cache = SCHEMA_CACHE.write().unwrap();
+        let mut cache = SCHEMA_CACHE.write();
         cache.insert(schema_name, id);
     }
 
@@ -79,7 +80,7 @@ pub async fn lookup_schema_id(
 /// This returns the cached version for a schema ID. The cache must be
 /// populated beforehand using `preload_schemas` or `cache_schema_version`.
 pub fn get_schema_version(schema_id: Ulid) -> Option<Arc<String>> {
-    let cache = VERSION_CACHE.read().unwrap();
+    let cache = VERSION_CACHE.read();
     cache.get(&schema_id).cloned()
 }
 
@@ -89,13 +90,13 @@ pub fn get_schema_version(schema_id: Ulid) -> Option<Arc<String>> {
 /// The cache must be populated beforehand using `preload_schemas`.
 pub fn get_schema_id(source: &EventSource, event_type: &EventType) -> Option<Ulid> {
     let schema_name = format!("{}.{}", source.as_str(), event_type.as_str());
-    let cache = SCHEMA_CACHE.read().unwrap();
+    let cache = SCHEMA_CACHE.read();
     cache.get(&schema_name).cloned()
 }
 
 /// Cache a schema version (used during startup or schema registration)
 pub fn cache_schema_version(schema_id: Ulid, version: String) {
-    let mut cache = VERSION_CACHE.write().unwrap();
+    let mut cache = VERSION_CACHE.write();
     cache.insert(schema_id, Arc::new(version));
 }
 
@@ -137,10 +138,10 @@ pub async fn lookup_schema_version(pool: &sqlx::PgPool, schema_id: Ulid) -> Opti
 /// Clear the schema cache (useful for testing)
 #[cfg(test)]
 pub fn clear_cache() {
-    let mut cache = SCHEMA_CACHE.write().unwrap();
+    let mut cache = SCHEMA_CACHE.write();
     cache.clear();
 
-    let mut version_cache = VERSION_CACHE.write().unwrap();
+    let mut version_cache = VERSION_CACHE.write();
     version_cache.clear();
 }
 
@@ -182,8 +183,8 @@ pub async fn preload_schemas(pool: &sqlx::PgPool) -> Result<usize, sqlx::Error> 
     .fetch_all(pool)
     .await?;
 
-    let mut cache = SCHEMA_CACHE.write().unwrap();
-    let mut version_cache = VERSION_CACHE.write().unwrap();
+    let mut cache = SCHEMA_CACHE.write();
+    let mut version_cache = VERSION_CACHE.write();
 
     for schema in &schemas {
         cache.insert(schema.schema_name.clone(), schema.id);
