@@ -59,7 +59,12 @@ use std::fmt::Display;
 use std::time::Duration;
 pub use ulid::Ulid;
 pub use utils::*;
-pub use validation::{sanitize_filename_component, validate_json, validate_path, ValidationError};
+pub use validation::{
+    deserialize_optional_sanitized_path, deserialize_optional_validated_utf8_path,
+    deserialize_sanitized_path, deserialize_sanitized_path_vec, deserialize_validated_utf8_path,
+    deserialize_validated_utf8_path_vec, sanitize_filename_component, validate_json, validate_path,
+    PathValidationLevel, SecurePath, ValidatedPathDeserializer, ValidationError,
+};
 
 // Re-export Result type alias for convenience
 pub type Result<T> = std::result::Result<T, SinexError>;

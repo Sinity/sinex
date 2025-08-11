@@ -1,0 +1,221 @@
+//! Invariant enforcement for replay operations
+//!
+//! This module provides types and functions for validating system invariants
+//! during replay operations to ensure correctness and consistency.
+
+use crate::db::models::event::RawEvent;
+use crate::types::Id;
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+
+/// Types of invariant violations that can occur during replay
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ViolationType {
+    /// Event references non-existent parent in provenance chain
+    BrokenProvenance {
+        event_id: Id<RawEvent>,
+        missing_parent_id: Id<RawEvent>,
+    },
+
+    /// Circular dependency detected in event graph
+    CircularDependency { event_ids: Vec<Id<RawEvent>> },
+
+    /// Event timestamp is out of order with its dependencies
+    OutOfOrderTimestamp {
+        event_id: Id<RawEvent>,
+        event_timestamp: DateTime<Utc>,
+        dependency_id: Id<RawEvent>,
+        dependency_timestamp: DateTime<Utc>,
+    },
+
+    /// Event has been tampered with (checksum mismatch)
+    TamperedEvent {
+        event_id: Id<RawEvent>,
+        expected_checksum: String,
+        actual_checksum: String,
+    },
+
+    /// Event references a source material anchor that doesn't exist
+    OrphanedAnchor {
+        event_id: Id<RawEvent>,
+        material_id: Id<RawEvent>,
+        anchor_byte: i64,
+        material_size: i64,
+    },
+
+    /// Event payload doesn't match its declared schema
+    SchemaMismatch {
+        event_id: Id<RawEvent>,
+        schema_id: Option<uuid::Uuid>,
+        schema_name: Option<String>,
+        validation_error: String,
+    },
+
+    /// Event claims to have occurred before its dependencies (time travel)
+    TemporalParadox {
+        event_id: Id<RawEvent>,
+        claimed_time: DateTime<Utc>,
+        earliest_possible_time: DateTime<Utc>,
+        conflicting_dependency: Id<RawEvent>,
+    },
+
+    /// Gap detected in continuous material stream
+    MaterialGap {
+        material_id: Id<RawEvent>,
+        gap_start: i64,
+        gap_end: i64,
+    },
+
+    /// Overlapping material slices
+    MaterialOverlap {
+        material_id: Id<RawEvent>,
+        overlap_start: i64,
+        overlap_end: i64,
+        conflicting_events: Vec<Id<RawEvent>>,
+    },
+}
+
+impl ViolationType {
+    /// Get a human-readable description of the violation
+    pub fn description(&self) -> String {
+        match self {
+            ViolationType::BrokenProvenance {
+                event_id,
+                missing_parent_id,
+            } => {
+                format!(
+                    "Event {} references non-existent parent {}",
+                    event_id, missing_parent_id
+                )
+            }
+            ViolationType::CircularDependency { event_ids } => {
+                format!(
+                    "Circular dependency detected involving {} events",
+                    event_ids.len()
+                )
+            }
+            ViolationType::OutOfOrderTimestamp { event_id, .. } => {
+                format!(
+                    "Event {} has timestamp out of order with its dependencies",
+                    event_id
+                )
+            }
+            ViolationType::TamperedEvent { event_id, .. } => {
+                format!(
+                    "Event {} has been tampered with (checksum mismatch)",
+                    event_id
+                )
+            }
+            ViolationType::OrphanedAnchor {
+                event_id,
+                anchor_byte,
+                ..
+            } => {
+                format!(
+                    "Event {} references non-existent anchor at byte {}",
+                    event_id, anchor_byte
+                )
+            }
+            ViolationType::SchemaMismatch {
+                event_id,
+                validation_error,
+                ..
+            } => {
+                format!(
+                    "Event {} payload validation failed: {}",
+                    event_id, validation_error
+                )
+            }
+            ViolationType::TemporalParadox { event_id, .. } => {
+                format!(
+                    "Event {} claims to have occurred before its dependencies",
+                    event_id
+                )
+            }
+            ViolationType::MaterialGap {
+                material_id,
+                gap_start,
+                gap_end,
+            } => {
+                format!(
+                    "Gap detected in material {} from byte {} to {}",
+                    material_id, gap_start, gap_end
+                )
+            }
+            ViolationType::MaterialOverlap {
+                material_id,
+                overlap_start,
+                overlap_end,
+                ..
+            } => {
+                format!(
+                    "Overlapping slices in material {} from byte {} to {}",
+                    material_id, overlap_start, overlap_end
+                )
+            }
+        }
+    }
+
+    /// Get the severity level of the violation
+    pub fn severity(&self) -> ViolationSeverity {
+        match self {
+            ViolationType::TamperedEvent { .. } => ViolationSeverity::Critical,
+            ViolationType::CircularDependency { .. } => ViolationSeverity::Critical,
+            ViolationType::TemporalParadox { .. } => ViolationSeverity::Critical,
+            ViolationType::BrokenProvenance { .. } => ViolationSeverity::High,
+            ViolationType::SchemaMismatch { .. } => ViolationSeverity::High,
+            ViolationType::OrphanedAnchor { .. } => ViolationSeverity::Medium,
+            ViolationType::OutOfOrderTimestamp { .. } => ViolationSeverity::Medium,
+            ViolationType::MaterialGap { .. } => ViolationSeverity::Medium,
+            ViolationType::MaterialOverlap { .. } => ViolationSeverity::Low,
+        }
+    }
+}
+
+/// Severity levels for violations
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ViolationSeverity {
+    /// Minor issue that might be acceptable in some contexts
+    Low,
+    /// Issue that should be investigated but might not block replay
+    Medium,
+    /// Serious issue that should block replay in most cases
+    High,
+    /// Critical issue that must always block replay
+    Critical,
+}
+
+/// A detected invariant violation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InvariantViolation {
+    pub violation_type: ViolationType,
+    pub detected_at: DateTime<Utc>,
+    pub operation_id: Option<Id<crate::db::repositories::state::Operation>>,
+    pub context: serde_json::Value,
+}
+
+impl InvariantViolation {
+    /// Create a new invariant violation
+    pub fn new(
+        violation_type: ViolationType,
+        operation_id: Option<Id<crate::db::repositories::state::Operation>>,
+    ) -> Self {
+        Self {
+            violation_type,
+            detected_at: Utc::now(),
+            operation_id,
+            context: serde_json::json!({}),
+        }
+    }
+
+    /// Add context information to the violation
+    pub fn with_context(mut self, key: impl ToString, value: impl Serialize) -> Self {
+        if let Some(obj) = self.context.as_object_mut() {
+            obj.insert(
+                key.to_string(),
+                serde_json::to_value(value).unwrap_or(serde_json::Value::Null),
+            );
+        }
+        self
+    }
+}

@@ -27,7 +27,6 @@ use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use sinex_core::db::models::RawEvent; // Modern Event API
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::{
     domain::{EventSource, EventType, HostName},
     Ulid,

@@ -47,6 +47,7 @@ tonic = "0.12"
 # Configuration
 config = "0.14"
 validator = { version = "0.18", features = ["derive"] }
+bon = { workspace = true }
 
 [dev-dependencies]
 sinex-test-utils = { path = "../../lib/sinex-test-utils" }

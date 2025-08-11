@@ -1,7 +1,7 @@
 //! Test Context - Database Isolation and Test Utilities
 //!
 //! The `TestContext` provides isolated database access and test-specific utilities
-//! without wrapping production APIs. Tests use production `RawEvent::from_payload()`
+//! without wrapping production APIs. Tests use production `RawEvent::new()`
 //! and repository methods directly through the exposed pool.
 //!
 //! # Architecture
@@ -18,10 +18,11 @@
 //! #[sinex_test]
 //! async fn test_example(ctx: TestContext) -> Result<()> {
 //!     // Direct production API - no wrapper
-//!     let event = RawEvent::from_payload(FileCreatedPayload {
-//!         path: "/test/file.txt".into(),
-//!         size: 1024,
-//!     })?;
+//!     let event = RawEvent::new(
+//!         "fs-watcher",
+//!         "file.created",
+//!         json!({"path": "/test/file.txt", "size": 1024})
+//!     );
 //!     
 //!     // Direct repository access via exposed pool
 //!     ctx.pool.events().insert(event).await?;
@@ -223,29 +224,6 @@ impl TestContext {
     /// Create inline snapshot for testing (delegates to insta)
     pub fn assert_inline_snapshot<T: serde::Serialize>(&self, value: &T) {
         insta::assert_json_snapshot!(value);
-    }
-
-    /// Create a basic test event with source and type (temporary convenience method)
-    ///
-    /// This is a lightweight helper for tests that don't need specific payload types.
-    /// For real payload testing, use RawEvent::from_payload() with actual payload structs.
-    pub async fn create_test_event(
-        &self,
-        source: &str,
-        event_type: &str,
-        payload: JsonValue,
-    ) -> Result<RawEvent> {
-        let event = RawEvent::schemaless(
-            sinex_core::types::domain::EventSource::from(source),
-            sinex_core::types::domain::EventType::from(event_type),
-            payload,
-        );
-
-        let inserted = self.pool.events().insert(event).await?;
-        if let Some(id) = &inserted.id {
-            self.created_events.lock().push(id.clone().into());
-        }
-        Ok(inserted)
     }
 
     /// Assert similar values with detailed diff

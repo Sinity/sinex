@@ -281,7 +281,7 @@ impl StageAsYouGoProcessor for LogFileStageProcessor {
 
             // Create event for this log line
             use sinex_core::types::events::LogLinePayload;
-            let event: RawEvent = Event::from_payload(LogLinePayload {
+            let event: RawEvent = Event::new(LogLinePayload {
                 line: line.to_string(),
                 line_number: (line_num + 1) as u64,
                 log_source: self.log_source.clone(),

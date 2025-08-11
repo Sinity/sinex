@@ -19,67 +19,51 @@ pub mod proto {
     tonic::include_proto!("sinex.ingest");
 }
 
+// Re-export SinexError for unified error handling
+pub use sinex_core::types::error::{Result, SinexError};
+
 /// Result type for ingestd operations
-pub type IngestdResult<T> = std::result::Result<T, IngestdError>;
+pub type IngestdResult<T> = Result<T>;
 
-/// Error types for ingestion daemon
-#[derive(thiserror::Error, Debug)]
-pub enum IngestdError {
-    #[error("Configuration error: {0}")]
-    Config(String),
-
-    #[error("Database error: {0}")]
-    Database(#[from] sqlx::Error),
-
-    #[error("NATS error: {0}")]
-    Nats(String),
-
-    #[error("Connection error: {0}")]
-    Connection(String),
-
-    #[error("gRPC error: {0}")]
-    Grpc(#[from] tonic::Status),
-
-    #[error("Serialization error: {0}")]
-    Serialization(#[from] serde_json::Error),
-
-    #[error("Sinex error: {0}")]
-    Sinex(#[from] sinex_core::types::SinexError),
-
-    #[error("IO error: {0}")]
-    Io(#[from] std::io::Error),
-
-    #[error("Validation error: {0}")]
-    Validation(String),
-
-    #[error("Service error: {0}")]
-    Service(String),
-}
-
-impl From<IngestdError> for tonic::Status {
-    fn from(err: IngestdError) -> Self {
+/// Convert SinexError to tonic::Status for gRPC responses
+///
+/// This function preserves the original IngestdError -> tonic::Status mapping
+/// while using the unified SinexError system.
+impl From<SinexError> for tonic::Status {
+    fn from(err: SinexError) -> Self {
         use tonic::Code;
         match err {
-            IngestdError::Config(msg)
-            | IngestdError::Validation(msg)
-            | IngestdError::Service(msg) => tonic::Status::new(Code::InvalidArgument, msg),
-            IngestdError::Database(e) => {
-                tonic::Status::new(Code::Internal, format!("Database error: {}", e))
+            // Configuration, validation, and service errors are client errors
+            SinexError::Configuration(_) | SinexError::Validation(_) | SinexError::Service(_) => {
+                tonic::Status::new(Code::InvalidArgument, err.to_string())
             }
-            IngestdError::Nats(e) => {
-                tonic::Status::new(Code::Internal, format!("NATS error: {}", e))
+            // Database errors are internal server errors
+            SinexError::Database(_) => {
+                tonic::Status::new(Code::Internal, format!("Database error: {}", err))
             }
-            IngestdError::Connection(e) => {
-                tonic::Status::new(Code::Unavailable, format!("Connection error: {}", e))
+            // Network errors map to connection issues
+            SinexError::Network(_) => {
+                tonic::Status::new(Code::Unavailable, format!("Network error: {}", err))
             }
-            IngestdError::Grpc(status) => status,
-            IngestdError::Serialization(e) => {
-                tonic::Status::new(Code::InvalidArgument, format!("Serialization error: {}", e))
+            // Serialization and parsing errors are client input issues
+            SinexError::Serialization(_) | SinexError::Parse(_) => tonic::Status::new(
+                Code::InvalidArgument,
+                format!("Serialization error: {}", err),
+            ),
+            // I/O errors are internal issues
+            SinexError::Io(_) => tonic::Status::new(Code::Internal, format!("IO error: {}", err)),
+            // Timeout and resource exhaustion are temporary server issues
+            SinexError::Timeout(_) | SinexError::ResourceExhausted(_) => {
+                tonic::Status::new(Code::Unavailable, err.to_string())
             }
-            IngestdError::Sinex(e) => {
-                tonic::Status::new(Code::Internal, format!("Sinex error: {}", e))
+            // Permission issues
+            SinexError::PermissionDenied(_) => {
+                tonic::Status::new(Code::PermissionDenied, err.to_string())
             }
-            IngestdError::Io(e) => tonic::Status::new(Code::Internal, format!("IO error: {}", e)),
+            // Not found issues
+            SinexError::NotFound(_) => tonic::Status::new(Code::NotFound, err.to_string()),
+            // Everything else is internal
+            _ => tonic::Status::new(Code::Internal, format!("Internal error: {}", err)),
         }
     }
 }

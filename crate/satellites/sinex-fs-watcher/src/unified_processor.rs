@@ -101,7 +101,9 @@ use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::error::with_context;
 use sinex_core::types::events::Event;
-use sinex_core::types::validate_path;
+use sinex_core::types::validation::{
+    validate_discovered_file, validate_path, validate_watch_paths, FileWatchingSecurityPolicy,
+};
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -120,12 +122,22 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
+use validator::{Validate, ValidationError};
 use walkdir::WalkDir;
 // use sinex_core::types::events::constants::{sources}; // already imported above
 
+#[cfg(test)]
+mod config_validation_tests;
+
+/// Default debounce interval for filesystem events in milliseconds
+const DEFAULT_DEBOUNCE_MS: u64 = 100;
+
+/// Maximum number of sample file paths for diagnostics
+const MAX_DIAGNOSTIC_SAMPLES: usize = 100;
+
 /// Filesystem monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct FilesystemConfig {
     /// Glob patterns for files/directories to watch
     ///
@@ -137,6 +149,8 @@ pub struct FilesystemConfig {
     /// Performance impact:
     /// - More specific patterns = fewer watches = better performance
     /// - `"**/*"` on large trees can hit inotify limits on Linux
+    #[validate(length(min = 1, message = "At least one watch pattern must be specified"))]
+    #[validate(custom(function = "validate_glob_patterns", message = "Invalid glob patterns"))]
     pub watch_patterns: Vec<String>,
 
     /// Patterns to explicitly ignore (takes precedence over watch_patterns)
@@ -150,6 +164,10 @@ pub struct FilesystemConfig {
     /// System limits (Linux):
     /// - Check limit: `cat /proc/sys/fs/inotify/max_user_watches`
     /// - Increase: `sudo sysctl fs.inotify.max_user_watches=524288`
+    #[validate(custom(
+        function = "validate_glob_patterns",
+        message = "Invalid ignore patterns"
+    ))]
     pub ignore_patterns: Vec<String>,
 
     /// Debounce delay in milliseconds for rapid file changes
@@ -162,6 +180,11 @@ pub struct FilesystemConfig {
     /// Trade-offs:
     /// - Lower: More responsive, more events
     /// - Higher: Fewer events, may miss rapid changes
+    #[validate(range(
+        min = 1,
+        max = 60000,
+        message = "Debounce delay must be between 1ms and 60 seconds"
+    ))]
     pub debounce_ms: u64,
 
     /// Maximum directory traversal depth (None = unlimited)
@@ -175,7 +198,21 @@ pub struct FilesystemConfig {
     /// - Watching user home directories with deep structures
     /// - Known flat directory structures
     /// - inotify watch limits are a concern
+    #[validate(custom(
+        function = "validate_max_depth",
+        message = "Max depth must be reasonable (1-100)"
+    ))]
     pub max_depth: Option<usize>,
+
+    /// Security policy for file watching operations
+    ///
+    /// Provides comprehensive security controls for filesystem monitoring:
+    /// - Path validation and sanitization
+    /// - Symlink following policies
+    /// - Directory depth limiting
+    /// - Forbidden path detection
+    /// - System directory protection
+    pub security_policy: FileWatchingSecurityPolicy,
 }
 
 impl Default for FilesystemConfig {
@@ -187,10 +224,57 @@ impl Default for FilesystemConfig {
                 "**/.git/**".to_string(),
                 "**/node_modules/**".to_string(),
             ],
-            debounce_ms: 100,
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
+            security_policy: FileWatchingSecurityPolicy::default(),
         }
     }
+}
+
+impl FilesystemConfig {
+    /// Validate the configuration and return detailed error messages
+    pub fn validate_config(&self) -> Result<(), String> {
+        use validator::Validate as ValidateTrait;
+
+        ValidateTrait::validate(self).map_err(|e| {
+            sinex_core::types::validation::validation_chains::format_validation_errors(&e)
+        })
+    }
+}
+
+// Custom validation functions for FilesystemConfig
+
+/// Validate glob patterns for correctness and safety
+fn validate_glob_patterns(patterns: &[String]) -> Result<(), ValidationError> {
+    for pattern in patterns {
+        if pattern.is_empty() {
+            return Err(ValidationError::new("empty_pattern"));
+        }
+
+        // Check for dangerous patterns that could cause infinite recursion or security issues
+        if pattern == "/" || pattern == "**" {
+            return Err(ValidationError::new("dangerous_pattern"));
+        }
+
+        // Validate glob syntax using the glob crate
+        if let Err(_) = glob::Pattern::new(pattern) {
+            return Err(ValidationError::new("invalid_glob_syntax"));
+        }
+    }
+    Ok(())
+}
+
+/// Validate maximum depth setting
+fn validate_max_depth(depth: &Option<usize>) -> Result<(), ValidationError> {
+    if let Some(d) = depth {
+        if *d == 0 {
+            return Err(ValidationError::new("depth_zero"));
+        }
+        if *d > 100 {
+            return Err(ValidationError::new("depth_too_large"));
+        }
+    }
+    Ok(())
 }
 
 /// Rename operation tracking for enhanced move detection
@@ -216,7 +300,7 @@ pub struct FilesystemState {
     /// Directories being monitored
     pub directories: Vec<Utf8PathBuf>,
 
-    /// Sample file paths for diagnostics (limited to 100)
+    /// Sample file paths for diagnostics (limited to MAX_DIAGNOSTIC_SAMPLES)
     pub sample_paths: Vec<Utf8PathBuf>,
 }
 
@@ -233,6 +317,9 @@ pub struct FilesystemProcessor {
 
     /// Root directories being watched for validation
     watch_roots: Vec<Utf8PathBuf>,
+
+    /// Validated watch roots for security boundary checking
+    validated_watch_roots: Vec<Utf8PathBuf>,
 
     /// Rename operation tracking for enhanced move detection
     rename_tracker: Arc<Mutex<HashMap<u32, RenameOperation>>>,
@@ -254,6 +341,7 @@ impl FilesystemProcessor {
             context: None,
             config: FilesystemConfig::default(),
             watch_roots: Vec::new(),
+            validated_watch_roots: Vec::new(),
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
@@ -267,6 +355,7 @@ impl FilesystemProcessor {
             context: None,
             config,
             watch_roots: Vec::new(),
+            validated_watch_roots: Vec::new(),
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
@@ -275,6 +364,8 @@ impl FilesystemProcessor {
     }
 
     /// Take a snapshot of current filesystem state
+    #[must_use = "Snapshot result should be used or stored"]
+    #[instrument(skip(self), fields(processor = "filesystem", watch_roots_count = self.watch_roots.len()))]
     #[with_context(
         operation = "take_filesystem_snapshot",
         retry_count = 2,
@@ -288,11 +379,19 @@ impl FilesystemProcessor {
 
         for watch_root in &self.watch_roots {
             if watch_root.exists() {
+                debug!(path = %watch_root.as_str(), "Counting files in watch root");
                 let count = self
                     .count_files_in_directory(watch_root, &mut sample_paths)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, path = %watch_root.as_str(), "Failed to count files in directory");
+                        e
+                    })?;
                 file_counts.insert(watch_root.clone(), count);
                 total_files += count;
+                debug!(path = %watch_root.as_str(), file_count = count, "Completed file count for directory");
+            } else {
+                warn!(path = %watch_root.as_str(), "Watch root does not exist, skipping");
             }
         }
 
@@ -309,6 +408,7 @@ impl FilesystemProcessor {
     }
 
     /// Count files in a directory and collect samples
+    #[instrument(skip(self, sample_paths), fields(processor = "filesystem", path = %path.as_str(), max_depth = self.config.max_depth))]
     #[with_context(
         operation = "count_files_in_directory",
         timeout_ms = 15000,
@@ -333,8 +433,8 @@ impl FilesystemProcessor {
             if entry.metadata().map(|m| m.is_file()).unwrap_or(false) {
                 count += 1;
 
-                // Collect samples for diagnostics (limit to 100)
-                if sample_paths.len() < 100 {
+                // Collect samples for diagnostics (limit to MAX_DIAGNOSTIC_SAMPLES)
+                if sample_paths.len() < MAX_DIAGNOSTIC_SAMPLES {
                     if let Ok(utf8_path) = Utf8PathBuf::from_path_buf(entry.path().to_path_buf()) {
                         sample_paths.push(utf8_path);
                     }
@@ -346,6 +446,7 @@ impl FilesystemProcessor {
     }
 
     /// Scan directory and emit events for discovered files/directories
+    #[instrument(skip(self), fields(processor = "filesystem", path = %path.as_str(), emit_events, checkpoint_desc = %checkpoint.description()))]
     #[with_context(
         operation = "scan_directory_with_checkpoint",
         retry_count = 1,
@@ -426,7 +527,8 @@ impl FilesystemProcessor {
             }
 
             // Apply pattern filtering
-            if !self.matches_patterns(utf8_path) {
+            let should_process = self.matches_patterns(utf8_path);
+            if !should_process {
                 continue;
             }
 
@@ -519,7 +621,7 @@ impl FilesystemProcessor {
         }
     }
 
-    /// Create discovery events for a file or directory
+    /// Create discovery events for a file or directory with security validation
     fn create_discovery_events(
         &self,
         path: &Utf8Path,
@@ -528,9 +630,29 @@ impl FilesystemProcessor {
         // Validate path before processing
         let path_str = path.as_str();
 
-        // Validate the path structure
-        validate_path(path_str)
-            .map_err(|e| SatelliteError::General(eyre!("Invalid path: {}", e)))?;
+        // SECURITY: Validate discovered file against watch roots
+        let mut path_validated = false;
+        for watch_root in &self.validated_watch_roots {
+            match validate_discovered_file(
+                path_str,
+                watch_root.as_str(),
+                &self.config.security_policy,
+            ) {
+                Ok(_) => {
+                    path_validated = true;
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+
+        if !path_validated {
+            warn!(
+                "Rejecting filesystem discovery event for path outside validated boundaries: {}",
+                path_str
+            );
+            return Ok(vec![]); // Return empty events instead of error
+        }
 
         let mut events = Vec::new();
 
@@ -569,6 +691,7 @@ impl FilesystemProcessor {
     }
 
     /// Start continuous filesystem monitoring
+    #[instrument(skip(self), fields(processor = "filesystem", debounce_ms = self.config.debounce_ms, watch_patterns_count = self.config.watch_patterns.len()))]
     #[with_context(
         operation = "start_continuous_filesystem_monitoring",
         enable_metrics,
@@ -679,7 +802,8 @@ impl FilesystemProcessor {
         Ok(())
     }
 
-    /// Set up filesystem watch paths from configuration
+    /// Set up filesystem watch paths from configuration with security validation
+    #[instrument(skip(self, debouncer), fields(processor = "filesystem", patterns_count = self.config.watch_patterns.len()))]
     async fn setup_watch_paths(
         &mut self,
         debouncer: &mut notify_debouncer_full::Debouncer<
@@ -689,6 +813,10 @@ impl FilesystemProcessor {
     ) -> SatelliteResult<()> {
         let mut watched_paths = HashSet::new();
         self.watch_roots.clear();
+        self.validated_watch_roots.clear();
+
+        // Collect base path strings for validation
+        let mut base_path_strings = Vec::new();
 
         for pattern in &self.config.watch_patterns {
             // Expand home directory
@@ -713,18 +841,33 @@ impl FilesystemProcessor {
                 expanded.to_string()
             };
 
-            // Validate the base path
-            validate_path(&base_path_str)
-                .map_err(|e| SatelliteError::General(eyre!("Invalid watch path: {}", e)))?;
+            base_path_strings.push(base_path_str);
+        }
 
-            let base_path = camino::Utf8Path::new(&base_path_str);
+        // SECURITY: Validate all watch paths before setting up watchers
+        let validated_paths =
+            validate_watch_paths(&base_path_strings, &self.config.security_policy).map_err(
+                |e| {
+                    SatelliteError::General(eyre!("Filesystem watch path validation failed: {}", e))
+                },
+            )?;
 
+        info!(
+            "Validated {} watch paths for filesystem monitoring",
+            validated_paths.len()
+        );
+        for path in &validated_paths {
+            info!("  - {}", path.as_str());
+        }
+
+        // Set up validated watch paths
+        for base_path in &validated_paths {
             // Create directory if it doesn't exist (for testing)
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.as_str());
                 std::fs::create_dir_all(base_path).map_err(|e| {
                     SatelliteError::General(eyre!(
-                        "Failed to create directory {}: {}",
+                        "Failed to create validated directory {}: {}",
                         base_path.as_str(),
                         e
                     ))
@@ -733,26 +876,33 @@ impl FilesystemProcessor {
 
             // Watch the base directory
             if base_path.exists() && !watched_paths.contains(base_path) {
-                info!("Watching directory: {}", base_path.as_str());
+                info!("Watching validated directory: {}", base_path.as_str());
                 debouncer
                     .watcher()
                     .watch(base_path.as_std_path(), notify::RecursiveMode::Recursive)
                     .map_err(|e| {
-                        SatelliteError::General(eyre!("Failed to watch path {}: {}", base_path, e))
+                        SatelliteError::General(eyre!(
+                            "Failed to watch validated path {}: {}",
+                            base_path,
+                            e
+                        ))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
 
                 // Add to watch roots for validation
                 if let Ok(canonical) = base_path.canonicalize() {
                     if let Ok(utf8_canonical) = Utf8PathBuf::from_path_buf(canonical) {
-                        self.watch_roots.push(utf8_canonical);
+                        self.watch_roots.push(utf8_canonical.clone());
+                        self.validated_watch_roots.push(utf8_canonical);
                     }
                 }
             }
         }
 
         if self.watch_roots.is_empty() {
-            return Err(SatelliteError::General(eyre!("No valid watch roots found")));
+            return Err(SatelliteError::General(eyre!(
+                "No valid watch roots found after security validation"
+            )));
         }
 
         Ok(())
@@ -783,11 +933,68 @@ impl FilesystemProcessor {
         }
     }
 
-    /// Convert notify event to RawEvent with rich metadata (placeholder for full implementation)
-    fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<RawEvent>> {
-        // This would contain the full event conversion logic from the original implementation
-        // For now, return empty to focus on the architectural changes
-        Ok(vec![])
+    /// Convert filesystem event to RawEvent with security validation (legacy method)
+    fn convert_fs_event(&self, event: NotifyEvent, host: &str) -> SatelliteResult<Vec<RawEvent>> {
+        // Delegate to secure version
+        self.convert_fs_event_secure(event, host)
+    }
+
+    /// Convert filesystem event to RawEvent with comprehensive security validation
+    fn convert_fs_event_secure(
+        &self,
+        event: NotifyEvent,
+        _host: &str,
+    ) -> SatelliteResult<Vec<RawEvent>> {
+        let mut events = Vec::new();
+
+        // Process each path in the notify event
+        for path in event.paths {
+            let utf8_path = match Utf8PathBuf::from_path_buf(path) {
+                Ok(p) => p,
+                Err(_) => {
+                    debug!("Skipping non-UTF8 path in filesystem event");
+                    continue;
+                }
+            };
+
+            // SECURITY: Validate discovered file against watch roots
+            let mut path_validated = false;
+            for watch_root in &self.validated_watch_roots {
+                match validate_discovered_file(
+                    utf8_path.as_str(),
+                    watch_root.as_str(),
+                    &self.config.security_policy,
+                ) {
+                    Ok(_) => {
+                        path_validated = true;
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            if !path_validated {
+                warn!(
+                    "Rejecting filesystem event for path outside validated boundaries: {}",
+                    utf8_path.as_str()
+                );
+                continue;
+            }
+
+            // Get file metadata for event creation
+            if let Ok(metadata) = std::fs::metadata(&utf8_path) {
+                match self.create_discovery_events(&utf8_path, &metadata) {
+                    Ok(mut file_events) => {
+                        events.append(&mut file_events);
+                    }
+                    Err(e) => {
+                        warn!("Failed to create events for {}: {}", utf8_path, e);
+                    }
+                }
+            }
+        }
+
+        Ok(events)
     }
 }
 
@@ -802,6 +1009,7 @@ impl Default for FilesystemProcessor {
 impl StatefulStreamProcessor for FilesystemProcessor {
     type Config = FilesystemConfig;
 
+    #[instrument(skip(self, ctx), fields(processor = "filesystem", service = %ctx.service_name))]
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
@@ -892,6 +1100,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(processor = "filesystem", from = %from.description(), dry_run = args.dry_run, targets_count = args.targets.len()))]
     async fn scan(
         &mut self,
         from: Checkpoint,
@@ -926,6 +1135,11 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 };
 
                 for target in targets {
+                    // Validate target path for security
+                    validate_path(&target).map_err(|e| {
+                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                    })?;
+
                     let path = camino::Utf8Path::new(&target);
                     if path.exists() {
                         match self
@@ -959,6 +1173,11 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 };
 
                 for target in targets {
+                    // Validate target path for security
+                    validate_path(&target).map_err(|e| {
+                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                    })?;
+
                     let path = camino::Utf8Path::new(&target);
                     if path.exists() {
                         match self
@@ -1036,11 +1255,13 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         }
     }
 
+    #[instrument(skip(self), fields(processor = "filesystem"))]
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For filesystem monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
 
+    #[instrument(skip(self, args), fields(processor = "filesystem", from = %_from.description(), targets_count = args.targets.len()))]
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
@@ -1058,6 +1279,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         };
 
         for target in targets {
+            // Validate target path for security
+            if let Err(e) = validate_path(target) {
+                warnings.push(format!("Invalid target path '{}': {}", target, e));
+                continue;
+            }
+
             let path = camino::Utf8Path::new(target);
             if path.exists() {
                 // Quick estimate by counting entries
@@ -1193,6 +1420,9 @@ impl ExplorationProvider for FilesystemProcessor {
         path: &Utf8PathBuf,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
+        // Validate export path for security
+        validate_path(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid export path {}": {}, path, e))?;
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,
@@ -1244,7 +1474,7 @@ mod tests {
         let config = FilesystemConfig {
             watch_patterns: vec!["**/*.rs".to_string()],
             ignore_patterns: vec![],
-            debounce_ms: 100,
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
         };
 
@@ -1253,23 +1483,46 @@ mod tests {
             context: None,
             stage_context: None,
             watch_roots: vec![],
+            validated_watch_roots: vec![],
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
         };
 
-        // Test with invalid path containing null bytes
-        let invalid_path = Utf8Path::new("test\0file.rs");
+        // Test with no validated watch roots (should return empty events)
+        let test_path = Utf8Path::new("test_file.rs");
         let metadata = std::fs::Metadata::from(std::fs::metadata(".").unwrap());
 
-        let result = processor.create_discovery_events(invalid_path, &metadata);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid path"));
-
-        // Test with valid path
-        let valid_path = Utf8Path::new("test_file.rs");
-        let result = processor.create_discovery_events(valid_path, &metadata);
+        let result = processor.create_discovery_events(test_path, &metadata);
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().len(),
+            0,
+            "Should return empty events when no validated watch roots"
+        );
+
+        // Test with valid validated watch root
+        let temp_dir = TempDir::new()?;
+        let temp_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let mut processor_with_roots = FilesystemProcessor {
+            config: processor.config.clone(),
+            context: None,
+            stage_context: None,
+            watch_roots: vec![temp_path.clone()],
+            validated_watch_roots: vec![temp_path.clone()],
+            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            last_state: None,
+            checkpoint_manager: None,
+        };
+
+        let test_file_in_temp = temp_path.join("test_file.rs");
+        std::fs::write(&test_file_in_temp, "// test file")?;
+        let result = processor_with_roots.create_discovery_events(&test_file_in_temp, &metadata);
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().len() > 0,
+            "Should create events for files within validated watch roots"
+        );
 
         Ok(())
     }
@@ -1283,7 +1536,7 @@ mod tests {
         let config = FilesystemConfig {
             watch_patterns: vec![format!("{}/**/*.rs", base_path.display())],
             ignore_patterns: vec![],
-            debounce_ms: 100,
+            debounce_ms: DEFAULT_DEBOUNCE_MS,
             max_depth: None,
         };
 
@@ -1292,6 +1545,7 @@ mod tests {
             context: None,
             stage_context: None,
             watch_roots: vec![],
+            validated_watch_roots: vec![],
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,

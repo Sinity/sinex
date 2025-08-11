@@ -9,7 +9,6 @@
 //! Note: Some tests are simplified to avoid PostgreSQL OID range issues
 //! that occur with the hash_key_to_i64 function in some environments.
 
-use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]

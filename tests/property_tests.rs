@@ -6,15 +6,13 @@
 //! of specific input values using the current architecture.
 
 // Import test utilities without broad prelude to avoid Event type conflicts
-use color_eyre::eyre::Result;
 use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::models::RawEvent as DbEvent;
-use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::domain::{EventSource, EventType, HostName};
 use sinex_core::types::{Id, Ulid};
-use sinex_test_utils::{sinex_test, TestContext};
+use sinex_test_utils::sinex_test;
 
 // =============================================================================
 // ULID PROPERTY TESTS - Invariants for time-ordered identifiers

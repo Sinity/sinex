@@ -68,71 +68,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // 5. Create raw.temporal_ledger table (append-only capture-time records)
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                CREATE TABLE IF NOT EXISTS raw.temporal_ledger (
-                    entry_id ULID PRIMARY KEY DEFAULT gen_ulid(),
-                    material_id ULID NOT NULL REFERENCES raw.source_material_registry(source_material_id) ON DELETE CASCADE,
-                    offset_start BIGINT NOT NULL,
-                    offset_end BIGINT NOT NULL,
-                    offset_kind TEXT NOT NULL CHECK (offset_kind IN ('byte','line','rowid','logical')),
-                    ts_capture TIMESTAMPTZ NOT NULL,
-                    precision TEXT NOT NULL CHECK (precision IN ('exact','bounded')),
-                    clock TEXT NOT NULL CHECK (clock IN ('monotonic','wall')),
-                    source_type TEXT NOT NULL CHECK (source_type IN ('realtime_capture','intrinsic_content','inferred_mtime','inferred_ctime','inferred_user')),
-                    note TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    UNIQUE(material_id, offset_start)
-                );
-                "#,
-            )
-            .await?;
-
-        // 6. Create indexes for temporal_ledger
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                CREATE INDEX IF NOT EXISTS ix_tl_material_offsets 
-                ON raw.temporal_ledger (material_id, offset_start, offset_end);
-                
-                CREATE INDEX IF NOT EXISTS ix_tl_ts 
-                ON raw.temporal_ledger (ts_capture, source_type);
-                "#,
-            )
-            .await?;
-
-        // 7. Create temporal ledger append-only trigger function
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                CREATE OR REPLACE FUNCTION raw.fn_temporal_ledger_append_only()
-                RETURNS trigger LANGUAGE plpgsql AS $$
-                BEGIN
-                    RAISE EXCEPTION 'raw.temporal_ledger is append-only (no % allowed)', TG_OP;
-                END $$;
-                "#,
-            )
-            .await?;
-
-        // 8. Create temporal ledger append-only trigger
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                DROP TRIGGER IF EXISTS trg_tl_no_update ON raw.temporal_ledger;
-                CREATE TRIGGER trg_tl_no_update
-                BEFORE UPDATE OR DELETE ON raw.temporal_ledger
-                FOR EACH ROW EXECUTE FUNCTION raw.fn_temporal_ledger_append_only();
-                "#,
-            )
-            .await?;
-
-        // 9. Add indexes for archived_events
+        // 5. Add indexes for archived_events
         manager
             .get_connection()
             .execute_unprepared(
@@ -156,26 +92,6 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Remove triggers
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                DROP TRIGGER IF EXISTS trg_tl_no_update ON raw.temporal_ledger;
-                "#,
-            )
-            .await?;
-
-        // Remove trigger functions
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                DROP FUNCTION IF EXISTS raw.fn_temporal_ledger_append_only();
-                "#,
-            )
-            .await?;
-
         // Remove constraints and indexes
         manager
             .get_connection()
@@ -188,7 +104,7 @@ impl MigrationTrait for Migration {
             )
             .await?;
 
-        // Remove added columns from archived_events and remove new tables
+        // Remove added columns from archived_events
         manager
             .get_connection()
             .execute_unprepared(
@@ -197,8 +113,6 @@ impl MigrationTrait for Migration {
                 DROP COLUMN IF EXISTS archived_by,
                 DROP COLUMN IF EXISTS superseded_by_event_id,
                 DROP COLUMN IF EXISTS operation_id;
-                
-                DROP TABLE IF EXISTS raw.temporal_ledger;
                 "#,
             )
             .await?;

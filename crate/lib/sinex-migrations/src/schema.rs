@@ -6,8 +6,11 @@
 use sea_query::{Alias, PostgresQueryBuilder};
 use sea_query::{ColumnDef, Expr, Index, IndexOrder, IntoIden, Table};
 
-pub mod artifact_tables;
-pub use artifact_tables::*;
+// Note: artifact_tables module removed as part of Phase 1.3 cleanup
+// The artifact system has been replaced by the synthesis architecture
+
+pub mod event_embeddings;
+pub use event_embeddings::*;
 
 /// Trait for table definitions that can be used with generic repository operations
 pub trait TableDef: Copy + Clone {
@@ -52,18 +55,13 @@ macro_rules! impl_table_def {
 #[derive(Copy, Clone)]
 pub struct ProcessorManifests;
 
-impl_table_def!(
-    ProcessorManifests,
-    "processor_manifests",
-    "core",
-    "manifest_id"
-);
+impl_table_def!(ProcessorManifests, "processor_manifests", "core", "id");
 
 impl ProcessorManifests {
     pub const TABLE: &'static str = "processor_manifests";
     pub const SCHEMA: &'static str = "core";
 
-    pub const MANIFEST_ID: &'static str = "manifest_id";
+    pub const MANIFEST_ID: &'static str = "id";
     pub const PROCESSOR_NAME: &'static str = "processor_name";
     pub const PROCESSOR_VERSION: &'static str = "processor_version";
     pub const PROCESSOR_TYPE: &'static str = "processor_type";
@@ -163,13 +161,13 @@ impl ProcessorManifests {
 #[derive(Copy, Clone)]
 pub struct Events;
 
-impl_table_def!(Events, "events", "core", "event_id");
+impl_table_def!(Events, "events", "core", "id");
 
 impl Events {
     pub const TABLE: &'static str = "events";
     pub const SCHEMA: &'static str = "core";
 
-    pub const EVENT_ID: &'static str = "event_id";
+    pub const ID: &'static str = "id";
     pub const SOURCE: &'static str = "source";
     pub const EVENT_TYPE: &'static str = "event_type";
     pub const HOST: &'static str = "host";
@@ -194,7 +192,7 @@ impl Events {
             .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
             .if_not_exists()
             .col(
-                ColumnDef::new(Alias::new(Self::EVENT_ID))
+                ColumnDef::new(Alias::new(Self::ID))
                     .custom(Alias::new("ULID"))
                     .not_null()
                     .primary_key()
@@ -708,23 +706,25 @@ impl SourceMaterials {
 #[derive(Copy, Clone)]
 pub struct OperationsLog;
 
-impl_table_def!(OperationsLog, "operations_log", "core", "operation_id");
+impl_table_def!(OperationsLog, "operations_log", "core", "id");
 
 impl OperationsLog {
     pub const TABLE: &'static str = "operations_log";
     pub const SCHEMA: &'static str = "core";
 
-    pub const OPERATION_ID: &'static str = "operation_id";
-    pub const OPERATION_TS: &'static str = "operation_ts";
-    pub const OPERATION_TYPE: &'static str = "operation_type";
-    pub const OPERATOR: &'static str = "operator";
-    pub const TARGET_TABLE: &'static str = "target_table";
-    pub const TARGET_ID: &'static str = "target_id";
-    pub const OPERATION_DATA: &'static str = "operation_data";
-    pub const RESULT_STATUS: &'static str = "result_status";
-    pub const RESULT_MESSAGE: &'static str = "result_message";
-    pub const DURATION_MS: &'static str = "duration_ms";
-    pub const METADATA: &'static str = "metadata";
+    pub const ID: &'static str = "id";
+    pub const ACTOR: &'static str = "actor";
+    pub const SCOPE: &'static str = "scope";
+    pub const STATE: &'static str = "state";
+    pub const PREVIEW_SUMMARY: &'static str = "preview_summary";
+    pub const CHECKPOINT: &'static str = "checkpoint";
+    pub const APPROVED_BY: &'static str = "approved_by";
+    pub const APPROVED_AT: &'static str = "approved_at";
+    pub const EXECUTOR_NODE: &'static str = "executor_node";
+    pub const STARTED_AT: &'static str = "started_at";
+    pub const FINISHED_AT: &'static str = "finished_at";
+    pub const OUTCOME: &'static str = "outcome";
+    pub const ERROR_DETAILS: &'static str = "error_details";
     pub const CREATED_AT: &'static str = "created_at";
 
     /// Create the operations log table
@@ -733,41 +733,36 @@ impl OperationsLog {
             .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
             .if_not_exists()
             .col(
-                ColumnDef::new(Alias::new(Self::OPERATION_ID))
+                ColumnDef::new(Alias::new(Self::ID))
                     .custom(Alias::new("ULID"))
                     .not_null()
-                    .primary_key()
-                    .default(Expr::cust("gen_ulid()")),
+                    .primary_key(),
             )
-            // Note: operation_ts is GENERATED column, handled separately
+            .col(ColumnDef::new(Alias::new(Self::ACTOR)).text().not_null())
             .col(
-                ColumnDef::new(Alias::new(Self::OPERATION_TYPE))
-                    .text()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(Alias::new(Self::OPERATOR)).text().not_null())
-            .col(
-                ColumnDef::new(Alias::new(Self::TARGET_TABLE))
-                    .text()
-                    .not_null(),
-            )
-            .col(ColumnDef::new(Alias::new(Self::TARGET_ID)).text())
-            .col(
-                ColumnDef::new(Alias::new(Self::OPERATION_DATA))
+                ColumnDef::new(Alias::new(Self::SCOPE))
                     .json_binary()
                     .not_null(),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::RESULT_STATUS))
+                ColumnDef::new(Alias::new(Self::STATE))
                     .text()
                     .not_null()
-                    .check(Expr::cust(
-                        "result_status IN ('success', 'failure', 'partial')",
-                    )),
+                    .default("planning"),
             )
-            .col(ColumnDef::new(Alias::new(Self::RESULT_MESSAGE)).text())
-            .col(ColumnDef::new(Alias::new(Self::DURATION_MS)).integer())
-            .col(ColumnDef::new(Alias::new(Self::METADATA)).json_binary())
+            .col(ColumnDef::new(Alias::new(Self::PREVIEW_SUMMARY)).json_binary())
+            .col(ColumnDef::new(Alias::new(Self::CHECKPOINT)).json_binary())
+            .col(ColumnDef::new(Alias::new(Self::APPROVED_BY)).text())
+            .col(ColumnDef::new(Alias::new(Self::APPROVED_AT)).timestamp_with_time_zone())
+            .col(ColumnDef::new(Alias::new(Self::EXECUTOR_NODE)).text())
+            .col(ColumnDef::new(Alias::new(Self::STARTED_AT)).timestamp_with_time_zone())
+            .col(ColumnDef::new(Alias::new(Self::FINISHED_AT)).timestamp_with_time_zone())
+            .col(
+                ColumnDef::new(Alias::new(Self::OUTCOME))
+                    .text()
+                    .check(Expr::cust("outcome IN ('success', 'error', 'cancelled')")),
+            )
+            .col(ColumnDef::new(Alias::new(Self::ERROR_DETAILS)).text())
             .col(
                 ColumnDef::new(Alias::new(Self::CREATED_AT))
                     .timestamp_with_time_zone()
@@ -777,33 +772,38 @@ impl OperationsLog {
             .build(PostgresQueryBuilder)
     }
 
-    /// Add generated column for operation_ts
+    /// Add generated column for operation_ts (no longer needed)
     pub fn add_generated_column() -> String {
-        format!(
-            "ALTER TABLE {}.{} ADD COLUMN {} TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS ({}::timestamp) STORED",
-            Self::SCHEMA, Self::TABLE, Self::OPERATION_TS, Self::OPERATION_ID
-        )
+        // No generated column needed with new schema
+        String::new()
     }
 
     /// Create indexes for the operations log table
     pub fn create_indexes() -> Vec<String> {
         vec![
-            // Index on operation_ts for time-based queries
+            // Index on actor and started_at
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_operations_log_ts")
-                .col(Alias::new(Self::OPERATION_TS))
+                .name("idx_operations_log_actor_started")
+                .col(Alias::new(Self::ACTOR))
+                .col(Alias::new(Self::STARTED_AT))
                 .build(PostgresQueryBuilder),
-            // Index on operation type and timestamp
+            // Index on outcome and started_at
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_operations_log_type_ts")
-                .col(Alias::new(Self::OPERATION_TYPE))
-                .col(Alias::new(Self::OPERATION_TS))
+                .name("idx_operations_log_outcome_started")
+                .col(Alias::new(Self::OUTCOME))
+                .col(Alias::new(Self::STARTED_AT))
                 .build(PostgresQueryBuilder),
-            // Partial index on target
+            // Index on started_at
+            Index::create()
+                .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
+                .name("idx_operations_log_started_at")
+                .col(Alias::new(Self::STARTED_AT))
+                .build(PostgresQueryBuilder),
+            // Partial index on state for active states
             format!(
-                "CREATE INDEX idx_operations_log_target ON {}.{} (target_table, target_id) WHERE target_id IS NOT NULL",
+                "CREATE INDEX idx_operations_log_state ON {}.{} (state) WHERE state IN ('planning', 'previewed', 'approved', 'executing')",
                 Self::SCHEMA, Self::TABLE
             ),
         ]
@@ -814,7 +814,7 @@ impl OperationsLog {
 #[derive(Copy, Clone)]
 pub struct ArchivedEvents;
 
-impl_table_def!(ArchivedEvents, "archived_events", "core", "event_id");
+impl_table_def!(ArchivedEvents, "archived_events", "core", "id");
 
 impl ArchivedEvents {
     pub const TABLE: &'static str = "archived_events";
@@ -1209,7 +1209,7 @@ impl EventAnnotations {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_annotations_event FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
         ]
     }
@@ -1748,13 +1748,13 @@ impl EventRelations {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_relations_from FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::FROM_EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
             // Foreign key to_event_id to events
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_event_relations_to FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::TO_EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
             // Unique constraint on from_event_id, to_event_id, relation_type
             format!(
@@ -1942,7 +1942,7 @@ impl EventClusterMembers {
             format!(
                 "ALTER TABLE {}.{} ADD CONSTRAINT fk_cluster_members_event FOREIGN KEY ({}) REFERENCES {}.{}({}) ON DELETE CASCADE",
                 Self::SCHEMA, Self::TABLE, Self::EVENT_ID,
-                Events::SCHEMA, Events::TABLE, Events::EVENT_ID
+                Events::SCHEMA, Events::TABLE, Events::ID
             ),
         ]
     }

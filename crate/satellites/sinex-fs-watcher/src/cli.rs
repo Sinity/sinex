@@ -2,10 +2,20 @@
 
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::Result;
+use sinex_core::types::domain::SanitizedPath;
 use sinex_fs_watcher::{
     FilesystemProcessor, SensdIntegrationConfig, run_with_sensd,
 };
+use std::str::FromStr;
 use tracing::info;
+
+/// Validate and parse filesystem path for watching
+pub fn validate_watch_path(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Watch path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
+}
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -19,8 +29,8 @@ enum Commands {
     /// Run with traditional direct filesystem monitoring
     Direct {
         /// Paths to watch
-        #[arg(value_name = "PATH")]
-        paths: Vec<String>,
+        #[arg(value_name = "PATH", value_parser = validate_watch_path)]
+        paths: Vec<SanitizedPath>,
         
         /// Debounce delay in milliseconds
         #[arg(long, default_value_t = 100)]
@@ -58,7 +68,7 @@ pub async fn run() -> Result<()> {
             
             // Run traditional fs-watcher
             // This would use the existing FilesystemProcessor
-            todo!("Direct mode not fully implemented in CLI")
+            return Err(color_eyre::eyre::eyre!("Direct mode not yet supported in CLI"));
         }
         
         Commands::Sensd {

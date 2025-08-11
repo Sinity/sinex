@@ -10,7 +10,6 @@
 //! - Modern payload types from sinex_core::types::events::payloads
 //! - color_eyre for error handling
 
-use color_eyre::eyre::Result;
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::types::events::payloads::{
@@ -182,7 +181,7 @@ async fn test_filesystem_payload_system(ctx: TestContext) -> color_eyre::eyre::R
     assert_eq!(file_event.source.as_str(), "fs-watcher");
     assert_eq!(file_event.event_type.as_str(), "file.created");
     assert_eq!(file_event.payload.size, 1024);
-    assert_eq!(file_event.payload.path, "/test/file.txt");
+    assert_eq!(file_event.payload.path.as_str(), "/test/file.txt");
 
     // Test FileModifiedPayload
     let modified_payload = FileModifiedPayload::test_default("/test/modified.txt")
@@ -225,7 +224,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
 
     assert_eq!(kitty_event.source.as_str(), "shell.kitty");
     assert_eq!(kitty_event.event_type.as_str(), "command.executed");
-    assert_eq!(kitty_event.payload.command, "ls -la");
+    assert_eq!(kitty_event.payload.command.as_str(), "ls -la");
 
     // Test AtuinCommandExecutedPayload
     let atuin_payload = AtuinCommandExecutedPayload::test_default("git status", "/repo")

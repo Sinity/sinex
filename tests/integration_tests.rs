@@ -15,7 +15,6 @@ mod integration {
 }
 
 // Import test utilities with proper prelude for consistent testing
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::models::{Blob, RawEvent as DbEvent};
 use sinex_core::db::repositories::DbPoolExt;

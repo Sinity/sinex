@@ -18,6 +18,7 @@ use sinex_satellite_sdk::{
         ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
         MissingItem, SourceState,
     },
+    error_helpers::{parse_config_value, parse_typed_config},
     stream_processor::{
         Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
         StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
@@ -26,7 +27,7 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
 
 use crate::{ClipboardWatcher, WindowManagerWatcher};
 
@@ -111,6 +112,9 @@ pub struct DesktopProcessor {
 }
 
 impl DesktopProcessor {
+    const MS_PER_EVENT: u64 = 10;
+    const BYTES_PER_EVENT: u64 = 256;
+
     /// Create a new unified desktop processor
     pub fn new() -> Self {
         Self {
@@ -135,7 +139,10 @@ impl DesktopProcessor {
         }
     }
 
+    /// Parse configuration value from context with type conversion
+
     /// Take a snapshot of current desktop state
+    #[instrument(skip(self), fields(processor = "desktop"))]
     async fn take_snapshot(&mut self) -> SatelliteResult<DesktopState> {
         let mut enabled_sources = Vec::new();
         let mut clipboard_status = None;
@@ -181,6 +188,7 @@ impl DesktopProcessor {
     }
 
     /// Initialize watchers based on enabled sources
+    #[instrument(skip(self), fields(processor = "desktop"))]
     async fn initialize_watchers(&mut self) -> SatelliteResult<()> {
         // Initialize clipboard watcher
         if self.config.clipboard_enabled {
@@ -203,6 +211,7 @@ impl DesktopProcessor {
     }
 
     /// Start continuous desktop monitoring
+    #[instrument(skip(self), fields(processor = "desktop", checkpoint = %_from_checkpoint.description()))]
     async fn start_continuous_monitoring(
         &mut self,
         _from_checkpoint: Checkpoint,
@@ -230,6 +239,7 @@ impl DesktopProcessor {
     }
 
     /// Perform historical scan on desktop sources
+    #[instrument(skip(self), fields(processor = "desktop", from = %_from.description(), emit_events))]
     async fn scan_historical_desktop_data(
         &self,
         _from: &Checkpoint,
@@ -285,6 +295,7 @@ impl Default for DesktopProcessor {
 impl StatefulStreamProcessor for DesktopProcessor {
     type Config = DesktopConfig;
 
+    #[instrument(skip(self, ctx), fields(processor = "desktop", service = %ctx.service_name))]
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
@@ -300,40 +311,25 @@ impl StatefulStreamProcessor for DesktopProcessor {
         self.checkpoint_manager = Some(ctx.checkpoint_manager.clone());
 
         // Parse configuration from processor context
-        if let Some(config_json) = ctx.config.get("desktop") {
-            match serde_json::from_value::<DesktopConfig>(config_json.clone()) {
-                Ok(config) => {
-                    self.config = config;
-                }
-                Err(e) => {
-                    warn!("Failed to parse desktop config, using defaults: {}", e);
-                }
-            }
+        if let Some(config) = parse_typed_config::<DesktopConfig>("desktop", &ctx) {
+            self.config = config;
         }
 
         // Override with individual config values if present
-        if let Some(clipboard_enabled_json) = ctx.config.get("clipboard_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(clipboard_enabled_json.clone()) {
-                self.config.clipboard_enabled = enabled;
-            }
+        if let Some(enabled) = parse_config_value::<bool>("clipboard_enabled", &ctx) {
+            self.config.clipboard_enabled = enabled;
         }
 
-        if let Some(wm_enabled_json) = ctx.config.get("window_manager_enabled") {
-            if let Ok(enabled) = serde_json::from_value::<bool>(wm_enabled_json.clone()) {
-                self.config.window_manager_enabled = enabled;
-            }
+        if let Some(enabled) = parse_config_value::<bool>("window_manager_enabled", &ctx) {
+            self.config.window_manager_enabled = enabled;
         }
 
-        if let Some(wm_type_json) = ctx.config.get("window_manager_type") {
-            if let Ok(wm_type) = serde_json::from_value::<String>(wm_type_json.clone()) {
-                self.config.window_manager_type = wm_type;
-            }
+        if let Some(wm_type) = parse_config_value::<String>("window_manager_type", &ctx) {
+            self.config.window_manager_type = wm_type;
         }
 
-        if let Some(poll_interval_json) = ctx.config.get("clipboard_poll_interval_secs") {
-            if let Ok(interval) = serde_json::from_value::<u64>(poll_interval_json.clone()) {
-                self.config.clipboard_poll_interval_secs = interval;
-            }
+        if let Some(interval) = parse_config_value::<u64>("clipboard_poll_interval_secs", &ctx) {
+            self.config.clipboard_poll_interval_secs = interval;
         }
 
         info!(
@@ -348,6 +344,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(processor = "desktop", from = %from.description(), dry_run = args.dry_run, targets_count = args.targets.len()))]
     async fn scan(
         &mut self,
         from: Checkpoint,
@@ -376,6 +373,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
                 // Initialize watchers for snapshot capabilities
                 if let Err(e) = self.initialize_watchers().await {
+                    warn!(error = %e, "Failed to initialize some watchers for snapshot");
                     warnings.push(format!("Failed to initialize some watchers: {}", e));
                 }
 
@@ -403,7 +401,10 @@ impl StatefulStreamProcessor for DesktopProcessor {
                             })
                             .into();
 
-                        context.emit_event(snapshot_event).await?;
+                        context.emit_event(snapshot_event).await.map_err(|e| {
+                            error!(error = %e, "Failed to emit desktop snapshot event");
+                            e
+                        })?;
                     }
                 }
             }
@@ -422,6 +423,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
                         successful_targets.push("desktop_historical_scan".to_string());
                     }
                     Err(e) => {
+                        error!(error = %e, "Historical desktop scan failed");
                         failed_targets.push(("desktop_historical_scan".to_string(), e.to_string()));
                     }
                 }
@@ -429,11 +431,20 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
             TimeHorizon::Continuous => {
                 // Initialize watchers for continuous monitoring
-                self.initialize_watchers().await?;
+                debug!("Initializing watchers for continuous monitoring");
+                self.initialize_watchers().await.map_err(|e| {
+                    error!(error = %e, "Failed to initialize watchers for continuous monitoring");
+                    e
+                })?;
 
                 // Start continuous monitoring
                 info!("Starting continuous desktop monitoring");
-                self.start_continuous_monitoring(from.clone()).await?;
+                self.start_continuous_monitoring(from.clone())
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "Failed to start continuous monitoring");
+                        e
+                    })?;
                 // Continuous monitoring runs indefinitely
                 events_processed = 0; // Can't count events in continuous mode
             }
@@ -452,25 +463,25 @@ impl StatefulStreamProcessor for DesktopProcessor {
                 },
                 Utc::now(),
             )),
-            processor_stats: HashMap::from([
+            processor_stats: [
                 (
-                    "clipboard_enabled".to_string(),
+                    "clipboard_enabled",
                     if self.config.clipboard_enabled { 1 } else { 0 },
                 ),
                 (
-                    "window_manager_enabled".to_string(),
+                    "window_manager_enabled",
                     if self.config.window_manager_enabled {
                         1
                     } else {
                         0
                     },
                 ),
-                (
-                    "successful_targets".to_string(),
-                    successful_targets.len() as u64,
-                ),
-                ("failed_targets".to_string(), failed_targets.len() as u64),
-            ]),
+                ("successful_targets", successful_targets.len() as u64),
+                ("failed_targets", failed_targets.len() as u64),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
             successful_targets,
             failed_targets,
             warnings,
@@ -496,11 +507,13 @@ impl StatefulStreamProcessor for DesktopProcessor {
         }
     }
 
+    #[instrument(skip(self), fields(processor = "desktop"))]
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For desktop monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
 
+    #[instrument(skip(self), fields(processor = "desktop", from = %_from.description()))]
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
@@ -533,8 +546,8 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
         Ok(ScanEstimate {
             estimated_events: adjusted_events,
-            estimated_duration: Duration::from_millis(adjusted_events * 10), // ~10ms per event
-            estimated_data_size: adjusted_events * 256,                      // ~256 bytes per event
+            estimated_duration: Duration::from_millis(adjusted_events * Self::MS_PER_EVENT),
+            estimated_data_size: adjusted_events * Self::BYTES_PER_EVENT,
             estimated_targets: 2, // clipboard + window manager
             warnings,
             confidence,
@@ -576,28 +589,31 @@ impl ExplorationProvider for DesktopProcessor {
                 .map(|s| s.captured_at)
                 .unwrap_or_else(Utc::now),
             total_items: Some(active_sources),
-            metadata: HashMap::from([
+            metadata: [
                 (
-                    "clipboard_enabled".to_string(),
+                    "clipboard_enabled",
                     serde_json::to_value(self.config.clipboard_enabled)?,
                 ),
                 (
-                    "window_manager_enabled".to_string(),
+                    "window_manager_enabled",
                     serde_json::to_value(self.config.window_manager_enabled)?,
                 ),
                 (
-                    "window_manager_type".to_string(),
+                    "window_manager_type",
                     serde_json::to_value(&self.config.window_manager_type)?,
                 ),
                 (
-                    "clipboard_poll_interval_secs".to_string(),
+                    "clipboard_poll_interval_secs",
                     serde_json::to_value(self.config.clipboard_poll_interval_secs)?,
                 ),
                 (
-                    "processor_type".to_string(),
+                    "processor_type",
                     serde_json::Value::String("ingestor".to_string()),
                 ),
-            ]),
+            ]
+            .into_iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect(),
             healthy: true,
             recent_activity,
         })

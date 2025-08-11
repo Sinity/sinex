@@ -6,7 +6,7 @@ use sinex_macros::EventPayload;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "events.processed")]
+#[event_payload(source = "sinex.telemetry", event_type = "events.processed")]
 pub struct EventsProcessedPayload {
     pub time_range_seconds: u64,
     pub total_events: u64,
@@ -16,7 +16,7 @@ pub struct EventsProcessedPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "errors.summary")]
+#[event_payload(source = "sinex.telemetry", event_type = "errors.summary")]
 pub struct ErrorsSummaryPayload {
     pub time_range_seconds: u64,
     pub total_errors: u64,
@@ -26,7 +26,7 @@ pub struct ErrorsSummaryPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "system.resources")]
+#[event_payload(source = "sinex.telemetry", event_type = "system.resources")]
 pub struct SystemResourcesPayload {
     pub cpu_usage_percent: f64,
     pub memory_usage_bytes: u64,
@@ -39,7 +39,7 @@ pub struct SystemResourcesPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "operation.performance")]
+#[event_payload(source = "sinex.telemetry", event_type = "operation.performance")]
 pub struct OperationPerformancePayload {
     pub operation_name: String,
     pub duration_ms: u64,
@@ -50,7 +50,7 @@ pub struct OperationPerformancePayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, EventPayload)]
-#[event_payload(source = "sinex", event_type = "resource.usage")]
+#[event_payload(source = "sinex.telemetry", event_type = "resource.usage")]
 pub struct ComponentResourceUsagePayload {
     pub component: String,
     pub period_seconds: u64,
@@ -59,17 +59,6 @@ pub struct ComponentResourceUsagePayload {
 }
 
 impl EventsProcessedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            time_range_seconds: 60,
-            total_events: 0,
-            events_per_source: HashMap::new(),
-            events_per_type: HashMap::new(),
-            processing_rate: 0.0,
-        }
-    }
-
     /// Builder-style method for time range
     pub fn with_time_range_seconds(mut self, seconds: u64) -> Self {
         self.time_range_seconds = seconds;
@@ -102,17 +91,6 @@ impl EventsProcessedPayload {
 }
 
 impl ErrorsSummaryPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            time_range_seconds: 60,
-            total_errors: 0,
-            errors_by_severity: HashMap::new(),
-            errors_by_component: HashMap::new(),
-            error_rate: 0.0,
-        }
-    }
-
     /// Builder-style method for time range
     pub fn with_time_range_seconds(mut self, seconds: u64) -> Self {
         self.time_range_seconds = seconds;
@@ -145,20 +123,6 @@ impl ErrorsSummaryPayload {
 }
 
 impl SystemResourcesPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            cpu_usage_percent: 0.0,
-            memory_usage_bytes: 0,
-            memory_total_bytes: 1024 * 1024 * 1024, // 1GB
-            disk_usage_bytes: 0,
-            disk_total_bytes: 100 * 1024 * 1024 * 1024, // 100GB
-            open_file_descriptors: 0,
-            network_bytes_sent: 0,
-            network_bytes_received: 0,
-        }
-    }
-
     /// Builder-style method for CPU usage
     pub fn with_cpu_usage_percent(mut self, percent: f64) -> Self {
         self.cpu_usage_percent = percent;
@@ -209,18 +173,6 @@ impl SystemResourcesPayload {
 }
 
 impl OperationPerformancePayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(operation_name: impl Into<String>) -> Self {
-        Self {
-            operation_name: operation_name.into(),
-            duration_ms: 0,
-            items_processed: 0,
-            success: true,
-            error: None,
-            metrics: HashMap::new(),
-        }
-    }
-
     /// Builder-style method for duration
     pub fn with_duration_ms(mut self, duration: u64) -> Self {
         self.duration_ms = duration;
@@ -253,16 +205,6 @@ impl OperationPerformancePayload {
 }
 
 impl ComponentResourceUsagePayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(component: impl Into<String>) -> Self {
-        Self {
-            component: component.into(),
-            period_seconds: 60,
-            memory_mb: serde_json::json!({"current": 0, "avg": 0, "peak": 0}),
-            cpu_percent: serde_json::json!({"avg": 0.0, "peak": 0.0}),
-        }
-    }
-
     /// Builder-style method for period
     pub fn with_period_seconds(mut self, seconds: u64) -> Self {
         self.period_seconds = seconds;

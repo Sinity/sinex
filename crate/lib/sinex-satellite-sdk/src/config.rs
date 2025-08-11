@@ -37,6 +37,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
 use std::collections::HashMap;
 use validator::Validate;
 
@@ -256,10 +257,9 @@ impl SatelliteConfig {
     pub fn load_from_env(service_name: &str) -> Self {
         Self {
             service_name: service_name.to_string(),
-            log_level: std::env::var("SINEX_LOG_LEVEL").unwrap_or_else(|_| default_log_level()),
-            ingest_socket_path: std::env::var("SINEX_INGEST_SOCKET")
-                .unwrap_or_else(|_| default_ingest_socket()),
-            redis_url: std::env::var("SINEX_REDIS_URL").unwrap_or_else(|_| default_redis_url()),
+            log_level: env_var_or_default("SINEX_LOG_LEVEL", default_log_level),
+            ingest_socket_path: env_var_or_default("SINEX_INGEST_SOCKET", default_ingest_socket),
+            redis_url: env_var_or_default("SINEX_REDIS_URL", default_redis_url),
             database_url: std::env::var("DATABASE_URL").ok(),
             database_pool_size: std::env::var("SINEX_DB_POOL_SIZE")
                 .ok()
@@ -351,10 +351,22 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_work_dir() -> Utf8PathBuf {
+    let work_dir = get_cache_dir_or_fallback().join("sinex");
+
+    // Validate the default path
+    match validate_path(work_dir.as_str()) {
+        Ok(validated) => validated,
+        Err(_) => {
+            // Fallback to a safe default if validation fails
+            Utf8PathBuf::from("/tmp/sinex")
+        }
+    }
+}
+
+fn get_cache_dir_or_fallback() -> Utf8PathBuf {
     dirs::cache_dir()
         .map(|p| Utf8PathBuf::from_path_buf(p).unwrap_or_else(|_| Utf8PathBuf::from("/tmp")))
         .unwrap_or_else(|| Utf8PathBuf::from("/tmp"))
-        .join("sinex")
 }
 
 fn default_batch_size() -> usize {
@@ -389,9 +401,10 @@ fn validate_log_level(level: &str) -> Result<(), validator::ValidationError> {
 fn validate_socket_path(path: &str) -> Result<(), validator::ValidationError> {
     use sinex_core::types::validate_path;
 
-    validate_path(path)
-        .map(|_| ())
-        .map_err(|_| validator::ValidationError::new("invalid_socket_path"))
+    validate_path(path).map(|_| ()).map_err(|_| {
+        validator::ValidationError::new("invalid_socket_path")
+            .with_message(format!("Socket path '{}' is not valid", path).into())
+    })
 }
 
 fn validate_work_dir(path: &Utf8PathBuf) -> Result<(), validator::ValidationError> {
@@ -408,4 +421,12 @@ fn validate_rfc3339(timestamp: &str) -> Result<(), validator::ValidationError> {
     chrono::DateTime::parse_from_rfc3339(timestamp)
         .map(|_| ())
         .map_err(|_| validator::ValidationError::new("invalid_rfc3339"))
+}
+
+/// Helper function for environment variable parsing with default values
+fn env_var_or_default<F>(key: &str, default_fn: F) -> String
+where
+    F: FnOnce() -> String,
+{
+    std::env::var(key).unwrap_or_else(|_| default_fn())
 }

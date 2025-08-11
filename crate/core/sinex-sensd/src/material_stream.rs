@@ -23,6 +23,31 @@ pub struct MaterialSlice {
     pub metadata: serde_json::Value,
 }
 
+/// Control frames for MaterialSliceStream as per TARGET_final.md
+#[derive(Debug, Clone)]
+pub enum StreamFrame {
+    /// A data slice from the material
+    Slice(MaterialSlice),
+    /// Indicates rotation to a new material
+    RotationBoundary {
+        old_material_id: Ulid,
+        new_material_id: Ulid,
+        rotation_reason: String,
+    },
+    /// Indicates end of the current material
+    EndOfMaterial {
+        material_id: Ulid,
+        final_offset: i64,
+    },
+    /// Indicates a gap in the material
+    Gap {
+        material_id: Ulid,
+        gap_start_offset: i64,
+        gap_end_offset: i64,
+        reason: String,
+    },
+}
+
 /// MaterialSliceStream for ingestors
 pub struct MaterialSliceStream {
     db_pool: PgPool,

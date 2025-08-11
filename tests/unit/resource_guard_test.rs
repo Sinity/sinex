@@ -9,7 +9,6 @@
 //! Note: These tests have been updated for the modern ResourceGuard API
 //! which uses Arc<Mutex<Option<T>>> internally and requires .resource() calls
 
-use color_eyre::eyre::Result;
 use sinex_core::types::utils::ResourceGuard;
 use sinex_test_utils::prelude::*;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};

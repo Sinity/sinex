@@ -185,7 +185,7 @@ impl UdevWatcher {
 
                             // Check if this is a new device
                             if !last_seen_devices.contains(&device_key) {
-                                let properties = std::collections::HashMap::new(); // Simplified
+                                let properties = std::collections::HashMap::with_capacity(8); // Device properties: vendor, model, serial, etc.
 
                                 let device_type = match class_name.as_str() {
                                     "usb" => "usb",
@@ -231,7 +231,7 @@ impl UdevWatcher {
                         _ => "other",
                     };
 
-                    let properties = std::collections::HashMap::new();
+                    let properties = std::collections::HashMap::with_capacity(8); // Device properties: vendor, model, serial, etc.
                     let device_path = format!("/sys/class/{}/{}", class_name, device_name);
 
                     let raw_event =

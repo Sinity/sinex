@@ -69,7 +69,7 @@ mod tests {
 
         // Build a query using SeaQuery and TableDef
         let query = Query::select()
-            .column(Alias::new(Events::EVENT_ID))
+            .column(Alias::new(Events::ID))
             .column(Alias::new(Events::SOURCE))
             .column(Alias::new(Events::EVENT_TYPE))
             .from(Events::table_iden())
@@ -89,7 +89,7 @@ mod tests {
         // Test that all TableDef implementations have correct values
         assert_eq!(Events::table_name(), "events");
         assert_eq!(Events::schema_name(), "core");
-        assert_eq!(Events::primary_key(), "event_id");
+        assert_eq!(Events::primary_key(), "id");
 
         assert_eq!(ProcessorCheckpoints::table_name(), "processor_checkpoints");
         assert_eq!(ProcessorCheckpoints::schema_name(), "core");
@@ -105,7 +105,7 @@ mod tests {
 
         assert_eq!(OperationsLog::table_name(), "operations_log");
         assert_eq!(OperationsLog::schema_name(), "core");
-        assert_eq!(OperationsLog::primary_key(), "operation_id");
+        assert_eq!(OperationsLog::primary_key(), "id");
 
         assert_eq!(Entities::table_name(), "entities");
         assert_eq!(Entities::schema_name(), "core");

@@ -24,12 +24,10 @@ pub type JsonValue = serde_json::Value;
 /// The id field determines if this is a new event or a persisted one:
 /// - id: None => New event to be created
 /// - id: Some(id) => RawEvent retrieved from database
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, bon::Builder)]
-#[builder(on(String, into))] // Convert &str to String automatically
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RawEvent {
     /// Event ID - None when creating, Some when from DB
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[builder(skip)]
     pub id: Option<Id<RawEvent>>,
 
     /// Event source (e.g., "fs-watcher", "terminal")
@@ -41,16 +39,12 @@ pub struct RawEvent {
     /// Event payload as JSON
     pub payload: JsonValue,
 
-    /// Ingestion timestamp - set by database
-    #[builder(skip)]
-    pub ts_ingest: Timestamp,
-
     /// Original timestamp when the event occurred
-    #[builder(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ts_orig: OptionalTimestamp,
 
     /// Hostname where the event was generated
-    #[builder(default = get_hostname())]
+    #[serde(default = "get_hostname")]
     pub host: HostName,
 
     /// Version of the ingestor that created this event
@@ -125,15 +119,15 @@ impl Provenance {
 }
 
 impl RawEvent {
-    /// Create a schemaless/external event with minimal required fields
+    /// Create a schemaless event with untyped JSON payload
     ///
     /// This creates a RawEvent that can be chained with `with_*` methods:
     /// ```ignore
-    /// let event = RawEvent::schemaless(source, event_type, payload)
+    /// let event = RawEvent::new(source, event_type, payload)
     ///     .with_ts_orig(Some(timestamp))
     ///     .with_provenance(provenance);
     /// ```
-    pub fn schemaless(
+    pub fn new(
         source: impl Into<EventSource>,
         event_type: impl Into<EventType>,
         payload: JsonValue,
@@ -143,7 +137,6 @@ impl RawEvent {
             source: source.into(),
             event_type: event_type.into(),
             payload,
-            ts_ingest: chrono::Utc::now(),
             ts_orig: None,
             host: get_hostname(),
             ingestor_version: None,
@@ -178,6 +171,24 @@ impl RawEvent {
         self
     }
 
+    /// Fluent method to set host
+    pub fn with_host(mut self, host: HostName) -> Self {
+        self.host = host;
+        self
+    }
+
+    /// Fluent method to set ingestor version
+    pub fn with_ingestor_version(mut self, version: Option<String>) -> Self {
+        self.ingestor_version = version;
+        self
+    }
+
+    /// Fluent method to set schema ID
+    pub fn with_schema_id(mut self, schema_id: Option<Ulid>) -> Self {
+        self.payload_schema_id = schema_id;
+        self
+    }
+
     /// Check if this event has been persisted to the database
     pub fn is_persisted(&self) -> bool {
         self.id.is_some()
@@ -200,19 +211,30 @@ impl RawEvent {
             _ => None,
         }
     }
+}
 
-    /// Extract ingestion timestamp from ULID if persisted
-    pub fn ts_ingest_from_ulid(&self) -> Option<Timestamp> {
-        self.id.as_ref().map(|id| id.timestamp())
-    }
+/// Create RawEvent from typed payload - derives source and event_type automatically
+impl<T> From<T> for RawEvent
+where
+    T: crate::types::events::EventPayload + serde::Serialize,
+{
+    fn from(payload: T) -> Self {
+        let payload_json =
+            serde_json::to_value(&payload).expect("EventPayload serialization should never fail");
 
-    /// Simple constructor for the most common use case
-    pub fn simple(source: EventSource, event_type: EventType, payload: JsonValue) -> Self {
-        RawEvent::builder()
-            .source(source)
-            .event_type(event_type)
-            .payload(payload)
-            .build()
+        RawEvent {
+            id: None,
+            source: T::SOURCE,
+            event_type: T::EVENT_TYPE,
+            payload: payload_json,
+            ts_orig: None,
+            host: get_hostname(),
+            ingestor_version: None,
+            payload_schema_id: None,
+            provenance: None,
+            anchor_byte: None,
+            associated_blob_ids: None,
+        }
     }
 }
 
@@ -229,16 +251,13 @@ mod tests {
     use sinex_test_utils::sinex_test;
 
     #[sinex_test]
-    fn test_schemaless_event_builder() -> Result<()> {
-        let mut event = RawEvent::schemaless(
-            EventSource::new("test"),
-            EventType::new("test.created"),
-            json!({"message": "hello"}),
-        );
-        event.host = HostName::new("test-host");
+    fn test_new_event_constructor() -> Result<()> {
+        let event = RawEvent::new("test", "test.created", json!({"message": "hello"}))
+            .with_host(HostName::new("test-host"));
 
         assert_eq!(event.source.as_str(), "test");
         assert_eq!(event.event_type.as_str(), "test.created");
+        assert_eq!(event.host.as_str(), "test-host");
         assert!(event.id.is_none());
         assert!(event.is_raw_event());
         assert!(!event.is_persisted());
@@ -246,29 +265,37 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_simple_constructor() -> Result<()> {
-        let event = RawEvent::simple(
-            EventSource::new("test"),
-            EventType::new("test.created"),
-            json!({"message": "hello"}),
-        );
+    fn test_from_typed_payload() -> Result<()> {
+        use crate::types::domain::SanitizedPath;
+        use crate::types::events::payloads::filesystem::FileCreatedPayload;
+        use chrono::Utc;
 
-        assert_eq!(event.source.as_str(), "test");
-        assert_eq!(event.event_type.as_str(), "test.created");
+        let payload = FileCreatedPayload {
+            path: SanitizedPath::new_unchecked("/test.txt"),
+            size: 1024,
+            created_at: Utc::now(),
+            permissions: Some(0o644),
+        };
+
+        let event: RawEvent = payload.into();
+
+        assert_eq!(event.source, FileCreatedPayload::SOURCE);
+        assert_eq!(event.event_type, FileCreatedPayload::EVENT_TYPE);
         assert!(event.id.is_none());
+        assert!(event.is_raw_event());
         Ok(())
     }
 
     #[sinex_test]
     fn test_synthesis_event() -> Result<()> {
         let source_ids = vec![Id::<RawEvent>::new(), Id::<RawEvent>::new()];
-        let mut event = RawEvent::schemaless(
+        let event = RawEvent::new(
             EventSource::new("processor"),
             EventType::new("analysis.completed"),
             json!({"result": "success"}),
-        );
-        event.host = HostName::new("test-host");
-        let event = event.with_provenance(Provenance::Events(source_ids.clone()));
+        )
+        .with_host(HostName::new("test-host"))
+        .with_provenance(Provenance::Events(source_ids.clone()));
 
         assert!(event.is_synthesis_event());
         assert!(!event.is_raw_event());

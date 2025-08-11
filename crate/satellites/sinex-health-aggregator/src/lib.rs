@@ -6,10 +6,6 @@ use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use sinex_satellite_sdk::{
-    nats_stream_consumer::{
-        BatchProcessingResult as NatsBatchProcessingResult,
-        EventBatchProcessor as NatsEventBatchProcessor,
-    },
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
@@ -44,6 +40,23 @@ impl HealthAggregator {
     pub fn new() -> Self {
         Self { context: None }
     }
+
+    /// Create an empty scan report with default values
+    fn create_empty_scan_report(
+        events_processed: u64,
+        start_time: chrono::DateTime<Utc>,
+    ) -> ScanReport {
+        ScanReport {
+            events_processed,
+            duration: std::time::Duration::from_secs(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: Some((start_time, Utc::now())),
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["health".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -75,16 +88,10 @@ impl StatefulStreamProcessor for HealthAggregator {
             TimeHorizon::Continuous => 0,
         };
 
-        Ok(ScanReport {
-            events_processed: events_processed as u64,
-            duration: std::time::Duration::from_secs(0),
-            final_checkpoint: Checkpoint::None,
-            time_range: Some((start_time, Utc::now())),
-            processor_stats: HashMap::new(),
-            successful_targets: vec!["health".to_string()],
-            failed_targets: Vec::new(),
-            warnings: Vec::new(),
-        })
+        Ok(Self::create_empty_scan_report(
+            events_processed as u64,
+            start_time,
+        ))
     }
 
     fn processor_name(&self) -> &str {
@@ -103,25 +110,6 @@ impl StatefulStreamProcessor for HealthAggregator {
 impl Default for HealthAggregator {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-#[async_trait]
-impl NatsEventBatchProcessor for HealthAggregator {
-    async fn process_batch(
-        &mut self,
-        events: Vec<sinex_core::db::models::RawEvent>,
-    ) -> SatelliteResult<NatsBatchProcessingResult> {
-        // Simple implementation that just acknowledges all events
-        info!("Health aggregator processed {} events", events.len());
-
-        Ok(NatsBatchProcessingResult {
-            processed: events.len(),
-            skipped: 0,
-            failed: 0,
-            duration: std::time::Duration::from_millis(0),
-            errors: vec![],
-        })
     }
 }
 

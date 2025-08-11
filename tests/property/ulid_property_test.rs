@@ -1,5 +1,4 @@
 use chrono::{DateTime, Duration as ChronoDuration, Utc};
-use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_core::types::Ulid;

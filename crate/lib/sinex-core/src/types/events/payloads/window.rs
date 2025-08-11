@@ -91,14 +91,6 @@ pub struct WindowGeometry {
 
 impl WindowGeometry {
     /// Create a test geometry with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            x: 0,
-            y: 0,
-            width: 800,
-            height: 600,
-        }
-    }
 
     /// Builder-style method for position
     pub fn with_position(mut self, x: i32, y: i32) -> Self {
@@ -116,19 +108,6 @@ impl WindowGeometry {
 }
 
 impl HyprlandWindowOpenedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(window_id: impl Into<String>, window_class: impl Into<String>) -> Self {
-        Self {
-            window_id: window_id.into(),
-            window_class: window_class.into(),
-            window_title: "Test Window".to_string(),
-            workspace_id: 1,
-            monitor_id: 0,
-            geometry: WindowGeometry::test_default(),
-            floating: false,
-        }
-    }
-
     /// Builder-style method for window title
     pub fn with_window_title(mut self, title: impl Into<String>) -> Self {
         self.window_title = title.into();
@@ -161,17 +140,6 @@ impl HyprlandWindowOpenedPayload {
 }
 
 impl HyprlandWindowClosedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(window_id: impl Into<String>, window_class: impl Into<String>) -> Self {
-        Self {
-            window_id: window_id.into(),
-            window_class: window_class.into(),
-            window_title: "Test Window".to_string(),
-            workspace_id: 1,
-            close_reason: None,
-        }
-    }
-
     /// Builder-style method for window title
     pub fn with_window_title(mut self, title: impl Into<String>) -> Self {
         self.window_title = title.into();
@@ -192,17 +160,6 @@ impl HyprlandWindowClosedPayload {
 }
 
 impl HyprlandWindowFocusedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(window_id: impl Into<String>, window_class: impl Into<String>) -> Self {
-        Self {
-            window_id: window_id.into(),
-            window_class: window_class.into(),
-            window_title: "Test Window".to_string(),
-            workspace_id: 1,
-            previous_window_id: None,
-        }
-    }
-
     /// Builder-style method for window title
     pub fn with_window_title(mut self, title: impl Into<String>) -> Self {
         self.window_title = title.into();
@@ -223,16 +180,6 @@ impl HyprlandWindowFocusedPayload {
 }
 
 impl HyprlandWorkspaceSwitchedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(from_workspace_id: i32, to_workspace_id: i32) -> Self {
-        Self {
-            from_workspace_id,
-            to_workspace_id,
-            monitor_id: 0,
-            active_window_id: None,
-        }
-    }
-
     /// Builder-style method for monitor
     pub fn with_monitor_id(mut self, monitor_id: i32) -> Self {
         self.monitor_id = monitor_id;
@@ -247,15 +194,6 @@ impl HyprlandWorkspaceSwitchedPayload {
 }
 
 impl HyprlandWindowMovedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(window_address: impl Into<String>, new_workspace_id: i32) -> Self {
-        Self {
-            window_address: window_address.into(),
-            new_workspace_id,
-            moved_at: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
     /// Builder-style method for moved timestamp
     pub fn with_moved_at(mut self, timestamp: impl Into<String>) -> Self {
         self.moved_at = timestamp.into();
@@ -264,16 +202,6 @@ impl HyprlandWindowMovedPayload {
 }
 
 impl HyprlandMonitorFocusedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(monitor_id: i32, workspace_id: i32) -> Self {
-        Self {
-            monitor_id,
-            workspace_id,
-            previous_monitor: None,
-            focused_at: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
     /// Builder-style method for previous monitor
     pub fn with_previous_monitor(mut self, prev_monitor: i32) -> Self {
         self.previous_monitor = Some(prev_monitor);
@@ -288,18 +216,6 @@ impl HyprlandMonitorFocusedPayload {
 }
 
 impl HyprlandStateCapturedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            windows: vec![],
-            workspaces: vec![],
-            monitors: vec![],
-            current_workspace: 1,
-            current_monitor: 0,
-            captured_at: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
     /// Builder-style method for windows
     pub fn with_windows(mut self, windows: Vec<serde_json::Value>) -> Self {
         self.windows = windows;

@@ -871,15 +871,13 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
         // Drop unnecessary indexes that slow down copying
         let expensive_indexes = vec![
             // Vector indexes are expensive to copy
-            "idx_artifact_embeddings_vector",
             "idx_event_embeddings_vector",
             "idx_embedding_cache_vector",
             // Full-text search indexes
-            "idx_artifacts_search",
             "idx_ai_content_search",
             // Complex multi-column indexes for test data
             "idx_event_annotations_complex",
-            "idx_artifact_relations_complex",
+            // Note: artifact-related indexes removed in Phase 1.3 cleanup
         ];
 
         for index in expensive_indexes {
@@ -905,8 +903,7 @@ async fn optimize_template_for_tests(pool: &DbPool) -> Result<()> {
         }
 
         // Disable autovacuum on template (tests don't need it)
-        let disable_autovacuum_tables =
-            vec!["core.events", "core.artifacts", "core.event_annotations"];
+        let disable_autovacuum_tables = vec!["core.events", "core.event_annotations"];
 
         for table in disable_autovacuum_tables {
             let disable_sql = format!("ALTER TABLE {} SET (autovacuum_enabled = false)", table);

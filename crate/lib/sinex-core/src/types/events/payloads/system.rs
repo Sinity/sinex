@@ -501,17 +501,6 @@ pub struct UdevDeviceHistoricalPayload {
 }
 
 impl SystemdUnitStatusPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(unit_name: impl Into<String>) -> Self {
-        Self {
-            unit_name: unit_name.into(),
-            unit_type: "service".to_string(),
-            description: "Test service".to_string(),
-            action: "started".to_string(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
     /// Builder-style method for unit type
     pub fn with_unit_type(mut self, unit_type: impl Into<String>) -> Self {
         self.unit_type = unit_type.into();
@@ -538,17 +527,6 @@ impl SystemdUnitStatusPayload {
 }
 
 impl JournalEntryPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(message: impl Into<String>) -> Self {
-        Self {
-            unit: None,
-            priority: 6, // INFO priority
-            message: message.into(),
-            fields: HashMap::new(),
-            timestamp: Utc::now(),
-        }
-    }
-
     /// Builder-style method for unit
     pub fn with_unit(mut self, unit: impl Into<String>) -> Self {
         self.unit = Some(unit.into());
@@ -575,20 +553,6 @@ impl JournalEntryPayload {
 }
 
 impl DbusNotificationSentPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(app_name: impl Into<String>, summary: impl Into<String>) -> Self {
-        Self {
-            app_name: app_name.into(),
-            summary: summary.into(),
-            body: "".to_string(),
-            urgency: 1,  // Normal urgency
-            timeout: -1, // Default timeout
-            actions: vec![],
-            hints: HashMap::new(),
-            timestamp: chrono::Utc::now().to_rfc3339(),
-        }
-    }
-
     /// Builder-style method for body
     pub fn with_body(mut self, body: impl Into<String>) -> Self {
         self.body = body.into();
@@ -621,20 +585,6 @@ impl DbusNotificationSentPayload {
 }
 
 impl SystemHealthSummaryPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            overall_status: HealthStatus::Healthy,
-            healthy_components: 0,
-            degraded_components: 0,
-            failed_components: 0,
-            missing_components: 0,
-            total_components: 0,
-            last_updated: Utc::now(),
-            components: HashMap::new(),
-        }
-    }
-
     /// Builder-style method for overall status
     pub fn with_overall_status(mut self, status: HealthStatus) -> Self {
         self.overall_status = status;
@@ -671,15 +621,6 @@ impl SystemHealthSummaryPayload {
 }
 
 impl ScanStartedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(scan_type: impl Into<String>, target: impl Into<String>) -> Self {
-        Self {
-            scan_type: scan_type.into(),
-            target: target.into(),
-            options: HashMap::new(),
-        }
-    }
-
     /// Builder-style method for options
     pub fn with_options(mut self, options: HashMap<String, serde_json::Value>) -> Self {
         self.options = options;
@@ -688,18 +629,6 @@ impl ScanStartedPayload {
 }
 
 impl ScanCompletedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(scan_type: impl Into<String>, target: impl Into<String>) -> Self {
-        Self {
-            scan_type: scan_type.into(),
-            target: target.into(),
-            items_scanned: 0,
-            items_found: 0,
-            duration_ms: 0,
-            errors: vec![],
-        }
-    }
-
     /// Builder-style method for item counts
     pub fn with_item_counts(mut self, scanned: u64, found: u64) -> Self {
         self.items_scanned = scanned;
@@ -722,18 +651,6 @@ impl ScanCompletedPayload {
 
 impl ComponentHealth {
     /// Create a test component health with sensible defaults
-    pub fn test_default(service_name: impl Into<String>) -> Self {
-        Self {
-            service_name: service_name.into(),
-            status: HealthStatus::Healthy,
-            last_heartbeat: Utc::now(),
-            uptime_seconds: None,
-            memory_usage_mb: None,
-            events_processed: None,
-            version: None,
-            git_hash: None,
-        }
-    }
 
     /// Builder-style method for status
     pub fn with_status(mut self, status: HealthStatus) -> Self {

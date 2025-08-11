@@ -103,6 +103,9 @@ use tokio::sync::mpsc;
 use tokio::time::{interval, sleep};
 use tracing::{debug, error, info, warn};
 
+const CACHE_CLEANUP_INTERVAL_SECS: u64 = 60;
+const CACHE_ENTRY_MAX_AGE_SECS: u64 = 30;
+
 /// Enhanced window information with metadata
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct WindowInfo {
@@ -151,17 +154,16 @@ struct MonitorInfo {
 /// Cache entry for hyprctl results
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    _data: Value,
     timestamp: Instant,
 }
 
-/// Focus history entry
+/// Focus history entry  
 #[derive(Debug, Clone)]
 struct FocusHistoryEntry {
-    _timestamp: chrono::DateTime<Utc>,
-    _window_address: String,
-    _window_class: Option<String>,
-    _window_title: Option<String>,
+    timestamp: chrono::DateTime<Utc>,
+    window_address: String,
+    window_class: Option<String>,
+    window_title: Option<String>,
 }
 
 /// Window augmentation level
@@ -196,12 +198,6 @@ pub struct WindowManagerWatcher {
     last_state_capture: SystemTime,
     // Advanced features
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
-    _focus_history: Arc<Mutex<VecDeque<FocusHistoryEntry>>>,
-    _window_augmentation: WindowAugmentation,
-    _workspace_tracking: WorkspaceTracking,
-    _track_focus_history: bool,
-    _connection_backoff_delay: Duration,
-    _max_backoff_delay: Duration,
 }
 
 impl WindowManagerWatcher {
@@ -220,12 +216,6 @@ impl WindowManagerWatcher {
             state_capture_interval: Duration::from_secs(300),
             last_state_capture: SystemTime::UNIX_EPOCH,
             hyprctl_cache: Arc::new(Mutex::new(HashMap::new())),
-            _focus_history: Arc::new(Mutex::new(VecDeque::new())),
-            _window_augmentation: WindowAugmentation::Basic,
-            _workspace_tracking: WorkspaceTracking::Events,
-            _track_focus_history: true,
-            _connection_backoff_delay: Duration::from_secs(1),
-            _max_backoff_delay: Duration::from_secs(60),
         };
 
         // Discover socket paths based on WM type
@@ -251,13 +241,15 @@ impl WindowManagerWatcher {
         let cache = Arc::clone(&self.hyprctl_cache);
 
         tokio::spawn(async move {
-            let mut cleanup_interval = interval(Duration::from_secs(60));
+            let mut cleanup_interval = interval(Duration::from_secs(CACHE_CLEANUP_INTERVAL_SECS));
 
             loop {
                 cleanup_interval.tick().await;
 
                 let mut cache_guard = cache.lock().unwrap();
-                cache_guard.retain(|_, entry| entry.timestamp.elapsed() < Duration::from_secs(30));
+                cache_guard.retain(|_, entry| {
+                    entry.timestamp.elapsed() < Duration::from_secs(CACHE_ENTRY_MAX_AGE_SECS)
+                });
 
                 if !cache_guard.is_empty() {
                     debug!(
@@ -356,7 +348,6 @@ impl WindowManagerWatcher {
             cache.insert(
                 cache_key,
                 CacheEntry {
-                    _data: data.clone(),
                     timestamp: Instant::now(),
                 },
             );
@@ -470,6 +461,32 @@ impl WindowManagerWatcher {
         Ok(response)
     }
 
+    /// Send event or warn if channel closed, returning whether to continue
+    fn send_event_or_warn(&self, tx: &mpsc::UnboundedSender<RawEvent>, event: RawEvent) -> bool {
+        if tx.send(event).is_err() {
+            warn!("Event channel closed");
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Serialize values to JSON, handling errors gracefully
+    fn serialize_values<T: serde::Serialize>(
+        &self,
+        values: impl Iterator<Item = T>,
+    ) -> Vec<serde_json::Value> {
+        values.map(|v| serde_json::to_value(v).unwrap()).collect()
+    }
+
+    /// Parse ID string to integer with fallback and warning
+    fn parse_id(&self, id_str: &str, context: &str) -> i32 {
+        id_str.parse().unwrap_or_else(|_| {
+            warn!("Failed to parse {} '{}', defaulting to 0", context, id_str);
+            0
+        })
+    }
+
     /// Process Hyprland event line
     async fn process_hyprland_event(
         &mut self,
@@ -535,9 +552,7 @@ impl WindowManagerWatcher {
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             self.current_focused_window = Some(window_address.clone());
         }
@@ -566,7 +581,7 @@ impl WindowManagerWatcher {
                     window_id: window_address.to_string(),
                     window_class: window_class.to_string(),
                     window_title: window_title.to_string(),
-                    workspace_id: workspace_id.parse().unwrap_or(0),
+                    workspace_id: self.parse_id(&workspace_id, "workspace_id"),
                     monitor_id: 0, // TODO: Get actual monitor ID
                     geometry: sinex_core::types::events::WindowGeometry {
                         x: 0,
@@ -578,9 +593,7 @@ impl WindowManagerWatcher {
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             // Store window info
             self.windows.insert(
@@ -644,14 +657,12 @@ impl WindowManagerWatcher {
             let event: RawEvent =
                 Event::from_payload(sinex_core::types::events::HyprlandWindowMovedPayload {
                     window_address: address.to_string(),
-                    new_workspace_id: workspace.parse().unwrap_or(0),
+                    new_workspace_id: self.parse_id(workspace, "workspace_id"),
                     moved_at: chrono::Utc::now().to_rfc3339(),
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             // Update window workspace
             if let Some(window) = self.windows.get_mut(address) {
@@ -677,9 +688,9 @@ impl WindowManagerWatcher {
                 from_workspace_id: self
                     .current_workspace
                     .as_ref()
-                    .and_then(|w| w.parse().ok())
+                    .map(|w| self.parse_id(w, "current_workspace_id"))
                     .unwrap_or(0),
-                to_workspace_id: workspace_id.parse().unwrap_or(0),
+                to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
                 monitor_id: 0,          // TODO: Get actual monitor ID
                 active_window_id: None, // TODO: Get active window
             },
@@ -707,16 +718,14 @@ impl WindowManagerWatcher {
 
             let event =
                 Event::from_payload(sinex_core::types::events::HyprlandMonitorFocusedPayload {
-                    monitor_id: monitor.parse().unwrap_or(0),
-                    workspace_id: workspace.parse().unwrap_or(0),
+                    monitor_id: self.parse_id(monitor, "monitor_id"),
+                    workspace_id: self.parse_id(workspace, "workspace_id"),
                     previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
                     focused_at: chrono::Utc::now().to_rfc3339(),
                 })
                 .into();
 
-            if tx.send(event).is_err() {
-                warn!("Event channel closed");
-            }
+            self.send_event_or_warn(tx, event);
 
             self.current_monitor = Some(monitor.to_string());
         }
@@ -745,30 +754,18 @@ impl WindowManagerWatcher {
 
         let event: RawEvent =
             Event::from_payload(sinex_core::types::events::HyprlandStateCapturedPayload {
-                windows: self
-                    .windows
-                    .values()
-                    .map(|w| serde_json::to_value(w).unwrap())
-                    .collect(),
-                workspaces: self
-                    .workspaces
-                    .values()
-                    .map(|w| serde_json::to_value(w).unwrap())
-                    .collect(),
-                monitors: self
-                    .monitors
-                    .values()
-                    .map(|m| serde_json::to_value(m).unwrap())
-                    .collect(),
+                windows: self.serialize_values(self.windows.values()),
+                workspaces: self.serialize_values(self.workspaces.values()),
+                monitors: self.serialize_values(self.monitors.values()),
                 current_workspace: self
                     .current_workspace
                     .as_ref()
-                    .and_then(|w| w.parse().ok())
+                    .map(|w| self.parse_id(w, "current_workspace_id"))
                     .unwrap_or(0),
                 current_monitor: self
                     .current_monitor
                     .as_ref()
-                    .and_then(|m| m.parse().ok())
+                    .map(|m| self.parse_id(m, "current_monitor_id"))
                     .unwrap_or(0),
                 captured_at: chrono::Utc::now().to_rfc3339(),
             })

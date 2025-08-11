@@ -6,6 +6,328 @@ use syn::{
     Expr, ItemFn, Lit, Meta, PathArguments, ReturnType, Type, TypePath,
 };
 
+/// Configuration parsed from macro attributes
+#[derive(Debug, Default)]
+struct MacroConfig {
+    operation_name: Option<String>,
+    context_pairs: Vec<(String, String)>,
+    suppress_warnings: bool,
+    enable_metrics: bool,
+    _retry_count: u32,
+    _timeout_ms: Option<u64>,
+    _circuit_breaker: bool,
+}
+
+/// Parse macro configuration from attributes
+fn parse_macro_config(args: Punctuated<Meta, Comma>) -> Result<MacroConfig, TokenStream> {
+    let mut config = MacroConfig::default();
+    let mut seen_keys = HashSet::new();
+
+    for arg in args {
+        match arg {
+            Meta::NameValue(nv) if nv.path.is_ident("operation") => {
+                if let Err(error_tokens) =
+                    parse_operation_attribute(&nv, &mut seen_keys, &mut config)
+                {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::NameValue(nv) if nv.path.is_ident("context") => {
+                if let Err(error_tokens) = parse_context_attribute(&nv, &mut config) {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::Path(path) if path.is_ident("suppress_warnings") => {
+                if let Err(error_tokens) = parse_flag_attribute(
+                    &path,
+                    "suppress_warnings",
+                    &mut seen_keys,
+                    &mut config.suppress_warnings,
+                ) {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::Path(path) if path.is_ident("enable_metrics") => {
+                if let Err(error_tokens) = parse_flag_attribute(
+                    &path,
+                    "enable_metrics",
+                    &mut seen_keys,
+                    &mut config.enable_metrics,
+                ) {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::Path(path) if path.is_ident("circuit_breaker") => {
+                if let Err(error_tokens) = parse_flag_attribute(
+                    &path,
+                    "circuit_breaker",
+                    &mut seen_keys,
+                    &mut config._circuit_breaker,
+                ) {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::NameValue(nv) if nv.path.is_ident("retry_count") => {
+                if let Err(error_tokens) =
+                    parse_retry_count_attribute(&nv, &mut seen_keys, &mut config)
+                {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::NameValue(nv) if nv.path.is_ident("timeout_ms") => {
+                if let Err(error_tokens) = parse_timeout_attribute(&nv, &mut seen_keys, &mut config)
+                {
+                    return Err(error_tokens);
+                }
+            }
+            Meta::Path(path) => {
+                if !config.suppress_warnings {
+                    emit_warning(&format!(
+                        "unknown attribute '{}' in with_context macro",
+                        path.get_ident()
+                            .map(|i| i.to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    ));
+                }
+            }
+            _ => {
+                if !config.suppress_warnings {
+                    emit_warning("unsupported attribute syntax in with_context macro");
+                }
+            }
+        }
+    }
+
+    Ok(config)
+}
+
+/// Parse operation attribute
+fn parse_operation_attribute(
+    nv: &syn::MetaNameValue,
+    seen_keys: &mut HashSet<&'static str>,
+    config: &mut MacroConfig,
+) -> Result<(), TokenStream> {
+    if !seen_keys.insert("operation") {
+        return Err(
+            SynError::new(nv.path.span(), "Duplicate 'operation' parameter")
+                .to_compile_error()
+                .into(),
+        );
+    }
+
+    if let Expr::Lit(expr_lit) = &nv.value {
+        if let Lit::Str(lit_str) = &expr_lit.lit {
+            let op_name = lit_str.value();
+            validate_operation_name(&op_name, lit_str.span())?;
+            config.operation_name = Some(op_name);
+        } else {
+            return Err(
+                SynError::new(nv.value.span(), "Operation value must be a string literal")
+                    .to_compile_error()
+                    .into(),
+            );
+        }
+    } else {
+        return Err(
+            SynError::new(nv.value.span(), "Operation value must be a string literal")
+                .to_compile_error()
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Validate operation name
+fn validate_operation_name(op_name: &str, span: proc_macro2::Span) -> Result<(), TokenStream> {
+    if op_name.is_empty() {
+        return Err(SynError::new(span, "Operation name cannot be empty")
+            .to_compile_error()
+            .into());
+    }
+    if op_name.len() > 100 {
+        return Err(
+            SynError::new(span, "Operation name too long (max 100 characters)")
+                .to_compile_error()
+                .into(),
+        );
+    }
+    if !op_name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ':')
+    {
+        return Err(SynError::new(span, "Operation name contains invalid characters. Only alphanumeric, '_', '-', '.', ':' allowed")
+            .to_compile_error()
+            .into());
+    }
+    Ok(())
+}
+
+/// Parse context attribute
+fn parse_context_attribute(
+    nv: &syn::MetaNameValue,
+    config: &mut MacroConfig,
+) -> Result<(), TokenStream> {
+    if let Expr::Lit(expr_lit) = &nv.value {
+        if let Lit::Str(lit_str) = &expr_lit.lit {
+            let context_str = lit_str.value();
+            if let Some((key, value)) = context_str.split_once('=') {
+                let key_trimmed = key.trim();
+                let value_trimmed = value.trim();
+                validate_context_pair(key_trimmed, value_trimmed, lit_str.span())?;
+                config
+                    .context_pairs
+                    .push((key_trimmed.to_string(), value_trimmed.to_string()));
+            } else {
+                return Err(
+                    SynError::new(lit_str.span(), "Context must be in 'key=value' format")
+                        .to_compile_error()
+                        .into(),
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Validate context key-value pair
+fn validate_context_pair(
+    key: &str,
+    value: &str,
+    span: proc_macro2::Span,
+) -> Result<(), TokenStream> {
+    if key.is_empty() {
+        return Err(SynError::new(span, "Context key cannot be empty")
+            .to_compile_error()
+            .into());
+    }
+    if key.len() > 50 {
+        return Err(
+            SynError::new(span, "Context key too long (max 50 characters)")
+                .to_compile_error()
+                .into(),
+        );
+    }
+    if value.len() > 200 {
+        return Err(
+            SynError::new(span, "Context value too long (max 200 characters)")
+                .to_compile_error()
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Parse flag attribute
+fn parse_flag_attribute(
+    path: &syn::Path,
+    name: &'static str,
+    seen_keys: &mut HashSet<&'static str>,
+    flag: &mut bool,
+) -> Result<(), TokenStream> {
+    if !seen_keys.insert(name) {
+        return Err(
+            SynError::new(path.span(), &format!("Duplicate '{}' parameter", name))
+                .to_compile_error()
+                .into(),
+        );
+    }
+    *flag = true;
+    Ok(())
+}
+
+/// Parse retry count attribute
+fn parse_retry_count_attribute(
+    nv: &syn::MetaNameValue,
+    seen_keys: &mut HashSet<&'static str>,
+    config: &mut MacroConfig,
+) -> Result<(), TokenStream> {
+    if !seen_keys.insert("retry_count") {
+        return Err(
+            SynError::new(nv.path.span(), "Duplicate 'retry_count' parameter")
+                .to_compile_error()
+                .into(),
+        );
+    }
+
+    if let Expr::Lit(expr_lit) = &nv.value {
+        if let Lit::Int(lit_int) = &expr_lit.lit {
+            match lit_int.base10_parse::<u32>() {
+                Ok(count) if count <= 10 => config._retry_count = count,
+                _ => {
+                    return Err(SynError::new(
+                        lit_int.span(),
+                        "retry_count must be between 0 and 10",
+                    )
+                    .to_compile_error()
+                    .into())
+                }
+            }
+        } else {
+            return Err(
+                SynError::new(nv.value.span(), "retry_count must be an integer literal")
+                    .to_compile_error()
+                    .into(),
+            );
+        }
+    } else {
+        return Err(
+            SynError::new(nv.value.span(), "retry_count must be an integer literal")
+                .to_compile_error()
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Parse timeout attribute
+fn parse_timeout_attribute(
+    nv: &syn::MetaNameValue,
+    seen_keys: &mut HashSet<&'static str>,
+    config: &mut MacroConfig,
+) -> Result<(), TokenStream> {
+    if !seen_keys.insert("timeout_ms") {
+        return Err(
+            SynError::new(nv.path.span(), "Duplicate 'timeout_ms' parameter")
+                .to_compile_error()
+                .into(),
+        );
+    }
+
+    if let Expr::Lit(expr_lit) = &nv.value {
+        if let Lit::Int(lit_int) = &expr_lit.lit {
+            match lit_int.base10_parse::<u64>() {
+                Ok(ms) if ms > 0 && ms <= 300000 => config._timeout_ms = Some(ms), // Max 5 minutes
+                _ => {
+                    return Err(SynError::new(
+                        lit_int.span(),
+                        "timeout_ms must be between 1 and 300000 (5 minutes)",
+                    )
+                    .to_compile_error()
+                    .into())
+                }
+            }
+        } else {
+            return Err(
+                SynError::new(nv.value.span(), "timeout_ms must be an integer literal")
+                    .to_compile_error()
+                    .into(),
+            );
+        }
+    } else {
+        return Err(
+            SynError::new(nv.value.span(), "timeout_ms must be an integer literal")
+                .to_compile_error()
+                .into(),
+        );
+    }
+    Ok(())
+}
+
+/// Emit warning using eprintln! since proc macro diagnostics are unstable
+fn emit_warning(message: &str) {
+    eprintln!("warning: {}", message);
+}
+
 /// Procedural macro for automatic error context enrichment
 ///
 /// This macro wraps functions that return `Result<T, E>` where `E: Into<SinexError>`
@@ -336,8 +658,6 @@ pub fn with_context(attr: TokenStream, item: TokenStream) -> TokenStream {
     };
 
     // Use simplified logic without complex async wrapping
-    // Clone execution_logic since we need to use it in the quote! macro
-    let _final_logic = execution_logic.clone();
 
     let metrics_code = if enable_metrics {
         quote! {

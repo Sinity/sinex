@@ -1,10 +1,8 @@
 use crate::schema::{
-    ArchivedEvents, ArtifactContents, ArtifactEmbeddings, ArtifactEventSources, ArtifactRelations,
-    ArtifactTags, Artifacts, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
-    EventAnnotations, EventArtifactRefs, EventClusterMembers, EventClusters, EventEmbeddings,
-    EventPayloadSchemas, EventRelations, Events, GitopsSchemaSource, OperationsLog,
-    ProcessorCheckpoints, ProcessorManifests, SchemaCompatibility, SourceMaterials, Tags,
-    ValidationCache,
+    ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
+    EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
+    EventRelations, Events, GitopsSchemaSource, ProcessorCheckpoints, ProcessorManifests,
+    SchemaCompatibility, SourceMaterials, Tags, ValidationCache,
 };
 use sea_orm_migration::prelude::*;
 
@@ -124,7 +122,7 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 r#"
                 ALTER TABLE core.events 
-                ADD COLUMN ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (event_id::timestamp) STORED;
+                ADD COLUMN ts_ingest TIMESTAMPTZ NOT NULL GENERATED ALWAYS AS (id::timestamp) STORED;
                 "#
             )
             .await?;
@@ -136,7 +134,7 @@ impl MigrationTrait for Migration {
                 r#"
                 SELECT create_hypertable(
                     'core.events',
-                    by_range('event_id', partition_func => 'ulid_to_timestamptz'::regproc)
+                    by_range('id', partition_func => 'ulid_to_timestamptz'::regproc)
                 );
                 "#,
             )
@@ -192,24 +190,7 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Create operations log
-        manager
-            .get_connection()
-            .execute_unprepared(&OperationsLog::create_table())
-            .await?;
-
-        // Add generated column
-        manager
-            .get_connection()
-            .execute_unprepared(&OperationsLog::add_generated_column())
-            .await?;
-
-        for index_sql in OperationsLog::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
+        // Note: operations_log table is now created in m20250810_000004_create_operations_log migration
 
         // Create event payload schemas
         manager
@@ -514,145 +495,8 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Create artifact tables
-        manager
-            .get_connection()
-            .execute_unprepared(&Artifacts::create_table())
-            .await?;
-
-        for index_sql in Artifacts::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in Artifacts::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create artifact contents
-        manager
-            .get_connection()
-            .execute_unprepared(&ArtifactContents::create_table())
-            .await?;
-
-        for index_sql in ArtifactContents::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in ArtifactContents::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create artifact tags
-        manager
-            .get_connection()
-            .execute_unprepared(&ArtifactTags::create_table())
-            .await?;
-
-        for index_sql in ArtifactTags::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in ArtifactTags::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create artifact relations
-        manager
-            .get_connection()
-            .execute_unprepared(&ArtifactRelations::create_table())
-            .await?;
-
-        for index_sql in ArtifactRelations::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in ArtifactRelations::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create artifact event sources
-        manager
-            .get_connection()
-            .execute_unprepared(&ArtifactEventSources::create_table())
-            .await?;
-
-        for index_sql in ArtifactEventSources::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in ArtifactEventSources::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create event artifact refs
-        manager
-            .get_connection()
-            .execute_unprepared(&EventArtifactRefs::create_table())
-            .await?;
-
-        for index_sql in EventArtifactRefs::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EventArtifactRefs::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
-        // Create artifact embeddings
-        manager
-            .get_connection()
-            .execute_unprepared(&ArtifactEmbeddings::create_table())
-            .await?;
-
-        for index_sql in ArtifactEmbeddings::create_indexes() {
-            manager
-                .get_connection()
-                .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in ArtifactEmbeddings::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
+        // Note: Artifact table creation removed in Phase 1.3 cleanup
+        // The artifact system has been replaced by the synthesis architecture
 
         // Create event embeddings
         manager
@@ -686,11 +530,6 @@ impl MigrationTrait for Migration {
 
                 CREATE TRIGGER set_event_clusters_updated_at 
                     BEFORE UPDATE ON core.event_clusters 
-                    FOR EACH ROW 
-                    EXECUTE FUNCTION set_current_timestamp();
-
-                CREATE TRIGGER set_artifacts_updated_at 
-                    BEFORE UPDATE ON core.artifacts 
                     FOR EACH ROW 
                     EXECUTE FUNCTION set_current_timestamp();
                 "#,

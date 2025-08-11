@@ -28,7 +28,9 @@ pub struct AtuinConfig {
 
 impl Default for AtuinConfig {
     fn default() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| "/home/user".to_string());
+        let home = dirs::home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_else(|| "/home/user".to_string());
         Self {
             db_path: Utf8PathBuf::from(home).join(".local/share/atuin/history.db"),
             polling_interval_secs: 3,

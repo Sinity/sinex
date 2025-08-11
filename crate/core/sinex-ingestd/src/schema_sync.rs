@@ -33,26 +33,36 @@ pub async fn synchronize_schemas(pool: &PgPool) -> IngestdResult<SyncResult> {
     // Load existing schemas from database
     let existing_schemas = load_existing_schemas(pool).await?;
 
-    let mut created = 0;
-    let mut updated = 0;
-    let mut unchanged = 0;
+    // Process each discovered schema using iterator methods
+    // Pre-compute hashes and metadata to avoid repeated computation
+    let (created, updated, unchanged) = {
+        let mut results = Vec::new();
 
-    // Process each discovered schema
-    for ((source, event_type, version), schema_content) in discovered_schemas {
-        let metadata = SchemaMetadata {
-            source: source.clone(),
-            event_type: event_type.clone(),
-            version: version.clone(),
-            content: schema_content.clone(),
-            content_hash: compute_content_hash(&schema_content),
-        };
+        for ((source, event_type, version), schema_content) in discovered_schemas {
+            // Pre-compute the content hash once
+            let content_hash = compute_content_hash(&schema_content);
 
-        match process_schema(pool, &metadata, &existing_schemas).await? {
-            SchemaAction::Created => created += 1,
-            SchemaAction::Updated => updated += 1,
-            SchemaAction::Unchanged => unchanged += 1,
+            let metadata = SchemaMetadata {
+                source: source.clone(),
+                event_type: event_type.clone(),
+                version: version.clone(),
+                content: schema_content.clone(),
+                content_hash,
+            };
+
+            results.push(process_schema(pool, &metadata, &existing_schemas).await?);
         }
-    }
+
+        // Use iterator methods to count results
+        results.iter().fold(
+            (0, 0, 0),
+            |(created, updated, unchanged), action| match action {
+                SchemaAction::Created => (created + 1, updated, unchanged),
+                SchemaAction::Updated => (created, updated + 1, unchanged),
+                SchemaAction::Unchanged => (created, updated, unchanged + 1),
+            },
+        )
+    };
 
     let result = SyncResult {
         discovered: discovered_count,

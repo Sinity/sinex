@@ -11,10 +11,9 @@
 //! - Error handling and resilience patterns function correctly
 
 use chrono::{Duration, Utc};
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
+use sinex_core::types::domain::EventSource;
 use sinex_satellite_sdk::checkpoint::CheckpointManager;
 use sinex_satellite_sdk::stream_processor::Checkpoint;
 use sinex_test_utils::prelude::*;

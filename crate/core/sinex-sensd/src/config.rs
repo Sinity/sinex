@@ -2,77 +2,102 @@
 
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::validate_path;
 use std::time::Duration;
 use validator::Validate;
 
 /// sensd daemon configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
+#[builder(on(String, into))]
 pub struct SensdConfig {
     /// Database connection URL
     #[validate(length(min = 1))]
+    #[builder(default = String::from("postgresql:///sinex_dev?host=/run/postgresql"))]
     pub database_url: String,
 
     /// Port for gRPC MaterialSliceStream service
     #[validate(range(min = 1024, max = 65535))]
+    #[builder(default = 50052)]
     pub grpc_port: u16,
 
     /// Material storage path (for blobs)
     #[validate(length(min = 1))]
+    #[validate(custom(
+        function = "validate_material_path",
+        message = "Invalid material storage path"
+    ))]
+    #[builder(default = default_material_path())]
     pub material_storage_path: String,
 
     /// Temporal ledger configuration
+    #[builder(default = TemporalLedgerConfig::default())]
     pub temporal_ledger: TemporalLedgerConfig,
 
     /// Job manager configuration
+    #[builder(default = JobManagerConfig::default())]
     pub job_manager: JobManagerConfig,
 
     /// Sensor configuration
+    #[builder(default = SensorConfig::default())]
     pub sensors: SensorConfig,
 }
 
 /// Temporal ledger configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
+#[builder(on(String, into))]
 pub struct TemporalLedgerConfig {
     /// Batch size for ledger writes
     #[validate(range(min = 1, max = 10000))]
+    #[builder(default = 100)]
     pub batch_size: usize,
 
     /// Flush interval for ledger writes
+    #[builder(default = 1000)]
     pub flush_interval_ms: u64,
 
     /// Maximum slice size in bytes
     #[validate(range(min = 1024))]
+    #[builder(default = 10 * 1024 * 1024)] // 10MB
     pub max_slice_size: usize,
 }
 
 /// Job manager configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
+#[builder(on(String, into))]
 pub struct JobManagerConfig {
     /// Poll interval for checking new jobs
+    #[builder(default = 1000)]
     pub poll_interval_ms: u64,
 
     /// Maximum concurrent jobs
     #[validate(range(min = 1, max = 1000))]
+    #[builder(default = 10)]
     pub max_concurrent_jobs: usize,
 
     /// Job timeout duration
+    #[builder(default = 60000)] // 1 minute
     pub job_timeout_ms: u64,
 }
 
 /// Sensor configuration
-#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
+#[builder(on(String, into))]
 pub struct SensorConfig {
     /// Enable append_stream sensor
+    #[builder(default = true)]
     pub enable_append_stream: bool,
 
     /// Enable tree_watch sensor
+    #[builder(default = true)]
     pub enable_tree_watch: bool,
 
     /// Socket buffer size for append_stream
     #[validate(range(min = 1024))]
+    #[builder(default = 65536)]
     pub socket_buffer_size: usize,
 
     /// File watcher debounce duration
+    #[builder(default = 100)]
     pub tree_watch_debounce_ms: u64,
 }
 
@@ -123,25 +148,44 @@ impl Default for SensorConfig {
 impl SensdConfig {
     /// Load configuration from environment variables
     pub fn from_env() -> Result<Self> {
-        let database_url =
-            std::env::var("DATABASE_URL").unwrap_or_else(|_| Self::default().database_url);
+        let builder = Self::builder();
 
-        let grpc_port = std::env::var("SENSD_GRPC_PORT")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(Self::default().grpc_port);
-
-        let material_storage_path = std::env::var("SENSD_MATERIAL_PATH")
-            .unwrap_or_else(|_| Self::default().material_storage_path);
-
-        let config = Self {
-            database_url,
-            grpc_port,
-            material_storage_path,
-            ..Default::default()
+        let builder = match std::env::var("DATABASE_URL") {
+            Ok(url) => builder.database_url(url),
+            Err(_) => builder,
         };
 
+        let builder = match std::env::var("SENSD_GRPC_PORT")
+            .ok()
+            .and_then(|s| s.parse().ok())
+        {
+            Some(port) => builder.grpc_port(port),
+            None => builder,
+        };
+
+        let builder = match std::env::var("SENSD_MATERIAL_PATH") {
+            Ok(path) => builder.material_storage_path(path),
+            Err(_) => builder,
+        };
+
+        let config = builder.build();
         config.validate()?;
         Ok(config)
     }
+}
+
+/// Default material storage path (validated)
+fn default_material_path() -> String {
+    let path = "/tmp/sinex/materials";
+    match validate_path(path) {
+        Ok(validated) => validated.to_string(),
+        Err(_) => "/tmp/sinex/materials".to_string(), // Fallback to original if validation fails
+    }
+}
+
+/// Custom validator for material storage path
+fn validate_material_path(path: &str) -> Result<(), validator::ValidationError> {
+    validate_path(path)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_material_path"))
 }

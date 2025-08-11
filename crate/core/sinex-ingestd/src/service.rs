@@ -8,11 +8,10 @@ use crate::{
         RawEvent as ProtoRawEvent,
     },
     validator::EventValidator,
-    IngestdError, IngestdResult,
+    IngestdResult, SinexError,
 };
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
-use once_cell::sync::Lazy;
 use sinex_core::db::models::{Provenance, RawEvent};
 use sinex_core::db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
 use sinex_core::db::repositories::DbPoolExt;
@@ -36,11 +35,66 @@ use tokio::{
 use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 
-// Shared ingestor version to avoid repeated allocations
-static INGESTOR_VERSION: Lazy<String> = Lazy::new(|| "0.4.2".to_string());
+// Shared ingestor version as a compile-time constant
+const INGESTOR_VERSION: &str = "0.4.2";
 
-// Cache for NATS subject strings to avoid repeated allocations
-type SubjectCache = Mutex<AHashMap<(String, String), Arc<String>>>;
+/// Helper function to create a shutdown signal future
+async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
+    loop {
+        if shutdown_flag.load(Ordering::Relaxed) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Cache for NATS subject strings to avoid repeated allocations
+#[derive(Debug, Default)]
+pub struct SubjectCache {
+    cache: Mutex<AHashMap<(String, String), Arc<String>>>,
+}
+
+impl SubjectCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(AHashMap::new()),
+        }
+    }
+
+    /// Get or create a cached subject string for the given source and event type
+    pub async fn get_subject(&self, source: &str, event_type: &str) -> Arc<String> {
+        let key = (source.to_string(), event_type.to_string());
+
+        // Fast path: check if already in cache
+        {
+            let cache = self.cache.lock().await;
+            if let Some(cached) = cache.get(&key) {
+                return cached.clone();
+            }
+        }
+
+        // Slow path: create and cache the subject
+        let subject = Arc::new(format!(
+            "events.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ));
+
+        let mut cache = self.cache.lock().await;
+        // Double-check in case another task inserted while we were waiting
+        if let Some(cached) = cache.get(&key) {
+            return cached.clone();
+        }
+
+        cache.insert(key, subject.clone());
+        subject
+    }
+
+    /// Get the current cache size for monitoring
+    pub async fn len(&self) -> usize {
+        self.cache.lock().await.len()
+    }
+}
 
 /// Main ingestion service
 pub struct IngestService {
@@ -78,7 +132,9 @@ impl IngestService {
             (None, None)
         } else {
             let client = async_nats::connect(&config.nats_url).await.map_err(|e| {
-                IngestdError::Connection(format!("Failed to connect to NATS: {}", e))
+                SinexError::network(format!("Failed to connect to NATS: {}", e))
+                    .with_operation("service.connect_nats")
+                    .with_context("nats_url", config.nats_url.clone())
             })?;
             let js = jetstream::new(client.clone());
 
@@ -142,10 +198,10 @@ impl IngestService {
             validator: Arc::new(Mutex::new(validator)),
             stats: Arc::new(IngestStats::new()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            event_buffer: Arc::new(Mutex::new(Vec::with_capacity(config.batch_size))),
             last_flush: Arc::new(Mutex::new(SystemTime::now())),
             telemetry,
-            subject_cache: Arc::new(Mutex::new(AHashMap::new())),
+            subject_cache: Arc::new(SubjectCache::new()),
         };
 
         info!("Ingestion service initialized");
@@ -246,14 +302,7 @@ impl IngestService {
                     _ = interval.tick() => {
                         stats.log_stats();
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
@@ -278,7 +327,11 @@ impl IngestService {
             .add_service(IngestServiceServer::new(grpc_service))
             .serve_with_incoming(tokio_stream::wrappers::UnixListenerStream::new(listener))
             .await
-            .map_err(|e| IngestdError::Service(format!("gRPC server error: {}", e)))?;
+            .map_err(|e| {
+                SinexError::service(format!("gRPC server error: {}", e))
+                    .with_operation("service.start_grpc_server")
+                    .with_context("socket_path", config.socket_path.clone())
+            })?;
 
         info!("Ingestion service stopped");
         Ok(())
@@ -318,18 +371,10 @@ impl IngestService {
                                 db_pool.as_ref(),
                                 jetstream.as_ref(),
                                 &stats,
-                                &subject_cache,
-                            ).await;
+                                ).await;
                         }
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         // Final flush on shutdown
                         Self::flush_events_static(
                             &event_buffer,
@@ -338,7 +383,6 @@ impl IngestService {
                             db_pool.as_ref(),
                             jetstream.as_ref(),
                             &stats,
-                            &subject_cache,
                         ).await;
                         break;
                     }
@@ -351,6 +395,7 @@ impl IngestService {
     async fn start_outbox_processor_task(&self, pool: PgPool, js: jetstream::Context) {
         let shutdown_flag = self.shutdown_flag.clone();
         let stats = self.stats.clone();
+        let telemetry = self.telemetry.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(100));
@@ -366,18 +411,14 @@ impl IngestService {
                             }
                             Err(e) => {
                                 error!("Failed to process outbox: {}", e);
+                                if let Some(ref telemetry) = telemetry {
+                                    telemetry.record_error("nats", "outbox_processing");
+                                }
                                 stats.nats_errors.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         // Final outbox processing on shutdown
                         match Self::process_outbox(&pool, &js).await {
                             Ok(processed) => {
@@ -395,6 +436,9 @@ impl IngestService {
     }
 
     /// Process outbox entries: read, publish to NATS, delete
+    ///
+    /// Optimized version that batches NATS publishes and database operations
+    /// for better async performance and reduced latency.
     async fn process_outbox(pool: &PgPool, js: &jetstream::Context) -> IngestdResult<u32> {
         #[derive(sqlx::FromRow)]
         struct OutboxEntry {
@@ -416,9 +460,11 @@ impl IngestService {
             return Ok(0);
         }
 
-        let mut processed = 0;
+        // Prepare all publish operations concurrently
+        let mut publish_futures = Vec::new();
+        let mut entry_data = Vec::new();
+
         for entry in pending {
-            // Publish to NATS JetStream
             let event_data = serde_json::to_vec(&entry.payload)?;
             let mut headers = async_nats::HeaderMap::new();
             headers.insert(
@@ -426,24 +472,61 @@ impl IngestService {
                 uuid_to_ulid(entry.event_id).to_string().as_str(),
             );
 
-            match js
-                .publish_with_headers(entry.subject, headers, event_data.into())
+            let publish_future =
+                js.publish_with_headers(entry.subject.clone(), headers, event_data.into());
+            publish_futures.push(publish_future);
+            entry_data.push((entry.id, entry.subject));
+        }
+
+        // Execute all NATS publishes concurrently
+        let publish_results = futures::future::join_all(publish_futures).await;
+
+        // Collect IDs of successfully published entries for batch deletion
+        let mut successful_ids = Vec::new();
+        let mut processed = 0;
+
+        for (result, (entry_id, subject)) in publish_results.into_iter().zip(entry_data.into_iter())
+        {
+            match result {
+                Ok(_) => {
+                    successful_ids.push(entry_id);
+                    processed += 1;
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to publish outbox entry {} (subject: {}) to NATS: {}",
+                        entry_id, subject, e
+                    );
+                    // Keep entry in outbox for retry
+                }
+            }
+        }
+
+        // Batch delete all successfully published entries
+        if !successful_ids.is_empty() {
+            match sqlx::query("DELETE FROM core.outbox WHERE id = ANY($1)")
+                .bind(&successful_ids)
+                .execute(pool)
                 .await
             {
-                Ok(_) => {
-                    // Delete from outbox after successful publish
-                    match sqlx::query("DELETE FROM core.outbox WHERE id = $1")
-                        .bind(entry.id)
-                        .execute(pool)
-                        .await
-                    {
-                        Ok(_) => processed += 1,
-                        Err(e) => error!("Failed to delete outbox entry {}: {}", entry.id, e),
+                Ok(result) => {
+                    let deleted_count = result.rows_affected();
+                    if deleted_count != successful_ids.len() as u64 {
+                        warn!(
+                            "Expected to delete {} outbox entries but deleted {}",
+                            successful_ids.len(),
+                            deleted_count
+                        );
                     }
                 }
                 Err(e) => {
-                    error!("Failed to publish outbox entry {} to NATS: {}", entry.id, e);
-                    // Keep entry in outbox for retry
+                    error!(
+                        "Failed to batch delete {} outbox entries: {}",
+                        successful_ids.len(),
+                        e
+                    );
+                    // This is problematic as we may have published but not cleaned up
+                    // In a production system, you might want to log these IDs for manual cleanup
                 }
             }
         }
@@ -467,14 +550,7 @@ impl IngestService {
                             warn!("Failed to reload schemas: {}", e);
                         }
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
@@ -490,7 +566,6 @@ impl IngestService {
         db_pool: Option<&PgPool>,
         _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
-        _subject_cache: &Arc<SubjectCache>, // No longer used - subjects handled in outbox
     ) {
         // Take events from buffer
         let events = {
@@ -518,6 +593,8 @@ impl IngestService {
         if let Some(pool) = db_pool {
             if let Err(e) = Self::batch_write_to_db(pool, &events).await {
                 error!("Failed to write events to database: {}", e);
+                // Note: This is in a static context, so telemetry is not available here
+                // Consider refactoring to pass telemetry if needed
                 stats.db_errors.fetch_add(1, Ordering::Relaxed);
                 return;
             }
@@ -545,24 +622,27 @@ impl IngestService {
         // Begin transaction for atomicity
         let mut tx = pool.begin().await?;
 
-        // Prepare arrays for UNNEST batch insert
-        let mut event_ids = Vec::new();
-        let mut sources = Vec::new();
-        let mut event_types = Vec::new();
-        let mut hosts = Vec::new();
-        let mut payloads = Vec::new();
-        let mut ts_origs = Vec::new();
-        let mut ingestor_versions = Vec::new();
-        let mut payload_schema_ids = Vec::new();
-        let mut source_event_id_arrays = Vec::new();
-        let mut source_material_ids = Vec::new();
-        let mut source_material_offset_starts = Vec::new();
-        let mut source_material_offset_ends = Vec::new();
-        let mut anchor_bytes = Vec::new();
-        let mut associated_blob_id_arrays = Vec::new();
+        // Prepare arrays for UNNEST batch insert with pre-sized capacity
+        let event_count = events.len();
+        let mut event_ids = Vec::with_capacity(event_count);
+        let mut sources = Vec::with_capacity(event_count);
+        let mut event_types = Vec::with_capacity(event_count);
+        let mut hosts = Vec::with_capacity(event_count);
+        let mut payloads = Vec::with_capacity(event_count);
+        let mut ts_origs = Vec::with_capacity(event_count);
+        let mut ingestor_versions = Vec::with_capacity(event_count);
+        let mut payload_schema_ids = Vec::with_capacity(event_count);
+        let mut source_event_id_arrays = Vec::with_capacity(event_count);
+        let mut source_material_ids = Vec::with_capacity(event_count);
+        let mut source_material_offset_starts = Vec::with_capacity(event_count);
+        let mut source_material_offset_ends = Vec::with_capacity(event_count);
+        let mut anchor_bytes = Vec::with_capacity(event_count);
+        let mut associated_blob_id_arrays = Vec::with_capacity(event_count);
+        let mut payload_schema_names = Vec::with_capacity(event_count);
+        let mut payload_schema_versions = Vec::with_capacity(event_count);
 
         // Outbox entries for NATS publishing
-        let mut outbox_entries = Vec::new();
+        let mut outbox_entries = Vec::with_capacity(event_count);
 
         for event in events {
             // Generate ID if not present
@@ -582,6 +662,15 @@ impl IngestService {
             ingestor_versions.push(event.ingestor_version.as_deref());
 
             payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
+
+            // Extract schema name and version from the event
+            // Format: {source}.{event_type} for schema name, actual version from schema
+            let schema_name = format!("{}.{}", event.source.as_str(), event.event_type.as_str());
+            payload_schema_names.push(Some(schema_name));
+
+            // For now, use a placeholder version since we don't have access to the validator here
+            // TODO: Pass validator context to get actual schema version
+            payload_schema_versions.push(Some("1.0.0".to_string()));
 
             // Extract provenance into separate database fields
             let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
@@ -658,8 +747,8 @@ impl IngestService {
         .bind(&source_material_offset_ends)
         .bind(&anchor_bytes)
         .bind(serde_json::to_value(&associated_blob_id_arrays).unwrap())
-        .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
-        .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
+        .bind(&payload_schema_names)
+        .bind(&payload_schema_versions)
         .bind(&vec![None::<i32>; events.len()]) // processor_manifest_id
         .execute(&mut *tx)
         .await?;
@@ -688,7 +777,7 @@ impl IngestService {
 
     /// Add event to buffer
     async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
-        let event_type = event.event_type.clone();
+        let event_type = &event.event_type;
         let start = std::time::Instant::now();
 
         let mut buffer = self.event_buffer.lock().await;
@@ -697,7 +786,7 @@ impl IngestService {
         // Record telemetry
         if let Some(ref telemetry) = self.telemetry {
             let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-            telemetry.record_event_processed(&event_type, duration_ms);
+            telemetry.record_event_processed(event_type.as_str(), duration_ms);
         }
 
         // Check if we should flush immediately
@@ -867,34 +956,39 @@ impl IngestServiceTrait for IngestServiceImpl {
             }));
         }
 
-        let mut event_ids = Vec::new();
+        // Process events in parallel batches for better async performance
+        let mut event_ids = Vec::with_capacity(event_count);
         let mut processed_count = 0;
         let mut failed_count = 0;
 
-        for proto_event in batch.events {
-            match self.proto_to_event(proto_event).await {
-                Ok(raw_event) => {
-                    // Validate event
-                    let validation_result = {
-                        let validator = self.service.validator.lock().await;
-                        validator.validate_event(&raw_event)?
-                    };
+        // Process up to 20 events concurrently to balance throughput and resource usage
+        let batch_size = std::cmp::min(event_count, 20);
 
-                    if validation_result.should_accept() {
-                        let event_id = raw_event
-                            .id
-                            .as_ref()
-                            .map(|id| id.to_string())
-                            .unwrap_or_else(|| "unknown".into());
-                        event_ids.push(event_id);
+        for chunk in batch.events.chunks(batch_size) {
+            // Convert all proto events to raw events concurrently
+            let conversion_futures: Vec<_> = chunk
+                .iter()
+                .map(|proto_event| self.proto_to_event(proto_event.clone()))
+                .collect();
 
-                        if let Err(e) = self.service.add_event_to_buffer(raw_event).await {
-                            error!("Failed to add event to buffer: {}", e);
-                            failed_count += 1;
-                        } else {
-                            processed_count += 1;
-                        }
-                    } else {
+            let conversion_results = futures::future::join_all(conversion_futures).await;
+
+            // Validate all successfully converted events concurrently
+            let mut validation_futures = Vec::new();
+            let mut raw_events = Vec::new();
+
+            for result in conversion_results {
+                match result {
+                    Ok(raw_event) => {
+                        raw_events.push(raw_event.clone());
+                        let validator = self.service.validator.clone();
+                        validation_futures.push(async move {
+                            let validator_guard = validator.lock().await;
+                            validator_guard.validate_event(&raw_event)
+                        });
+                    }
+                    Err(e) => {
+                        warn!("Failed to convert proto event: {}", e);
                         failed_count += 1;
                         self.service
                             .stats
@@ -902,13 +996,47 @@ impl IngestServiceTrait for IngestServiceImpl {
                             .fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                Err(e) => {
-                    warn!("Failed to convert proto event: {}", e);
-                    failed_count += 1;
-                    self.service
-                        .stats
-                        .validation_errors
-                        .fetch_add(1, Ordering::Relaxed);
+            }
+
+            if !validation_futures.is_empty() {
+                let validation_results = futures::future::join_all(validation_futures).await;
+
+                // Process validation results and add valid events to buffer
+                for (raw_event, validation_result) in
+                    raw_events.into_iter().zip(validation_results.into_iter())
+                {
+                    match validation_result {
+                        Ok(result) if result.should_accept() => {
+                            let event_id = raw_event
+                                .id
+                                .as_ref()
+                                .map(|id| id.to_string())
+                                .unwrap_or_else(|| "unknown".into());
+                            event_ids.push(event_id);
+
+                            if let Err(e) = self.service.add_event_to_buffer(raw_event).await {
+                                error!("Failed to add event to buffer: {}", e);
+                                failed_count += 1;
+                            } else {
+                                processed_count += 1;
+                            }
+                        }
+                        Ok(_) => {
+                            failed_count += 1;
+                            self.service
+                                .stats
+                                .validation_errors
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                        Err(e) => {
+                            error!("Failed to validate event: {}", e);
+                            failed_count += 1;
+                            self.service
+                                .stats
+                                .validation_errors
+                                .fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
                 }
             }
         }
@@ -953,14 +1081,18 @@ impl IngestServiceImpl {
     /// Convert protobuf event to RawEvent
     async fn proto_to_event(&self, proto: ProtoRawEvent) -> IngestdResult<RawEvent> {
         // Validate and parse JSON payload
-        let payload = sinex_core::types::validate_json(&proto.payload)
-            .map_err(|e| IngestdError::Validation(format!("Invalid JSON payload: {}", e)))?;
+        let payload = sinex_core::types::validate_json(&proto.payload).map_err(|e| {
+            SinexError::validation(format!("Invalid JSON payload: {}", e))
+                .with_operation("service.parse_json_payload")
+        })?;
 
         let _blob_id = proto
             .blob_id
             .map(|blob_id_str| {
-                Ulid::from_str(&blob_id_str)
-                    .map_err(|e| IngestdError::Validation(format!("Invalid blob ID: {}", e)))
+                Ulid::from_str(&blob_id_str).map_err(|e| {
+                    SinexError::validation(format!("Invalid blob ID: {}", e))
+                        .with_operation("service.parse_blob_id")
+                })
             })
             .transpose()?;
 
@@ -979,7 +1111,7 @@ impl IngestServiceImpl {
             .event_type(event_type)
             .host(HostName::new(proto.host))
             .payload(payload)
-            .ingestor_version(INGESTOR_VERSION.clone());
+            .ingestor_version(INGESTOR_VERSION);
 
         Ok(if let Some(id) = schema_id {
             builder.payload_schema_id(id).build()

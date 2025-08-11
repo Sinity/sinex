@@ -8,7 +8,6 @@
 //! - Error handling with color-eyre
 //! - Core utilities and helpers
 
-use color_eyre::eyre::eyre;
 use serde_json::json;
 use sinex_core::db::models::RawEvent as DbEvent;
 use sinex_core::db::repositories::DbPoolExt;
@@ -27,6 +26,8 @@ mod unit {
     pub mod event_type_system_test;
     pub mod preflight_test;
     pub mod resource_guard_test;
+    pub mod satellite_error_helpers_test;
+    pub mod schema_validator_test;
     pub mod typed_clipboard_test;
     pub mod version_system_test;
 }
@@ -334,7 +335,7 @@ fn test_event_builder_with_optional_fields() -> color_eyre::eyre::Result<()> {
 
 #[sinex_test]
 fn test_event_builder_with_timestamps() -> color_eyre::eyre::Result<()> {
-    use chrono::{DateTime, Utc};
+    use chrono::Utc;
 
     let custom_timestamp = Utc::now() - chrono::Duration::hours(1);
 

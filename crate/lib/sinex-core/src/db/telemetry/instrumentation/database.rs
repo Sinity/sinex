@@ -197,6 +197,7 @@ impl DatabaseMetrics {
 pub struct DatabaseQueryGuard {
     metrics: Arc<DatabaseMetrics>,
     start_time: Instant,
+    completed: bool,
 }
 
 impl DatabaseQueryGuard {
@@ -205,25 +206,34 @@ impl DatabaseQueryGuard {
         Self {
             metrics,
             start_time: Instant::now(),
+            completed: false,
         }
     }
 
-    pub fn record_error(self, error_type: &str) {
-        let duration = self.start_time.elapsed();
-        self.metrics.query_duration.observe(duration.as_secs_f64());
-        self.metrics.record_query_error(error_type);
+    pub fn record_error(mut self, error_type: &str) {
+        if !self.completed {
+            let duration = self.start_time.elapsed();
+            self.metrics.query_duration.observe(duration.as_secs_f64());
+            self.metrics.record_query_error(error_type);
+            self.completed = true;
+        }
     }
 
-    pub fn complete_with_rows(self, rows: Option<u64>) {
-        let duration = self.start_time.elapsed();
-        self.metrics.record_query_complete(duration, rows);
+    pub fn complete_with_rows(mut self, rows: Option<u64>) {
+        if !self.completed {
+            let duration = self.start_time.elapsed();
+            self.metrics.record_query_complete(duration, rows);
+            self.completed = true;
+        }
     }
 }
 
 impl Drop for DatabaseQueryGuard {
     fn drop(&mut self) {
-        let duration = self.start_time.elapsed();
-        self.metrics.record_query_complete(duration, None);
+        if !self.completed {
+            let duration = self.start_time.elapsed();
+            self.metrics.record_query_complete(duration, None);
+        }
     }
 }
 

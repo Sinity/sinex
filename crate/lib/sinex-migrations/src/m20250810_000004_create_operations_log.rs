@@ -1,6 +1,6 @@
-//! Migration to create replay_operations table for tracking replay operations with operation_id
+//! Migration to create operations_log table for tracking all operations
 //!
-//! This table tracks replay operations with unique operation IDs
+//! This table tracks replay/archive/restore operations per TARGET_canonical.md specification
 
 use async_trait::async_trait;
 use sea_orm_migration::prelude::*;
@@ -11,79 +11,46 @@ pub struct Migration;
 #[async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Create core.replay_operations table
+        // Create core.operations_log table with complete schema from the start
         manager
-            .create_table(
-                Table::create()
-                    .table((Alias::new("core"), ReplayOperations::Table))
-                    .if_not_exists()
-                    .col(
-                        ColumnDef::new(ReplayOperations::OperationId)
-                            .string()
-                            .not_null()
-                            .primary_key(),
-                    )
-                    .col(
-                        ColumnDef::new(ReplayOperations::OperationType)
-                            .string()
-                            .not_null()
-                            .default("replay"),
-                    )
-                    .col(
-                        ColumnDef::new(ReplayOperations::Status)
-                            .string()
-                            .not_null()
-                            .default("draft"),
-                    )
-                    .col(ColumnDef::new(ReplayOperations::Metadata).json())
-                    .col(
-                        ColumnDef::new(ReplayOperations::CreatedAt)
-                            .timestamp_with_time_zone()
-                            .not_null()
-                            .default(Expr::current_timestamp()),
-                    )
-                    .col(ColumnDef::new(ReplayOperations::ExecutedAt).timestamp_with_time_zone())
-                    .col(ColumnDef::new(ReplayOperations::CompletedAt).timestamp_with_time_zone())
-                    .col(ColumnDef::new(ReplayOperations::ErrorMessage).text())
-                    .col(
-                        ColumnDef::new(ReplayOperations::EventCount)
-                            .big_integer()
-                            .default(0),
-                    )
-                    .col(
-                        ColumnDef::new(ReplayOperations::AffectedEventIds)
-                            .array(ColumnType::custom("ULID")),
-                    )
-                    .col(ColumnDef::new(ReplayOperations::Provenance).json())
-                    .to_owned(),
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                CREATE TABLE core.operations_log (
+                    id ULID PRIMARY KEY,
+                    actor TEXT NOT NULL,
+                    scope JSONB NOT NULL,
+                    state TEXT NOT NULL DEFAULT 'planning',
+                    preview_summary JSONB,
+                    checkpoint JSONB,
+                    approved_by TEXT,
+                    approved_at TIMESTAMPTZ,
+                    executor_node TEXT,
+                    started_at TIMESTAMPTZ,
+                    finished_at TIMESTAMPTZ,
+                    outcome TEXT CHECK (outcome IN ('success', 'error', 'cancelled')),
+                    error_details TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                );
+                
+                -- Create indexes
+                CREATE INDEX idx_operations_log_actor_started
+                ON core.operations_log (actor, started_at);
+                
+                CREATE INDEX idx_operations_log_outcome_started
+                ON core.operations_log (outcome, started_at);
+                
+                CREATE INDEX idx_operations_log_started_at
+                ON core.operations_log (started_at);
+                
+                CREATE INDEX idx_operations_log_state
+                ON core.operations_log (state)
+                WHERE state IN ('planning', 'previewed', 'approved', 'executing');
+                "#,
             )
             .await?;
 
-        // Create indexes
-        manager
-            .create_index(
-                Index::create()
-                    .if_not_exists()
-                    .name("idx_replay_operations_type_status")
-                    .table((Alias::new("core"), ReplayOperations::Table))
-                    .col(ReplayOperations::OperationType)
-                    .col(ReplayOperations::Status)
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .create_index(
-                Index::create()
-                    .if_not_exists()
-                    .name("idx_replay_operations_created_at")
-                    .table((Alias::new("core"), ReplayOperations::Table))
-                    .col(ReplayOperations::CreatedAt)
-                    .to_owned(),
-            )
-            .await?;
-
-        // Create function to set operation_id session variable
+        // Create function to set operation_id session variable (used by triggers)
         manager
             .get_connection()
             .execute_unprepared(
@@ -94,22 +61,8 @@ impl MigrationTrait for Migration {
                     PERFORM set_config('sinex.operation_id', op_id, false);
                 END;
                 $$ LANGUAGE plpgsql;
-
-                CREATE OR REPLACE FUNCTION get_operation_id()
-                RETURNS TEXT AS $$
-                BEGIN
-                    RETURN current_setting('sinex.operation_id', true);
-                END;
-                $$ LANGUAGE plpgsql;
-                "#,
-            )
-            .await?;
-
-        // Create trigger to automatically track operation_id in events
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
+                
+                -- Create function to track operation in event payload
                 CREATE OR REPLACE FUNCTION track_operation_in_event()
                 RETURNS TRIGGER AS $$
                 DECLARE
@@ -139,61 +92,18 @@ impl MigrationTrait for Migration {
     }
 
     async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Drop trigger and functions
         manager
             .get_connection()
             .execute_unprepared(
                 r#"
                 DROP TRIGGER IF EXISTS track_operation_trigger ON core.events;
                 DROP FUNCTION IF EXISTS track_operation_in_event();
-                DROP FUNCTION IF EXISTS get_operation_id();
                 DROP FUNCTION IF EXISTS set_operation_id(TEXT);
+                DROP TABLE IF EXISTS core.operations_log CASCADE;
                 "#,
-            )
-            .await?;
-
-        // Drop indexes
-        manager
-            .drop_index(
-                Index::drop()
-                    .name("idx_replay_operations_created_at")
-                    .to_owned(),
-            )
-            .await?;
-
-        manager
-            .drop_index(
-                Index::drop()
-                    .name("idx_replay_operations_type_status")
-                    .to_owned(),
-            )
-            .await?;
-
-        // Drop table
-        manager
-            .drop_table(
-                Table::drop()
-                    .table((Alias::new("core"), ReplayOperations::Table))
-                    .to_owned(),
             )
             .await?;
 
         Ok(())
     }
-}
-
-#[derive(DeriveIden)]
-enum ReplayOperations {
-    Table,
-    OperationId,
-    OperationType,
-    Status,
-    Metadata,
-    CreatedAt,
-    ExecutedAt,
-    CompletedAt,
-    ErrorMessage,
-    EventCount,
-    AffectedEventIds,
-    Provenance,
 }

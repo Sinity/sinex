@@ -10,7 +10,6 @@
 //! - Updated to match current architecture (non-optional content_hash)
 //! - color_eyre for error handling
 
-use color_eyre::eyre::Result;
 use sinex_core::types::events::payloads::{ClipboardCopiedPayload, ClipboardSelectedPayload};
 use sinex_test_utils::prelude::*;
 
