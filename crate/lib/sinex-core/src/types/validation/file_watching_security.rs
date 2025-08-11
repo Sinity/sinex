@@ -10,7 +10,7 @@ use std::collections::HashSet;
 // ===== File Watching Security Module =====
 
 /// Security policy for file watching operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct FileWatchingSecurityPolicy {
     /// Maximum depth for recursive watching (None = unlimited)
     pub max_watch_depth: Option<usize>,
