@@ -480,7 +480,7 @@ mod tests {
         let config = NatsConfig::default();
         assert_eq!(config.servers, vec!["nats://localhost:4222"]);
         assert!(config.jetstream.enabled);
-        
+
         // Should pass validation
         assert!(config.validate().is_ok());
         assert!(config.validate_config().is_ok());
@@ -491,7 +491,7 @@ mod tests {
     fn test_test_config() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig::test();
         assert_eq!(config.client_name, "sinex-test");
-        
+
         // Should pass validation
         assert!(config.validate().is_ok());
         Ok(())
@@ -504,7 +504,7 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        
+
         let error_msg = config.validate_config().unwrap_err();
         assert!(error_msg.contains("At least one NATS server URL"));
         Ok(())
@@ -537,7 +537,7 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        
+
         let error_msg = config.validate_config().unwrap_err();
         assert!(error_msg.contains("between 1 and 100 characters"));
         Ok(())
@@ -560,7 +560,7 @@ mod tests {
 
         let result = config.validate();
         assert!(result.is_err());
-        
+
         let error_msg = config.validate_config().unwrap_err();
         assert!(error_msg.contains("between 1 and 1000"));
         Ok(())
@@ -631,14 +631,14 @@ mod tests {
     #[sinex_test]
     fn test_nats_config_multiple_validation_errors() -> color_eyre::eyre::Result<()> {
         let config = NatsConfig {
-            servers: vec![], // Empty - should fail
+            servers: vec![],             // Empty - should fail
             client_name: "".to_string(), // Empty - should fail
-            max_reconnects: 0, // Invalid - should fail
+            max_reconnects: 0,           // Invalid - should fail
             ..Default::default()
         };
 
         let error_msg = config.validate_config().unwrap_err();
-        
+
         // Should contain multiple specific error messages
         assert!(!error_msg.is_empty());
         assert!(error_msg.contains("At least one NATS server URL"));

@@ -1074,7 +1074,7 @@ impl<'a> EventRepository<'a> {
             let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
                 match &event.provenance {
                     Some(Provenance::Events(ids)) => {
-                        let ulids: Vec<crate::types::Ulid> = 
+                        let ulids: Vec<crate::types::Ulid> =
                             ids.iter().map(|id| *id.as_ulid()).collect();
                         (Some(ulids), None, None, None)
                     }
@@ -1097,11 +1097,11 @@ impl<'a> EventRepository<'a> {
             source_material_offset_ends.push(offset_end);
             anchor_bytes.push(event.anchor_byte);
 
-            let blob_uuids = event
+            let blob_ulids = event
                 .associated_blob_ids
                 .as_ref()
-                .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
-            associated_blob_id_arrays.push(blob_uuids);
+                .map(|ids| ids.iter().copied().collect::<Vec<_>>());
+            associated_blob_id_arrays.push(blob_ulids);
         }
 
         // Execute batch insert using UNNEST
