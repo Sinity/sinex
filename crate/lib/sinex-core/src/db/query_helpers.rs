@@ -1,19 +1,9 @@
 //! Query execution helpers for reducing boilerplate and providing consistent error handling
 //!
-//! This module provides helper functions for common database operations with automatic
-//! ULID<->UUID conversion, transaction support, and retry logic.
+//! This module provides helper functions for common database operations with
+//! transaction support and retry logic.
 //!
-//! # ULID/UUID Conversion Convention
-//!
-//! When working with database queries in sinex-db, always use the conversion
-//! functions from this module:
-//!
-//! - `ulid_to_uuid()` for ULID → UUID conversion before database operations
-//! - `uuid_to_ulid()` for UUID → ULID conversion after database fetches
-//! - `UlidArrayExt` trait for batch conversions
-//!
-//! **DO NOT** use `.to_uuid()` method directly on ULID types. This ensures
-//! consistency and makes conversions explicit at database boundaries.
+//! For ULID/UUID conversions, use the functions from `sinex_schema::ulid_conversions`.
 //!
 //! # Examples
 //!
@@ -81,7 +71,6 @@
 
 use crate::types::error::{Result as SinexResult, SinexError};
 use crate::types::{retry, timeouts};
-use crate::Ulid;
 use crate::{DbPool, DbPoolRef};
 use sea_query::{Alias, Expr, Func, PostgresQueryBuilder, Query};
 use sqlx::{Error as SqlxError, Postgres, Transaction};
@@ -89,6 +78,9 @@ use std::future::Future;
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::warn;
+
+// Re-export ULID conversion utilities from sinex-schema for convenience
+pub use sinex_schema::ulid_conversions::*;
 
 /// Convert sqlx errors to SinexError with context
 pub fn db_error(err: SqlxError, context: &str) -> SinexError {
@@ -255,115 +247,8 @@ pub async fn count(
     Ok(result.0)
 }
 
-// ===== Unified ULID/UUID Database Integration =====
-//
-// This section provides a comprehensive API for ULID/UUID conversions at database boundaries.
-// PostgreSQL stores ULIDs as UUIDs for efficiency, so we need seamless conversion.
-
-use sqlx::types::Uuid as SqlxUuid;
-
-/// Convert ULID to PostgreSQL UUID type (primary conversion function)
-#[inline]
-pub fn ulid_to_uuid(ulid: Ulid) -> SqlxUuid {
-    SqlxUuid::from_bytes(*ulid.to_uuid().as_bytes())
-}
-
-/// Convert PostgreSQL UUID to ULID (primary conversion function)
-#[inline]
-pub fn uuid_to_ulid(uuid: SqlxUuid) -> Ulid {
-    Ulid::from_uuid(uuid::Uuid::from_bytes(*uuid.as_bytes()))
-}
-
-// Shorter aliases for common use
-pub use ulid_to_uuid as to_db;
-pub use uuid_to_ulid as from_db;
-
-/// Extension trait for ULID types to provide database conversions
-pub trait UlidExt: Sized {
-    /// Convert to database UUID representation
-    fn to_db(&self) -> SqlxUuid;
-
-    /// Convert an optional ULID to optional database UUID
-    fn to_db_opt(opt: Option<Self>) -> Option<SqlxUuid>;
-}
-
-impl UlidExt for Ulid {
-    #[inline]
-    fn to_db(&self) -> SqlxUuid {
-        ulid_to_uuid(*self)
-    }
-
-    #[inline]
-    fn to_db_opt(opt: Option<Self>) -> Option<SqlxUuid> {
-        opt.map(|ulid| ulid.to_db())
-    }
-}
-
-/// Extension trait for database UUID types to provide ULID conversions
-pub trait DbUuidExt {
-    /// Convert from database UUID to ULID
-    fn to_ulid(self) -> Ulid;
-}
-
-impl DbUuidExt for SqlxUuid {
-    #[inline]
-    fn to_ulid(self) -> Ulid {
-        uuid_to_ulid(self)
-    }
-}
-
-/// Helper trait for ULID collections
-pub trait UlidArrayExt {
-    fn to_uuid_vec(&self) -> Vec<SqlxUuid>;
-    fn to_db_vec(&self) -> Vec<SqlxUuid> {
-        self.to_uuid_vec()
-    }
-}
-
-impl<T: AsRef<[Ulid]>> UlidArrayExt for T {
-    fn to_uuid_vec(&self) -> Vec<SqlxUuid> {
-        self.as_ref().iter().map(|&id| ulid_to_uuid(id)).collect()
-    }
-}
-
-/// Extension trait for collections of database UUIDs
-pub trait DbUuidCollectionExt {
-    /// Convert collection of database UUIDs to ULIDs
-    fn to_ulid_vec(self) -> Vec<Ulid>;
-}
-
-impl DbUuidCollectionExt for Vec<SqlxUuid> {
-    fn to_ulid_vec(self) -> Vec<Ulid> {
-        self.into_iter().map(uuid_to_ulid).collect()
-    }
-}
-
-impl DbUuidCollectionExt for Option<Vec<SqlxUuid>> {
-    fn to_ulid_vec(self) -> Vec<Ulid> {
-        self.map(|v| v.to_ulid_vec()).unwrap_or_default()
-    }
-}
-
-/// Convenience functions for common optional patterns
-#[inline]
-pub fn opt_to_db(ulid: Option<Ulid>) -> Option<SqlxUuid> {
-    ulid.map(ulid_to_uuid)
-}
-
-#[inline]
-pub fn opt_from_db(uuid: Option<SqlxUuid>) -> Option<Ulid> {
-    uuid.map(uuid_to_ulid)
-}
-
-#[inline]
-pub fn opt_vec_to_db(ulids: Option<Vec<Ulid>>) -> Option<Vec<SqlxUuid>> {
-    ulids.map(|v| v.to_uuid_vec())
-}
-
-#[inline]
-pub fn opt_vec_from_db(uuids: Option<Vec<SqlxUuid>>) -> Option<Vec<Ulid>> {
-    uuids.map(|v| v.to_ulid_vec())
-}
+// ULID/UUID conversion utilities are now provided by sinex-schema::ulid_conversions
+// and re-exported above for convenience
 
 #[cfg(test)]
 mod tests {
@@ -373,27 +258,6 @@ mod tests {
     use color_eyre::eyre::Result;
 
     use serde_json::json;
-
-    #[sinex_test]
-    async fn test_ulid_conversion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let ulid = Ulid::new();
-        let uuid = ulid_to_uuid(ulid);
-        let converted_back = uuid_to_ulid(uuid);
-        assert_eq!(ulid, converted_back);
-        Ok(())
-    }
-
-    #[sinex_test]
-    async fn test_ulid_array_conversion(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let ulids = vec![Ulid::new(), Ulid::new(), Ulid::new()];
-        let uuids = ulids.to_uuid_vec();
-        assert_eq!(ulids.len(), uuids.len());
-
-        for (ulid, uuid) in ulids.iter().zip(uuids.iter()) {
-            assert_eq!(*ulid, uuid_to_ulid(*uuid));
-        }
-        Ok(())
-    }
 
     #[sinex_test]
     async fn test_retry_config_default(ctx: TestContext) -> color_eyre::eyre::Result<()> {
@@ -429,126 +293,5 @@ mod tests {
     // ULID Parsing Error Tests
     // =============================================================================
 
-    #[sinex_test]
-    fn test_ulid_parsing_invalid_formats() -> color_eyre::eyre::Result<()> {
-        // Test various invalid ULID formats that could cause parsing errors
-        let invalid_ulids = vec![
-            ("not-a-ulid", "Non-ULID string"),
-            (
-                "01234567890123456789012345",
-                "Wrong length (25 chars instead of 26)",
-            ),
-            ("01234567890123456789012345XX", "Extra characters"),
-            ("ZZZZZZZZZZZZZZZZZZZZZZZZZ", "Invalid base32 characters"),
-            ("", "Empty string"),
-            ("01234567890123456789012345\0", "Null byte in string"),
-            ("01234567890123456789012345 ", "Trailing space"),
-            (" 01234567890123456789012345", "Leading space"),
-            (
-                "0123456789ABCDEFGHIJKLMNOP",
-                "Mixed case (should be uppercase)",
-            ),
-            ("🦀1234567890123456789012345", "Unicode in ULID"),
-        ];
-
-        for (invalid, description) in invalid_ulids {
-            // Test direct parsing
-            match Ulid::from_str(invalid) {
-                Ok(_) => {
-                    // Some ULID implementations might be more lenient than expected
-                    // This is still valuable information for understanding error handling
-                }
-                Err(_) => {
-                    // Expected behavior for most invalid inputs
-                }
-            }
-
-            // Basic format validation - these should all be invalid in some way
-            // ULIDs must be 26 characters and contain only valid base32 characters (0-9, A-Z)
-            let appears_valid = invalid.len() == 26
-                && invalid
-                    .chars()
-                    .all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
-
-            // Most of our test cases should not appear valid at first glance
-            if appears_valid && !invalid.contains(char::is_lowercase) {
-                // This is expected behavior - the ULID parser should reject it
-                assert!(
-                    Ulid::from_str(invalid).is_err(),
-                    "ULID parser should reject seemingly valid but actually invalid ULID: {}",
-                    invalid
-                );
-            }
-        }
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_ulid_uuid_conversion_edge_cases() -> color_eyre::eyre::Result<()> {
-        // Test ULID to UUID conversion edge cases
-        let edge_cases = vec![
-            // Test with well-known valid ULIDs
-            Ulid::from_str("01ARZ3NDEKTSV4RRFFQ69G5FAV").unwrap(),
-            Ulid::from_str("7ZZZZZZZZZZZZZZZZZZZZZZZZZ").unwrap(),
-            // Current time ULID
-            Ulid::new(),
-        ];
-
-        for ulid in edge_cases {
-            // This should always succeed for valid ULIDs
-            let uuid = ulid_to_uuid(ulid);
-
-            // Verify basic properties
-            assert!(!uuid.is_nil(), "UUID should not be nil");
-
-            // Verify that conversion produces consistent results
-            let uuid2 = ulid_to_uuid(ulid);
-            assert_eq!(
-                uuid, uuid2,
-                "ULID to UUID conversion should be deterministic"
-            );
-
-            // Verify bytes are reasonable length
-            let uuid_bytes = uuid.as_bytes();
-            let ulid_bytes = ulid.to_bytes();
-            assert_eq!(uuid_bytes.len(), 16, "UUID should be 16 bytes");
-            assert_eq!(ulid_bytes.len(), 16, "ULID should be 16 bytes");
-        }
-        Ok(())
-    }
-
-    #[sinex_test]
-    fn test_ulid_generation_properties() -> color_eyre::eyre::Result<()> {
-        // Test ULID generation properties
-        let mut ulids = Vec::new();
-        for _ in 0..100 {
-            // Reduced from 1000 for faster tests
-            ulids.push(Ulid::new());
-        }
-
-        // Check uniqueness
-        let mut sorted = ulids.clone();
-        sorted.sort();
-        sorted.dedup();
-
-        assert_eq!(sorted.len(), ulids.len(), "All ULIDs should be unique");
-
-        // Check ordering (ULIDs should be mostly ordered by timestamp)
-        let mut ordered_count = 0;
-        for window in ulids.windows(2) {
-            if window[0] <= window[1] {
-                ordered_count += 1;
-            }
-        }
-
-        // Most ULIDs should be in order (allowing for some clock jitter)
-        let ordering_ratio = ordered_count as f64 / (ulids.len() - 1) as f64;
-        assert!(
-            ordering_ratio > 0.85, // Relaxed from 0.95 for test stability
-            "ULIDs should be mostly ordered: {}",
-            ordering_ratio
-        );
-
-        Ok(())
-    }
+    // ULID parsing and conversion tests have been moved to sinex-schema::ulid_conversions
 }

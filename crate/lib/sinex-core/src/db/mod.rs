@@ -9,7 +9,6 @@ pub mod sanitization;
 pub mod security;
 
 // Core modules
-pub mod constants;
 pub mod distributed_locking;
 
 // Repository pattern - the new way to access data
@@ -18,7 +17,6 @@ pub mod repositories;
 
 // Database schema definitions using SeaQuery
 pub use sinex_schema::schema;
-pub mod schema_migrations;
 pub mod seaquery_helpers;
 
 // Migration support
@@ -27,10 +25,18 @@ pub mod migration;
 
 // Re-export query helpers for easier access
 pub use query_helpers::{
-    count, db_error, exists, from_db, is_retryable_db_error, opt_from_db, opt_to_db,
-    opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid, uuid_to_ulid, with_retry_transaction,
-    with_transaction, DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
+    count, db_error, exists, is_retryable_db_error, with_retry_transaction, with_transaction,
+    RetryConfig,
 };
+
+// Re-export ULID conversion utilities from sinex-schema
+pub use sinex_schema::ulid_conversions::{
+    from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db, ulid_to_uuid,
+    uuid_to_ulid, DbUuidCollectionExt, DbUuidExt, UlidArrayExt, UlidExt,
+};
+
+// Re-export constants from sinex-schema
+pub use sinex_schema::constants;
 
 // Re-export SeaQuery ULID helpers
 pub use seaquery_helpers::SeaQueryUlidExt;

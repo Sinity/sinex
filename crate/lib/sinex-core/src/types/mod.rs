@@ -45,11 +45,12 @@
 pub mod domain;
 pub mod error;
 pub mod events;
+pub mod ids;
 pub mod utils;
 pub mod validation;
 
-// Import core types from sinex-schema
-pub use sinex_schema::ids::Id;
+// Import primitive types from sinex-schema and domain types from local modules
+pub use ids::Id;
 pub use sinex_schema::ulid::Ulid;
 
 use chrono::{DateTime, Utc};

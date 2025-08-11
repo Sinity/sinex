@@ -19,8 +19,12 @@
 pub use sea_orm_migration::prelude::*;
 
 // Core type definitions
-pub mod ids;
 pub mod ulid;
+pub mod ulid_conversions;
+
+// Database constants and utilities
+pub mod constants;
+pub mod migration_helpers;
 
 // Schema definitions
 pub mod schema;

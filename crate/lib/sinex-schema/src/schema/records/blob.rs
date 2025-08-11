@@ -1,17 +1,14 @@
 //! Blob record types for database operations
 
-use crate::ids::Id;
+use crate::ulid::Ulid;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
-// Forward declare Blob type for Id<T>
-pub struct Blob;
-
 /// Record type representing a blob row in the database
 #[derive(Debug, Clone, FromRow)]
 pub struct BlobRecord {
-    pub id: uuid::Uuid, // Still UUID at boundary for SQLx compatibility
+    pub id: Ulid,
     pub annex_key: String,
     pub original_filename: Option<String>,
     pub size_bytes: i64,
@@ -26,8 +23,8 @@ pub struct BlobRecord {
 }
 
 impl BlobRecord {
-    /// Get the ID as a strongly-typed Id<Blob>
-    pub fn typed_id(&self) -> Id<Blob> {
-        Id::from_uuid(self.id)
+    /// Get the blob ID as raw ULID
+    pub fn id(&self) -> Ulid {
+        self.id
     }
 }

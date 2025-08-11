@@ -983,7 +983,7 @@ mod tests {
         // Batch insert and verify
         let batch_events = (0..10)
             .map(|i| {
-                RawEvent::new(
+                RawEvent::test_event(
                     EventSource::from("count-test"),
                     EventType::from("batch"),
                     json!({"batch_index": i}),

@@ -189,6 +189,44 @@ impl<T> Event<T> {
         }
     }
 
+    /// Create a system event synthesized from the system bootstrap
+    ///
+    /// This is a transitional method for system events that don't yet have
+    /// proper Source Material integration. System events should eventually
+    /// be derived from a system metrics Source Material stream.
+    pub fn system_event(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: T,
+    ) -> Self {
+        // Use a well-known system bootstrap event ID as parent
+        // In practice, this should be replaced with proper sensd integration
+        let system_bootstrap_id = EventId::from_ulid(crate::types::Ulid::from_bytes([
+            0x01, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+        ]));
+
+        Self::from_synthesis(source, event_type, payload, vec![system_bootstrap_id])
+    }
+
+    #[cfg(feature = "testing")]
+    /// Create a test event with dummy Material provenance
+    ///
+    /// This is for testing only and creates events with a well-known test
+    /// material ID. In production, all events must have real provenance.
+    pub fn test_event(
+        source: impl Into<EventSource>,
+        event_type: impl Into<EventType>,
+        payload: T,
+    ) -> Self {
+        let test_material_id = Id::<SourceMaterial>::from_ulid(crate::types::Ulid::from_bytes([
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF, 0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54,
+            0x32, 0x10,
+        ]));
+
+        Self::from_material(source, event_type, payload, test_material_id, 0)
+    }
+
     /// Set the timestamp
     pub fn with_timestamp(mut self, ts: Timestamp) -> Self {
         self.ts_orig = Some(ts);

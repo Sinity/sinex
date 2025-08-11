@@ -4884,6 +4884,7 @@ dependencies = [
 name = "sinex-sensd"
 version = "0.4.2"
 dependencies = [
+ "async-stream",
  "async-trait",
  "bon",
  "bytes",

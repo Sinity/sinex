@@ -1,18 +1,14 @@
 //! Event record types for database operations
 
-use crate::ids::Id;
+use crate::ulid::Ulid;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::FromRow;
 
-// Forward declare types for Id<T>
-pub struct Event;
-pub struct SourceMaterial;
-
 /// Record type representing an event row in the database
 #[derive(Debug, Clone, FromRow)]
 pub struct EventRecord {
-    pub id: uuid::Uuid,
+    pub id: Ulid,
     pub ts_ingest: DateTime<Utc>, // Generated column from ULID
     pub ts_orig: Option<DateTime<Utc>>,
     pub source: String,
@@ -20,36 +16,39 @@ pub struct EventRecord {
     pub host: String,
     pub payload: JsonValue,
     pub ingestor_version: Option<String>,
-    pub payload_schema_id: Option<uuid::Uuid>,
+    pub payload_schema_id: Option<Ulid>,
     pub payload_schema_name: Option<String>,
     pub payload_schema_version: Option<String>,
 
     // Provenance fields
-    pub source_event_ids: Option<Vec<uuid::Uuid>>,
-    pub source_material_id: Option<uuid::Uuid>,
+    pub source_event_ids: Option<Vec<Ulid>>,
+    pub source_material_id: Option<Ulid>,
     pub source_material_offset_start: Option<i64>,
     pub source_material_offset_end: Option<i64>,
     pub anchor_byte: Option<i64>,
 
     // Associated data
-    pub associated_blob_ids: Option<Vec<uuid::Uuid>>,
+    pub associated_blob_ids: Option<Vec<Ulid>>,
 }
 
 impl EventRecord {
-    /// Get the ID as a strongly-typed Id<Event>
-    pub fn typed_id(&self) -> Id<Event> {
-        Id::from_uuid(self.id)
+    /// Get the event ID as raw ULID
+    pub fn id(&self) -> Ulid {
+        self.id
     }
 
-    /// Get the source material ID as strongly-typed
-    pub fn typed_source_material_id(&self) -> Option<Id<SourceMaterial>> {
-        self.source_material_id.map(Id::from_uuid)
+    /// Get the source material ID
+    pub fn source_material_id(&self) -> Option<Ulid> {
+        self.source_material_id
     }
 
-    /// Get the source event IDs as strongly-typed
-    pub fn typed_source_event_ids(&self) -> Option<Vec<Id<Event>>> {
-        self.source_event_ids
-            .as_ref()
-            .map(|ids| ids.iter().map(|&id| Id::from_uuid(id)).collect())
+    /// Get the source event IDs
+    pub fn source_event_ids(&self) -> Option<&[Ulid]> {
+        self.source_event_ids.as_deref()
+    }
+
+    /// Get the associated blob IDs
+    pub fn associated_blob_ids(&self) -> Option<&[Ulid]> {
+        self.associated_blob_ids.as_deref()
     }
 }

@@ -1273,7 +1273,7 @@ impl<'a> EventRepository<'a> {
 
         if let Some(schema) = schema_details {
             // Emit schema status change intent event BEFORE state change
-            let schema_status_intent_event = RawEvent::new(
+            let schema_status_intent_event = RawEvent::system_event(
                 EventSource::new("sinex.schema.lifecycle".to_string()),
                 EventType::new("schema.status_change_intent".to_string()),
                 serde_json::json!({
@@ -1304,7 +1304,7 @@ impl<'a> EventRepository<'a> {
 
             if rows_affected {
                 // Emit schema status changed confirmation event after successful update
-                let schema_status_changed_event = RawEvent::new(
+                let schema_status_changed_event = RawEvent::system_event(
                     EventSource::new("sinex.schema.lifecycle".to_string()),
                     EventType::new("schema.status_changed".to_string()),
                     serde_json::json!({
@@ -1357,7 +1357,7 @@ impl<'a> EventRepository<'a> {
 
         if let Some(schema) = schema_details {
             // Emit schema deprecation intent event BEFORE state change
-            let schema_deprecation_intent_event = RawEvent::new(
+            let schema_deprecation_intent_event = RawEvent::system_event(
                 EventSource::new("sinex.schema.lifecycle".to_string()),
                 EventType::new("schema.deprecation_intent".to_string()),
                 serde_json::json!({
@@ -1396,7 +1396,7 @@ impl<'a> EventRepository<'a> {
 
             if rows_affected {
                 // Emit schema deprecated confirmation event after successful deprecation
-                let schema_deprecated_event = RawEvent::new(
+                let schema_deprecated_event = RawEvent::system_event(
                     EventSource::new("sinex.schema.lifecycle".to_string()),
                     EventType::new("schema.deprecated".to_string()),
                     serde_json::json!({
@@ -1937,7 +1937,7 @@ impl<'a> EventRepository<'a> {
         event_type: &str,
         payload: serde_json::Value,
     ) -> DbResult<RawEvent> {
-        let event = RawEvent::new(
+        let event = RawEvent::system_event(
             EventSource::new(source.to_string()),
             EventType::new(event_type.to_string()),
             payload,
@@ -2394,7 +2394,7 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create an event
-        let event = crate::models::RawEvent::new(
+        let event = crate::models::RawEvent::test_event(
             EventSource::new("test.source"),
             EventType::new("test.event"),
             json!({"test": "data"}),
@@ -2421,7 +2421,7 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = crate::models::RawEvent::new(
+        let source_event = crate::models::RawEvent::test_event(
             EventSource::new("test.source"),
             EventType::new("source.event"),
             json!({"original": true}),
@@ -2432,7 +2432,7 @@ mod tests {
         let source_id = source.id.unwrap();
 
         // Create derived event with provenance
-        let derived_event = crate::models::RawEvent::new(
+        let derived_event = crate::models::RawEvent::test_event(
             EventSource::new("test.processor"),
             EventType::new("derived.event"),
             json!({"derived": true}),

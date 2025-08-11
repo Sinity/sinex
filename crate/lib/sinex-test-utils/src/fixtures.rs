@@ -558,15 +558,15 @@ async fn create_error_scenarios_fixture(pool: &DbPool) -> Result<ErrorScenariosF
     // Create events that would fail validation
     let invalid_events = vec![
         (
-            RawEvent::new(EventSource::from(""), EventType::from("test"), json!({})),
+            RawEvent::test_event(EventSource::from(""), EventType::from("test"), json!({})),
             "Empty source",
         ),
         (
-            RawEvent::new(EventSource::from("test"), EventType::from(""), json!({})),
+            RawEvent::test_event(EventSource::from("test"), EventType::from(""), json!({})),
             "Empty event type",
         ),
         (
-            RawEvent::new(
+            RawEvent::test_event(
                 EventSource::from("test"),
                 EventType::from("test.event"),
                 json!(null),
@@ -665,7 +665,7 @@ async fn create_performance_dataset_fixture(
         let event_type = &event_types[i % event_types.len()];
         let payload_size = [100, 500, 1000, 5000][i % 4];
 
-        let event = RawEvent::new(
+        let event = RawEvent::test_event(
             source.clone(),
             event_type.clone(),
             json!({
@@ -808,7 +808,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
     let mut batch = Vec::new();
     for i in 0..event_count {
         let payload_size = payload_sizes[i % payload_sizes.len()];
-        let event = RawEvent::new(
+        let event = RawEvent::test_event(
             EventSource::from("performance_test"),
             EventType::from("test.event"),
             json!({
@@ -1355,7 +1355,7 @@ mod tests {
         let mut event_ids = vec![];
 
         // Insert start event
-        let start_event = RawEvent::new(
+        let start_event = RawEvent::test_event(
             EventSource::from_static("test"),
             EventType::from_static("test.started"),
             json!({}),
@@ -1365,7 +1365,7 @@ mod tests {
 
         // Insert middle events
         for i in 0..5 {
-            let middle_event = RawEvent::new(
+            let middle_event = RawEvent::test_event(
                 EventSource::from_static("test"),
                 EventType::from_static("test.started"),
                 json!({"index": i}),
@@ -1375,7 +1375,7 @@ mod tests {
         }
 
         // Insert end event
-        let end_event = RawEvent::new(
+        let end_event = RawEvent::test_event(
             EventSource::from_static("test"),
             EventType::from_static("test.completed"),
             json!({}),
