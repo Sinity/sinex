@@ -79,37 +79,39 @@ pub struct IngestdFigmentConfig {
     pub nats_consumer_name: String,
 }
 
-// Default value functions
-fn default_pool_size() -> u32 {
-    25
+// Const default functions for serde
+const fn default_pool_size() -> u32 {
+    DEFAULT_POOL_SIZE
 }
+const fn default_batch_size() -> usize {
+    DEFAULT_BATCH_SIZE
+}
+const fn default_batch_timeout() -> u64 {
+    DEFAULT_BATCH_TIMEOUT
+}
+const fn default_validate_schemas() -> bool {
+    DEFAULT_VALIDATE_SCHEMAS
+}
+const fn default_max_message_size() -> usize {
+    DEFAULT_MAX_MESSAGE_SIZE
+}
+
 fn default_socket_path() -> String {
-    "/tmp/sinex-ingestd.sock".to_string()
+    DEFAULT_SOCKET_PATH.to_string()
 }
-fn default_batch_size() -> usize {
-    100
+fn default_nats_stream_name() -> String {
+    DEFAULT_NATS_STREAM_NAME.to_string()
 }
-fn default_batch_timeout() -> u64 {
-    5
+fn default_nats_consumer_name() -> String {
+    DEFAULT_NATS_CONSUMER_NAME.to_string()
 }
-fn default_validate_schemas() -> bool {
-    true
-}
+
 fn default_work_dir() -> Utf8PathBuf {
     dirs::cache_dir()
         .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
         .unwrap_or_else(|| Utf8PathBuf::from("/tmp"))
         .join("sinex")
         .join("ingestd")
-}
-fn default_max_message_size() -> usize {
-    16 * 1024 * 1024
-} // 16MB
-fn default_nats_stream_name() -> String {
-    "EVENTS".to_string()
-}
-fn default_nats_consumer_name() -> String {
-    "ingestd".to_string()
 }
 
 impl Default for IngestdFigmentConfig {
@@ -133,33 +135,37 @@ impl Default for IngestdFigmentConfig {
 }
 
 impl IngestdFigmentConfig {
-    /// Load configuration from multiple sources
-    pub fn load() -> Result<Self, figment::Error> {
+    /// Build a figment with common configuration layers
+    fn build_figment_base() -> Figment {
         Figment::new()
             // Start with defaults
             .merge(Toml::string(&toml::to_string(&Self::default()).unwrap()))
+    }
+
+    /// Add common environment variable layers to a figment
+    fn add_env_layers(figment: Figment) -> Figment {
+        figment
+            .merge(Env::prefixed("INGESTD_").split("_"))
+            .merge(Env::raw().only(&["DATABASE_URL"]))
+    }
+
+    /// Load configuration from multiple sources
+    pub fn load() -> Result<Self, figment::Error> {
+        let figment = Self::build_figment_base()
             // Load from config file if exists
             .merge(Toml::file("ingestd.toml").nested())
-            .merge(Toml::file("/etc/sinex/ingestd.toml").nested())
-            // Override with environment variables
-            .merge(Env::prefixed("INGESTD_").split("_"))
-            // Special handling for DATABASE_URL without prefix
-            .merge(Env::raw().only(&["DATABASE_URL"]))
-            .extract()
+            .merge(Toml::file("/etc/sinex/ingestd.toml").nested());
+
+        Self::add_env_layers(figment).extract()
     }
 
     /// Load configuration with custom config file
     pub fn load_from(config_file: &str) -> Result<Self, figment::Error> {
-        Figment::new()
-            // Start with defaults
-            .merge(Toml::string(&toml::to_string(&Self::default()).unwrap()))
+        let figment = Self::build_figment_base()
             // Load from specified config file
-            .merge(Toml::file(config_file).nested())
-            // Override with environment variables
-            .merge(Env::prefixed("INGESTD_").split("_"))
-            // Special handling for DATABASE_URL without prefix
-            .merge(Env::raw().only(&["DATABASE_URL"]))
-            .extract()
+            .merge(Toml::file(config_file).nested());
+
+        Self::add_env_layers(figment).extract()
     }
 
     /// Validate the configuration
