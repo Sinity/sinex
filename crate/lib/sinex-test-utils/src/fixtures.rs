@@ -471,6 +471,7 @@ async fn create_user_session_fixture(
                 "session_start": session_start,
                 "events_processed": event_count / checkpoint_interval * checkpoint_interval
             }))
+            .build()
             .insert(pool)
             .await?;
         Some(checkpoint_id)
@@ -525,6 +526,7 @@ async fn create_populated_checkpoints_fixture(
                 "status": "healthy",
                 "last_health_check": Utc::now(),
             }))
+            .build()
             .insert(pool)
             .await?;
 
@@ -827,6 +829,7 @@ async fn create_pre_warmed_fixture(pool: &DbPool) -> Result<PreWarmedFixture> {
                 "fixture": "pre_warmed",
                 "index": i,
             }))
+            .build()
             .insert(pool)
             .await?;
     }

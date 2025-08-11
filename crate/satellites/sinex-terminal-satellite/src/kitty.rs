@@ -92,11 +92,11 @@ impl KittyWatcher {
         let mut watcher = Self {
             socket_path: None,
             poll_interval: Duration::from_millis(500),
-            window_states: HashMap::new(),
+            window_states: HashMap::with_capacity(20),
             prompt_patterns: Self::create_prompt_patterns(),
-            last_scrollback_line_counts: HashMap::new(),
+            last_scrollback_line_counts: HashMap::with_capacity(20),
             last_focused_tab: None,
-            process_states: HashMap::new(),
+            process_states: HashMap::with_capacity(50),
         };
 
         // Try to discover Kitty socket
@@ -181,7 +181,7 @@ impl KittyWatcher {
             .await
             .map_err(|e| io_error_with_context(e, "Failed to flush"))?;
 
-        let mut response_buffer = Vec::new();
+        let mut response_buffer = Vec::with_capacity(4096); // Reasonable buffer for API response
         stream
             .read_to_end(&mut response_buffer)
             .await
@@ -205,8 +205,8 @@ impl KittyWatcher {
         let ls_command = serde_json::json!({"cmd": "ls"});
         let response = self.send_kitty_command(ls_command).await?;
 
-        let mut tabs = Vec::new();
-        let mut windows = Vec::new();
+        let mut tabs = Vec::with_capacity(10); // Typical number of tabs
+        let mut windows = Vec::with_capacity(20); // Typical number of windows
 
         if let Some(tabs_array) = response.as_array() {
             for (tab_index, tab) in tabs_array.iter().enumerate() {
@@ -229,7 +229,7 @@ impl KittyWatcher {
                         for window in tab_windows {
                             if let Some(id) = window.get("id").and_then(|i| i.as_i64()) {
                                 // Extract foreground processes if available
-                                let mut foreground_processes = Vec::new();
+                                let mut foreground_processes = Vec::with_capacity(8); // Typical processes per window
                                 if let Some(processes) = window
                                     .get("foreground_processes")
                                     .and_then(|p| p.as_array())

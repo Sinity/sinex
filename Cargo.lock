@@ -4732,23 +4732,14 @@ name = "sinex-rpc-dispatcher"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "axum 0.7.9",
- "byteorder",
  "camino",
  "chrono",
- "clap",
  "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
- "sinex-core",
  "sinex-satellite-sdk",
- "tokio",
- "tower 0.5.2",
- "tower-http 0.5.2",
  "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -4824,6 +4815,7 @@ name = "sinex-sensd"
 version = "0.4.2"
 dependencies = [
  "async-trait",
+ "bon",
  "bytes",
  "camino",
  "chrono",

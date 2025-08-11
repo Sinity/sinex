@@ -135,7 +135,7 @@ impl HistoryWatcher {
     fn parse_history_content(&self, content: &str, file_path: &Utf8PathBuf) -> Vec<String> {
         let filename = file_path.file_name().unwrap_or("");
 
-        let mut commands = Vec::new();
+        let mut commands = Vec::with_capacity(1000); // Reasonable capacity for shell history
 
         if filename.contains("fish") {
             // Fish history format: "- cmd: command\n  when: timestamp"

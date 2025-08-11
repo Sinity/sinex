@@ -9,6 +9,7 @@ use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Event repository for database operations
 pub struct EventRepository<'a> {
@@ -230,6 +231,7 @@ pub struct EventTypeCount {
 }
 
 impl<'a> EventRepository<'a> {
+    #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn insert(&self, mut event: RawEvent) -> DbResult<RawEvent> {
         let id = event.id.get_or_insert_with(Id::<RawEvent>::new).clone();
 
@@ -305,6 +307,7 @@ impl<'a> EventRepository<'a> {
         Ok(record.to_event())
     }
 
+    #[instrument(skip(self), fields(event_id = %id))]
     pub async fn get_by_id(&self, id: Id<RawEvent>) -> DbResult<Option<RawEvent>> {
         let record = sqlx::query_as::<_, EventRecord>(
             r#"
@@ -971,27 +974,180 @@ impl<'a> EventRepository<'a> {
         Ok(record.to_event())
     }
 
+    #[instrument(skip(self, events), fields(batch_size = events.len()))]
     pub async fn insert_batch(&self, events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
-        // For batch inserts, we'll use a transaction and insert one by one
-        // A more efficient implementation would use UNNEST or COPY
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // For small batches, use the optimized UNNEST approach which is faster than individual inserts
+        if events.len() <= 100 {
+            return self.insert_batch_unnest(events).await;
+        }
+
+        // For larger batches, chunk them and process concurrently with limited parallelism
+        // to avoid overwhelming the database connection pool
+        let chunk_size = 25; // Process 25 events per chunk
+        let max_concurrent_chunks = 4; // Up to 4 chunks concurrently
+
+        let mut results = Vec::with_capacity(events.len());
+
+        // Process chunks with controlled concurrency
+        for chunk_batch in events.chunks(chunk_size * max_concurrent_chunks) {
+            let mut chunk_futures = Vec::new();
+
+            for chunk in chunk_batch.chunks(chunk_size) {
+                let chunk_vec = chunk.to_vec();
+                let pool_clone = self.pool.clone();
+
+                chunk_futures.push(async move {
+                    let repo = EventRepository::new(&pool_clone);
+                    repo.insert_batch_unnest(chunk_vec).await
+                });
+            }
+
+            // Wait for this batch of chunks to complete
+            let chunk_results = futures::future::join_all(chunk_futures).await;
+
+            // Collect results
+            for result in chunk_results {
+                match result {
+                    Ok(mut chunk_results) => {
+                        results.append(&mut chunk_results);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Optimized batch insert using UNNEST for better performance
+    async fn insert_batch_unnest(&self, mut events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Begin transaction for atomicity
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(|e| db_error(e, "begin transaction for batch insert"))?;
+            .map_err(|e| db_error(e, "begin transaction for batch unnest insert"))?;
 
-        let mut results = Vec::with_capacity(events.len());
-
-        for event in events {
-            let result = self.insert_with_tx(&mut tx, event).await?;
-            results.push(result);
+        // Ensure all events have IDs
+        for event in &mut events {
+            if event.id.is_none() {
+                event.id = Some(Id::<RawEvent>::new());
+            }
         }
+
+        // Prepare arrays for UNNEST batch insert
+        let mut event_ids = Vec::new();
+        let mut sources = Vec::new();
+        let mut event_types = Vec::new();
+        let mut hosts = Vec::new();
+        let mut payloads = Vec::new();
+        let mut ts_origs = Vec::new();
+        let mut ingestor_versions = Vec::new();
+        let mut payload_schema_ids = Vec::new();
+        let mut source_event_id_arrays = Vec::new();
+        let mut source_material_ids = Vec::new();
+        let mut source_material_offset_starts = Vec::new();
+        let mut source_material_offset_ends = Vec::new();
+        let mut anchor_bytes = Vec::new();
+        let mut associated_blob_id_arrays = Vec::new();
+
+        for event in &events {
+            let event_id = event.id.as_ref().unwrap();
+            event_ids.push(ulid_to_uuid(*event_id.as_ulid()));
+            sources.push(event.source.as_str());
+            event_types.push(event.event_type.as_str());
+            hosts.push(event.host.as_str());
+            payloads.push(&event.payload);
+            ts_origs.push(event.ts_orig);
+            ingestor_versions.push(event.ingestor_version.as_deref());
+            payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
+
+            // Extract provenance into separate database fields
+            let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
+                match &event.provenance {
+                    Some(Provenance::Events(ids)) => {
+                        let ulids: Vec<crate::types::Ulid> = 
+                            ids.iter().map(|id| *id.as_ulid()).collect();
+                        (Some(ulids), None, None, None)
+                    }
+                    Some(Provenance::Material {
+                        id,
+                        offset_start,
+                        offset_end,
+                    }) => (
+                        None,
+                        Some(ulid_to_uuid(*id.as_ulid())),
+                        *offset_start,
+                        *offset_end,
+                    ),
+                    None => (None, None, None, None),
+                };
+
+            source_event_id_arrays.push(source_event_ids_opt);
+            source_material_ids.push(source_material_id);
+            source_material_offset_starts.push(offset_start);
+            source_material_offset_ends.push(offset_end);
+            anchor_bytes.push(event.anchor_byte);
+
+            let blob_uuids = event
+                .associated_blob_ids
+                .as_ref()
+                .map(|ids| ids.iter().map(|id| ulid_to_uuid(*id)).collect::<Vec<_>>());
+            associated_blob_id_arrays.push(blob_uuids);
+        }
+
+        // Execute batch insert using UNNEST
+        sqlx::query!(
+            r#"
+            INSERT INTO core.events (
+                id, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                source_material_id, source_material_offset_start, source_material_offset_end,
+                anchor_byte, associated_blob_ids,
+                payload_schema_name, payload_schema_version
+            )
+            SELECT * FROM UNNEST(
+                $1::uuid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
+                $6::timestamptz[], $7::text[], $8::uuid[], $9::uuid[][],
+                $10::uuid[], $11::bigint[], $12::bigint[],
+                $13::bigint[], $14::uuid[][],
+                $15::text[], $16::text[]
+            )
+            "#,
+            &event_ids,
+            &sources,
+            &event_types,
+            &hosts,
+            &payloads,
+            &ts_origs,
+            &ingestor_versions,
+            &payload_schema_ids,
+            &source_event_id_arrays,
+            &source_material_ids,
+            &source_material_offset_starts,
+            &source_material_offset_ends,
+            &anchor_bytes,
+            &associated_blob_id_arrays,
+            &vec![None::<&str>; events.len()], // payload_schema_name
+            &vec![None::<&str>; events.len()]  // payload_schema_version
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "batch insert with unnest"))?;
 
         tx.commit()
             .await
-            .map_err(|e| db_error(e, "commit batch insert"))?;
+            .map_err(|e| db_error(e, "commit batch unnest insert"))?;
 
-        Ok(results)
+        Ok(events)
     }
 
     // ===== Schema Management Methods =====

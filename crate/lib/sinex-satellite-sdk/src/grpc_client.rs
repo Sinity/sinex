@@ -7,7 +7,7 @@ use crate::proto::{
 use crate::{SatelliteError, SatelliteResult};
 use sinex_core::db::models::RawEvent;
 use tonic::transport::{Channel, Endpoint, Uri};
-use tracing::{debug, error, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
 
 /// Default schema version for events
 const DEFAULT_SCHEMA_VERSION: &str = "1.0.0";
@@ -20,6 +20,7 @@ pub struct IngestClient {
 
 impl IngestClient {
     /// Create a new client connected to the specified Unix Domain Socket
+    #[instrument(fields(socket_path))]
     pub async fn new(socket_path: &str) -> SatelliteResult<Self> {
         let socket_path_owned = socket_path.to_string();
         // Create a channel to the Unix Domain Socket
@@ -37,15 +38,19 @@ impl IngestClient {
     }
 
     /// Send a single event to ingestd
+    #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String> {
         let proto_event = self.convert_to_proto(event)?;
 
         let request = tonic::Request::new(proto_event);
-        let response = self.client.ingest_event(request).await?;
+        let response = self.client.ingest_event(request).await.map_err(|e| {
+            error!(error = %e, "gRPC call to ingest_event failed");
+            e
+        })?;
 
         let inner = response.into_inner();
         if inner.success {
-            debug!("Successfully ingested event");
+            debug!(event_id = %inner.event_id.as_ref().unwrap_or(&"unknown".to_string()), "Successfully ingested event");
             Ok(inner.event_id.unwrap_or_default())
         } else {
             let error_msg = inner.error.unwrap_or_else(|| "Unknown error".to_string());
@@ -61,34 +66,38 @@ impl IngestClient {
     }
 
     /// Send a batch of events to ingestd
+    #[instrument(skip(self, events), fields(batch_size = events.len()))]
     pub async fn ingest_batch(&mut self, events: &[RawEvent]) -> SatelliteResult<BatchResult> {
         if events.is_empty() {
             return Ok(BatchResult {
                 success: true,
-                event_ids: vec![],
+                event_ids: Vec::new(),
                 processed_count: 0,
                 failed_count: 0,
                 error: None,
             });
         }
 
-        let proto_events: Result<Vec<_>, _> = events
-            .iter()
-            .map(|event| self.convert_to_proto(event))
-            .collect();
-
-        let proto_events = proto_events?;
+        let mut proto_events = Vec::with_capacity(events.len());
+        for event in events {
+            proto_events.push(self.convert_to_proto(event)?);
+        }
         let batch = EventBatch {
             events: proto_events,
         };
 
         let request = tonic::Request::new(batch);
-        let response = self.client.ingest_batch(request).await?;
+        let response = self.client.ingest_batch(request).await.map_err(|e| {
+            error!(error = %e, batch_size = events.len(), "gRPC call to ingest_batch failed");
+            e
+        })?;
 
         let inner = response.into_inner();
-        debug!(
-            "Batch ingestion result: {} processed, {} failed",
-            inner.processed_count, inner.failed_count
+        info!(
+            processed_count = inner.processed_count,
+            failed_count = inner.failed_count,
+            success = inner.success,
+            "Batch ingestion completed"
         );
 
         Ok(BatchResult {
@@ -101,9 +110,13 @@ impl IngestClient {
     }
 
     /// Check health of ingestd service
+    #[instrument(skip(self))]
     pub async fn health_check(&mut self) -> SatelliteResult<HealthStatus> {
         let request = tonic::Request::new(HealthRequest {});
-        let response = self.client.health(request).await?;
+        let response = self.client.health(request).await.map_err(|e| {
+            error!(error = %e, "gRPC health check failed");
+            e
+        })?;
 
         let inner = response.into_inner();
         debug!("Health check result: {} - {}", inner.healthy, inner.status);
@@ -178,6 +191,7 @@ impl EventBatcher {
     }
 
     /// Add an event to the batch, flushing if necessary
+    #[instrument(skip(self, event), fields(batch_size = self.batch.len(), source = %event.source, event_type = %event.event_type))]
     pub async fn add_event(&mut self, event: RawEvent) -> SatelliteResult<Option<BatchResult>> {
         self.batch.push(event);
 
@@ -190,6 +204,7 @@ impl EventBatcher {
     }
 
     /// Force flush any pending events
+    #[instrument(skip(self), fields(batch_size = self.batch.len()))]
     pub async fn flush(&mut self) -> SatelliteResult<BatchResult> {
         if self.batch.is_empty() {
             return Ok(BatchResult {
@@ -205,9 +220,16 @@ impl EventBatcher {
 
         if !result.success {
             warn!(
-                "Batch ingestion partially failed: {} of {} events failed",
-                result.failed_count,
-                self.batch.len()
+                failed_count = result.failed_count,
+                total_events = self.batch.len(),
+                processed_count = result.processed_count,
+                "Batch ingestion partially failed"
+            );
+        } else {
+            debug!(
+                processed_count = result.processed_count,
+                batch_size = self.batch.len(),
+                "Successfully flushed event batch"
             );
         }
 

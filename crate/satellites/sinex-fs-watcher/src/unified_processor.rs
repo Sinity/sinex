@@ -120,9 +120,13 @@ use std::collections::{HashMap, HashSet};
 use std::os::unix::fs::PermissionsExt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
+use validator::{Validate, ValidationError};
 use walkdir::WalkDir;
 // use sinex_core::types::events::constants::{sources}; // already imported above
+
+#[cfg(test)]
+mod config_validation_tests;
 
 /// Default debounce interval for filesystem events in milliseconds
 const DEFAULT_DEBOUNCE_MS: u64 = 100;
@@ -131,7 +135,7 @@ const DEFAULT_DEBOUNCE_MS: u64 = 100;
 const MAX_DIAGNOSTIC_SAMPLES: usize = 100;
 
 /// Filesystem monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct FilesystemConfig {
     /// Glob patterns for files/directories to watch
     ///
@@ -143,6 +147,8 @@ pub struct FilesystemConfig {
     /// Performance impact:
     /// - More specific patterns = fewer watches = better performance
     /// - `"**/*"` on large trees can hit inotify limits on Linux
+    #[validate(length(min = 1, message = "At least one watch pattern must be specified"))]
+    #[validate(custom(function = "validate_glob_patterns", message = "Invalid glob patterns"))]
     pub watch_patterns: Vec<String>,
 
     /// Patterns to explicitly ignore (takes precedence over watch_patterns)
@@ -156,6 +162,10 @@ pub struct FilesystemConfig {
     /// System limits (Linux):
     /// - Check limit: `cat /proc/sys/fs/inotify/max_user_watches`
     /// - Increase: `sudo sysctl fs.inotify.max_user_watches=524288`
+    #[validate(custom(
+        function = "validate_glob_patterns",
+        message = "Invalid ignore patterns"
+    ))]
     pub ignore_patterns: Vec<String>,
 
     /// Debounce delay in milliseconds for rapid file changes
@@ -168,6 +178,11 @@ pub struct FilesystemConfig {
     /// Trade-offs:
     /// - Lower: More responsive, more events
     /// - Higher: Fewer events, may miss rapid changes
+    #[validate(range(
+        min = 1,
+        max = 60000,
+        message = "Debounce delay must be between 1ms and 60 seconds"
+    ))]
     pub debounce_ms: u64,
 
     /// Maximum directory traversal depth (None = unlimited)
@@ -181,6 +196,10 @@ pub struct FilesystemConfig {
     /// - Watching user home directories with deep structures
     /// - Known flat directory structures
     /// - inotify watch limits are a concern
+    #[validate(custom(
+        function = "validate_max_depth",
+        message = "Max depth must be reasonable (1-100)"
+    ))]
     pub max_depth: Option<usize>,
 }
 
@@ -197,6 +216,52 @@ impl Default for FilesystemConfig {
             max_depth: None,
         }
     }
+}
+
+impl FilesystemConfig {
+    /// Validate the configuration and return detailed error messages
+    pub fn validate_config(&self) -> Result<(), String> {
+        use validator::Validate as ValidateTrait;
+
+        ValidateTrait::validate(self).map_err(|e| {
+            sinex_core::types::validation::validation_chains::format_validation_errors(&e)
+        })
+    }
+}
+
+// Custom validation functions for FilesystemConfig
+
+/// Validate glob patterns for correctness and safety
+fn validate_glob_patterns(patterns: &[String]) -> Result<(), ValidationError> {
+    for pattern in patterns {
+        if pattern.is_empty() {
+            return Err(ValidationError::new("empty_pattern"));
+        }
+
+        // Check for dangerous patterns that could cause infinite recursion or security issues
+        if pattern == "/" || pattern == "**" {
+            return Err(ValidationError::new("dangerous_pattern"));
+        }
+
+        // Validate glob syntax using the glob crate
+        if let Err(_) = glob::Pattern::new(pattern) {
+            return Err(ValidationError::new("invalid_glob_syntax"));
+        }
+    }
+    Ok(())
+}
+
+/// Validate maximum depth setting
+fn validate_max_depth(depth: &Option<usize>) -> Result<(), ValidationError> {
+    if let Some(d) = depth {
+        if *d == 0 {
+            return Err(ValidationError::new("depth_zero"));
+        }
+        if *d > 100 {
+            return Err(ValidationError::new("depth_too_large"));
+        }
+    }
+    Ok(())
 }
 
 /// Rename operation tracking for enhanced move detection
@@ -282,6 +347,7 @@ impl FilesystemProcessor {
 
     /// Take a snapshot of current filesystem state
     #[must_use = "Snapshot result should be used or stored"]
+    #[instrument(skip(self), fields(processor = "filesystem", watch_roots_count = self.watch_roots.len()))]
     #[with_context(
         operation = "take_filesystem_snapshot",
         retry_count = 2,
@@ -295,11 +361,19 @@ impl FilesystemProcessor {
 
         for watch_root in &self.watch_roots {
             if watch_root.exists() {
+                debug!(path = %watch_root.as_str(), "Counting files in watch root");
                 let count = self
                     .count_files_in_directory(watch_root, &mut sample_paths)
-                    .await?;
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, path = %watch_root.as_str(), "Failed to count files in directory");
+                        e
+                    })?;
                 file_counts.insert(watch_root.clone(), count);
                 total_files += count;
+                debug!(path = %watch_root.as_str(), file_count = count, "Completed file count for directory");
+            } else {
+                warn!(path = %watch_root.as_str(), "Watch root does not exist, skipping");
             }
         }
 
@@ -316,6 +390,7 @@ impl FilesystemProcessor {
     }
 
     /// Count files in a directory and collect samples
+    #[instrument(skip(self, sample_paths), fields(processor = "filesystem", path = %path.as_str(), max_depth = self.config.max_depth))]
     #[with_context(
         operation = "count_files_in_directory",
         timeout_ms = 15000,
@@ -353,6 +428,7 @@ impl FilesystemProcessor {
     }
 
     /// Scan directory and emit events for discovered files/directories
+    #[instrument(skip(self), fields(processor = "filesystem", path = %path.as_str(), emit_events, checkpoint_desc = %checkpoint.description()))]
     #[with_context(
         operation = "scan_directory_with_checkpoint",
         retry_count = 1,
@@ -577,6 +653,7 @@ impl FilesystemProcessor {
     }
 
     /// Start continuous filesystem monitoring
+    #[instrument(skip(self), fields(processor = "filesystem", debounce_ms = self.config.debounce_ms, watch_patterns_count = self.config.watch_patterns.len()))]
     #[with_context(
         operation = "start_continuous_filesystem_monitoring",
         enable_metrics,
@@ -688,6 +765,7 @@ impl FilesystemProcessor {
     }
 
     /// Set up filesystem watch paths from configuration
+    #[instrument(skip(self, debouncer), fields(processor = "filesystem", patterns_count = self.config.watch_patterns.len()))]
     async fn setup_watch_paths(
         &mut self,
         debouncer: &mut notify_debouncer_full::Debouncer<
@@ -810,6 +888,7 @@ impl Default for FilesystemProcessor {
 impl StatefulStreamProcessor for FilesystemProcessor {
     type Config = FilesystemConfig;
 
+    #[instrument(skip(self, ctx), fields(processor = "filesystem", service = %ctx.service_name))]
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
@@ -900,6 +979,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(processor = "filesystem", from = %from.description(), dry_run = args.dry_run, targets_count = args.targets.len()))]
     async fn scan(
         &mut self,
         from: Checkpoint,
@@ -1044,11 +1124,13 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         }
     }
 
+    #[instrument(skip(self), fields(processor = "filesystem"))]
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For filesystem monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
 
+    #[instrument(skip(self, args), fields(processor = "filesystem", from = %_from.description(), targets_count = args.targets.len()))]
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,

@@ -27,7 +27,7 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
 
 use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 
@@ -146,6 +146,7 @@ impl SystemProcessor {
     }
 
     /// Take a snapshot of current system state
+    #[instrument(skip(self), fields(processor = "system"))]
     async fn take_snapshot(&mut self) -> SatelliteResult<SystemState> {
         let mut enabled_sources = Vec::new();
         let mut dbus_status = None;
@@ -338,6 +339,7 @@ impl Default for SystemProcessor {
 impl StatefulStreamProcessor for SystemProcessor {
     type Config = SystemConfig;
 
+    #[instrument(skip(self, ctx), fields(processor = "system", service = %ctx.service_name))]
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
@@ -415,6 +417,7 @@ impl StatefulStreamProcessor for SystemProcessor {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(processor = "system", from = %from.description(), dry_run = args.dry_run, targets_count = args.targets.len()))]
     async fn scan(
         &mut self,
         from: Checkpoint,

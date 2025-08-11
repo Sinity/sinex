@@ -28,24 +28,64 @@ use sinex_satellite_sdk::{
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
+use validator::{Validate, ValidationError};
 
 use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
 // use sinex_core::types::events::constants::{event_types, services}; // already imported above
 
+#[cfg(test)]
+mod config_validation_tests;
+
 /// Terminal monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct TerminalConfig {
     pub enabled_sources: HashMap<String, bool>,
+    #[validate(custom(
+        function = "validate_optional_path",
+        message = "Invalid atuin database path"
+    ))]
     pub atuin_db_path: Option<Utf8PathBuf>,
+    #[validate(custom(
+        function = "validate_path_list",
+        message = "Invalid history file paths"
+    ))]
     pub history_files: Vec<Utf8PathBuf>,
+    #[validate(custom(
+        function = "validate_optional_path",
+        message = "Invalid kitty socket path"
+    ))]
     pub kitty_socket_path: Option<Utf8PathBuf>,
+    #[validate(custom(
+        function = "validate_optional_path",
+        message = "Invalid recording output directory"
+    ))]
     pub recording_output_dir: Option<Utf8PathBuf>,
     pub scrollback_capture_enabled: bool,
+    #[validate(range(
+        min = 1,
+        max = 3600,
+        message = "Polling interval must be between 1 and 3600 seconds"
+    ))]
     pub polling_interval_secs: u64,
+    #[validate(range(
+        min = 1,
+        max = 10000,
+        message = "Batch size must be between 1 and 10000"
+    ))]
     pub batch_size: usize,
 
     // Scanner-specific configuration
+    #[validate(range(
+        min = 1,
+        max = 100000,
+        message = "Scanner batch size must be between 1 and 100000"
+    ))]
     pub scanner_batch_size: usize,
+    #[validate(range(
+        min = 1,
+        max = 10240,
+        message = "Max file size must be between 1MB and 10GB"
+    ))]
     pub scanner_max_file_size_mb: u64,
 }
 
@@ -57,10 +97,10 @@ impl Default for TerminalConfig {
 
         Self {
             enabled_sources: [
-                ("atuin".to_string(), true),
-                ("history".to_string(), true),
-                ("kitty".to_string(), false), // Disabled by default, requires setup
-                ("recording".to_string(), false),
+                ("atuin".to_owned(), true),
+                ("history".to_owned(), true),
+                ("kitty".to_owned(), false), // Disabled by default, requires setup
+                ("recording".to_owned(), false),
                 ("scrollback".to_string(), false),
             ]
             .into_iter()
@@ -80,6 +120,56 @@ impl Default for TerminalConfig {
             scanner_max_file_size_mb: 100,
         }
     }
+}
+
+impl TerminalConfig {
+    /// Validate the configuration and return detailed error messages
+    pub fn validate_config(&self) -> Result<(), String> {
+        use validator::Validate as ValidateTrait;
+
+        ValidateTrait::validate(self).map_err(|e| {
+            sinex_core::types::validation::validation_chains::format_validation_errors(&e)
+        })
+    }
+}
+
+// Custom validation functions for TerminalConfig
+
+/// Validate optional path fields
+fn validate_optional_path(path: &Option<Utf8PathBuf>) -> Result<(), ValidationError> {
+    if let Some(p) = path {
+        validate_single_path(p)?;
+    }
+    Ok(())
+}
+
+/// Validate a list of paths
+fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
+    for path in paths {
+        validate_single_path(path)?;
+    }
+    Ok(())
+}
+
+/// Validate a single path for basic correctness
+fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
+    let path_str = path.as_str();
+
+    if path_str.is_empty() {
+        return Err(ValidationError::new("empty_path"));
+    }
+
+    // Check for dangerous path traversal patterns
+    if path_str.contains("../") || path_str.contains("..\\") {
+        return Err(ValidationError::new("path_traversal"));
+    }
+
+    // Check for null bytes or other dangerous characters
+    if path_str.contains('\0') {
+        return Err(ValidationError::new("null_byte_in_path"));
+    }
+
+    Ok(())
 }
 
 /// Terminal state snapshot for exploration and diagnostics
@@ -188,7 +278,7 @@ impl TerminalProcessor {
         enable_metrics
     )]
     async fn take_snapshot(&mut self) -> SatelliteResult<TerminalState> {
-        let mut enabled_sources = Vec::new();
+        let mut enabled_sources = Vec::with_capacity(8); // Reasonable capacity for config items
         let mut history_file_status = HashMap::new();
         let mut atuin_status = None;
 
@@ -604,9 +694,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
     ) -> SatelliteResult<ScanReport> {
         let start_time = std::time::Instant::now();
         let mut events_processed = 0;
-        let mut successful_targets = Vec::new();
-        let mut failed_targets = Vec::new();
-        let mut warnings = Vec::new();
+        let mut successful_targets = Vec::with_capacity(targets.len());
+        let mut failed_targets = Vec::with_capacity(targets.len());
+        let mut warnings = Vec::with_capacity(16);
 
         info!(
             processor = self.processor_name(),

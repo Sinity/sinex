@@ -138,7 +138,7 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::from_payload(sinex_core::events::FileDiscoveredPayload {
+                    Event::new(sinex_core::events::FileDiscoveredPayload {
                         path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         size: metadata.len(),
                         modified_at: modified_time,
@@ -156,7 +156,7 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::from_payload(sinex_core::events::DirDiscoveredPayload {
+                    Event::new(sinex_core::events::DirDiscoveredPayload {
                         path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         modified_at: modified_time,
                     })

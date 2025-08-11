@@ -27,7 +27,7 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{info, warn};
+use tracing::{debug, error, info, instrument, warn, Span};
 
 use crate::{ClipboardWatcher, WindowManagerWatcher};
 
@@ -142,6 +142,7 @@ impl DesktopProcessor {
     /// Parse configuration value from context with type conversion
 
     /// Take a snapshot of current desktop state
+    #[instrument(skip(self), fields(processor = "desktop"))]
     async fn take_snapshot(&mut self) -> SatelliteResult<DesktopState> {
         let mut enabled_sources = Vec::new();
         let mut clipboard_status = None;
@@ -187,6 +188,7 @@ impl DesktopProcessor {
     }
 
     /// Initialize watchers based on enabled sources
+    #[instrument(skip(self), fields(processor = "desktop"))]
     async fn initialize_watchers(&mut self) -> SatelliteResult<()> {
         // Initialize clipboard watcher
         if self.config.clipboard_enabled {
@@ -209,6 +211,7 @@ impl DesktopProcessor {
     }
 
     /// Start continuous desktop monitoring
+    #[instrument(skip(self), fields(processor = "desktop", checkpoint = %_from_checkpoint.description()))]
     async fn start_continuous_monitoring(
         &mut self,
         _from_checkpoint: Checkpoint,
@@ -236,6 +239,7 @@ impl DesktopProcessor {
     }
 
     /// Perform historical scan on desktop sources
+    #[instrument(skip(self), fields(processor = "desktop", from = %_from.description(), emit_events))]
     async fn scan_historical_desktop_data(
         &self,
         _from: &Checkpoint,
@@ -291,6 +295,7 @@ impl Default for DesktopProcessor {
 impl StatefulStreamProcessor for DesktopProcessor {
     type Config = DesktopConfig;
 
+    #[instrument(skip(self, ctx), fields(processor = "desktop", service = %ctx.service_name))]
     async fn initialize(
         &mut self,
         ctx: StreamProcessorContext,
@@ -339,6 +344,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
         Ok(())
     }
 
+    #[instrument(skip(self), fields(processor = "desktop", from = %from.description(), dry_run = args.dry_run, targets_count = args.targets.len()))]
     async fn scan(
         &mut self,
         from: Checkpoint,
@@ -367,6 +373,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
                 // Initialize watchers for snapshot capabilities
                 if let Err(e) = self.initialize_watchers().await {
+                    warn!(error = %e, "Failed to initialize some watchers for snapshot");
                     warnings.push(format!("Failed to initialize some watchers: {}", e));
                 }
 
@@ -394,7 +401,10 @@ impl StatefulStreamProcessor for DesktopProcessor {
                             })
                             .into();
 
-                        context.emit_event(snapshot_event).await?;
+                        context.emit_event(snapshot_event).await.map_err(|e| {
+                            error!(error = %e, "Failed to emit desktop snapshot event");
+                            e
+                        })?;
                     }
                 }
             }
@@ -413,6 +423,7 @@ impl StatefulStreamProcessor for DesktopProcessor {
                         successful_targets.push("desktop_historical_scan".to_string());
                     }
                     Err(e) => {
+                        error!(error = %e, "Historical desktop scan failed");
                         failed_targets.push(("desktop_historical_scan".to_string(), e.to_string()));
                     }
                 }
@@ -420,11 +431,20 @@ impl StatefulStreamProcessor for DesktopProcessor {
 
             TimeHorizon::Continuous => {
                 // Initialize watchers for continuous monitoring
-                self.initialize_watchers().await?;
+                debug!("Initializing watchers for continuous monitoring");
+                self.initialize_watchers().await.map_err(|e| {
+                    error!(error = %e, "Failed to initialize watchers for continuous monitoring");
+                    e
+                })?;
 
                 // Start continuous monitoring
                 info!("Starting continuous desktop monitoring");
-                self.start_continuous_monitoring(from.clone()).await?;
+                self.start_continuous_monitoring(from.clone())
+                    .await
+                    .map_err(|e| {
+                        error!(error = %e, "Failed to start continuous monitoring");
+                        e
+                    })?;
                 // Continuous monitoring runs indefinitely
                 events_processed = 0; // Can't count events in continuous mode
             }
@@ -487,11 +507,13 @@ impl StatefulStreamProcessor for DesktopProcessor {
         }
     }
 
+    #[instrument(skip(self), fields(processor = "desktop"))]
     async fn current_checkpoint(&self) -> SatelliteResult<Checkpoint> {
         // For desktop monitoring, use timestamp-based checkpoints
         Ok(Checkpoint::timestamp(Utc::now(), None))
     }
 
+    #[instrument(skip(self), fields(processor = "desktop", from = %_from.description()))]
     async fn estimate_scan_scope(
         &self,
         _from: &Checkpoint,
