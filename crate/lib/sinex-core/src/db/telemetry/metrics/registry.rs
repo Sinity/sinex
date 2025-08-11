@@ -821,12 +821,10 @@ mod tests {
             counter_data.get("help").unwrap().as_str().unwrap(),
             "A test counter"
         );
-        assert!(counter_data
-            .get("type")
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .contains("Counter"));
+        assert_eq!(
+            counter_data.get("type").unwrap().as_str().unwrap(),
+            "COUNTER"
+        );
         Ok(())
     }
 

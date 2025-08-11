@@ -194,6 +194,7 @@ impl FunctionMetrics {
 pub struct FunctionCallGuard {
     metrics: Arc<FunctionMetrics>,
     start_time: Instant,
+    completed: bool,
 }
 
 impl FunctionCallGuard {
@@ -202,36 +203,42 @@ impl FunctionCallGuard {
         Self {
             metrics,
             start_time: Instant::now(),
+            completed: false,
         }
     }
 
-    pub fn record_error(self) {
-        let duration = self.start_time.elapsed();
-        self.metrics.duration.observe(duration.as_secs_f64());
-        self.metrics.record_error();
+    pub fn record_error(mut self) {
+        if !self.completed {
+            let duration = self.start_time.elapsed();
+            self.metrics.duration.observe(duration.as_secs_f64());
+            self.metrics.record_error();
 
-        // Also record in telemetry
-        crate::telemetry::record_function_telemetry(
-            &self.metrics.module,
-            &self.metrics.name,
-            duration.as_secs_f64() * 1000.0, // Convert to milliseconds
-            true,                            // This is an error
-        );
+            // Also record in telemetry
+            crate::telemetry::record_function_telemetry(
+                &self.metrics.module,
+                &self.metrics.name,
+                duration.as_secs_f64() * 1000.0, // Convert to milliseconds
+                true,                            // This is an error
+            );
+            self.completed = true;
+        }
     }
 }
 
 impl Drop for FunctionCallGuard {
     fn drop(&mut self) {
-        let duration = self.start_time.elapsed();
-        self.metrics.record_call_complete(duration);
+        if !self.completed {
+            let duration = self.start_time.elapsed();
+            self.metrics.record_call_complete(duration);
 
-        // Also record in telemetry
-        crate::telemetry::record_function_telemetry(
-            &self.metrics.module,
-            &self.metrics.name,
-            duration.as_secs_f64() * 1000.0, // Convert to milliseconds
-            false,                           // Not an error
-        );
+            // Also record in telemetry
+            crate::telemetry::record_function_telemetry(
+                &self.metrics.module,
+                &self.metrics.name,
+                duration.as_secs_f64() * 1000.0, // Convert to milliseconds
+                false,                           // Not an error
+            );
+        }
     }
 }
 
@@ -476,12 +483,14 @@ mod tests {
     }
 
     #[sinex_test]
-    fn test_track_function_helper() -> Result<()> {
+    async fn test_track_function_helper(ctx: TestContext) -> Result<()> {
         let guard = track_function_call("helper_test", "test_module");
 
         // Guard should be created
-        assert_eq!(guard.metrics.name, "helper_test");
-        assert_eq!(guard.metrics.module, "test_module");
+        ctx.assert("guard name")
+            .eq(&guard.metrics.name, &"helper_test".to_string())?;
+        ctx.assert("guard module")
+            .eq(&guard.metrics.module, &"test_module".to_string())?;
         Ok(())
     }
 }

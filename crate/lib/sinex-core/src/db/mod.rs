@@ -13,6 +13,7 @@ pub mod constants;
 pub mod distributed_locking;
 
 // Repository pattern - the new way to access data
+pub mod replay;
 pub mod repositories;
 
 // Database schema definitions using SeaQuery

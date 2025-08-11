@@ -1,7 +1,7 @@
 //! Payload structures for system events
 //!
 //! This module provides comprehensive payload structures for D-Bus signals,
-//! sinex-events-system implementation.
+//! hardware monitoring, and other system-level events for the system satellite.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;

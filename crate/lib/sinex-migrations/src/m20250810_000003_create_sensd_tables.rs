@@ -287,12 +287,6 @@ enum SourceMaterials {
     Metadata,
 }
 
-impl SourceMaterials {
-    fn table_name() -> String {
-        "raw.source_materials".to_string()
-    }
-}
-
 #[derive(DeriveIden)]
 enum TemporalLedger {
     Table,
@@ -305,12 +299,6 @@ enum TemporalLedger {
     SliceHash,
     CaptureMetadata,
     CreatedAt,
-}
-
-impl TemporalLedger {
-    fn table_name() -> String {
-        "raw.temporal_ledger".to_string()
-    }
 }
 
 #[derive(DeriveIden)]
@@ -326,10 +314,4 @@ enum SensorJobs {
     CompletedAt,
     ErrorMessage,
     MaterialId,
-}
-
-impl SensorJobs {
-    fn table_name() -> String {
-        "raw.sensor_jobs".to_string()
-    }
 }

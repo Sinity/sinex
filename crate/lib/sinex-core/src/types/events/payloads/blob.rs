@@ -64,17 +64,6 @@ pub struct StorageStatisticsPayload {
 }
 
 impl BlobStoredPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(blob_id: impl Into<String>, hash_sha256: impl Into<String>) -> Self {
-        Self {
-            blob_id: blob_id.into(),
-            content_type: "application/octet-stream".to_string(),
-            size_bytes: 0,
-            hash_sha256: hash_sha256.into(),
-            stored_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for content type
     pub fn with_content_type(mut self, content_type: impl Into<String>) -> Self {
         self.content_type = content_type.into();
@@ -95,15 +84,6 @@ impl BlobStoredPayload {
 }
 
 impl BlobRetrievedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(blob_id: impl Into<String>) -> Self {
-        Self {
-            blob_id: blob_id.into(),
-            retrieval_time_ms: 0,
-            cache_hit: false,
-        }
-    }
-
     /// Builder-style method for retrieval time
     pub fn with_retrieval_time_ms(mut self, time_ms: u64) -> Self {
         self.retrieval_time_ms = time_ms;
@@ -118,15 +98,6 @@ impl BlobRetrievedPayload {
 }
 
 impl BlobDeletedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(blob_id: impl Into<String>) -> Self {
-        Self {
-            blob_id: blob_id.into(),
-            deletion_reason: "cleanup".to_string(),
-            freed_bytes: 0,
-        }
-    }
-
     /// Builder-style method for deletion reason
     pub fn with_deletion_reason(mut self, reason: impl Into<String>) -> Self {
         self.deletion_reason = reason.into();
@@ -141,22 +112,6 @@ impl BlobDeletedPayload {
 }
 
 impl BlobIngestedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(
-        blob_id: impl Into<String>,
-        checksum_blake3: impl Into<String>,
-        filename: impl Into<String>,
-    ) -> Self {
-        Self {
-            blob_id: blob_id.into(),
-            size_bytes: 0,
-            mime_type: None,
-            checksum_blake3: checksum_blake3.into(),
-            deduplicated: false,
-            original_filename: filename.into(),
-        }
-    }
-
     /// Builder-style method for size
     pub fn with_size_bytes(mut self, size: i64) -> Self {
         self.size_bytes = size;
@@ -177,15 +132,6 @@ impl BlobIngestedPayload {
 }
 
 impl BlobVerifiedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(blob_id: impl Into<String>) -> Self {
-        Self {
-            blob_id: blob_id.into(),
-            verification_status: "verified".to_string(),
-            checksum_matched: true,
-        }
-    }
-
     /// Builder-style method for verification status
     pub fn with_verification_status(mut self, status: impl Into<String>) -> Self {
         self.verification_status = status.into();
@@ -200,16 +146,6 @@ impl BlobVerifiedPayload {
 }
 
 impl StorageStatisticsPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            total_blobs: 0,
-            total_size_bytes: 0,
-            failed_verifications: 0,
-            storage_backend: "git-annex".to_string(),
-        }
-    }
-
     /// Builder-style method for total blobs
     pub fn with_total_blobs(mut self, count: i64) -> Self {
         self.total_blobs = count;

@@ -3,7 +3,6 @@
 //! Tests that verify satellite communication, lifecycle, and coordination properties
 //! using modern Sinex infrastructure (NATS JetStream, TestContext, etc.)
 
-use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use serde_json::json;
 use sinex_core::db::models::RawEvent;

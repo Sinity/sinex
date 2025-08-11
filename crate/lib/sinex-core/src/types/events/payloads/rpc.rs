@@ -29,16 +29,6 @@ pub struct RpcPkmResponsePayload {
 }
 
 impl RpcContentResponsePayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(service: impl Into<String>) -> Self {
-        Self {
-            request_id: None,
-            response: None,
-            error: None,
-            service: service.into(),
-        }
-    }
-
     /// Builder-style method for request ID
     pub fn with_request_id(mut self, request_id: serde_json::Value) -> Self {
         self.request_id = Some(request_id);
@@ -62,16 +52,6 @@ impl RpcContentResponsePayload {
 }
 
 impl RpcPkmResponsePayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(service: impl Into<String>) -> Self {
-        Self {
-            request_id: None,
-            response: None,
-            error: None,
-            service: service.into(),
-        }
-    }
-
     /// Builder-style method for request ID
     pub fn with_request_id(mut self, request_id: serde_json::Value) -> Self {
         self.request_id = Some(request_id);

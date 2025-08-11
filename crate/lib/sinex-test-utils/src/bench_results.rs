@@ -140,8 +140,16 @@ impl BenchmarkRun {
     /// Save results to a file
     ///
     /// Results are saved to `target/benchmarks/{timestamp}-{branch}-{commit}.json`
+    /// with validated path operations for security.
     pub fn save(&self) -> Result<Utf8PathBuf> {
+        use crate::path_validation::validate_test_path;
+
         let dir = Utf8PathBuf::from("target/benchmarks");
+
+        // Validate the target directory path
+        validate_test_path(dir.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid benchmark directory path: {}", e))?;
+
         std::fs::create_dir_all(&dir)?;
 
         let filename = format!(
@@ -152,6 +160,11 @@ impl BenchmarkRun {
         );
 
         let path = dir.join(filename);
+
+        // Validate the final file path
+        validate_test_path(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid benchmark file path: {}", e))?;
+
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(&path, json)?;
 
@@ -159,7 +172,14 @@ impl BenchmarkRun {
     }
 
     /// Load results from a file
+    /// Path is validated for security before loading.
     pub fn load(path: &Utf8Path) -> Result<Self> {
+        use crate::path_validation::validate_test_path;
+
+        // Validate the file path before reading
+        validate_test_path(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid benchmark file path: {}", e))?;
+
         let json = std::fs::read_to_string(path)?;
         Ok(serde_json::from_str(&json)?)
     }

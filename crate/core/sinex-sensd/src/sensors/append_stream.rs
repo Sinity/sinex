@@ -5,6 +5,7 @@
 use crate::{
     config::SensorConfig,
     job_manager::SensorJob,
+    material_rotation::{MaterialRotationManager, RotationPolicy},
     temporal_ledger::{LedgerEntry, TemporalLedger},
 };
 use bytes::BytesMut;
@@ -39,14 +40,22 @@ impl AppendStreamSensor {
     ) -> Result<Ulid> {
         info!("Processing append_stream job for {}", job.target_path);
 
-        // Create material record
-        let material_id = temporal_ledger
-            .create_material(
-                "append_stream",
-                &job.target_path,
-                Some("application/octet-stream"),
-            )
-            .await?;
+        // Create rotation manager for continuous stream
+        let rotation_policy = RotationPolicy {
+            max_bytes: 10 * 1024 * 1024, // 10MB for sockets
+            max_age_seconds: 300,        // 5 minutes
+            overlap_duration_ms: 50,     // 50ms overlap
+        };
+
+        let rotation_manager = MaterialRotationManager::new(
+            temporal_ledger.clone(),
+            rotation_policy,
+            "append_stream".to_string(),
+            job.target_path.clone(),
+        );
+
+        // Get or create initial material (ensures zero-gap from start)
+        let mut current_material_id = rotation_manager.get_or_create_material().await?;
 
         // Connect to socket
         let mut stream = UnixStream::connect(&job.target_path)
@@ -72,9 +81,22 @@ impl AppendStreamSensor {
 
             let capture_end = Utc::now();
 
+            // Check if rotation is needed (maintains zero-gap invariant)
+            if let Some(new_material_id) = rotation_manager.check_rotation(total_bytes).await? {
+                info!(
+                    "Rotating material for {}: {} -> {}",
+                    job.target_path, current_material_id, new_material_id
+                );
+                current_material_id = new_material_id;
+                offset = 0; // Reset offset for new material
+            }
+
+            // Get current active material (handles rotation state)
+            let active_material = rotation_manager.get_active_material().await?;
+
             // Record ledger entry
             let entry = LedgerEntry {
-                material_id,
+                material_id: active_material,
                 offset_start: offset,
                 offset_end: offset + bytes_read as i64,
                 ts_capture_start: capture_start,
@@ -88,6 +110,11 @@ impl AppendStreamSensor {
 
             temporal_ledger.record_entry(entry).await?;
 
+            // Update rotation manager's byte counter
+            rotation_manager
+                .update_bytes_written(bytes_read as i64)
+                .await?;
+
             // Update offsets
             offset += bytes_read as i64;
             total_bytes += bytes_read as i64;
@@ -96,21 +123,25 @@ impl AppendStreamSensor {
             buffer.clear();
 
             debug!(
-                "Read {} bytes from {}, total: {}",
-                bytes_read, job.target_path, total_bytes
+                "Read {} bytes from {}, total: {}, material: {}",
+                bytes_read, job.target_path, total_bytes, active_material
+            );
+
+            // Verify zero-gap invariant is maintained
+            assert!(
+                rotation_manager.verify_zero_gap_invariant().await?,
+                "Zero-gap invariant violated!"
             );
         }
 
-        // Finalize material
-        temporal_ledger
-            .finalize_material(material_id, "completed", total_bytes)
-            .await?;
+        // Force final rotation to close the stream properly
+        let final_material = rotation_manager.force_rotation("stream_ended").await?;
 
         info!(
-            "Completed append_stream job for {}, {} bytes captured",
+            "Completed append_stream job for {}, {} bytes captured across materials",
             job.target_path, total_bytes
         );
 
-        Ok(material_id)
+        Ok(final_material)
     }
 }

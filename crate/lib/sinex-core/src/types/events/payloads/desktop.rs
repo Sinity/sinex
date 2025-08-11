@@ -40,15 +40,6 @@ pub struct WindowManagerHistoricalPayload {
 }
 
 impl DesktopMonitoringStartedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            clipboard_enabled: true,
-            window_manager_enabled: true,
-            start_time: Utc::now(),
-        }
-    }
-
     /// Builder-style method for clipboard enabled
     pub fn with_clipboard_enabled(mut self, enabled: bool) -> Self {
         self.clipboard_enabled = enabled;
@@ -69,16 +60,6 @@ impl DesktopMonitoringStartedPayload {
 }
 
 impl DesktopSnapshotPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default() -> Self {
-        Self {
-            active_watchers: 1,
-            clipboard_enabled: true,
-            window_manager_enabled: true,
-            snapshot_time: Utc::now(),
-        }
-    }
-
     /// Builder-style method for active watchers
     pub fn with_active_watchers(mut self, count: usize) -> Self {
         self.active_watchers = count;
@@ -105,15 +86,6 @@ impl DesktopSnapshotPayload {
 }
 
 impl ClipboardHistoricalPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(source: impl Into<String>) -> Self {
-        Self {
-            source: source.into(),
-            scan_type: "historical".to_string(),
-            note: "Test clipboard historical scan".to_string(),
-        }
-    }
-
     /// Builder-style method for scan type
     pub fn with_scan_type(mut self, scan_type: impl Into<String>) -> Self {
         self.scan_type = scan_type.into();
@@ -128,16 +100,6 @@ impl ClipboardHistoricalPayload {
 }
 
 impl WindowManagerHistoricalPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(source: impl Into<String>, wm_type: impl Into<String>) -> Self {
-        Self {
-            source: source.into(),
-            wm_type: wm_type.into(),
-            scan_type: "historical".to_string(),
-            note: "Test window manager historical scan".to_string(),
-        }
-    }
-
     /// Builder-style method for scan type
     pub fn with_scan_type(mut self, scan_type: impl Into<String>) -> Self {
         self.scan_type = scan_type.into();

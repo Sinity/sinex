@@ -34,6 +34,7 @@ use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_core::types::Timestamp;
 use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
+use sinex_satellite_sdk::error_helpers::{path_utils, processing_error};
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -41,6 +42,10 @@ use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 use tracing::{debug, error, info, warn};
+
+const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
+const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
+const DEFAULT_MAX_HISTORY_ENTRIES: usize = 1000;
 
 /// Rich clipboard content information
 #[derive(Debug, Clone)]
@@ -88,9 +93,9 @@ impl ClipboardWatcher {
             last_content: None,
             last_primary_content: None,
             clipboard_history: VecDeque::new(),
-            max_preview_length: 100,
-            max_content_size: 10 * 1024 * 1024, // 10MB
-            max_history_entries: 1000,
+            max_preview_length: DEFAULT_MAX_PREVIEW_LENGTH,
+            max_content_size: DEFAULT_MAX_CONTENT_SIZE,
+            max_history_entries: DEFAULT_MAX_HISTORY_ENTRIES,
             enable_primary_selection: true,
             enable_history: true,
             blob_manager: None,
@@ -129,9 +134,8 @@ impl ClipboardWatcher {
             .unwrap_or(false);
 
         if !wl_paste_available && !xclip_available {
-            return Err(sinex_satellite_sdk::SatelliteError::Processing(
-                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring"
-                    .to_string(),
+            return Err(processing_error(
+                "Neither wl-clipboard nor xclip found. Install one for clipboard monitoring",
             ));
         }
 
@@ -219,66 +223,10 @@ impl ClipboardWatcher {
         }
     }
 
+    /// Sanitize path component using core utilities
     /// Extract file paths from clipboard content
     fn extract_file_paths(&self, content: &str) -> Option<Vec<String>> {
-        if content.starts_with("file://") {
-            Some(
-                content
-                    .lines()
-                    .filter_map(|line| {
-                        line.strip_prefix("file://")
-                            .and_then(|p| urlencoding::decode(p).ok())
-                            .map(|p| {
-                                // Sanitize the path components
-                                let path_str = p.to_string();
-                                let path = std::path::Path::new(&path_str);
-                                if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                                    // Use sanitization but fall back to original if it fails
-                                    let sanitized_name =
-                                        sinex_core::types::sanitize_filename_component(filename)
-                                            .unwrap_or_else(|_| filename.to_string());
-                                    path.parent()
-                                        .map(|parent| {
-                                            parent
-                                                .join(&sanitized_name)
-                                                .to_string_lossy()
-                                                .to_string()
-                                        })
-                                        .unwrap_or_else(|| sanitized_name)
-                                } else {
-                                    path_str
-                                }
-                            })
-                    })
-                    .collect(),
-            )
-        } else if content.lines().all(|l| l.starts_with('/') || l.is_empty()) {
-            Some(
-                content
-                    .lines()
-                    .filter(|l| !l.is_empty())
-                    .map(|l| {
-                        // Sanitize the path components
-                        let path = std::path::Path::new(l);
-                        if let Some(filename) = path.file_name().and_then(|f| f.to_str()) {
-                            // Use sanitization but fall back to original if it fails
-                            let sanitized_name =
-                                sinex_core::types::sanitize_filename_component(filename)
-                                    .unwrap_or_else(|_| filename.to_string());
-                            path.parent()
-                                .map(|parent| {
-                                    parent.join(&sanitized_name).to_string_lossy().to_string()
-                                })
-                                .unwrap_or_else(|| sanitized_name)
-                        } else {
-                            l.to_string()
-                        }
-                    })
-                    .collect(),
-            )
-        } else {
-            None
-        }
+        path_utils::extract_file_paths(content)
     }
 
     /// Get active window application name
@@ -544,6 +492,38 @@ impl ClipboardWatcher {
         })
     }
 
+    /// Handle large content storage and return appropriate preview/metadata
+    async fn handle_large_content(
+        &self,
+        content: &ClipboardContent,
+    ) -> (Option<String>, Option<String>, Option<String>) {
+        if content.size_bytes <= self.max_content_size {
+            return (content.text_preview.clone(), None, None);
+        }
+
+        match self.store_large_content(&content.text, &content.hash).await {
+            Ok((key, id)) => {
+                info!(
+                    "Stored large content ({} bytes) in blob storage: {}",
+                    content.size_bytes, key
+                );
+                (
+                    Some("[Content stored in blob storage]".to_string()),
+                    Some(key),
+                    id,
+                )
+            }
+            Err(e) => {
+                error!("Failed to store large content: {}", e);
+                (
+                    Some("[Content too large - storage failed]".to_string()),
+                    None,
+                    None,
+                )
+            }
+        }
+    }
+
     /// Create rich clipboard changed event
     async fn create_clipboard_event(
         &self,
@@ -558,31 +538,7 @@ impl ClipboardWatcher {
         };
 
         // Handle large content with blob storage
-        let (text_preview, annex_key, blob_id) = if content.size_bytes > self.max_content_size {
-            match self.store_large_content(&content.text, &content.hash).await {
-                Ok((key, id)) => {
-                    info!(
-                        "Stored large clipboard content ({} bytes) in blob storage: {}",
-                        content.size_bytes, key
-                    );
-                    (
-                        Some("[Content stored in blob storage]".to_string()),
-                        Some(key),
-                        id,
-                    )
-                }
-                Err(e) => {
-                    error!("Failed to store large content in blob storage: {}", e);
-                    (
-                        Some("[Content too large - storage failed]".to_string()),
-                        None,
-                        None,
-                    )
-                }
-            }
-        } else {
-            (content.text_preview.clone(), None, None)
-        };
+        let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
 
         let file_count = content.file_paths.as_ref().map(|paths| paths.len());
 
@@ -620,34 +576,7 @@ impl ClipboardWatcher {
         };
 
         // Handle large content with blob storage
-        let (text_preview, annex_key, blob_id) = if content.size_bytes > self.max_content_size {
-            match self.store_large_content(&content.text, &content.hash).await {
-                Ok((key, id)) => {
-                    info!(
-                        "Stored large primary selection content ({} bytes) in blob storage: {}",
-                        content.size_bytes, key
-                    );
-                    (
-                        Some("[Content stored in blob storage]".to_string()),
-                        Some(key),
-                        id,
-                    )
-                }
-                Err(e) => {
-                    error!(
-                        "Failed to store large primary selection in blob storage: {}",
-                        e
-                    );
-                    (
-                        Some("[Content too large - storage failed]".to_string()),
-                        None,
-                        None,
-                    )
-                }
-            }
-        } else {
-            (content.text_preview.clone(), None, None)
-        };
+        let (text_preview, annex_key, blob_id) = self.handle_large_content(content).await;
 
         let event: RawEvent =
             Event::from_payload(sinex_core::types::events::ClipboardSelectedPayload {
@@ -667,83 +596,25 @@ impl ClipboardWatcher {
         Ok(event)
     }
 
+    /// Send event or warn if channel closed, returning whether to continue
+    fn send_event_or_warn(&self, tx: &mpsc::UnboundedSender<RawEvent>, event: RawEvent) -> bool {
+        if tx.send(event).is_err() {
+            warn!("Event channel closed");
+            false
+        } else {
+            true
+        }
+    }
+
     /// Check for clipboard changes with enhanced monitoring
     async fn check_clipboard_changes(
         &mut self,
         tx: &mpsc::UnboundedSender<RawEvent>,
     ) -> SatelliteResult<()> {
-        // Check main clipboard
-        if let Some(current_content) = self.get_clipboard_content().await {
-            let content_changed = match &self.last_content {
-                Some(last) => last.hash != current_content.hash,
-                None => true,
-            };
-
-            if content_changed {
-                debug!(
-                    "Clipboard changed: {} bytes, hash: {}, type: {}, app: {:?}",
-                    current_content.size_bytes,
-                    &current_content.hash[..8],
-                    current_content.content_type,
-                    current_content.source_app
-                );
-
-                let event = self
-                    .create_clipboard_event(&current_content, "copy")
-                    .await?;
-
-                if tx.send(event).is_err() {
-                    warn!("Event channel closed");
-                    return Ok(());
-                }
-
-                // Update history
-                self.update_history(
-                    current_content.hash.clone(),
-                    current_content.content_type.clone(),
-                );
-
-                self.last_content = Some(current_content);
-            }
-        }
-
-        // Check primary selection (Linux)
+        self.check_main_clipboard(tx).await?;
         if self.enable_primary_selection {
-            if let Some(current_primary) = self.get_primary_selection_content().await {
-                let primary_changed = match &self.last_primary_content {
-                    Some(last) => last.hash != current_primary.hash,
-                    None => true,
-                };
-
-                if primary_changed {
-                    debug!(
-                        "Primary selection changed: {} bytes, hash: {}, type: {}, app: {:?}",
-                        current_primary.size_bytes,
-                        &current_primary.hash[..8],
-                        current_primary.content_type,
-                        current_primary.source_app
-                    );
-
-                    let event = self
-                        .create_primary_selection_event(&current_primary)
-                        .await?;
-
-                    if tx.send(event).is_err() {
-                        warn!("Event channel closed");
-                        return Ok(());
-                    }
-
-                    // Update history
-                    self.update_history(
-                        current_primary.hash.clone(),
-                        current_primary.content_type.clone(),
-                    );
-
-                    self.last_primary_content = Some(current_primary);
-                }
-            }
+            self.check_primary_selection(tx).await?;
         }
-
         Ok(())
     }
 
@@ -764,5 +635,85 @@ impl ClipboardWatcher {
                 // Continue polling even if there's an error
             }
         }
+    }
+
+    /// Check main clipboard for changes
+    async fn check_main_clipboard(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
+        if let Some(current_content) = self.get_clipboard_content().await {
+            let content_changed = match &self.last_content {
+                Some(last) => last.hash != current_content.hash,
+                None => true,
+            };
+
+            if content_changed {
+                debug!(
+                    "Clipboard changed: {} bytes, hash: {}, type: {}, app: {:?}",
+                    current_content.size_bytes,
+                    &current_content.hash[..8],
+                    current_content.content_type,
+                    current_content.source_app
+                );
+
+                let event = self
+                    .create_clipboard_event(&current_content, "copy")
+                    .await?;
+
+                if !self.send_event_or_warn(tx, event) {
+                    return Ok(());
+                }
+
+                // Update history
+                self.update_history(
+                    current_content.hash.clone(),
+                    current_content.content_type.clone(),
+                );
+
+                self.last_content = Some(current_content);
+            }
+        }
+        Ok(())
+    }
+
+    /// Check primary selection for changes
+    async fn check_primary_selection(
+        &mut self,
+        tx: &mpsc::UnboundedSender<RawEvent>,
+    ) -> SatelliteResult<()> {
+        if let Some(current_primary) = self.get_primary_selection_content().await {
+            let primary_changed = match &self.last_primary_content {
+                Some(last) => last.hash != current_primary.hash,
+                None => true,
+            };
+
+            if primary_changed {
+                debug!(
+                    "Primary selection changed: {} bytes, hash: {}, type: {}, app: {:?}",
+                    current_primary.size_bytes,
+                    &current_primary.hash[..8],
+                    current_primary.content_type,
+                    current_primary.source_app
+                );
+
+                let event = self
+                    .create_primary_selection_event(&current_primary)
+                    .await?;
+
+                if !self.send_event_or_warn(tx, event) {
+                    return Ok(());
+                }
+
+                // Update history
+                self.update_history(
+                    current_primary.hash.clone(),
+                    current_primary.content_type.clone(),
+                );
+
+                self.last_primary_content = Some(current_primary);
+            }
+        }
+        Ok(())
     }
 }

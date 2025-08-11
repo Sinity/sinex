@@ -9,14 +9,11 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::models::{RawEvent, SystemHealthSummaryPayload};
+use sinex_core::db::models::RawEvent;
+use sinex_core::types::events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
-    nats_stream_consumer::{
-        BatchProcessingResult as NatsBatchProcessingResult, 
-        EventBatchProcessor as NatsEventBatchProcessor,
-        EventFilter as NatsEventFilter, 
-        NatsStreamConsumer},
+    redis_stream_consumer::BatchProcessingResult,
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -26,8 +23,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
-// Use HealthStatus and ComponentHealth from sinex_events
-use sinex_core::types::events::{HealthStatus, ComponentHealth};
+/// Health threshold constants
+const HEALTHY_THRESHOLD_MINUTES: i64 = 2;
+const DEGRADED_THRESHOLD_MINUTES: i64 = 5;
 
 /// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +37,7 @@ pub struct SystemHealthSummary {
     pub missing_components: u32,
     pub total_components: u32,
     pub last_updated: DateTime<Utc>,
-    pub components: HashMap<String, ComponentHealth>}
+    pub components: HashMap<String, ComponentHealth>,}
 
 /// Health Aggregator as a unified StatefulStreamProcessor
 pub struct HealthAggregator {
@@ -47,7 +45,7 @@ pub struct HealthAggregator {
     expected_components: Vec<String>,
     aggregation_window: Duration,
     component_health: Arc<Mutex<HashMap<String, ComponentHealth>>>,
-    last_summary_time: DateTime<Utc>}
+    last_summary_time: DateTime<Utc>,}
 
 impl HealthAggregator {
     pub fn new() -> Self {
@@ -103,6 +101,27 @@ impl HealthAggregator {
         Ok(())
     }
 
+    /// Create a scan report with common defaults
+    fn build_scan_report(
+        events_processed: u64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        checkpoint: Checkpoint,
+        target: &str,
+        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> ScanReport {
+        ScanReport {
+            events_processed,
+            duration: (end_time - start_time).to_std().unwrap_or_default(),
+            final_checkpoint: checkpoint,
+            time_range,
+            processor_stats: HashMap::new(),
+            successful_targets: vec![target.to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
     /// Generate health summary if enough time has passed
     async fn maybe_generate_summary(&mut self) -> SatelliteResult<Option<RawEvent>> {
         let now = Utc::now();
@@ -122,15 +141,15 @@ impl HealthAggregator {
             missing_components: 0,
             total_components: self.expected_components.len() as u32,
             last_updated: now,
-            components: health_map.clone()};
+            components: health_map.clone(),};
 
         // Check each expected component
         for expected in &self.expected_components {
             if let Some(health) = health_map.get(expected) {
                 let age = now - health.last_heartbeat;
-                if age < Duration::minutes(2) {
+                if age < Duration::minutes(HEALTHY_THRESHOLD_MINUTES) {
                     summary.healthy_components += 1;
-                } else if age < Duration::minutes(5) {
+                } else if age < Duration::minutes(DEGRADED_THRESHOLD_MINUTES) {
                     summary.degraded_components += 1;
                 } else {
                     summary.failed_components += 1;
@@ -148,7 +167,7 @@ impl HealthAggregator {
         }
 
         // Create synthesis event
-        let event: RawEvent = Event::from_payload(SystemHealthSummaryPayload {
+        let event: RawEvent = Event::new(SystemHealthSummaryPayload {
             overall_status: summary.overall_status,
             healthy_components: summary.healthy_components,
             degraded_components: summary.degraded_components,
@@ -170,57 +189,25 @@ impl HealthAggregator {
         Ok(Some(event))
     }
 
-    /// Get event filters for this automaton
-    fn event_filters() -> Vec<NatsEventFilter> {
-        vec![
-            NatsEventFilter {
-                sources: vec!["journald".to_string()],
-                event_types: vec!["satellite.heartbeat".to_string()],
-            },
-        ]
-    }
+    // TODO: Remove event_filters after NatsStreamConsumer removal
+    // /// Get event filters for this automaton
+    // fn event_filters() -> Vec<NatsEventFilter> {
+    //     vec![
+    //         NatsEventFilter {
+    //             sources: vec!["journald".to_string()],
+    //             event_types: vec!["satellite.heartbeat".to_string()],
+    //         },
+    //     ]
+    // }
 }
 
-#[async_trait]
-impl NatsEventBatchProcessor for HealthAggregator {
-    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
-        let mut successful_ids = Vec::new();
-        let mut failed_ids = Vec::new();
-        
-        for event in events {
-            let event_id = event.id.to_string();
-            
-            match self.process_heartbeat(&event).await {
-                Ok(_) => successful_ids.push(event_id),
-                Err(e) => {
-                    warn!("Failed to process heartbeat event {}: {}", event_id, e);
-                    failed_ids.push((event_id, e.to_string()));
-                }
-            }
-        }
-
-        // Check if we should generate a summary
-        if let Some(summary_event) = self.maybe_generate_summary().await? {
-            if let Some(ctx) = &self.context {
-                ctx.send_event(summary_event).await?;
-            }
-        }
-
-        Ok(NatsBatchProcessingResult {
-            processed: successful_ids.len(),
-            skipped: 0,
-            failed: failed_ids.len(),
-            duration: std::time::Duration::from_millis(0),
-            errors: failed_ids.into_iter().map(|(_, e)| e).collect(),
-        })
-    }
-
-    async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
-        Some(json!({
-            "last_summary_time": self.last_summary_time.to_rfc3339(),
-            "component_count": self.component_health.lock().await.len()}))
-    }
-}
+// TODO: Remove NatsEventBatchProcessor implementation after NatsStreamConsumer removal
+// #[async_trait]
+// impl NatsEventBatchProcessor for HealthAggregator {
+//     async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
+//         // ... implementation removed
+//     }
+// }
 
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
@@ -241,39 +228,17 @@ impl StatefulStreamProcessor for HealthAggregator {
 
         match until {
             TimeHorizon::Continuous => {
-                // Real-time processing from NATS JetStream
-                info!("Starting continuous health monitoring from NATS JetStream");
+                // TODO: Implement continuous health monitoring after NatsStreamConsumer removal
+                warn!("Health aggregator continuous mode not yet implemented after NatsStreamConsumer removal");
                 
-                let ctx = self.context.as_ref().ok_or_else(|| {
-                    SatelliteError::Processing("Health aggregator context not initialized".to_string())
-                })?;
-                
-                // Get JetStream client from context
-                let jetstream = ctx.nats_jetstream.as_ref().ok_or_else(|| {
-                    SatelliteError::Processing("NATS JetStream not initialized".to_string())
-                })?;
-                
-                let mut nats_consumer = NatsStreamConsumer::from_context(
-                    jetstream.clone(),
-                    "health-aggregator".to_string(),
-                    Self::event_filters(),
-                    ctx.checkpoint_manager.clone(),
-                );
-
-                // This will run indefinitely for continuous mode
-                let final_checkpoint = nats_consumer
-                    .consume_continuous(from, self, args.shutdown_signal)
-                    .await?;
-
-                Ok(ScanReport {
+                Ok(Self::build_scan_report(
                     events_processed,
-                    duration: Utc::now() - start_time,
-                    final_checkpoint: Some(final_checkpoint),
-                    time_range: Some((start_time, Utc::now())),
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["nats-jetstream".to_string()],
-                    failed_targets: HashMap::new(),
-                    warnings: Vec::new()})
+                    start_time,
+                    Utc::now(),
+                    from,
+                    "health-aggregator",
+                    Some((start_time, Utc::now())),
+                ))
             }
             TimeHorizon::Historical { end_time } => {
                 // Query historical events from PostgreSQL
@@ -323,15 +288,14 @@ impl StatefulStreamProcessor for HealthAggregator {
                     from.clone()
                 };
 
-                Ok(ScanReport {
+                Ok(Self::build_scan_report(
                     events_processed,
-                    duration: Utc::now() - start_time,
-                    final_checkpoint: Some(final_checkpoint),
-                    time_range: Some((start_time, end_time)),
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["postgresql".to_string()],
-                    failed_targets: HashMap::new(),
-                    warnings: Vec::new()})
+                    start_time,
+                    Utc::now(),
+                    final_checkpoint,
+                    "postgresql",
+                    Some((start_time, end_time)),
+                ))
             }
             TimeHorizon::Snapshot => {
                 // Generate immediate health snapshot
@@ -344,15 +308,14 @@ impl StatefulStreamProcessor for HealthAggregator {
                     }
                 }
 
-                Ok(ScanReport {
+                Ok(Self::build_scan_report(
                     events_processed,
-                    duration: Utc::now() - start_time,
-                    final_checkpoint: Some(Checkpoint::None),
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["snapshot".to_string()],
-                    failed_targets: HashMap::new(),
-                    warnings: Vec::new()})
+                    start_time,
+                    Utc::now(),
+                    Checkpoint::None,
+                    "snapshot",
+                    None,
+                ))
             }
         }
     }
@@ -369,6 +332,48 @@ impl StatefulStreamProcessor for HealthAggregator {
         Ok(Checkpoint::Timestamp {
             timestamp: self.last_summary_time,
             metadata: self.get_checkpoint_data().await})
+    }
+
+    async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<BatchProcessingResult> {
+        let mut successful_ids = Vec::new();
+        let mut failed_ids = Vec::new();
+        let mut synthesis_events = Vec::new();
+
+        for event in events {
+            match self.process_heartbeat(&event).await {
+                Ok(_) => {
+                    successful_ids.push(event.event_id);
+                }
+                Err(e) => {
+                    warn!("Failed to process heartbeat event {}: {}", event.event_id, e);
+                    failed_ids.push((event.event_id, e.to_string()));
+                }
+            }
+        }
+
+        // Check if we should generate a health summary
+        if let Ok(Some(summary_event)) = self.maybe_generate_summary().await {
+            synthesis_events.push(summary_event);
+        }
+
+        Ok(BatchProcessingResult {
+            successful_ids,
+            failed_ids,
+            synthesis_events,
+        })
+    }
+
+    async fn get_checkpoint_data(&self) -> Option<serde_json::Value> {
+        let health_map = self.component_health.try_lock().ok()?;
+        
+        let checkpoint_data = serde_json::json!({
+            "last_summary_time": self.last_summary_time,
+            "expected_components": self.expected_components,
+            "component_health": *health_map,
+            "aggregation_window_minutes": self.aggregation_window.num_minutes()
+        });
+        
+        Some(checkpoint_data)
     }
 }
 

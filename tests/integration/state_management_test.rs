@@ -9,7 +9,7 @@
 use color_eyre::eyre::Result;
 use chrono::{DateTime, Duration, Utc};
 use serde_json::json;
-use sinex_core::db::repositories::{DbPoolExt, checkpoints::CheckpointInput, state::{NewOperation, OperationType, OperationResult}};
+use sinex_core::db::repositories::{DbPoolExt, checkpoints::CheckpointInput, state::Operation};
 use sinex_test_utils::prelude::*;
 use sinex_core::types::domain::ProcessorName;
 use sinex_core::types::Id;
@@ -30,19 +30,30 @@ async fn test_checkpoint_operation_consistency(ctx: TestContext) -> Result<()> {
     let saved_checkpoint = state_repo.save_checkpoint(checkpoint).await?;
     
     // Log operation for checkpoint creation
-    let operation = NewOperation {
-        operation_type: OperationType::CheckpointCreated,
-        performed_by: "state-manager".to_string(),
-        target_type: Some("checkpoints".to_string()),
-        target_id: Some(saved_checkpoint.id.to_string()),
-        description: format!("Created checkpoint for processor {}", processor_name.as_ref()),
-        metadata: Some(json!({ 
-            "processor_name": processor_name.as_ref(),
-            "checkpoint_version": saved_checkpoint.checkpoint_version 
+    let operation = Operation {
+        id: None,
+        actor: "state-manager".to_string(),
+        scope: json!({
+            "operation_type": "CheckpointCreated",
+            "target_type": "checkpoints",
+            "target_id": saved_checkpoint.id.to_string(),
+            "processor_name": processor_name.as_ref()
+        }),
+        state: Some("completed".to_string()),
+        preview_summary: Some(json!({ 
+            "description": format!("Created checkpoint for processor {}", processor_name.as_ref()),
+            "checkpoint_version": saved_checkpoint.checkpoint_version,
+            "duration_ms": 25
         })),
-        result: OperationResult::Success,
-        error_message: None,
-        duration_ms: Some(25),
+        checkpoint: None,
+        approved_by: None,
+        approved_at: None,
+        executor_node: None,
+        started_at: Some(Utc::now()),
+        finished_at: Some(Utc::now()),
+        outcome: Some("success".to_string()),
+        error_details: None,
+        created_at: Utc::now(),
     };
     
     let logged_operation = state_repo.log_operation(operation).await?;

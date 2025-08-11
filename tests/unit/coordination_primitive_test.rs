@@ -5,7 +5,6 @@
 //! - Thresholds, reset behaviors, atomic operations
 //! - Backwards compatibility with EventCounter/ProgressTracker patterns
 
-use color_eyre::eyre::Result;
 use sinex_core::types::utils::CoordinationPrimitive;
 use sinex_test_utils::prelude::*;
 use std::sync::Arc;

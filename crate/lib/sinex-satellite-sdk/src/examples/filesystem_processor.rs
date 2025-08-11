@@ -17,7 +17,6 @@ use crate::{
 use async_trait::async_trait;
 use camino::{Utf8Path, Utf8PathBuf};
 use chrono::{DateTime, Utc};
-use color_eyre::eyre;
 use serde::{Deserialize, Serialize};
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::domain::SanitizedPath;
@@ -139,7 +138,7 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::from_payload(sinex_core::events::FileDiscoveredPayload {
+                    Event::new(sinex_core::events::FileDiscoveredPayload {
                         path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         size: metadata.len(),
                         modified_at: modified_time,
@@ -157,7 +156,7 @@ impl FilesystemProcessor {
                         })
                         .unwrap_or_else(Utc::now);
 
-                    Event::from_payload(sinex_core::events::DirDiscoveredPayload {
+                    Event::new(sinex_core::events::DirDiscoveredPayload {
                         path: SanitizedPath::from(entry_path.to_string_lossy().to_string()),
                         modified_at: modified_time,
                     })

@@ -1,8 +1,9 @@
 //! Search service for querying events and content
 
 use crate::error::ServiceResult;
+use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
 use serde::{Deserialize, Serialize};
-use sinex_core::db::DbPool;
+use sinex_core::db::{schema::Events, seaquery_helpers::SeaQueryUlidExt, DbPool};
 use sinex_core::types::ulid::Ulid;
 use sqlx::types::chrono::{DateTime, Utc};
 
@@ -27,6 +28,17 @@ pub struct SearchResult {
     pub score: f64,
 }
 
+/// Database row for search query results
+#[derive(Debug, sqlx::FromRow)]
+struct SearchResultRow {
+    event_id: Option<String>,
+    source: String,
+    event_type: String,
+    ts_ingest: DateTime<Utc>,
+    payload: serde_json::Value,
+    score: f64,
+}
+
 pub struct SearchService {
     pool: DbPool,
 }
@@ -36,119 +48,186 @@ impl SearchService {
         Self { pool }
     }
 
-    /// Search events based on criteria
+    /// Search events based on criteria using SeaQuery for type safety
     pub async fn search_events(&self, query: SearchQuery) -> ServiceResult<Vec<SearchResult>> {
-        let mut sql = String::from(
-            r#"
-            SELECT 
-                id::text as event_id,
-                source,
-                event_type,
-                ts_ingest,
-                payload,
-                1.0 as score
-            FROM core.events
-            WHERE 1=1
-            "#,
-        );
+        // Build dynamic query using SeaQuery for type safety and SQL injection prevention
+        let mut select_query = Query::select()
+            .expr_as(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::ID),
+                ))
+                .cast_as(Alias::new("text")),
+                Alias::new("event_id"),
+            )
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::SOURCE),
+            ))
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::EVENT_TYPE),
+            ))
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::TS_INGEST),
+            ))
+            .column((
+                Alias::new(Events::SCHEMA),
+                Alias::new(Events::TABLE),
+                Alias::new(Events::PAYLOAD),
+            ))
+            .expr_as(Expr::val(1.0_f64), Alias::new("score"))
+            .from((Alias::new(Events::SCHEMA), Alias::new(Events::TABLE)))
+            .to_owned();
 
-        let mut params: Vec<String> = Vec::new();
-        let mut param_count = 0;
-
-        // Add source filter
+        // Add source filter using proper parameterization
         if !query.sources.is_empty() {
-            param_count += 1;
-            sql.push_str(&format!(" AND source = ANY(${})", param_count));
-            params.push(format!("{{{}}}", query.sources.join(",")));
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::SOURCE),
+                ))
+                .is_in(query.sources.iter().cloned()),
+            );
         }
 
-        // Add event type filter
+        // Add event type filter using proper parameterization
         if !query.event_types.is_empty() {
-            param_count += 1;
-            sql.push_str(&format!(" AND event_type = ANY(${})", param_count));
-            params.push(format!("{{{}}}", query.event_types.join(",")));
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::EVENT_TYPE),
+                ))
+                .is_in(query.event_types.iter().cloned()),
+            );
         }
 
-        // Add time range filter
+        // Add time range filters with proper type handling
         if let Some(start) = query.start_time {
-            param_count += 1;
-            sql.push_str(&format!(" AND ts_ingest >= ${}", param_count));
-            params.push(start.to_rfc3339());
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::TS_INGEST),
+                ))
+                .gte(start),
+            );
         }
 
         if let Some(end) = query.end_time {
-            param_count += 1;
-            sql.push_str(&format!(" AND ts_ingest <= ${}", param_count));
-            params.push(end.to_rfc3339());
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::TS_INGEST),
+                ))
+                .lte(end),
+            );
         }
 
-        // Add text search if provided
+        // Add text search with proper parameterization (SeaQuery prevents SQL injection)
         if let Some(text) = &query.text {
-            param_count += 1;
-            sql.push_str(&format!(" AND payload::text ILIKE ${}", param_count));
-            params.push(format!("%{}%", text));
+            select_query.and_where(
+                Expr::col((
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::PAYLOAD),
+                ))
+                .cast_as(Alias::new("text"))
+                .ilike(Expr::val(format!("%{}%", text))),
+            );
         }
 
         // Add ordering and limits
-        sql.push_str(" ORDER BY ts_ingest DESC");
-        sql.push_str(&format!(" LIMIT {} OFFSET {}", query.limit, query.offset));
+        select_query
+            .order_by(
+                (
+                    Alias::new(Events::SCHEMA),
+                    Alias::new(Events::TABLE),
+                    Alias::new(Events::TS_INGEST),
+                ),
+                sea_query::Order::Desc,
+            )
+            .limit(query.limit as u64)
+            .offset(query.offset as u64);
 
-        // Execute the dynamic query
-        // Note: This is a simplified version. In production, you'd use
-        // a query builder or more sophisticated full-text search
-        let rows = sqlx::query_as::<
-            _,
-            (
-                Option<String>,
-                String,
-                String,
-                DateTime<Utc>,
-                serde_json::Value,
-                f64,
-            ),
-        >(&sql)
-        .fetch_all(&self.pool)
-        .await?;
+        // Build the SQL query
+        let (sql, _values) = select_query.build(PostgresQueryBuilder);
+
+        // Execute the type-safe query using the dedicated struct
+        let rows = sqlx::query_as::<_, SearchResultRow>(&sql)
+            .fetch_all(&self.pool)
+            .await?;
 
         let results = rows
             .into_iter()
-            .filter_map(
-                |(event_id, source, event_type, timestamp, payload, score)| {
-                    event_id
-                        .and_then(|id| id.parse::<Ulid>().ok())
-                        .map(|ulid| SearchResult {
-                            event_id: ulid,
-                            source,
-                            event_type,
-                            timestamp,
-                            snippet: Self::extract_snippet(&payload, query.text.as_deref()),
-                            score,
-                        })
-                },
-            )
+            .filter_map(|row| {
+                row.event_id
+                    .and_then(|id| id.parse::<Ulid>().ok())
+                    .map(|ulid| SearchResult {
+                        event_id: ulid,
+                        source: row.source,
+                        event_type: row.event_type,
+                        timestamp: row.ts_ingest,
+                        snippet: Self::extract_snippet(&row.payload, query.text.as_deref()),
+                        score: row.score,
+                    })
+            })
             .collect();
 
         Ok(results)
     }
 
-    /// Extract a text snippet from the payload
+    /// Extract a text snippet from the payload with UTF-8 safe truncation
     fn extract_snippet(payload: &serde_json::Value, search_text: Option<&str>) -> String {
         let payload_str = serde_json::to_string_pretty(payload).unwrap_or_default();
 
         if let Some(text) = search_text {
             // Find the search text and return surrounding context
             if let Some(pos) = payload_str.to_lowercase().find(&text.to_lowercase()) {
-                let start = pos.saturating_sub(50);
-                let end = (pos + text.len() + 50).min(payload_str.len());
-                return format!("...{}...", &payload_str[start..end]);
+                return Self::safe_substring_with_context(&payload_str, pos, text.len(), 50);
             }
         }
 
         // Return first 150 chars if no search text or not found
-        if payload_str.len() > 150 {
-            format!("{}...", &payload_str[..150])
+        Self::safe_truncate(&payload_str, 150)
+    }
+
+    /// Safely truncate a string at UTF-8 character boundaries
+    fn safe_truncate(s: &str, max_chars: usize) -> String {
+        if s.chars().count() <= max_chars {
+            s.to_string()
         } else {
-            payload_str
+            let truncated: String = s.chars().take(max_chars).collect();
+            format!("{}...", truncated)
         }
+    }
+
+    /// Safely extract substring with context around a match position
+    fn safe_substring_with_context(
+        s: &str,
+        match_pos: usize,
+        match_len: usize,
+        context_chars: usize,
+    ) -> String {
+        let chars: Vec<char> = s.chars().collect();
+        let total_chars = chars.len();
+
+        // Convert byte position to character position (approximately)
+        let char_pos = s[..match_pos].chars().count();
+        let match_char_len = s[match_pos..match_pos + match_len].chars().count();
+
+        let start = char_pos.saturating_sub(context_chars);
+        let end = (char_pos + match_char_len + context_chars).min(total_chars);
+
+        let substring: String = chars[start..end].iter().collect();
+        format!("...{}...", substring)
     }
 }

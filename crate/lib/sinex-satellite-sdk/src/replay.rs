@@ -271,10 +271,12 @@ impl ReplayManager {
                             .filter(|event: &RawEvent| {
                                 let type_matches =
                                     event_types.iter().any(|t| t == event.event_type.as_str());
-                                let start_matches =
-                                    start_time.map_or(true, |start| event.ts_ingest >= start);
-                                let end_matches =
-                                    end_time.map_or(true, |end| event.ts_ingest <= end);
+                                let start_matches = start_time.map_or(true, |start| {
+                                    event.ts_orig.as_ref().map_or(false, |ts| *ts >= start)
+                                });
+                                let end_matches = end_time.map_or(true, |end| {
+                                    event.ts_orig.as_ref().map_or(false, |ts| *ts <= end)
+                                });
                                 type_matches && start_matches && end_matches
                             })
                             .collect()
@@ -440,13 +442,13 @@ impl ReplayManager {
 
         // Check time range
         if let Some(start_time) = filters.start_time {
-            if event.ts_ingest < start_time {
+            if event.ts_orig.as_ref().map_or(false, |ts| *ts < start_time) {
                 return false;
             }
         }
 
         if let Some(end_time) = filters.end_time {
-            if event.ts_ingest > end_time {
+            if event.ts_orig.as_ref().map_or(false, |ts| *ts > end_time) {
                 return false;
             }
         }

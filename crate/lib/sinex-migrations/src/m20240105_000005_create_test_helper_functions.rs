@@ -5,7 +5,12 @@ pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
-    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn up(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // NOTE: These functions are commented out as they use the old operations_log schema
+        // The new operations_log has a completely different structure (actor, scope, state, etc.)
+        // These test helpers need to be rewritten for the new schema
+
+        /*
         // Start an operation and return its ID
         manager
             .get_connection()
@@ -20,7 +25,7 @@ impl MigrationTrait for Migration {
                     v_operation_id ULID;
                 BEGIN
                     v_operation_id := gen_ulid();
-                    
+
                     INSERT INTO core.operations_log (
                         operation_id,
                         operation_type,
@@ -36,7 +41,7 @@ impl MigrationTrait for Migration {
                         p_parameters,
                         'success'      -- Initial status
                     );
-                    
+
                     RETURN v_operation_id;
                 END;
                 $$ LANGUAGE plpgsql;
@@ -100,16 +105,16 @@ impl MigrationTrait for Migration {
                     RETURN QUERY
                     WITH RECURSIVE dependent_events AS (
                         -- Base case: the starting event
-                        SELECT 
+                        SELECT
                             e.event_id::uuid AS event_id,
                             0 AS dependency_depth
                         FROM core.events e
                         WHERE e.event_id::uuid = p_event_id
-                        
+
                         UNION ALL
-                        
+
                         -- Recursive case: find events that reference this event
-                        SELECT 
+                        SELECT
                             e.event_id::uuid AS event_id,
                             de.dependency_depth + 1
                         FROM core.events e
@@ -136,17 +141,17 @@ impl MigrationTrait for Migration {
                     RETURN QUERY
                     WITH RECURSIVE root_events AS (
                         -- Base case: the starting event
-                        SELECT 
+                        SELECT
                             e.event_id::uuid AS event_id,
                             e.source_event_ids,
                             0 AS dependency_depth
                         FROM core.events e
                         WHERE e.event_id::uuid = p_event_id
-                        
+
                         UNION ALL
-                        
+
                         -- Recursive case: find source events
-                        SELECT 
+                        SELECT
                             e.event_id::uuid AS event_id,
                             e.source_event_ids,
                             re.dependency_depth + 1
@@ -169,7 +174,7 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 r#"
                 CREATE OR REPLACE VIEW core.operations_log_compat AS
-                SELECT 
+                SELECT
                     operation_id,
                     operation_ts AS started_at,
                     operation_ts + (COALESCE(duration_ms, 0) || ' milliseconds')::interval AS completed_at,
@@ -184,11 +189,13 @@ impl MigrationTrait for Migration {
                 "#,
             )
             .await?;
+        */
 
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        /*
         // Drop view
         manager
             .get_connection()
@@ -212,6 +219,7 @@ impl MigrationTrait for Migration {
                 "#,
             )
             .await?;
+        */
 
         Ok(())
     }

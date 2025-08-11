@@ -2,11 +2,9 @@
 //!
 //! Basic tests to verify the test infrastructure is working
 
-use color_eyre::eyre::eyre;
 use serde_json::json;
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::types::{Id, Ulid};
+use sinex_core::types::domain::EventSource;
+use sinex_core::types::Ulid;
 use sinex_test_utils::prelude::*;
 
 #[sinex_test]

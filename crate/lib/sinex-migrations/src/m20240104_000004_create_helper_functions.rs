@@ -25,8 +25,8 @@ impl MigrationTrait for Migration {
                         WITH archived AS (
                             DELETE FROM core.events
                             WHERE ts_ingest < cutoff_date
-                              AND event_id IN (
-                                  SELECT event_id 
+                              AND id IN (
+                                  SELECT id 
                                   FROM core.events 
                                   WHERE ts_ingest < cutoff_date 
                                   LIMIT batch_size
@@ -36,9 +36,9 @@ impl MigrationTrait for Migration {
                             INSERT INTO core.archived_events
                             SELECT *, NOW(), 'age_based_archival'
                             FROM archived
-                            RETURNING event_id
+                            RETURNING id
                         )
-                        SELECT COUNT(*), MAX(event_id) INTO batch_count, last_id
+                        SELECT COUNT(*), MAX(id) INTO batch_count, last_id
                         FROM inserted;
                         
                         -- Update totals
@@ -78,26 +78,26 @@ impl MigrationTrait for Migration {
                     -- Base case: the starting event
                     SELECT 
                         0 as level,
-                        e.event_id,
+                        e.id,
                         e.event_type,
                         e.source,
                         e.ts_orig,
                         e.source_event_ids as parent_event_ids
                     FROM core.events e
-                    WHERE e.event_id = start_event_id
+                    WHERE e.id = start_event_id
                     
                     UNION ALL
                     
                     -- Recursive case: parent events
                     SELECT 
                         l.level + 1,
-                        e.event_id,
+                        e.id,
                         e.event_type,
                         e.source,
                         e.ts_orig,
                         e.source_event_ids as parent_event_ids
                     FROM lineage l
-                    JOIN core.events e ON e.event_id = ANY(l.parent_event_ids)
+                    JOIN core.events e ON e.id = ANY(l.parent_event_ids)
                     WHERE l.level < max_depth
                       AND l.parent_event_ids IS NOT NULL
                 )
@@ -167,7 +167,7 @@ impl MigrationTrait for Migration {
                     INTO event_record
                     FROM core.events e
                     LEFT JOIN sinex_schemas.event_payload_schemas s ON e.payload_schema_id = s.id
-                    WHERE e.event_id = event_id_param;
+                    WHERE e.id = event_id_param;
                     
                     IF NOT FOUND THEN
                         RAISE EXCEPTION 'Event % not found', event_id_param;
@@ -249,7 +249,7 @@ impl MigrationTrait for Migration {
                     SELECT e.ts_orig, e.ts_ingest, e.host, e.source
                     INTO ref_event
                     FROM core.events e
-                    WHERE e.event_id = reference_event_id;
+                    WHERE e.id = reference_event_id;
                     
                     IF NOT FOUND THEN
                         RAISE EXCEPTION 'Reference event % not found', reference_event_id;
@@ -260,7 +260,7 @@ impl MigrationTrait for Migration {
                         SELECT COALESCE(ref_event.ts_orig, ref_event.ts_ingest) as ref_time
                     )
                     SELECT 
-                        e.event_id,
+                        e.id,
                         e.event_type,
                         e.source,
                         e.ts_orig,
@@ -271,7 +271,7 @@ impl MigrationTrait for Migration {
                             ELSE 0.5
                         END * (1.0 - LEAST(1.0, ABS(EXTRACT(EPOCH FROM (COALESCE(e.ts_orig, e.ts_ingest) - time_ref.ref_time))) / EXTRACT(EPOCH FROM time_window))) as relevance_score
                     FROM core.events e, time_ref
-                    WHERE e.event_id != reference_event_id
+                    WHERE e.id != reference_event_id
                       AND COALESCE(e.ts_orig, e.ts_ingest) BETWEEN time_ref.ref_time - time_window AND time_ref.ref_time + time_window
                       AND (NOT same_host_only OR e.host = ref_event.host)
                     ORDER BY relevance_score DESC, ABS(EXTRACT(EPOCH FROM time_diff));

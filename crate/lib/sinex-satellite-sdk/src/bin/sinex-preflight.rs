@@ -405,7 +405,7 @@ async fn record_verification_result(report: &VerificationReport) -> Result<()> {
         "custom_metrics": serde_json::to_value(report)?
     });
 
-    let new_event: RawEvent = Event::from_payload(sinex_core::events::ProcessHeartbeatPayload {
+    let new_event: RawEvent = Event::new(sinex_core::events::ProcessHeartbeatPayload {
         source: "sinex-preflight".to_string(),
         sequence: 1, // Single heartbeat for verification result
         status: status_str.to_string(),
@@ -540,7 +540,7 @@ async fn generate_verification_report(
             for verification in &recent_verifications {
                 println!(
                     "  {} - {} ({})",
-                    verification.ts_ingest.to_string(),
+                    verification.ts_orig.to_string(),
                     verification
                         .payload
                         .get("health_status")

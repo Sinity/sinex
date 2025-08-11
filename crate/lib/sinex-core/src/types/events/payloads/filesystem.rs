@@ -70,16 +70,6 @@ pub struct DirDiscoveredPayload {
 }
 
 impl FileCreatedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            size: 0,
-            created_at: Utc::now(),
-            permissions: Some(0o644),
-        }
-    }
-
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
@@ -100,16 +90,6 @@ impl FileCreatedPayload {
 }
 
 impl FileModifiedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            size: 0,
-            modified_at: Utc::now(),
-            modification_type: "content".to_string(),
-        }
-    }
-
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
@@ -130,14 +110,6 @@ impl FileModifiedPayload {
 }
 
 impl FileDeletedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            deleted_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for deleted_at timestamp
     pub fn with_deleted_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.deleted_at = timestamp;
@@ -146,15 +118,6 @@ impl FileDeletedPayload {
 }
 
 impl FileMovedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(old_path: impl Into<String>, new_path: impl Into<String>) -> Self {
-        Self {
-            old_path: SanitizedPath::new_unchecked(old_path.into()),
-            new_path: SanitizedPath::new_unchecked(new_path.into()),
-            moved_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for moved_at timestamp
     pub fn with_moved_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.moved_at = timestamp;
@@ -163,14 +126,6 @@ impl FileMovedPayload {
 }
 
 impl DirCreatedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            created_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for created_at timestamp
     pub fn with_created_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.created_at = timestamp;
@@ -179,14 +134,6 @@ impl DirCreatedPayload {
 }
 
 impl DirDeletedPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            deleted_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for deleted_at timestamp
     pub fn with_deleted_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.deleted_at = timestamp;
@@ -195,16 +142,6 @@ impl DirDeletedPayload {
 }
 
 impl FileDiscoveredPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            size: 0,
-            modified_at: Utc::now(),
-            permissions: Some(0o644),
-        }
-    }
-
     /// Builder-style method for size
     pub fn with_size(mut self, size: u64) -> Self {
         self.size = size;
@@ -225,14 +162,6 @@ impl FileDiscoveredPayload {
 }
 
 impl DirDiscoveredPayload {
-    /// Create a test payload with sensible defaults
-    pub fn test_default(path: impl Into<String>) -> Self {
-        Self {
-            path: SanitizedPath::new_unchecked(path.into()),
-            modified_at: Utc::now(),
-        }
-    }
-
     /// Builder-style method for modified_at timestamp
     pub fn with_modified_at(mut self, timestamp: DateTime<Utc>) -> Self {
         self.modified_at = timestamp;

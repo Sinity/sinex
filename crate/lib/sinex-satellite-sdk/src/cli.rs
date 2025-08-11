@@ -9,7 +9,9 @@ use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};
 use serde::{Deserialize, Serialize};
+use sinex_core::types::domain::SanitizedPath;
 use std::collections::HashMap;
+use std::str::FromStr;
 use tracing::info;
 
 /// Standard CLI arguments for all stream processor satellites
@@ -21,8 +23,8 @@ use tracing::info;
 )]
 pub struct ProcessorCli {
     /// Socket path for ingestd communication
-    #[arg(long, default_value = "/tmp/sinex-ingestd.sock")]
-    pub ingest_socket_path: String,
+    #[arg(long, default_value = "/tmp/sinex-ingestd.sock", value_parser = validate_socket_path)]
+    pub ingest_socket_path: SanitizedPath,
 
     /// Database connection URL
     #[arg(long, env = "DATABASE_URL")]
@@ -33,8 +35,8 @@ pub struct ProcessorCli {
     pub service_name: Option<String>,
 
     /// Working directory for temporary files
-    #[arg(long)]
-    pub work_dir: Option<Utf8PathBuf>,
+    #[arg(long, value_parser = validate_work_dir)]
+    pub work_dir: Option<SanitizedPath>,
 
     /// Enable verbose logging
     #[arg(short, long, action = clap::ArgAction::Count)]
@@ -85,8 +87,8 @@ pub enum ProcessorCommand {
         until: String,
 
         /// Targets to scan (paths, filters, etc.)
-        #[arg(long)]
-        targets: Vec<String>,
+        #[arg(long, value_parser = validate_scan_target)]
+        targets: Vec<SanitizedPath>,
 
         /// Enable dry-run mode (don't emit events)
         #[arg(long)]
@@ -128,47 +130,116 @@ pub enum ProcessorCommand {
         limit: u64,
 
         /// Export data to file
-        #[arg(long)]
-        export_to: Option<Utf8PathBuf>,
+        #[arg(long, value_parser = validate_export_path)]
+        export_to: Option<SanitizedPath>,
     },
+}
+
+/// Parse checkpoint as JSON
+fn parse_checkpoint_json(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+    serde_json::from_str::<serde_json::Value>(checkpoint_str)
+        .and_then(|v| serde_json::from_value::<Checkpoint>(v))
+        .context("Invalid checkpoint JSON")
+}
+
+/// Parse checkpoint as timestamp
+fn parse_checkpoint_timestamp(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
+    checkpoint_str
+        .parse::<DateTime<Utc>>()
+        .map(|ts| Checkpoint::timestamp(ts, None))
+        .context("Invalid timestamp format")
+}
+
+/// Parse checkpoint as stream ID
+fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
+    Checkpoint::stream(checkpoint_str, None)
 }
 
 /// Parse checkpoint from string representation
 pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
-    match checkpoint_str.to_lowercase().as_str() {
-        "none" | "start" => Ok(Checkpoint::None),
-        _ => {
-            // Try to parse as JSON first
-            if let Ok(value) = serde_json::from_str::<serde_json::Value>(checkpoint_str) {
-                serde_json::from_value::<Checkpoint>(value).context("Invalid checkpoint JSON")
-            } else if let Ok(timestamp) = checkpoint_str.parse::<DateTime<Utc>>() {
-                // Parse as ISO timestamp
-                Ok(Checkpoint::timestamp(timestamp, None))
-            } else {
-                // Treat as stream message ID
-                Ok(Checkpoint::stream(checkpoint_str, None))
-            }
-        }
+    if matches!(
+        checkpoint_str,
+        "none" | "start" | "None" | "Start" | "NONE" | "START"
+    ) {
+        Ok(Checkpoint::None)
+    } else {
+        parse_checkpoint_json(checkpoint_str)
+            .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
+            .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)))
     }
+}
+
+/// Validate and parse socket path argument
+pub fn validate_socket_path(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Socket path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
+}
+
+/// Validate and parse working directory argument
+pub fn validate_work_dir(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Working directory path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
+}
+
+/// Validate and parse scan target path
+pub fn validate_scan_target(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Scan target path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
+}
+
+/// Validate and parse export file path
+pub fn validate_export_path(s: &str) -> Result<SanitizedPath, String> {
+    if s.is_empty() {
+        return Err("Export path cannot be empty".to_string());
+    }
+    SanitizedPath::from_str(s)
 }
 
 /// Parse time horizon from string representation
 pub fn parse_time_horizon(horizon_str: &str) -> eyre::Result<TimeHorizon> {
-    match horizon_str.to_lowercase().as_str() {
-        "continuous" | "stream" | "sensor" => Ok(TimeHorizon::Continuous),
-        "snapshot" | "current" | "now" => Ok(TimeHorizon::Snapshot),
-        _ => {
-            // Try to parse as ISO timestamp for historical scan
-            horizon_str
-                .parse::<DateTime<Utc>>()
-                .map(|dt| TimeHorizon::Historical { end_time: dt })
-                .with_context(|| {
-                    format!(
-                        "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp",
-                        horizon_str
-                    )
-                })
-        }
+    if matches!(
+        horizon_str,
+        "continuous"
+            | "stream"
+            | "sensor"
+            | "Continuous"
+            | "Stream"
+            | "Sensor"
+            | "CONTINUOUS"
+            | "STREAM"
+            | "SENSOR"
+    ) {
+        Ok(TimeHorizon::Continuous)
+    } else if matches!(
+        horizon_str,
+        "snapshot"
+            | "current"
+            | "now"
+            | "Snapshot"
+            | "Current"
+            | "Now"
+            | "SNAPSHOT"
+            | "CURRENT"
+            | "NOW"
+    ) {
+        Ok(TimeHorizon::Snapshot)
+    } else {
+        // Try to parse as ISO timestamp for historical scan
+        horizon_str
+            .parse::<DateTime<Utc>>()
+            .map(|dt| TimeHorizon::Historical { end_time: dt })
+            .with_context(|| {
+                format!(
+                    "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp",
+                    horizon_str
+                )
+            })
     }
 }
 
@@ -291,8 +362,11 @@ pub trait ExplorationProvider {
     ) -> color_eyre::eyre::Result<CoverageAnalysis>;
 
     /// Export data for debugging
-    fn export_data(&self, path: &Utf8PathBuf, format: ExportFormat)
-        -> color_eyre::eyre::Result<()>;
+    fn export_data(
+        &self,
+        path: &SanitizedPath,
+        format: ExportFormat,
+    ) -> color_eyre::eyre::Result<()>;
 }
 
 /// Export format options
@@ -301,6 +375,72 @@ pub enum ExportFormat {
     Json,
     Csv,
     Raw,
+}
+
+/// Macro to generate default ExplorationProvider implementation for automata
+///
+/// This reduces code duplication across automaton processors by providing
+/// a standard stub implementation with only the description customizable.
+///
+/// # Usage
+///
+/// ```rust
+/// use sinex_satellite_sdk::default_exploration_provider;
+///
+/// struct MyProcessor;
+///
+/// default_exploration_provider!(MyProcessor, "My processor description");
+/// ```
+#[macro_export]
+macro_rules! default_exploration_provider {
+    ($processor_type:ty, $description:expr) => {
+        impl $crate::cli::ExplorationProvider for $processor_type {
+            fn get_source_state(&self) -> color_eyre::eyre::Result<$crate::cli::SourceState> {
+                use std::collections::HashMap;
+
+                Ok($crate::cli::SourceState {
+                    description: $description.to_string(),
+                    last_updated: chrono::Utc::now(),
+                    total_items: Some(0),
+                    metadata: HashMap::new(),
+                    healthy: true,
+                    recent_activity: Vec::new(),
+                })
+            }
+
+            fn get_ingestion_history(
+                &self,
+                _limit: u64,
+            ) -> color_eyre::eyre::Result<Vec<$crate::cli::IngestionHistoryEntry>> {
+                Ok(Vec::new())
+            }
+
+            fn get_coverage_analysis(
+                &self,
+                _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+            ) -> color_eyre::eyre::Result<$crate::cli::CoverageAnalysis> {
+                let now = chrono::Utc::now();
+                Ok($crate::cli::CoverageAnalysis {
+                    time_range: (now - chrono::Duration::days(1), now),
+                    source_total: 0,
+                    sinex_total: 0,
+                    coverage_percentage: 0.0,
+                    missing_count: 0,
+                    missing_samples: Vec::new(),
+                    duplicate_count: 0,
+                    recommendations: Vec::new(),
+                })
+            }
+
+            fn export_data(
+                &self,
+                _path: &sinex_core::types::domain::SanitizedPath,
+                _format: $crate::cli::ExportFormat,
+            ) -> color_eyre::eyre::Result<()> {
+                Ok(())
+            }
+        }
+    };
 }
 
 /// Generic CLI runner for stream processor satellites
@@ -372,7 +512,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     .unwrap_or_else(|| "sinex-processor".to_string());
                 let work_dir = args
                     .work_dir
-                    .unwrap_or_else(|| Utf8PathBuf::from("/tmp/sinex/processor"));
+                    .unwrap_or_else(|| SanitizedPath::new_unchecked("/tmp/sinex/processor"));
 
                 // Create database pool
                 let db_pool = if let Some(db_url) = args.database_url {
@@ -393,7 +533,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     info!("Using legacy gRPC mode for event publishing");
 
                     // Create ingest client
-                    let ingest_client = IngestClient::new(&args.ingest_socket_path)
+                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
                         .await
                         .context("Failed to create ingest client")?;
 
@@ -497,7 +637,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     .unwrap_or_else(|| "sinex-processor".to_string());
                 let work_dir = args
                     .work_dir
-                    .unwrap_or_else(|| Utf8PathBuf::from("/tmp/sinex/processor"));
+                    .unwrap_or_else(|| SanitizedPath::new_unchecked("/tmp/sinex/processor"));
 
                 // For scan mode, database connection is optional for dry runs
                 let db_pool = if dry_run {
@@ -531,7 +671,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
 
                 // Initialize runner with NATS by default (unless dry run or legacy mode)
                 if args.use_grpc || dry_run {
-                    let ingest_client = IngestClient::new(&args.ingest_socket_path)
+                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
                         .await
                         .context("Failed to create ingest client")?;
 

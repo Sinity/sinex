@@ -49,7 +49,7 @@ use sinex_core::db::DbPool;
 use sinex_core::types::events::{
     BlobIngestedPayload, BlobRetrievedPayload, BlobVerifiedPayload, Event, StorageStatisticsPayload,
 };
-use sinex_core::types::{ulid::Ulid, Id};
+use sinex_core::types::{ulid::Ulid, validate_path, Id};
 use std::time::Instant;
 use tracing::{debug, info};
 
@@ -76,11 +76,15 @@ impl BlobManager {
         file_path: &Utf8Path,
         original_filename: Option<&str>,
     ) -> Result<BlobMetadata> {
-        info!("Ingesting file: {:?}", file_path);
+        // Validate file path before processing to prevent path traversal attacks
+        let validated_path = validate_path(file_path.as_str())
+            .map_err(|e| eyre!("Invalid file path for ingestion: {}", e))?;
+
+        info!("Ingesting file: {:?}", validated_path);
         let _start = Instant::now();
 
         // Compute BLAKE3 hash for deduplication
-        let blake3_hash = GitAnnex::compute_blake3_hash(file_path).await?;
+        let blake3_hash = GitAnnex::compute_blake3_hash(&validated_path).await?;
         debug!("Computed BLAKE3 hash: {}", blake3_hash);
 
         // Check if blob already exists
@@ -98,7 +102,7 @@ impl BlobManager {
             }
 
             // Emit deduplication event
-            let event: RawEvent = Event::from_payload(BlobIngestedPayload {
+            let event: RawEvent = Event::new(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
                 mime_type: existing.mime_type.clone(),
@@ -121,21 +125,21 @@ impl BlobManager {
         }
 
         // Get file metadata
-        let file_metadata = tokio::fs::metadata(file_path)
+        let file_metadata = tokio::fs::metadata(&validated_path)
             .await
             .wrap_err("Failed to get file metadata")?;
         let size_bytes = file_metadata.len() as i64;
 
         // Detect MIME type
-        let mime_type = Self::detect_mime_type(file_path)?;
+        let mime_type = Self::detect_mime_type(&validated_path)?;
 
         // Add to git-annex
-        let annex_key = self.annex.add_file(file_path).await?;
+        let annex_key = self.annex.add_file(&validated_path).await?;
         info!("Added to git-annex with key: {}", annex_key.key);
 
         // Create blob record in database
         let filename =
-            original_filename.unwrap_or_else(|| file_path.file_name().unwrap_or("unknown"));
+            original_filename.unwrap_or_else(|| validated_path.file_name().unwrap_or("unknown"));
 
         let blob = Blob::builder()
             .annex_key(annex_key.key.clone())
@@ -157,7 +161,7 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event
-        let event: RawEvent = Event::from_payload(BlobIngestedPayload {
+        let event: RawEvent = Event::new(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
             mime_type: Some(mime_type),
@@ -207,7 +211,7 @@ impl BlobManager {
             self.add_original_filename(&existing_id, filename).await?;
 
             // Emit deduplication event
-            let event: RawEvent = Event::from_payload(BlobIngestedPayload {
+            let event: RawEvent = Event::new(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
                 mime_type: existing.mime_type.clone(),
@@ -269,7 +273,7 @@ impl BlobManager {
         info!("Successfully ingested blob: {}", blob_id);
 
         // Emit blob ingested event
-        let event: RawEvent = Event::from_payload(BlobIngestedPayload {
+        let event: RawEvent = Event::new(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
             mime_type: Some(content_type.to_string()),
@@ -305,7 +309,7 @@ impl BlobManager {
             .wrap_err("Failed to read blob content")?;
 
         // Emit blob retrieved event
-        let event: RawEvent = Event::from_payload(BlobRetrievedPayload {
+        let event: RawEvent = Event::new(BlobRetrievedPayload {
             blob_id: annex_key.to_string(), // Using annex_key as blob identifier
             retrieval_time_ms: start.elapsed().as_millis() as u64,
             cache_hit: true, // git-annex get ensures it's local
@@ -331,7 +335,7 @@ impl BlobManager {
         self.annex.get_content(&blob.annex_key).await?;
 
         // Emit blob retrieved event
-        let event: RawEvent = Event::from_payload(BlobRetrievedPayload {
+        let event: RawEvent = Event::new(BlobRetrievedPayload {
             blob_id: blob_id.to_string(),
             retrieval_time_ms: start.elapsed().as_millis() as u64,
             cache_hit: true, // git-annex get ensures it's local
@@ -365,7 +369,7 @@ impl BlobManager {
         self.update_verification_status(blob_id, status).await?;
 
         // Emit blob verified event
-        let event: RawEvent = Event::from_payload(BlobVerifiedPayload {
+        let event: RawEvent = Event::new(BlobVerifiedPayload {
             blob_id: blob_id.to_string(),
             verification_status: status.to_string(),
             checksum_matched: is_verified,
@@ -497,7 +501,7 @@ impl BlobManager {
         let failed_count = 0i64; // TODO: Track failed verifications
 
         // Insert metric event using EventRepository
-        let new_event: RawEvent = Event::from_payload(StorageStatisticsPayload {
+        let new_event: RawEvent = Event::new(StorageStatisticsPayload {
             total_blobs: blob_count,
             total_size_bytes: total_size,
             failed_verifications: failed_count,

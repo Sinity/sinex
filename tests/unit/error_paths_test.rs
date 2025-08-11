@@ -3,7 +3,6 @@
 //! This module tests all error conditions that could trigger unwrap() or expect()
 //! failures in production code, ensuring graceful error handling.
 
-use color_eyre::eyre::Result;
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::query_helpers::ulid_to_uuid;
 use sinex_test_utils::prelude::*;

@@ -5,8 +5,7 @@
 //! This crate provides:
 //! - Common traits and interfaces
 //! - gRPC client for communicating with sinex-ingestd
-//! - NATS JetStream client for message bus communication (replacing Redis Streams)
-//! - Redis Streams client (deprecated, for backwards compatibility)
+//! - NATS JetStream client for message bus communication
 //! - Configuration management
 //! - Lifecycle management and graceful shutdown
 //! - State persistence and checkpointing
@@ -21,7 +20,7 @@
 //! ## Satellite Constellation Architecture
 //!
 //! Sinex uses a satellite constellation pattern where independent services communicate via
-//! gRPC and Redis Streams. Each satellite implements `StatefulStreamProcessor` with a
+//! gRPC and NATS JetStream. Each satellite implements `StatefulStreamProcessor` with a
 //! unified interface for consistent behavior across all data capture and processing mechanisms.
 //!
 //! ```text
@@ -35,9 +34,9 @@
 //! └─────────────────────┘     └──────────┬──────────┘     └──────────┬──────────┘
 //!                                        │                            │
 //!                             ┌──────────▼──────────┐                 │
-//!                             │   Redis Streams     │                 │
+//!                             │   NATS JetStream   │                 │
 //!                             │                     │                 │
-//!                             │ • Unified hotlog    │◀────────────────┘
+//!                             │ • Event streams     │◀────────────────┘
 //!                             │ • Consumer groups   │
 //!                             │ • Event filtering   │
 //!                             └──────────┬──────────┘
@@ -118,15 +117,15 @@ pub mod checkpoint;
 pub mod cli;
 pub mod config;
 pub mod coordination;
+pub mod error_helpers;
 pub mod event_processor;
 pub mod examples;
 pub mod figment_config;
 pub mod grpc_client;
 pub mod heartbeat;
+pub mod ingestion_helpers;
 pub mod lifecycle;
 pub mod nats;
-pub mod nats_client;
-pub mod nats_stream_consumer;
 pub mod preflight;
 pub mod processor_runner;
 pub mod replay;
@@ -134,11 +133,6 @@ pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
-pub use crate::nats_stream_consumer::{
-    BatchProcessingResult as NatsBatchProcessingResult,
-    EventBatchProcessor as NatsEventBatchProcessor, EventFilter as NatsEventFilter,
-    NatsConsumerConfig, NatsStreamConsumer,
-};
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,

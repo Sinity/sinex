@@ -5,8 +5,11 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use std::env;
+use std::{collections::HashMap, env, sync::RwLock};
 use tracing::info;
+
+/// Cache for command existence checks to avoid repeated which::which() calls
+static COMMAND_CACHE: RwLock<HashMap<String, bool>> = RwLock::new(HashMap::new());
 
 /// Supported shell types
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,7 +44,7 @@ impl ShellType {
 
     /// Get the default configuration file path for this shell
     pub fn default_config_path(&self) -> Option<Utf8PathBuf> {
-        let home = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())?;
+        let home = get_home_dir()?;
 
         match self {
             ShellType::Bash => Some(home.join(".bashrc")),
@@ -56,7 +59,7 @@ impl ShellType {
 
     /// Get the history file path for this shell
     pub fn default_history_path(&self) -> Option<Utf8PathBuf> {
-        let home = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())?;
+        let home = get_home_dir()?;
 
         match self {
             ShellType::Bash => Some(home.join(".bash_history")),
@@ -175,13 +178,33 @@ fn detect_capabilities(shell_type: &ShellType) -> ShellCapabilities {
     }
 }
 
-/// Check if a command exists in PATH
+/// Check if a command exists in PATH with caching
 fn check_command_exists(cmd: &str) -> bool {
-    which::which(cmd).is_ok()
+    // Check cache first (read lock)
+    if let Ok(cache) = COMMAND_CACHE.read() {
+        if let Some(&exists) = cache.get(cmd) {
+            return exists;
+        }
+    }
+
+    // Cache miss - check command existence
+    let exists = which::which(cmd).is_ok();
+
+    // Update cache (write lock)
+    if let Ok(mut cache) = COMMAND_CACHE.write() {
+        cache.insert(cmd.to_string(), exists);
+    }
+
+    exists
 }
 
 /// Get shell version
 fn get_shell_version(shell_type: &ShellType) -> Option<String> {
+    get_shell_version_impl(shell_type).ok()
+}
+
+/// Helper function that uses ? operator for cleaner error handling
+fn get_shell_version_impl(shell_type: &ShellType) -> Result<String, Box<dyn std::error::Error>> {
     use std::process::Command;
 
     let version_flag = match shell_type {
@@ -189,31 +212,25 @@ fn get_shell_version(shell_type: &ShellType) -> Option<String> {
         _ => "--version",
     };
 
-    Command::new(shell_type.name())
-        .arg(version_flag)
-        .output()
-        .ok()
-        .and_then(|output| {
-            String::from_utf8(output.stdout)
-                .ok()
-                .map(|s| s.lines().next().unwrap_or("").to_string())
-        })
+    let output = Command::new(shell_type.name()).arg(version_flag).output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let version = stdout.lines().next().unwrap_or("").to_string();
+    Ok(version)
 }
 
-/// Get parent process ID
+/// Get parent process ID using sysinfo crate for cross-platform compatibility
 fn get_parent_pid() -> Option<u32> {
-    #[cfg(unix)]
-    {
-        use std::fs;
-        let stat = fs::read_to_string("/proc/self/stat").ok()?;
-        let fields: Vec<&str> = stat.split_whitespace().collect();
-        fields.get(3)?.parse().ok()
-    }
+    use sysinfo::{ProcessExt, SystemExt};
 
-    #[cfg(not(unix))]
-    {
-        None
-    }
+    let mut system = sysinfo::System::new();
+    system.refresh_processes();
+
+    let current_pid = std::process::id();
+    system
+        .process(current_pid.into())?
+        .parent()
+        .map(|pid| pid.as_u32())
 }
 
 #[cfg(test)]
@@ -247,4 +264,9 @@ mod tests {
         assert!(!nushell_caps.supports_aliases);
         Ok(())
     }
+}
+
+/// Helper function to get home directory as Utf8PathBuf
+fn get_home_dir() -> Option<Utf8PathBuf> {
+    dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
 }

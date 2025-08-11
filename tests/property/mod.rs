@@ -5,6 +5,7 @@
 
 pub mod automation_property_test;
 pub mod checkpoint_property_test;
+pub mod error_handling_property_test;
 pub mod event_model_fuzzing_test;
 pub mod event_validation_property_test;
 pub mod queue_property_test;

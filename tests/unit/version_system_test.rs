@@ -10,7 +10,6 @@
 //! - Semantic versioning concepts
 //! - Error handling for version-related operations
 
-use color_eyre::eyre::Result;
 use sinex_test_utils::prelude::*;
 use std::cmp::Ordering;
 

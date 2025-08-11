@@ -3,7 +3,6 @@
 //! Tests that verify checkpoint consistency, recovery, and concurrency properties
 //! using modern test infrastructure.
 
-use color_eyre::eyre::Result;
 use proptest::prelude::*;
 use proptest::strategy::ValueTree;
 use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};

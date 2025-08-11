@@ -3,16 +3,17 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
     },
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteResult,
-    SourceState,
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteError,
+    SatelliteResult, SourceState,
 };
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{info, warn};
 
 /// Configuration for RPC Dispatcher processor
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -56,28 +57,50 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
 
     async fn scan(
         &mut self,
-        _from: Checkpoint,
+        from: Checkpoint,
         until: TimeHorizon,
-        _args: ScanArgs,
+        args: ScanArgs,
     ) -> SatelliteResult<ScanReport> {
         let start_time = Utc::now();
+        let events_processed = 0;
+        let mut warnings = Vec::new();
 
-        // Simplified implementation for now
-        let events_processed = match until {
-            TimeHorizon::Snapshot => 0,
-            TimeHorizon::Historical { .. } => 0,
-            TimeHorizon::Continuous => 0,
-        };
+        match until {
+            TimeHorizon::Snapshot => {
+                info!("RPC dispatcher taking snapshot of current RPC configuration");
+                // In a real implementation, this would capture current RPC server status,
+                // active connections, registered handlers, etc.
+                warnings.push("RPC dispatcher snapshot mode is a placeholder".to_string());
+            }
+            TimeHorizon::Historical { .. } => {
+                info!("RPC dispatcher scanning historical RPC invocations");
+                // In a real implementation, this would scan logs or databases for
+                // historical RPC calls, their responses, and performance metrics
+                warnings.push("RPC dispatcher historical scan is not yet implemented".to_string());
+            }
+            TimeHorizon::Continuous => {
+                info!("RPC dispatcher starting continuous RPC monitoring");
+                // In a real implementation, this would start monitoring RPC calls
+                // in real-time, capturing requests, responses, and metrics
+                return Err(SatelliteError::NotImplemented(
+                    "RPC dispatcher continuous monitoring requires RPC server infrastructure"
+                        .to_string(),
+                ));
+            }
+        }
 
         Ok(ScanReport {
-            events_processed: events_processed as u64,
-            duration: std::time::Duration::from_secs(0),
-            final_checkpoint: Checkpoint::None,
+            events_processed,
+            duration: start_time.elapsed().into(),
+            final_checkpoint: from,
             time_range: Some((start_time, Utc::now())),
-            processor_stats: HashMap::new(),
-            successful_targets: vec!["rpc".into()],
+            processor_stats: HashMap::from([
+                ("rpc_handlers_registered".to_string(), 0),
+                ("active_connections".to_string(), 0),
+            ]),
+            successful_targets: args.targets,
             failed_targets: Vec::new(),
-            warnings: Vec::new(),
+            warnings,
         })
     }
 

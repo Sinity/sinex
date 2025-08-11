@@ -469,8 +469,8 @@ impl JournalWatcher {
             }
         });
 
-        // Collect additional fields
-        let mut fields = HashMap::new();
+        // Collect additional fields - typical journal entries have 10-20 fields
+        let mut fields = HashMap::with_capacity(16);
         for (key, value) in obj {
             if !self.config.exclude_fields.contains(key)
                 && !matches!(

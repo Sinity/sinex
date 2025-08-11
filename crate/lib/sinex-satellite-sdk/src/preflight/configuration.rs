@@ -9,8 +9,9 @@
  */
 
 use camino::{Utf8Path, Utf8PathBuf};
-use color_eyre::eyre::{bail, Context, ContextCompat, Result};
+use color_eyre::eyre::{bail, Context, Result};
 use serde_json::{json, Value};
+use sinex_core::types::validate_path;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -288,49 +289,58 @@ async fn verify_configuration_files(messages: &mut Vec<String>) -> Result<Value>
 
     // Check SINEX_CONFIG environment variable if set
     if let Ok(custom_config) = std::env::var("SINEX_CONFIG") {
-        let custom_path = Utf8Path::new(&custom_config);
-
-        if custom_path.exists() {
-            match validate_toml_file(custom_path).await {
-                Ok(config_info) => {
-                    config_files.insert(
-                        "SINEX_CONFIG".to_string(),
-                        json!({
-                            "path": custom_path.to_string(),
-                            "description": "Custom config from SINEX_CONFIG",
-                            "exists": true,
-                            "valid": true,
-                            "config_info": config_info
-                        }),
-                    );
-
-                    found_configs.push("SINEX_CONFIG".to_string());
-                    messages
-                        .push("✓ Custom configuration file (SINEX_CONFIG) is valid".to_string());
-                }
-                Err(e) => {
-                    config_files.insert(
-                        "SINEX_CONFIG".to_string(),
-                        json!({
-                            "path": custom_path.to_string(),
-                            "description": "Custom config from SINEX_CONFIG",
-                            "exists": true,
-                            "valid": false,
-                            "error": e.to_string()
-                        }),
-                    );
-
-                    messages.push(format!(
-                        "⚠ Custom configuration file (SINEX_CONFIG) is invalid: {}",
-                        e
-                    ));
-                }
-            }
-        } else {
+        // Validate SINEX_CONFIG path for security (prevent arbitrary file reads)
+        if let Err(e) = validate_path(&custom_config) {
             messages.push(format!(
-                "⚠ SINEX_CONFIG points to non-existent file: {}",
-                custom_config
+                "⚠ Invalid SINEX_CONFIG path '{}': {}",
+                custom_config, e
             ));
+        } else {
+            let custom_path = Utf8Path::new(&custom_config);
+
+            if custom_path.exists() {
+                match validate_toml_file(custom_path).await {
+                    Ok(config_info) => {
+                        config_files.insert(
+                            "SINEX_CONFIG".to_string(),
+                            json!({
+                                "path": custom_path.to_string(),
+                                "description": "Custom config from SINEX_CONFIG",
+                                "exists": true,
+                                "valid": true,
+                                "config_info": config_info
+                            }),
+                        );
+
+                        found_configs.push("SINEX_CONFIG".to_string());
+                        messages.push(
+                            "✓ Custom configuration file (SINEX_CONFIG) is valid".to_string(),
+                        );
+                    }
+                    Err(e) => {
+                        config_files.insert(
+                            "SINEX_CONFIG".to_string(),
+                            json!({
+                                "path": custom_path.to_string(),
+                                "description": "Custom config from SINEX_CONFIG",
+                                "exists": true,
+                                "valid": false,
+                                "error": e.to_string()
+                            }),
+                        );
+
+                        messages.push(format!(
+                            "⚠ Custom configuration file (SINEX_CONFIG) is invalid: {}",
+                            e
+                        ));
+                    }
+                }
+            } else {
+                messages.push(format!(
+                    "⚠ SINEX_CONFIG points to non-existent file: {}",
+                    custom_config
+                ));
+            }
         }
     }
 
@@ -572,8 +582,12 @@ async fn check_nixos_compatibility() -> Result<Value> {
 }
 
 async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
-    let content = std::fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read TOML file: {:?}", path))?;
+    // Validate path before file operation to prevent path traversal
+    let validated_path = validate_path(path.as_str())
+        .wrap_err_with(|| format!("Invalid or dangerous path: {:?}", path))?;
+
+    let content = std::fs::read_to_string(&validated_path)
+        .wrap_err_with(|| format!("Failed to read TOML file: {:?}", validated_path))?;
 
     validate_toml_content(&content)
 }

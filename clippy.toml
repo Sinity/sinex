@@ -25,54 +25,8 @@ cognitive-complexity-threshold = 30
 too-many-arguments-threshold = 7
 too-many-lines-threshold = 100
 
-[lints.rust]
-unsafe_code = "deny"
-missing_docs = "warn"
-
-[lints.clippy]
-# Error handling
-unwrap_used = "warn"
-expect_used = "warn"
-panic = "warn"
-unimplemented = "warn"
-todo = "warn"
-unreachable = "warn"
-
-# Best practices
-await_holding_lock = "deny"
-await_holding_refcell_ref = "deny"
-large_futures = "warn"
-mutex_atomic = "warn"
-redundant_allocation = "warn"
-
-# Performance
-inefficient_to_string = "warn"
-large_types_passed_by_value = "warn"
-trivially_copy_pass_by_ref = "warn"
-unnecessary_wraps = "warn"
-
-# Correctness
-correctness = "deny"
-suspicious = "deny"
-
-# Style
-needless_pass_by_value = "warn"
-redundant_clone = "warn"
-unnecessary_cast = "warn"
-wildcard_imports = "warn"
-
-# Specific to Sinex patterns
-string_lit_as_bytes = "warn"  # Use constants
-manual_string_new = "warn"    # Consistent string creation
-
-# String literal enforcement
-# These help enforce use of constants instead of hardcoded strings
-str_to_string = "warn"         # Prefer .to_owned() or constants
-single_char_pattern = "warn"   # Use char instead of "x"
-
-# Additional pattern enforcement
-default_trait_access = "warn"  # Use Type::default() consistently
-map_unwrap_or = "warn"         # Prefer map_or for clarity
+# The [lints.*] sections are not supported in clippy.toml
+# Lints are configured in Cargo.toml workspace.lints instead
 
 # NOTE: Direct string literal detection (e.g., "process.heartbeat") is difficult
 # with clippy alone. Consider:

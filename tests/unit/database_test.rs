@@ -7,7 +7,6 @@
 //! - Transaction semantics
 //! - Performance characteristics
 
-use color_eyre::eyre::Result;
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
 use sinex_core::db::repositories::DbPoolExt;

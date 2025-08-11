@@ -4535,12 +4535,9 @@ dependencies = [
 name = "sinex-document-ingestor"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
- "blake3",
  "camino",
  "chrono",
- "clap",
  "color-eyre",
  "mimalloc",
  "mime_guess",
@@ -4606,6 +4603,7 @@ dependencies = [
  "sinex-satellite-sdk",
  "sinex-services",
  "sinex-test-utils",
+ "sqlx",
  "tempfile",
  "thiserror 2.0.12",
  "tokio",
@@ -4689,7 +4687,6 @@ dependencies = [
  "serde_json",
  "sinex-test-utils",
  "syn 2.0.104",
- "thiserror 1.0.69",
  "tokio",
  "toml",
 ]
@@ -4731,23 +4728,14 @@ name = "sinex-rpc-dispatcher"
 version = "0.1.0"
 dependencies = [
  "async-trait",
- "axum 0.7.9",
- "byteorder",
  "camino",
  "chrono",
- "clap",
  "color-eyre",
  "mimalloc",
  "serde",
  "serde_json",
- "sinex-core",
  "sinex-satellite-sdk",
- "tokio",
- "tower 0.5.2",
- "tower-http 0.5.2",
  "tracing",
- "tracing-subscriber",
- "uuid",
 ]
 
 [[package]]
@@ -4792,6 +4780,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "url",
+ "urlencoding",
  "uuid",
  "validator",
  "which 6.0.3",
@@ -4822,6 +4811,7 @@ name = "sinex-sensd"
 version = "0.4.2"
 dependencies = [
  "async-trait",
+ "bon",
  "bytes",
  "camino",
  "chrono",
@@ -4919,6 +4909,7 @@ name = "sinex-terminal-satellite"
 version = "0.4.2"
 dependencies = [
  "async-trait",
+ "bon",
  "camino",
  "chrono",
  "clap",
@@ -4937,6 +4928,7 @@ dependencies = [
  "sinex-core",
  "sinex-satellite-sdk",
  "sinex-test-utils",
+ "sysinfo 0.30.13",
  "thiserror 2.0.12",
  "tokio",
  "tracing",

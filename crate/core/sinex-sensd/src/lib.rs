@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod job_manager;
+pub mod material_rotation;
 pub mod material_stream;
 pub mod sensors;
 pub mod service;

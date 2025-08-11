@@ -13,6 +13,7 @@ use sinex_core::types::events::{
     Event, TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
     TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
 };
+use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -28,24 +29,65 @@ use sinex_satellite_sdk::{
 use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{info, warn};
+use validator::{Validate, ValidationError};
 
 use crate::{AtuinWatcher, HistoryWatcher, KittyWatcher, RecordingWatcher, ScrollbackWatcher};
 // use sinex_core::types::events::constants::{event_types, services}; // already imported above
 
+#[cfg(test)]
+mod config_validation_tests;
+
 /// Terminal monitoring configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate, bon::Builder)]
+#[builder(derive(Debug))]
 pub struct TerminalConfig {
     pub enabled_sources: HashMap<String, bool>,
+    #[validate(custom(
+        function = "validate_optional_path",
+        message = "Invalid atuin database path"
+    ))]
     pub atuin_db_path: Option<Utf8PathBuf>,
+    #[validate(custom(
+        function = "validate_path_list",
+        message = "Invalid history file paths"
+    ))]
     pub history_files: Vec<Utf8PathBuf>,
+    #[validate(custom(
+        function = "validate_optional_path",
+        message = "Invalid kitty socket path"
+    ))]
     pub kitty_socket_path: Option<Utf8PathBuf>,
+    #[validate(custom(
+        function = "validate_optional_path",
+        message = "Invalid recording output directory"
+    ))]
     pub recording_output_dir: Option<Utf8PathBuf>,
     pub scrollback_capture_enabled: bool,
+    #[validate(range(
+        min = 1,
+        max = 3600,
+        message = "Polling interval must be between 1 and 3600 seconds"
+    ))]
     pub polling_interval_secs: u64,
+    #[validate(range(
+        min = 1,
+        max = 10000,
+        message = "Batch size must be between 1 and 10000"
+    ))]
     pub batch_size: usize,
 
     // Scanner-specific configuration
+    #[validate(range(
+        min = 1,
+        max = 100000,
+        message = "Scanner batch size must be between 1 and 100000"
+    ))]
     pub scanner_batch_size: usize,
+    #[validate(range(
+        min = 1,
+        max = 10240,
+        message = "Max file size must be between 1MB and 10GB"
+    ))]
     pub scanner_max_file_size_mb: u64,
 }
 
@@ -55,30 +97,72 @@ impl Default for TerminalConfig {
             .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
             .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
 
-        Self {
-            enabled_sources: [
-                ("atuin".to_string(), true),
-                ("history".to_string(), true),
-                ("kitty".to_string(), false), // Disabled by default, requires setup
-                ("recording".to_string(), false),
-                ("scrollback".to_string(), false),
-            ]
-            .into_iter()
-            .collect(),
-            atuin_db_path: Some(home.join(".local/share/atuin/history.db")),
-            history_files: vec![
+        Self::builder()
+            .enabled_sources(
+                [
+                    ("atuin".to_owned(), true),
+                    ("history".to_owned(), true),
+                    ("kitty".to_owned(), false), // Disabled by default, requires setup
+                    ("recording".to_owned(), false),
+                    ("scrollback".to_string(), false),
+                ]
+                .into_iter()
+                .collect(),
+            )
+            .atuin_db_path(Some(home.join(".local/share/atuin/history.db")))
+            .history_files(vec![
                 home.join(".bash_history"),
                 home.join(".zsh_history"),
                 home.join(".local/share/fish/fish_history"),
-            ],
-            kitty_socket_path: None, // Auto-detected
-            recording_output_dir: Some(home.join(".local/share/sinex/recordings")),
-            scrollback_capture_enabled: false,
-            polling_interval_secs: 5,
-            batch_size: 100,
-            scanner_batch_size: 1000,
-            scanner_max_file_size_mb: 100,
-        }
+            ])
+            .kitty_socket_path(None) // Auto-detected
+            .recording_output_dir(Some(home.join(".local/share/sinex/recordings")))
+            .scrollback_capture_enabled(false)
+            .polling_interval_secs(5)
+            .batch_size(100)
+            .scanner_batch_size(1000)
+            .scanner_max_file_size_mb(100)
+            .build()
+    }
+}
+
+impl TerminalConfig {
+    /// Validate the configuration and return detailed error messages
+    pub fn validate_config(&self) -> Result<(), String> {
+        use validator::Validate as ValidateTrait;
+
+        ValidateTrait::validate(self).map_err(|e| {
+            sinex_core::types::validation::validation_chains::format_validation_errors(&e)
+        })
+    }
+}
+
+// Custom validation functions for TerminalConfig
+
+/// Validate optional path fields
+fn validate_optional_path(path: &Option<Utf8PathBuf>) -> Result<(), ValidationError> {
+    if let Some(p) = path {
+        validate_single_path(p)?;
+    }
+    Ok(())
+}
+
+/// Validate a list of paths
+fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
+    for path in paths {
+        validate_single_path(path)?;
+    }
+    Ok(())
+}
+
+/// Validate a single path for security and correctness using comprehensive validation
+fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
+    let path_str = path.as_str();
+
+    // Use the comprehensive path validation from sinex-core
+    match sinex_core::types::validate_path(path_str) {
+        Ok(_) => Ok(()),
+        Err(_) => Err(ValidationError::new("invalid_path")),
     }
 }
 
@@ -188,7 +272,7 @@ impl TerminalProcessor {
         enable_metrics
     )]
     async fn take_snapshot(&mut self) -> SatelliteResult<TerminalState> {
-        let mut enabled_sources = Vec::new();
+        let mut enabled_sources = Vec::with_capacity(8); // Reasonable capacity for config items
         let mut history_file_status = HashMap::new();
         let mut atuin_status = None;
 
@@ -201,55 +285,13 @@ impl TerminalProcessor {
 
         // Check history files
         for history_file in &self.config.history_files {
-            let status = if history_file.exists() {
-                let metadata = std::fs::metadata(history_file).ok();
-                let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
-                let last_modified = metadata
-                    .and_then(|m| m.modified().ok())
-                    .map(|t| DateTime::<Utc>::from(t));
-
-                // Estimate entries by counting lines (rough estimate)
-                let estimated_entries = if let Ok(content) = std::fs::read_to_string(history_file) {
-                    content.lines().count() as u64
-                } else {
-                    0
-                };
-
-                HistoryFileStatus {
-                    exists: true,
-                    size_bytes,
-                    last_modified,
-                    estimated_entries,
-                }
-            } else {
-                HistoryFileStatus {
-                    exists: false,
-                    size_bytes: 0,
-                    last_modified: None,
-                    estimated_entries: 0,
-                }
-            };
-
+            let status = Self::get_file_metadata_and_status(history_file);
             history_file_status.insert(history_file.clone(), status);
         }
 
         // Check Atuin database
         if let Some(ref atuin_path) = self.config.atuin_db_path {
-            if atuin_path.exists() {
-                let metadata = std::fs::metadata(atuin_path).ok();
-                let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
-
-                // For now, provide a rough estimate
-                // In a real implementation, we'd query the SQLite database
-                let estimated_entries = db_size_bytes / 100; // Very rough estimate
-
-                atuin_status = Some(AtuinStatus {
-                    db_exists: true,
-                    db_size_bytes,
-                    estimated_entries,
-                    last_entry_timestamp: None, // Would need SQLite query
-                });
-            }
+            atuin_status = Some(Self::get_atuin_status(atuin_path));
         }
 
         let state = TerminalState {
@@ -483,6 +525,119 @@ impl TerminalProcessor {
 
         Ok(event_count)
     }
+
+    /// Helper function to parse configuration field values
+    fn parse_config_field<T: serde::de::DeserializeOwned>(
+        config: &std::collections::HashMap<String, serde_json::Value>,
+        key: &str,
+    ) -> Option<T> {
+        config
+            .get(key)
+            .and_then(|v| serde_json::from_value::<T>(v.clone()).ok())
+    }
+
+    /// Helper function to get file metadata and status
+    fn get_file_metadata_and_status(history_file: &Utf8PathBuf) -> HistoryFileStatus {
+        // Validate path before file operations to prevent path traversal
+        if validate_path(history_file.as_str()).is_err() {
+            warn!(
+                path = %history_file,
+                "Skipping invalid or dangerous history file path"
+            );
+            return HistoryFileStatus::NonExistent;
+        }
+
+        if history_file.exists() {
+            let metadata = std::fs::metadata(history_file).ok();
+            let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+            let last_modified = metadata
+                .and_then(|m| m.modified().ok())
+                .map(|t| DateTime::<Utc>::from(t));
+
+            // Estimate entries by counting lines (rough estimate)
+            let estimated_entries = if let Ok(content) = std::fs::read_to_string(history_file) {
+                content.lines().count() as u64
+            } else {
+                0
+            };
+
+            HistoryFileStatus {
+                exists: true,
+                size_bytes,
+                last_modified,
+                estimated_entries,
+            }
+        } else {
+            HistoryFileStatus {
+                exists: false,
+                size_bytes: 0,
+                last_modified: None,
+                estimated_entries: 0,
+            }
+        }
+    }
+
+    /// Helper function to get Atuin database status
+    fn get_atuin_status(atuin_path: &Utf8PathBuf) -> AtuinStatus {
+        if atuin_path.exists() {
+            let metadata = std::fs::metadata(atuin_path).ok();
+            let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
+
+            // For now, provide a rough estimate
+            // In a real implementation, we'd query the SQLite database
+            let estimated_entries = db_size_bytes / 100; // Very rough estimate
+
+            AtuinStatus {
+                db_exists: true,
+                db_size_bytes,
+                estimated_entries,
+                last_entry_timestamp: None, // TODO: Query actual timestamp
+            }
+        } else {
+            AtuinStatus {
+                db_exists: false,
+                db_size_bytes: 0,
+                estimated_entries: 0,
+                last_entry_timestamp: None,
+            }
+        }
+    }
+
+    /// Helper function to estimate Atuin entries
+    fn estimate_atuin_entries(
+        atuin_db_path: &Option<Utf8PathBuf>,
+        warnings: &mut Vec<String>,
+    ) -> u64 {
+        if let Some(ref atuin_path) = atuin_db_path {
+            if atuin_path.exists() {
+                // Estimate based on file size (very rough)
+                std::fs::metadata(atuin_path)
+                    .map(|m| m.len() / 100) // ~100 bytes per entry
+                    .unwrap_or(0)
+            } else {
+                warnings.push("Atuin database not found".to_string());
+                0
+            }
+        } else {
+            0
+        }
+    }
+
+    /// Helper function to estimate history entries from files
+    fn estimate_history_entries(history_files: &[Utf8PathBuf]) -> u64 {
+        history_files
+            .iter()
+            .filter_map(|f| {
+                if f.exists() {
+                    std::fs::read_to_string(f)
+                        .map(|content| content.lines().count() as u64)
+                        .ok()
+                } else {
+                    None
+                }
+            })
+            .sum()
+    }
 }
 
 impl Default for TerminalProcessor {
@@ -547,38 +702,30 @@ impl StatefulStreamProcessor for TerminalProcessor {
         }
 
         // Override with individual config values if present
-        if let Some(enabled_sources_json) = ctx.config.get("enabled_sources") {
-            if let Ok(sources) =
-                serde_json::from_value::<HashMap<String, bool>>(enabled_sources_json.clone())
-            {
-                self.config.enabled_sources = sources;
-            }
+        if let Some(sources) =
+            Self::parse_config_field::<HashMap<String, bool>>(&ctx.config, "enabled_sources")
+        {
+            self.config.enabled_sources = sources;
         }
 
-        if let Some(atuin_db_path_json) = ctx.config.get("atuin_db_path") {
-            if let Ok(path) = serde_json::from_value::<Utf8PathBuf>(atuin_db_path_json.clone()) {
-                self.config.atuin_db_path = Some(path);
-            }
+        if let Some(path) = Self::parse_config_field::<Utf8PathBuf>(&ctx.config, "atuin_db_path") {
+            self.config.atuin_db_path = Some(path);
         }
 
-        if let Some(history_files_json) = ctx.config.get("history_files") {
-            if let Ok(files) =
-                serde_json::from_value::<Vec<Utf8PathBuf>>(history_files_json.clone())
-            {
-                self.config.history_files = files;
-            }
+        if let Some(files) =
+            Self::parse_config_field::<Vec<Utf8PathBuf>>(&ctx.config, "history_files")
+        {
+            self.config.history_files = files;
         }
 
-        if let Some(polling_interval_json) = ctx.config.get("polling_interval_secs") {
-            if let Ok(interval) = serde_json::from_value::<u64>(polling_interval_json.clone()) {
-                self.config.polling_interval_secs = interval;
-            }
+        if let Some(interval) =
+            Self::parse_config_field::<u64>(&ctx.config, "polling_interval_secs")
+        {
+            self.config.polling_interval_secs = interval;
         }
 
-        if let Some(batch_size_json) = ctx.config.get("batch_size") {
-            if let Ok(size) = serde_json::from_value::<usize>(batch_size_json.clone()) {
-                self.config.batch_size = size;
-            }
+        if let Some(size) = Self::parse_config_field::<usize>(&ctx.config, "batch_size") {
+            self.config.batch_size = size;
         }
 
         info!(
@@ -602,9 +749,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
     ) -> SatelliteResult<ScanReport> {
         let start_time = std::time::Instant::now();
         let mut events_processed = 0;
-        let mut successful_targets = Vec::new();
-        let mut failed_targets = Vec::new();
-        let mut warnings = Vec::new();
+        let mut successful_targets = Vec::with_capacity(8);
+        let mut failed_targets = Vec::with_capacity(8);
+        let mut warnings = Vec::with_capacity(16);
 
         info!(
             processor = self.processor_name(),
@@ -755,36 +902,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
             if *enabled {
                 let source_estimate = match source.as_str() {
                     "atuin" => {
-                        if let Some(ref atuin_path) = self.config.atuin_db_path {
-                            if atuin_path.exists() {
-                                // Estimate based on file size (very rough)
-                                std::fs::metadata(atuin_path)
-                                    .map(|m| m.len() / 100) // ~100 bytes per entry
-                                    .unwrap_or(0)
-                            } else {
-                                warnings.push("Atuin database not found".to_string());
-                                0
-                            }
-                        } else {
-                            0
-                        }
+                        Self::estimate_atuin_entries(&self.config.atuin_db_path, &mut warnings)
                     }
-                    "history" => {
-                        // Sum estimates from all history files
-                        self.config
-                            .history_files
-                            .iter()
-                            .filter_map(|f| {
-                                if f.exists() {
-                                    std::fs::read_to_string(f)
-                                        .map(|content| content.lines().count() as u64)
-                                        .ok()
-                                } else {
-                                    None
-                                }
-                            })
-                            .sum()
-                    }
+                    "history" => Self::estimate_history_entries(&self.config.history_files),
                     _ => 10, // Default estimate for other sources
                 };
                 estimated_events += source_estimate;
@@ -948,6 +1068,10 @@ impl ExplorationProvider for TerminalProcessor {
         path: &Utf8PathBuf,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
+        // Validate export path for security
+        validate_path(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid export path '{}': {}", path, e))?;
+
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,

@@ -1,15 +1,18 @@
 //! Service container that holds all service instances
 
 use camino::Utf8PathBuf;
-use color_eyre::eyre::{Context, ContextCompat, Result};
-use sinex_core::db::create_pool;
+use color_eyre::eyre::Result;
 use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
+use sinex_core::db::{create_pool, query_helpers::db_error};
+use sinex_core::types::error::SinexError;
 use sinex_satellite_sdk::annex::BlobManager;
 use sinex_satellite_sdk::grpc_client::IngestClient;
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
+
+const TELEMETRY_INTERVAL_SECS: u64 = 300;
 
 /// Container holding all service instances
 #[derive(Clone)]
@@ -27,12 +30,14 @@ impl ServiceContainer {
         // Get database URL from parameter or environment
         let db_url = database_url
             .or_else(|| std::env::var("DATABASE_URL").ok())
-            .wrap_err("Database URL not provided and DATABASE_URL not set")?;
+            .ok_or_else(|| {
+                SinexError::configuration("Database URL not provided and DATABASE_URL not set")
+            })?;
 
         // Create database pool
         let pool = create_pool(&db_url)
             .await
-            .wrap_err("Failed to create database pool")?;
+            .map_err(|e| db_error(e, "Failed to create database pool"))?;
 
         // Create blob manager for content service
         let annex_path = Utf8PathBuf::from(
@@ -40,18 +45,20 @@ impl ServiceContainer {
         );
 
         // Ensure the annex directory exists
-        std::fs::create_dir_all(&annex_path)
-            .with_context(|| format!("Failed to create annex directory: {:?}", annex_path))?;
+        std::fs::create_dir_all(&annex_path).map_err(|e| {
+            SinexError::io("Failed to create annex directory")
+                .with_path(&annex_path)
+                .with_source(e.to_string())
+        })?;
 
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(
-            BlobManager::new(annex_config, pool.clone())
-                .wrap_err("Failed to create blob manager")?,
-        );
+        let blob_manager = Arc::new(BlobManager::new(annex_config, pool.clone()).map_err(|e| {
+            SinexError::service("Failed to create blob manager").with_source(e.to_string())
+        })?);
 
         // Initialize telemetry
         let telemetry = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
@@ -95,7 +102,7 @@ impl ServiceContainer {
 
             let accumulator = TelemetryAccumulator::new("sinex-gateway")
                 .with_event_sender(tx.clone())
-                .with_interval(Duration::from_secs(300)); // 5 minutes
+                .with_interval(Duration::from_secs(TELEMETRY_INTERVAL_SECS));
 
             // Set global telemetry
             sinex_core::db::telemetry::telemetry::set_global_telemetry(accumulator.clone()).await;

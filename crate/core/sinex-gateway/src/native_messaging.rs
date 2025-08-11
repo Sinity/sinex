@@ -1,6 +1,5 @@
 //! Native messaging protocol for browser extension communication
 
-use byteorder::{NativeEndian, ReadBytesExt, WriteBytesExt};
 use color_eyre::eyre::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -9,6 +8,8 @@ use tracing::{debug, error, info};
 
 use crate::handlers::*;
 use crate::service_container::ServiceContainer;
+
+const MAX_MESSAGE_SIZE: usize = 1024 * 1024; // 1MB
 
 #[derive(Debug, Clone, Deserialize)]
 struct NativeMessage {
@@ -57,14 +58,16 @@ fn read_message() -> Result<Option<NativeMessage>> {
     let mut handle = stdin.lock();
 
     // Read message length (4 bytes, native endian)
-    let length = match handle.read_u32::<NativeEndian>() {
-        Ok(len) => len as usize,
+    let mut len_bytes = [0u8; 4];
+    match handle.read_exact(&mut len_bytes) {
+        Ok(()) => {}
         Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
         Err(e) => return Err(e.into()),
-    };
+    }
+    let length = u32::from_ne_bytes(len_bytes) as usize;
 
     // Validate length (Chrome/Firefox limit is 1MB)
-    if length > 1024 * 1024 {
+    if length > MAX_MESSAGE_SIZE {
         bail!("Message too large: {} bytes", length);
     }
 
@@ -88,7 +91,8 @@ fn write_message(response: &NativeResponse) -> Result<()> {
     let json = serde_json::to_vec(response)?;
 
     // Write message length (4 bytes, native endian)
-    handle.write_u32::<NativeEndian>(json.len() as u32)?;
+    let len_bytes = (json.len() as u32).to_ne_bytes();
+    handle.write_all(&len_bytes)?;
 
     // Write message content
     handle.write_all(&json)?;
@@ -123,41 +127,14 @@ async fn process_message(services: &ServiceContainer, message: NativeMessage) ->
     }
 }
 
-/// Dispatch RPC method to appropriate handler
+/// Dispatch RPC method to appropriate handler (shared with rpc_server)
 async fn dispatch_method(
     services: &ServiceContainer,
     method: &str,
     params: Value,
 ) -> Result<Value> {
-    match method {
-        // Analytics methods
-        "analytics.event_count_by_source" => {
-            handle_event_count_by_source(services.analytics.as_ref(), params).await
-        }
-
-        "analytics.activity_heatmap" => {
-            handle_activity_heatmap(services.analytics.as_ref(), params).await
-        }
-
-        // PKM methods
-        "pkm.create_note" => handle_create_note(services.pkm.as_ref(), params).await,
-
-        "pkm.create_entities_from_list" => {
-            handle_create_entities(services.pkm.as_ref(), params).await
-        }
-
-        "pkm.link_entities" => handle_link_entities(services.pkm.as_ref(), params).await,
-
-        // Search methods
-        "search.search_events" => handle_search_events(services.search.as_ref(), params).await,
-
-        // Content methods
-        "content.store_blob" => handle_store_blob(services.content.as_ref(), params).await,
-
-        "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params).await,
-
-        _ => bail!("Unknown method: {}", method),
-    }
+    // Use shared dispatch table from rpc_server
+    crate::rpc_server::dispatch_rpc_method(services, method, params).await
 }
 
 /// Run the native messaging loop

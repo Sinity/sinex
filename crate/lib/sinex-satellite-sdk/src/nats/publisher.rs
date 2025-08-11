@@ -63,7 +63,10 @@ impl NatsPublisher {
         headers.insert("Sinex-Source", event.source.as_str().to_string());
         headers.insert("Sinex-Event-Type", event.event_type.as_str().to_string());
         headers.insert("Sinex-Host", event.host.as_str().to_string());
-        headers.insert("Sinex-Timestamp", event.ts_ingest.to_rfc3339());
+        headers.insert(
+            "Sinex-Timestamp",
+            event.ts_orig.unwrap_or_else(chrono::Utc::now).to_rfc3339(),
+        );
 
         // Add provenance information if present
         if let Some(provenance) = &event.provenance {

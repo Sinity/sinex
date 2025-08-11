@@ -9,6 +9,7 @@ use crate::types::Id;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use tracing::{debug, error, info, instrument, warn};
 
 /// Event repository for database operations
 pub struct EventRepository<'a> {
@@ -36,7 +37,7 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 /// between the database and the domain model.
 #[derive(Debug, FromRow)]
 pub struct EventRecord {
-    pub event_id: uuid::Uuid,
+    pub id: uuid::Uuid,
     pub source: String,
     pub event_type: String,
     pub host: String,
@@ -55,7 +56,6 @@ pub struct EventRecord {
     // Schema fields
     pub payload_schema_name: Option<String>,
     pub payload_schema_version: Option<String>,
-    pub processor_manifest_id: Option<i32>,
 }
 
 impl EventRecord {
@@ -82,12 +82,11 @@ impl EventRecord {
             .map(|ids| ids.into_iter().map(uuid_to_ulid).collect());
 
         RawEvent {
-            id: Some(Id::<RawEvent>::from_uuid(self.event_id)),
+            id: Some(Id::<RawEvent>::from_uuid(self.id)),
             source: self.source.into(),
             event_type: self.event_type.into(),
             host: self.host.into(),
             payload: self.payload,
-            ts_ingest: self.ts_ingest,
             ts_orig: self.ts_orig,
             ingestor_version: self.ingestor_version,
             payload_schema_id: self.payload_schema_id.map(uuid_to_ulid),
@@ -232,6 +231,7 @@ pub struct EventTypeCount {
 }
 
 impl<'a> EventRepository<'a> {
+    #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn insert(&self, mut event: RawEvent) -> DbResult<RawEvent> {
         let id = event.id.get_or_insert_with(Id::<RawEvent>::new).clone();
 
@@ -252,21 +252,20 @@ impl<'a> EventRepository<'a> {
             EventRecord,
             r#"
             INSERT INTO core.events (
-                event_id, source, event_type, host, payload,
+                id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, source_material_offset_start, source_material_offset_end,
                 anchor_byte, associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8::uuid, $9::uuid[],
                 $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16, $17
+                $13, $14::uuid[], $15, $16
             )
             RETURNING 
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
@@ -282,8 +281,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids::uuid[] as associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -300,8 +298,7 @@ impl<'a> EventRepository<'a> {
             event.anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
-            None::<String>, // payload_schema_version
-            None::<i32>     // processor_manifest_id
+            None::<String>  // payload_schema_version
         )
         .fetch_one(self.pool)
         .await
@@ -310,11 +307,12 @@ impl<'a> EventRepository<'a> {
         Ok(record.to_event())
     }
 
+    #[instrument(skip(self), fields(event_id = %id))]
     pub async fn get_by_id(&self, id: Id<RawEvent>) -> DbResult<Option<RawEvent>> {
         let record = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -330,10 +328,9 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
-            WHERE event_id = $1
+            WHERE id = $1
             "#,
         )
         .bind(ulid_to_uuid(*id.as_ulid()))
@@ -357,7 +354,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -373,8 +370,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             ORDER BY ts_ingest DESC
             LIMIT $1
@@ -400,7 +396,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -416,8 +412,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE source = $1
             ORDER BY ts_ingest DESC
@@ -446,7 +441,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -462,8 +457,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE event_type = $1
             ORDER BY ts_ingest DESC
@@ -517,7 +511,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -533,8 +527,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE ts_ingest >= $1 AND ts_ingest <= $2
             ORDER BY ts_ingest DESC
@@ -600,7 +593,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -616,8 +609,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
             ORDER BY ts_ingest DESC
@@ -644,7 +636,7 @@ impl<'a> EventRepository<'a> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
             SELECT 
-                event_id,
+                id,
                 source,
                 event_type,
                 ts_ingest,
@@ -660,8 +652,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             FROM core.events 
             WHERE source = $1 
               AND event_type = 'process.heartbeat'
@@ -692,7 +683,7 @@ impl<'a> EventRepository<'a> {
             .column((
                 Alias::new(Events::SCHEMA),
                 Alias::new(Events::TABLE),
-                Alias::new(Events::EVENT_ID),
+                Alias::new(Events::ID),
             ))
             .column((
                 Alias::new(Events::SCHEMA),
@@ -871,7 +862,7 @@ impl<'a> EventRepository<'a> {
                 Func::count(Expr::col((
                     Alias::new(Events::SCHEMA),
                     Alias::new(Events::TABLE),
-                    Alias::new(Events::EVENT_ID),
+                    Alias::new(Events::ID),
                 ))),
                 Alias::new("count"),
             )
@@ -928,21 +919,20 @@ impl<'a> EventRepository<'a> {
             EventRecord,
             r#"
             INSERT INTO core.events (
-                event_id, source, event_type, host, payload,
+                id, source, event_type, host, payload,
                 ts_orig, ingestor_version, payload_schema_id, source_event_ids,
                 source_material_id, source_material_offset_start, source_material_offset_end,
                 anchor_byte, associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             ) VALUES (
                 $1::uuid, $2, $3, $4, $5,
                 $6, $7, $8::uuid, $9::uuid[],
                 $10::uuid, $11, $12,
-                $13, $14::uuid[], $15, $16, $17
+                $13, $14::uuid[], $15, $16
             )
             RETURNING 
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
@@ -958,8 +948,7 @@ impl<'a> EventRepository<'a> {
                 anchor_byte,
                 associated_blob_ids::uuid[] as associated_blob_ids,
                 payload_schema_name,
-                payload_schema_version,
-                processor_manifest_id
+                payload_schema_version
             "#,
             id.to_uuid(),
             event.source.as_str(),
@@ -976,8 +965,7 @@ impl<'a> EventRepository<'a> {
             event.anchor_byte,
             associated_blob_ids.as_deref(),
             None::<String>, // payload_schema_name
-            None::<String>, // payload_schema_version
-            None::<i32>     // processor_manifest_id
+            None::<String>  // payload_schema_version
         )
         .fetch_one(&mut **tx)
         .await
@@ -986,27 +974,214 @@ impl<'a> EventRepository<'a> {
         Ok(record.to_event())
     }
 
+    #[instrument(skip(self, events), fields(batch_size = events.len()))]
     pub async fn insert_batch(&self, events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
-        // For batch inserts, we'll use a transaction and insert one by one
-        // A more efficient implementation would use UNNEST or COPY
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // For small batches, use the optimized UNNEST approach which is faster than individual inserts
+        if events.len() <= 100 {
+            return self.insert_batch_unnest(events).await;
+        }
+
+        // For larger batches, chunk them and process concurrently with limited parallelism
+        // to avoid overwhelming the database connection pool
+        let chunk_size = 25; // Process 25 events per chunk
+        let max_concurrent_chunks = 4; // Up to 4 chunks concurrently
+
+        let mut results = Vec::with_capacity(events.len());
+
+        // Process chunks with controlled concurrency
+        for chunk_batch in events.chunks(chunk_size * max_concurrent_chunks) {
+            let mut chunk_futures = Vec::new();
+
+            for chunk in chunk_batch.chunks(chunk_size) {
+                let chunk_vec = chunk.to_vec();
+                let pool_clone = self.pool.clone();
+
+                chunk_futures.push(async move {
+                    let repo = EventRepository::new(&pool_clone);
+                    repo.insert_batch_unnest(chunk_vec).await
+                });
+            }
+
+            // Wait for this batch of chunks to complete
+            let chunk_results = futures::future::join_all(chunk_futures).await;
+
+            // Collect results
+            for result in chunk_results {
+                match result {
+                    Ok(mut chunk_results) => {
+                        results.append(&mut chunk_results);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// Optimized batch insert using UNNEST for better performance
+    async fn insert_batch_unnest(&self, mut events: Vec<RawEvent>) -> DbResult<Vec<RawEvent>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Begin transaction for atomicity
         let mut tx = self
             .pool
             .begin()
             .await
-            .map_err(|e| db_error(e, "begin transaction for batch insert"))?;
+            .map_err(|e| db_error(e, "begin transaction for batch unnest insert"))?;
 
-        let mut results = Vec::with_capacity(events.len());
-
-        for event in events {
-            let result = self.insert_with_tx(&mut tx, event).await?;
-            results.push(result);
+        // Ensure all events have IDs
+        for event in &mut events {
+            if event.id.is_none() {
+                event.id = Some(Id::<RawEvent>::new());
+            }
         }
+
+        // Prepare arrays for UNNEST batch insert
+        let mut event_ids = Vec::new();
+        let mut sources = Vec::new();
+        let mut event_types = Vec::new();
+        let mut hosts = Vec::new();
+        let mut payloads = Vec::new();
+        let mut ts_origs = Vec::new();
+        let mut ingestor_versions = Vec::new();
+        let mut payload_schema_ids = Vec::new();
+        let mut source_event_id_arrays = Vec::new();
+        let mut source_material_ids = Vec::new();
+        let mut source_material_offset_starts = Vec::new();
+        let mut source_material_offset_ends = Vec::new();
+        let mut anchor_bytes = Vec::new();
+        let mut associated_blob_id_arrays = Vec::new();
+
+        for event in &events {
+            let event_id = event.id.as_ref().unwrap();
+            event_ids.push(ulid_to_uuid(*event_id.as_ulid()));
+            sources.push(event.source.as_str());
+            event_types.push(event.event_type.as_str());
+            hosts.push(event.host.as_str());
+            payloads.push(&event.payload);
+            ts_origs.push(event.ts_orig);
+            ingestor_versions.push(event.ingestor_version.as_deref());
+            payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
+
+            // Extract provenance into separate database fields
+            let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
+                match &event.provenance {
+                    Some(Provenance::Events(ids)) => {
+                        let uuids: Vec<uuid::Uuid> =
+                            ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+                        (Some(uuids), None, None, None)
+                    }
+                    Some(Provenance::Material {
+                        id,
+                        offset_start,
+                        offset_end,
+                    }) => (
+                        None,
+                        Some(ulid_to_uuid(*id.as_ulid())),
+                        *offset_start,
+                        *offset_end,
+                    ),
+                    None => (None, None, None, None),
+                };
+
+            source_event_id_arrays.push(source_event_ids_opt);
+            source_material_ids.push(source_material_id);
+            source_material_offset_starts.push(offset_start);
+            source_material_offset_ends.push(offset_end);
+            anchor_bytes.push(event.anchor_byte);
+
+            let blob_uuids = event.associated_blob_ids.as_ref().map(|ids| {
+                ids.iter()
+                    .map(|ulid| ulid_to_uuid(*ulid))
+                    .collect::<Vec<_>>()
+            });
+            associated_blob_id_arrays.push(blob_uuids);
+        }
+
+        // Execute batch insert using UNNEST
+        // Note: Using sqlx::query instead of sqlx::query! because of ULID type handling issues
+        // Also converting array of arrays to JSON for source_event_ids and associated_blob_ids
+        // because SQLx doesn't support 2D UUID arrays
+        let source_event_ids_json: Vec<Option<serde_json::Value>> = source_event_id_arrays
+            .iter()
+            .map(|opt| opt.as_ref().map(|vec| serde_json::json!(vec)))
+            .collect();
+
+        let associated_blob_ids_json: Vec<Option<serde_json::Value>> = associated_blob_id_arrays
+            .iter()
+            .map(|opt| opt.as_ref().map(|vec| serde_json::json!(vec)))
+            .collect();
+
+        sqlx::query(
+            r#"
+            INSERT INTO core.events (
+                id, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                source_material_id, source_material_offset_start, source_material_offset_end,
+                anchor_byte, associated_blob_ids,
+                payload_schema_name, payload_schema_version
+            )
+            SELECT 
+                id::ulid, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, 
+                CASE WHEN source_event_ids IS NOT NULL 
+                     THEN ARRAY(SELECT (e::text)::ulid FROM jsonb_array_elements_text(source_event_ids) e)
+                     ELSE NULL 
+                END,
+                source_material_id::ulid,
+                source_material_offset_start, source_material_offset_end, anchor_byte,
+                CASE WHEN associated_blob_ids IS NOT NULL 
+                     THEN ARRAY(SELECT (e::text)::ulid FROM jsonb_array_elements_text(associated_blob_ids) e)
+                     ELSE NULL 
+                END,
+                payload_schema_name, payload_schema_version
+            FROM UNNEST(
+                $1::uuid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
+                $6::timestamptz[], $7::text[], $8::uuid[], $9::jsonb[],
+                $10::uuid[], $11::bigint[], $12::bigint[],
+                $13::bigint[], $14::jsonb[],
+                $15::text[], $16::text[]
+            ) AS t(
+                id, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                source_material_id, source_material_offset_start, source_material_offset_end,
+                anchor_byte, associated_blob_ids,
+                payload_schema_name, payload_schema_version
+            )
+            "#,
+        )
+        .bind(&event_ids)
+        .bind(&sources)
+        .bind(&event_types)
+        .bind(&hosts)
+        .bind(&payloads)
+        .bind(&ts_origs)
+        .bind(&ingestor_versions)
+        .bind(&payload_schema_ids)
+        .bind(&source_event_ids_json)
+        .bind(&source_material_ids)
+        .bind(&source_material_offset_starts)
+        .bind(&source_material_offset_ends)
+        .bind(&anchor_bytes)
+        .bind(&associated_blob_ids_json)
+        .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
+        .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "batch insert with unnest"))?;
 
         tx.commit()
             .await
-            .map_err(|e| db_error(e, "commit batch insert"))?;
+            .map_err(|e| db_error(e, "commit batch unnest insert"))?;
 
-        Ok(results)
+        Ok(events)
     }
 
     // ===== Schema Management Methods =====
@@ -1384,7 +1559,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.event_annotations
-            WHERE event_id = $1
+            WHERE id = $1
             ORDER BY created_at DESC
             "#,
             *id.as_ulid() as _
@@ -1513,7 +1688,7 @@ impl<'a> EventRepository<'a> {
         sqlx::query!(
             r#"
             SELECT
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 source as "source!",
                 event_type as "event_type!",
                 ts_ingest as "ts_ingest!",
@@ -1531,7 +1706,7 @@ impl<'a> EventRepository<'a> {
         .map(|rows| {
             rows.into_iter()
                 .map(|row| InvalidPayloadEvent {
-                    event_id: Id::<RawEvent>::from_uuid(row.event_id),
+                    event_id: Id::<RawEvent>::from_uuid(row.id),
                     source: row.source,
                     event_type: row.event_type,
                     ts_ingest: row.ts_ingest,
@@ -1550,15 +1725,15 @@ impl<'a> EventRepository<'a> {
             r#"
             WITH ordered_events AS (
                 SELECT 
-                    event_id,
+                    id,
                     ts_orig,
-                    LAG(event_id) OVER (PARTITION BY source ORDER BY event_id) as prev_id,
-                    LAG(ts_orig) OVER (PARTITION BY source ORDER BY event_id) as prev_ts
+                    LAG(id) OVER (PARTITION BY source ORDER BY id) as prev_id,
+                    LAG(ts_orig) OVER (PARTITION BY source ORDER BY id) as prev_ts
                 FROM core.events
                 WHERE ts_orig IS NOT NULL
             )
             SELECT 
-                event_id::uuid as "event_id!",
+                id::uuid as "id!",
                 prev_id::uuid as "prev_id!",
                 ts_orig as "ts_orig!",
                 prev_ts as "prev_ts!"
@@ -1576,7 +1751,7 @@ impl<'a> EventRepository<'a> {
             .into_iter()
             .map(|r| {
                 (
-                    Id::<RawEvent>::from_uuid(r.event_id),
+                    Id::<RawEvent>::from_uuid(r.id),
                     Id::<RawEvent>::from_uuid(r.prev_id),
                     r.ts_orig,
                     r.prev_ts,
@@ -1598,19 +1773,19 @@ impl<'a> EventRepository<'a> {
             r#"
             WITH event_batches AS (
                 SELECT 
-                    event_id,
+                    id,
                     ts_orig,
                     source,
-                    ROW_NUMBER() OVER (ORDER BY event_id) as row_num,
-                    LAG(event_id) OVER (ORDER BY event_id) as prev_event_id,
-                    LAG(ts_orig) OVER (ORDER BY event_id) as prev_ts_orig
+                    ROW_NUMBER() OVER (ORDER BY id) as row_num,
+                    LAG(id) OVER (ORDER BY id) as prev_event_id,
+                    LAG(ts_orig) OVER (ORDER by id) as prev_ts_orig
                 FROM core.events
                 WHERE ts_ingest > NOW() - INTERVAL '1 day' * $1
-                ORDER BY event_id DESC
+                ORDER BY id DESC
                 LIMIT 10000
             )
             SELECT 
-                event_id as "event_id?: Id<RawEvent>",
+                id as "event_id?: Id<RawEvent>",
                 prev_event_id as "prev_event_id?: Id<RawEvent>",
                 ts_orig,
                 prev_ts_orig,
@@ -1618,7 +1793,7 @@ impl<'a> EventRepository<'a> {
                 row_num
             FROM event_batches
             WHERE prev_event_id IS NOT NULL
-              AND (ts_orig < prev_ts_orig OR event_id < prev_event_id)
+              AND (ts_orig < prev_ts_orig OR id < prev_event_id)
             LIMIT $2
             "#,
             days_back as f64,
@@ -1641,7 +1816,7 @@ impl<'a> EventRepository<'a> {
             SuspiciousEvent,
             r#"
             SELECT 
-                event_id as "event_id: Id<RawEvent>",
+                id as "event_id: Id<RawEvent>",
                 source as "source!",
                 event_type as "event_type!",
                 payload as "payload!",
@@ -1674,7 +1849,7 @@ impl<'a> EventRepository<'a> {
             InvalidTimestamp,
             r#"
             SELECT 
-                event_id as "event_id: Id<RawEvent>", 
+                id as "event_id: Id<RawEvent>", 
                 ts_orig, 
                 ts_ingest as "ts_ingest!"
             FROM core.events
@@ -1701,12 +1876,12 @@ impl<'a> EventRepository<'a> {
         event_type: &str,
         payload: serde_json::Value,
     ) -> DbResult<RawEvent> {
-        let event = RawEvent::builder()
-            .source(EventSource::new(source.to_string()))
-            .event_type(EventType::new(event_type.to_string()))
-            .host(HostName::new("test-host".to_string()))
-            .payload(payload)
-            .build();
+        let event = RawEvent::new(
+            EventSource::new(source.to_string()),
+            EventType::new(event_type.to_string()),
+            payload,
+        )
+        .with_host(HostName::new("test-host".to_string()));
 
         self.insert(event).await
     }
@@ -1726,7 +1901,7 @@ impl<'a> EventRepository<'a> {
             r#"
             UPDATE core.events
             SET payload = $2
-            WHERE event_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _,
             payload
@@ -1743,7 +1918,7 @@ impl<'a> EventRepository<'a> {
         let result = sqlx::query!(
             r#"
             DELETE FROM core.events
-            WHERE event_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _
         )
@@ -2040,12 +2215,12 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create an event
-        let event = crate::models::RawEvent::builder()
-            .source(EventSource::new("test.source"))
-            .event_type(EventType::new("test.event"))
-            .host(HostName::new("test-host"))
-            .payload(json!({"test": "data"}))
-            .build();
+        let event = crate::models::RawEvent::new(
+            EventSource::new("test.source"),
+            EventType::new("test.event"),
+            json!({"test": "data"}),
+        )
+        .with_host(HostName::new("test-host"));
 
         // Insert using repository pattern with EventRecord
         let inserted = pool.events().insert(event).await?;
@@ -2056,8 +2231,8 @@ mod tests {
         assert_eq!(inserted.host.as_str(), "test-host");
         assert_eq!(inserted.payload["test"], "data");
 
-        // ts_ingest should be set by database
-        assert!(!inserted.ts_ingest.timestamp().is_negative());
+        // ID should be set after insertion
+        assert!(inserted.id.is_some());
 
         Ok(())
     }
@@ -2067,24 +2242,24 @@ mod tests {
         let pool = &ctx.pool;
 
         // Create a source event first
-        let source_event = crate::models::RawEvent::builder()
-            .source(EventSource::new("test.source"))
-            .event_type(EventType::new("source.event"))
-            .host(HostName::new("test-host"))
-            .payload(json!({"original": true}))
-            .build();
+        let source_event = crate::models::RawEvent::new(
+            EventSource::new("test.source"),
+            EventType::new("source.event"),
+            json!({"original": true}),
+        )
+        .with_host(HostName::new("test-host"));
 
         let source = pool.events().insert(source_event).await?;
         let source_id = source.id.unwrap();
 
         // Create derived event with provenance
-        let derived_event = crate::models::RawEvent::builder()
-            .source(EventSource::new("test.processor"))
-            .event_type(EventType::new("derived.event"))
-            .host(HostName::new("test-host"))
-            .payload(json!({"derived": true}))
-            .provenance(crate::models::Provenance::Events(vec![source_id.clone()]))
-            .build();
+        let derived_event = crate::models::RawEvent::new(
+            EventSource::new("test.processor"),
+            EventType::new("derived.event"),
+            json!({"derived": true}),
+        )
+        .with_host(HostName::new("test-host"))
+        .with_provenance(crate::models::Provenance::Events(vec![source_id.clone()]));
 
         let inserted = pool.events().insert(derived_event).await?;
 

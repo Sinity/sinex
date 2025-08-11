@@ -23,6 +23,7 @@ tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
+bon = { workspace = true }
 
 # Filesystem monitoring
 notify = "6.1"
@@ -47,6 +48,7 @@ nix = "0.27"
 whoami = "1.4"
 libc = "0.2"
 which = "5.0"
+sysinfo = "0.30"
 
 # Regex for pattern matching
 regex = "1.10"

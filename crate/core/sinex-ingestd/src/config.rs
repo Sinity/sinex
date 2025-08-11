@@ -1,9 +1,10 @@
 //! Configuration for the ingestion daemon
 
-use crate::{IngestdError, IngestdResult};
+use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
+use tracing::{error, info};
 use validator::Validate;
 
 /// Configuration for the ingestion daemon
@@ -53,6 +54,7 @@ pub struct IngestdConfig {
     pub validate_schemas: bool,
 
     /// Working directory for temporary files
+    #[serde(deserialize_with = "deserialize_validated_utf8_path")]
     #[validate(custom(function = "validate_work_dir", message = "Invalid work directory"))]
     #[builder(default = default_work_dir())]
     pub work_dir: Utf8PathBuf,
@@ -102,19 +104,36 @@ impl IngestdConfig {
         Ok(builder.build())
     }
 
+    /// Validate configuration and exit with appropriate status code
+    pub async fn validate_and_exit(&self) -> ! {
+        info!("Validating configuration...");
+        match self.validate().await {
+            Ok(()) => {
+                info!("✅ Configuration is valid");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                error!("❌ Configuration validation failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     /// Validate the configuration
     pub async fn validate(&self) -> IngestdResult<()> {
         use validator::Validate as ValidateTrait;
 
         // Run validator crate validation first
-        ValidateTrait::validate(self)
-            .map_err(|e| IngestdError::Config(format!("Validation failed: {}", e)))?;
+        ValidateTrait::validate(self).map_err(|e| {
+            SinexError::configuration(format!("Validation failed: {}", e))
+                .with_operation("config.validate_connection_strings")
+        })?;
 
         // Additional runtime validation - create directories if needed
         if let Some(parent) = Utf8PathBuf::from(&self.socket_path).parent() {
             if !parent.exists() {
                 tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    IngestdError::Config(format!(
+                    SinexError::configuration(format!(
                         "Cannot create socket directory {}: {}",
                         parent.as_str(),
                         e
@@ -127,7 +146,7 @@ impl IngestdConfig {
             tokio::fs::create_dir_all(&self.work_dir)
                 .await
                 .map_err(|e| {
-                    IngestdError::Config(format!(
+                    SinexError::configuration(format!(
                         "Cannot create work directory {}: {}",
                         self.work_dir.as_str(),
                         e
@@ -158,7 +177,11 @@ impl IngestdConfig {
         sqlx::query("SELECT 1")
             .fetch_one(&pool)
             .await
-            .map_err(|e| IngestdError::Config(format!("Database connection test failed: {}", e)))?;
+            .map_err(|e| {
+                SinexError::configuration(format!("Database connection test failed: {}", e))
+                    .with_operation("config.test_database_connection")
+                    .with_context("database_url", self.database_url.clone())
+            })?;
 
         pool.close().await;
         info!("Database connection test passed");
@@ -173,7 +196,11 @@ impl IngestdConfig {
             .name("ingestd-test")
             .connect(&self.nats_url)
             .await
-            .map_err(|e| IngestdError::Config(format!("NATS connection test failed: {}", e)))?;
+            .map_err(|e| {
+                SinexError::configuration(format!("NATS connection test failed: {}", e))
+                    .with_operation("config.test_nats_connection")
+                    .with_context("nats_url", self.nats_url.clone())
+            })?;
 
         // Connection successful
         info!("NATS connection test passed");
@@ -218,22 +245,36 @@ fn default_database_url() -> String {
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string())
 }
 
-/// Default work directory for ingestd
+/// Default work directory for ingestd (validated)
 fn default_work_dir() -> Utf8PathBuf {
-    dirs::cache_dir()
+    let base_dir = dirs::cache_dir()
         .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
-        .unwrap_or_else(|| Utf8PathBuf::from("/tmp"))
-        .join("sinex")
-        .join("ingestd")
+        .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
+
+    let work_dir = base_dir.join("sinex").join("ingestd");
+
+    // Validate the default path
+    match validate_path(work_dir.as_str()) {
+        Ok(validated) => validated,
+        Err(_) => {
+            // Fallback to a safe default if validation fails
+            Utf8PathBuf::from("/tmp/sinex/ingestd")
+        }
+    }
 }
 
 // Custom validator functions
 
 fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
-    if url.starts_with("postgresql://") || url.starts_with("postgres://") {
-        Ok(())
-    } else {
-        Err(validator::ValidationError::new("not_postgres_url"))
+    match url::Url::parse(url) {
+        Ok(parsed_url) => {
+            if matches!(parsed_url.scheme(), "postgresql" | "postgres") {
+                Ok(())
+            } else {
+                Err(validator::ValidationError::new("not_postgres_url"))
+            }
+        }
+        Err(_) => Err(validator::ValidationError::new("invalid_url")),
     }
 }
 

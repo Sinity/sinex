@@ -1,10 +1,13 @@
 //! Analytics service for event analysis and insights
 
-use crate::error::ServiceResult;
+use crate::error::Result as ServiceResult;
 use sinex_core::db::{repositories::DbPoolExt, DbPool};
 use sqlx::postgres::types::PgInterval;
 use sqlx::types::chrono::{DateTime, Utc};
 use std::collections::HashMap;
+
+/// Unix epoch start time as a constant
+const EPOCH_START: DateTime<Utc> = DateTime::from_timestamp(0, 0).unwrap();
 
 pub struct AnalyticsService {
     pool: DbPool,
@@ -15,37 +18,40 @@ impl AnalyticsService {
         Self { pool }
     }
 
+    /// Common helper for time range filtering logic
+    fn apply_time_range_filter<T, F>(
+        data: Vec<T>,
+        end_time: Option<DateTime<Utc>>,
+        get_timestamp: F,
+    ) -> Vec<T>
+    where
+        F: Fn(&T) -> Option<DateTime<Utc>>,
+    {
+        if let Some(end) = end_time {
+            data.into_iter()
+                .filter(|item| get_timestamp(item).map(|ts| ts <= end).unwrap_or(false))
+                .collect()
+        } else {
+            data
+        }
+    }
+
     /// Get event count by source for a time range
     pub async fn get_event_count_by_source(
         &self,
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
-        let mut result = HashMap::new();
+        let start = start_time.unwrap_or(EPOCH_START);
+        let rows = self.pool.events().get_source_activity(start).await?;
 
-        match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                let rows = self.pool.events().get_source_activity(start).await?;
+        // Apply client-side end time filtering
+        let filtered_rows = Self::apply_time_range_filter(rows, end_time, |row| row.last_event);
 
-                for row in rows {
-                    // Filter by end time on client side
-                    if let Some(last_event) = row.last_event {
-                        if last_event <= end {
-                            result.insert(row.source, row.event_count);
-                        }
-                    }
-                }
-            }
-            _ => {
-                // For all-time stats, use a timestamp far in the past
-                let very_old = DateTime::from_timestamp(0, 0).unwrap();
-                let rows = self.pool.events().get_source_activity(very_old).await?;
-
-                for row in rows {
-                    result.insert(row.source, row.event_count);
-                }
-            }
-        };
+        let result = filtered_rows
+            .into_iter()
+            .map(|row| (row.source, row.event_count))
+            .collect();
 
         Ok(result)
     }
@@ -56,28 +62,20 @@ impl AnalyticsService {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
-        let mut result = HashMap::new();
-
-        match (start_time, end_time) {
+        let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = self
-                    .pool
+                self.pool
                     .events()
                     .count_by_type_in_range(start, end)
-                    .await?;
-
-                for row in rows {
-                    result.insert(row.event_type, row.count);
-                }
+                    .await?
             }
-            _ => {
-                let rows = self.pool.events().count_by_type_all_time().await?;
-
-                for row in rows {
-                    result.insert(row.event_type, row.count);
-                }
-            }
+            _ => self.pool.events().count_by_type_all_time().await?,
         };
+
+        let result = rows
+            .into_iter()
+            .map(|row| (row.event_type, row.count))
+            .collect();
 
         Ok(result)
     }
@@ -89,11 +87,7 @@ impl AnalyticsService {
         end_time: DateTime<Utc>,
         interval_minutes: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
-        let interval = PgInterval {
-            months: 0,
-            days: 0,
-            microseconds: interval_minutes as i64 * 60 * 1_000_000,
-        };
+        let interval = minutes_to_interval(interval_minutes);
 
         let rows = self
             .pool
@@ -111,8 +105,6 @@ impl AnalyticsService {
         end_time: Option<DateTime<Utc>>,
         limit: i32,
     ) -> ServiceResult<Vec<(String, i64)>> {
-        let mut result = Vec::new();
-
         let commands = match (start_time, end_time) {
             (Some(start), Some(end)) => {
                 self.pool
@@ -128,9 +120,7 @@ impl AnalyticsService {
             }
         };
 
-        for cmd_count in commands {
-            result.push((cmd_count.command, cmd_count.count));
-        }
+        let result = commands.into_iter().map(|c| (c.command, c.count)).collect();
 
         Ok(result)
     }
@@ -141,11 +131,7 @@ impl AnalyticsService {
         bucket_size_minutes: i32,
         limit: i32,
     ) -> ServiceResult<Vec<(DateTime<Utc>, i64)>> {
-        let interval = PgInterval {
-            months: 0,
-            days: 0,
-            microseconds: bucket_size_minutes as i64 * 60 * 1_000_000,
-        };
+        let interval = minutes_to_interval(bucket_size_minutes);
 
         let rows = self
             .pool
@@ -154,5 +140,14 @@ impl AnalyticsService {
             .await?;
 
         Ok(rows.into_iter().map(|r| (r.bucket, r.count)).collect())
+    }
+}
+
+/// Helper function to create PgInterval from minutes
+fn minutes_to_interval(minutes: i32) -> PgInterval {
+    PgInterval {
+        months: 0,
+        days: 0,
+        microseconds: minutes as i64 * 60 * 1_000_000,
     }
 }
