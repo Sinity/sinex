@@ -156,7 +156,9 @@ fn validate_path_list(paths: &[Utf8PathBuf]) -> Result<(), ValidationError> {
 }
 
 /// Validate a single path for security and correctness using comprehensive validation
-fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
+fn validate_single_path(
+    path: &sinex_core::types::domain::SanitizedPath,
+) -> Result<(), ValidationError> {
     let path_str = path.as_str();
 
     // Use the comprehensive path validation from sinex-core
@@ -167,7 +169,7 @@ fn validate_single_path(path: &Utf8PathBuf) -> Result<(), ValidationError> {
 }
 
 /// Terminal state snapshot for exploration and diagnostics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct TerminalState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,
@@ -188,7 +190,7 @@ pub struct TerminalState {
     pub recent_activity: Vec<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct HistoryFileStatus {
     pub exists: bool,
     pub size_bytes: u64,
@@ -196,7 +198,7 @@ pub struct HistoryFileStatus {
     pub estimated_entries: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct AtuinStatus {
     pub db_exists: bool,
     pub db_size_bytes: u64,
@@ -285,13 +287,13 @@ impl TerminalProcessor {
 
         // Check history files
         for history_file in &self.config.history_files {
-            let status = Self::get_file_metadata_and_status(history_file);
+            let status = Self::get_file_metadata_and_status(history_file).await;
             history_file_status.insert(history_file.clone(), status);
         }
 
         // Check Atuin database
         if let Some(ref atuin_path) = self.config.atuin_db_path {
-            atuin_status = Some(Self::get_atuin_status(atuin_path));
+            atuin_status = Some(Self::get_atuin_status(atuin_path).await);
         }
 
         let state = TerminalState {
@@ -426,12 +428,11 @@ impl TerminalProcessor {
             info!("Terminal monitoring context available");
 
             // Emit monitoring started event with shell info
-            let mut monitoring_event: RawEvent =
-                Event::from_payload(TerminalMonitoringStartedPayload {
-                    enabled_sources: self.config.enabled_sources.clone(),
-                    start_time: Utc::now(),
-                })
-                .into();
+            let mut monitoring_event: RawEvent = Event::new(TerminalMonitoringStartedPayload {
+                enabled_sources: self.config.enabled_sources.clone(),
+                start_time: Utc::now(),
+            })
+            .into();
 
             // Add shell info to the event payload if available
             if let Some(ref shell_info) = self.shell_info {
@@ -483,14 +484,13 @@ impl TerminalProcessor {
                 if let Some(ref atuin_path) = self.config.atuin_db_path {
                     if atuin_path.exists() && emit_events {
                         // Create a sample historical event
-                        let event: RawEvent =
-                            Event::from_payload(TerminalCommandHistoricalPayload {
-                                source: "atuin".to_string(),
-                                db_path: Some(atuin_path.clone().into()),
-                                file_path: None,
-                                scan_type: "historical".to_string(),
-                            })
-                            .into();
+                        let event: RawEvent = Event::new(TerminalCommandHistoricalPayload {
+                            source: "atuin".to_string(),
+                            db_path: Some(atuin_path.clone().into()),
+                            file_path: None,
+                            scan_type: "historical".to_string(),
+                        })
+                        .into();
 
                         context.emit_event(event).await?;
                         event_count += 1;
@@ -508,13 +508,12 @@ impl TerminalProcessor {
             {
                 for history_file in &self.config.history_files {
                     if history_file.exists() && emit_events {
-                        let event: RawEvent =
-                            Event::from_payload(TerminalHistoryHistoricalPayload {
-                                source: "history_file".to_string(),
-                                file_path: history_file.clone().into(),
-                                scan_type: "historical".to_string(),
-                            })
-                            .into();
+                        let event: RawEvent = Event::new(TerminalHistoryHistoricalPayload {
+                            source: "history_file".to_string(),
+                            file_path: history_file.clone().into(),
+                            scan_type: "historical".to_string(),
+                        })
+                        .into();
 
                         context.emit_event(event).await?;
                         event_count += 1;
@@ -537,7 +536,7 @@ impl TerminalProcessor {
     }
 
     /// Helper function to get file metadata and status
-    fn get_file_metadata_and_status(history_file: &Utf8PathBuf) -> HistoryFileStatus {
+    async fn get_file_metadata_and_status(history_file: &Utf8PathBuf) -> HistoryFileStatus {
         // Validate path before file operations to prevent path traversal
         if validate_path(history_file.as_str()).is_err() {
             warn!(
@@ -548,18 +547,19 @@ impl TerminalProcessor {
         }
 
         if history_file.exists() {
-            let metadata = std::fs::metadata(history_file).ok();
+            let metadata = tokio::fs::metadata(history_file).await.ok();
             let size_bytes = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
             let last_modified = metadata
                 .and_then(|m| m.modified().ok())
                 .map(|t| DateTime::<Utc>::from(t));
 
             // Estimate entries by counting lines (rough estimate)
-            let estimated_entries = if let Ok(content) = std::fs::read_to_string(history_file) {
-                content.lines().count() as u64
-            } else {
-                0
-            };
+            let estimated_entries =
+                if let Ok(content) = tokio::fs::read_to_string(history_file).await {
+                    content.lines().count() as u64
+                } else {
+                    0
+                };
 
             HistoryFileStatus {
                 exists: true,
@@ -578,20 +578,45 @@ impl TerminalProcessor {
     }
 
     /// Helper function to get Atuin database status
-    fn get_atuin_status(atuin_path: &Utf8PathBuf) -> AtuinStatus {
+    async fn get_atuin_status(
+        atuin_path: &sinex_core::types::domain::SanitizedPath,
+    ) -> AtuinStatus {
         if atuin_path.exists() {
-            let metadata = std::fs::metadata(atuin_path).ok();
+            let metadata = tokio::fs::metadata(atuin_path).await.ok();
             let db_size_bytes = metadata.map(|m| m.len()).unwrap_or(0);
 
-            // For now, provide a rough estimate
-            // In a real implementation, we'd query the SQLite database
-            let estimated_entries = db_size_bytes / 100; // Very rough estimate
+            // Query actual data from Atuin SQLite database
+            let (estimated_entries, last_entry_timestamp) =
+                if let Ok(conn) = rusqlite::Connection::open(atuin_path.as_path()) {
+                    // Count entries
+                    let count: u64 = conn
+                        .query_row("SELECT COUNT(*) FROM history", [], |row| row.get(0))
+                        .unwrap_or(0);
+
+                    // Get most recent timestamp
+                    let last_timestamp: Option<i64> = conn
+                        .query_row("SELECT MAX(timestamp) FROM history", [], |row| row.get(0))
+                        .ok();
+
+                    let last_entry = last_timestamp.and_then(|ts| {
+                        // Atuin stores timestamps in nanoseconds since epoch
+                        let seconds = ts / 1_000_000_000;
+                        let nanos = (ts % 1_000_000_000) as u32;
+                        DateTime::from_timestamp(seconds, nanos)
+                    });
+
+                    (count, last_entry)
+                } else {
+                    // Fallback to estimate if we can't open the database
+                    let estimated_entries = db_size_bytes / 100;
+                    (estimated_entries, None)
+                };
 
             AtuinStatus {
                 db_exists: true,
                 db_size_bytes,
                 estimated_entries,
-                last_entry_timestamp: None, // TODO: Query actual timestamp
+                last_entry_timestamp,
             }
         } else {
             AtuinStatus {
@@ -604,14 +629,15 @@ impl TerminalProcessor {
     }
 
     /// Helper function to estimate Atuin entries
-    fn estimate_atuin_entries(
+    async fn estimate_atuin_entries(
         atuin_db_path: &Option<Utf8PathBuf>,
         warnings: &mut Vec<String>,
     ) -> u64 {
         if let Some(ref atuin_path) = atuin_db_path {
             if atuin_path.exists() {
                 // Estimate based on file size (very rough)
-                std::fs::metadata(atuin_path)
+                tokio::fs::metadata(atuin_path)
+                    .await
                     .map(|m| m.len() / 100) // ~100 bytes per entry
                     .unwrap_or(0)
             } else {
@@ -624,19 +650,16 @@ impl TerminalProcessor {
     }
 
     /// Helper function to estimate history entries from files
-    fn estimate_history_entries(history_files: &[Utf8PathBuf]) -> u64 {
-        history_files
-            .iter()
-            .filter_map(|f| {
-                if f.exists() {
-                    std::fs::read_to_string(f)
-                        .map(|content| content.lines().count() as u64)
-                        .ok()
-                } else {
-                    None
+    async fn estimate_history_entries(history_files: &[Utf8PathBuf]) -> u64 {
+        let mut total = 0u64;
+        for f in history_files {
+            if f.exists() {
+                if let Ok(content) = tokio::fs::read_to_string(f).await {
+                    total += content.lines().count() as u64;
                 }
-            })
-            .sum()
+            }
+        }
+        total
     }
 }
 
@@ -790,13 +813,12 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 if !args.dry_run {
                     // Emit a snapshot event
                     if let Some(ref context) = self.context {
-                        let snapshot_event: RawEvent =
-                            Event::from_payload(TerminalSnapshotPayload {
-                                active_watchers,
-                                enabled_sources: self.config.enabled_sources.clone(),
-                                snapshot_time: Utc::now(),
-                            })
-                            .into();
+                        let snapshot_event: RawEvent = Event::new(TerminalSnapshotPayload {
+                            active_watchers,
+                            enabled_sources: self.config.enabled_sources.clone(),
+                            snapshot_time: Utc::now(),
+                        })
+                        .into();
 
                         context.emit_event(snapshot_event).await?;
                     }
@@ -903,8 +925,9 @@ impl StatefulStreamProcessor for TerminalProcessor {
                 let source_estimate = match source.as_str() {
                     "atuin" => {
                         Self::estimate_atuin_entries(&self.config.atuin_db_path, &mut warnings)
+                            .await
                     }
-                    "history" => Self::estimate_history_entries(&self.config.history_files),
+                    "history" => Self::estimate_history_entries(&self.config.history_files).await,
                     _ => 10, // Default estimate for other sources
                 };
                 estimated_events += source_estimate;
@@ -1065,7 +1088,7 @@ impl ExplorationProvider for TerminalProcessor {
 
     fn export_data(
         &self,
-        path: &Utf8PathBuf,
+        path: &sinex_core::types::domain::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         // Validate export path for security
@@ -1086,7 +1109,7 @@ impl ExplorationProvider for TerminalProcessor {
                 ExportFormat::Raw => format!("{:#?}", state),
             };
 
-            std::fs::write(path, content)?;
+            tokio::fs::write(path, content).await?;
         } else {
             // Export configuration if no state available
             let config_data = serde_json::json!({
@@ -1103,7 +1126,7 @@ impl ExplorationProvider for TerminalProcessor {
                 ExportFormat::Csv => "No state data available\n".to_string(),
             };
 
-            std::fs::write(path, content)?;
+            tokio::fs::write(path, content).await?;
         }
 
         Ok(())

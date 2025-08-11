@@ -103,4 +103,7 @@ impl Default for ContentProcessor {
     }
 }
 
-default_exploration_provider!(ContentProcessor, "Content processor");
+default_exploration_provider!(
+    ContentProcessor,
+    "Content automaton for text and media analysis"
+);

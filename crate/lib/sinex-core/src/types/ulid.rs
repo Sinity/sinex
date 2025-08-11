@@ -248,17 +248,36 @@ impl Ulid {
         let now_ms = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_millis() as u64;
+            .as_millis()
+            .min(u64::MAX as u128) as u64;
 
         let mut state = MONOTONIC_STATE.lock().unwrap_or_else(|poisoned| {
-            // If the mutex is poisoned, clear it and start fresh
-            poisoned.into_inner()
+            // If the mutex is poisoned (due to panic during ULID generation),
+            // recover with a fresh state to prevent application crashes
+            eprintln!("WARN: ULID monotonic state mutex was poisoned, recovering");
+            let mut recovered = poisoned.into_inner();
+            recovered.last_timestamp = now_ms.saturating_sub(1); // Ensure we advance
+            recovered.last_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+            recovered
         });
 
         let random_part = if now_ms == state.last_timestamp {
             // Same millisecond: increment the random component to maintain ordering
-            state.last_random = state.last_random.wrapping_add(1);
-            state.last_random
+            // Check for overflow to prevent wrapping to zero
+            match state.last_random.checked_add(1) {
+                Some(next_random) if next_random <= 0x3FFF_FFFF_FFFF_FFFF_FFFF => {
+                    state.last_random = next_random;
+                    next_random
+                }
+                _ => {
+                    // Random component would overflow, force advance to next millisecond
+                    let next_ts = now_ms.saturating_add(1);
+                    state.last_timestamp = next_ts;
+                    let new_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                    state.last_random = new_random;
+                    new_random
+                }
+            }
         } else if now_ms > state.last_timestamp {
             // New millisecond: generate fresh random component
             let mut rng = rand::thread_rng();
@@ -267,10 +286,22 @@ impl Ulid {
             state.last_random = new_random;
             new_random
         } else {
-            // Clock went backwards: use incremented random from last timestamp
-            // This handles clock adjustments gracefully
-            state.last_random = state.last_random.wrapping_add(1);
-            state.last_random
+            // Clock went backwards: maintain monotonicity by keeping last timestamp
+            // and incrementing random component
+            match state.last_random.checked_add(1) {
+                Some(next_random) if next_random <= 0x3FFF_FFFF_FFFF_FFFF_FFFF => {
+                    state.last_random = next_random;
+                    next_random
+                }
+                _ => {
+                    // Random overflowed with backwards clock, advance timestamp
+                    let next_ts = state.last_timestamp.saturating_add(1);
+                    state.last_timestamp = next_ts;
+                    let new_random = rand::thread_rng().gen::<u128>() & 0x3FFF_FFFF_FFFF_FFFF_FFFF;
+                    state.last_random = new_random;
+                    new_random
+                }
+            }
         };
 
         drop(state); // Release the lock early

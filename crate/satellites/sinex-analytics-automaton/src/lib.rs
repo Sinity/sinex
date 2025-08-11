@@ -103,4 +103,7 @@ impl Default for AnalyticsProcessor {
     }
 }
 
-default_exploration_provider!(AnalyticsProcessor, "Analytics processor");
+default_exploration_provider!(
+    AnalyticsProcessor,
+    "Analytics automaton for data analysis and insights"
+);

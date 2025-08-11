@@ -631,7 +631,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> color_eyre::
         work_items.push(event.id);
     }
 
-    let worker_counts = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let worker_counts = Arc::new(parking_lot::Mutex::new(HashMap::new()));
     let total_processed = Arc::new(AtomicU64::new(0));
 
     let mut handles = vec![];
@@ -684,7 +684,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> color_eyre::
             }
 
             // Record final count
-            counts.lock().unwrap().insert(worker_id, worker_processed);
+            counts.lock().insert(worker_id, worker_processed);
             worker_processed
         });
 
@@ -698,7 +698,7 @@ async fn test_worker_load_balancing_concurrent(ctx: TestContext) -> color_eyre::
     println!("  Total work items: {}", work_item_count);
     println!("  Total processed: {}", total);
 
-    let worker_counts = worker_counts.lock().unwrap();
+    let worker_counts = worker_counts.lock();
     let mut min_processed = u64::MAX;
     let mut max_processed = 0;
 

@@ -179,7 +179,7 @@ async fn test_no_live_to_archived_references(ctx: TestContext) -> Result<()> {
     // This is the CI check from TARGET_final.md E.5
     let violations = sqlx::query!(
         r#"
-        WITH archived AS (SELECT id FROM core.archived_events)
+        WITH archived AS (SELECT id FROM audit.archived_events)
         SELECT COUNT(*) AS live_refs_archived
         FROM core.events e
         WHERE e.source_event_ids && (SELECT array_agg(id) FROM archived)

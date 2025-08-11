@@ -4,9 +4,11 @@
 //! including cascade analysis, state management, and invariant enforcement.
 
 pub mod config;
+pub mod dry_run;
 pub mod invariants;
 pub mod logging;
 
 // Re-export commonly used types
 pub use config::{BatchConfig, CascadeConfig, ReplayConfig};
+pub use dry_run::{execute_dry_run, DryRunExecutor, DryRunOperation, DryRunResult};
 pub use invariants::{InvariantViolation, ViolationSeverity, ViolationType};

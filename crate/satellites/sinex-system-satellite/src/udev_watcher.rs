@@ -18,7 +18,7 @@ macro_rules! create_udev_event {
     ($payload_type:ident, $action:expr, $device_path:expr, $device_type:expr,
      $subsystem:expr, $devtype:expr, $vendor:expr, $model:expr, $serial:expr,
      $properties:expr, $timestamp:expr) => {
-        Ok(Event::from_payload($payload_type {
+        Ok(Event::new($payload_type {
             action: $action.to_string(),
             device_path: $device_path.to_string(),
             device_type: $device_type.to_string(),
@@ -165,8 +165,8 @@ impl UdevWatcher {
             let mut current_devices = std::collections::HashSet::new();
 
             // Scan /sys/class for device changes
-            if let Ok(entries) = std::fs::read_dir("/sys/class") {
-                for entry in entries.flatten() {
+            if let Ok(mut entries) = tokio::fs::read_dir("/sys/class").await {
+                while let Ok(Some(entry)) = entries.next_entry().await {
                     let class_name = entry.file_name().to_string_lossy().to_string();
 
                     // Focus on interesting device classes
@@ -174,8 +174,8 @@ impl UdevWatcher {
                         continue;
                     }
 
-                    if let Ok(class_entries) = std::fs::read_dir(entry.path()) {
-                        for device_entry in class_entries.flatten() {
+                    if let Ok(mut class_entries) = tokio::fs::read_dir(entry.path()).await {
+                        while let Ok(Some(device_entry)) = class_entries.next_entry().await {
                             let device_name =
                                 device_entry.file_name().to_string_lossy().to_string();
                             let device_path = device_entry.path().to_string_lossy().to_string();

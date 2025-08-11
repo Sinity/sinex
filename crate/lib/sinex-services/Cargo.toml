@@ -24,6 +24,7 @@ serde_json.workspace = true
 
 # Database
 sqlx.workspace = true
+sea-query.workspace = true
 
 # Logging
 tracing.workspace = true

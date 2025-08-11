@@ -12,30 +12,62 @@ use sinex_core::db::{repositories::DbPoolExt, DbPool};
 
 // Test data builders using bon derive macros
 
-/// Builder for checkpoint test data - uses bon::Builder for fluent interface
-#[derive(Debug, Clone, Builder)]
+/// Builder for checkpoint test data - uses manual fluent interface
+#[derive(Debug, Clone)]
 pub(crate) struct TestCheckpointBuilder {
     processor_name: String,
-    #[builder(default)]
     consumer_group: Option<String>,
-    #[builder(default)]
     consumer_name: Option<String>,
-    #[builder(default)]
     last_processed_id: Option<Id<RawEvent>>,
-    #[builder(default = 0)]
     processed_count: i64,
-    #[builder(default)]
     state_data: Option<JsonValue>,
-    #[builder(default = 1)]
     checkpoint_version: i32,
-    #[builder(default)]
     checkpoint_data: Option<JsonValue>,
 }
 
 impl TestCheckpointBuilder {
-    /// Create a new checkpoint builder using bon::Builder
-    pub fn new(processor_name: &str) -> TestCheckpointBuilderBuilder<(String,)> {
-        Self::builder().processor_name(processor_name.to_string())
+    /// Create a new checkpoint builder
+    pub fn new(processor_name: &str) -> Self {
+        Self {
+            processor_name: processor_name.to_string(),
+            consumer_group: None,
+            consumer_name: None,
+            last_processed_id: None,
+            processed_count: 0,
+            state_data: None,
+            checkpoint_version: 1,
+            checkpoint_data: None,
+        }
+    }
+
+    /// Set the processed count
+    pub fn processed_count(mut self, count: i64) -> Self {
+        self.processed_count = count;
+        self
+    }
+
+    /// Set the consumer group
+    pub fn consumer_group<S: AsRef<str>>(mut self, group: S) -> Self {
+        self.consumer_group = Some(group.as_ref().to_string());
+        self
+    }
+
+    /// Set the consumer name
+    pub fn consumer_name<S: AsRef<str>>(mut self, name: S) -> Self {
+        self.consumer_name = Some(name.as_ref().to_string());
+        self
+    }
+
+    /// Set the last processed ID
+    pub fn last_processed_id(mut self, id: Id<RawEvent>) -> Self {
+        self.last_processed_id = Some(id);
+        self
+    }
+
+    /// Set the state data
+    pub fn state_data(mut self, data: JsonValue) -> Self {
+        self.state_data = Some(data);
+        self
     }
 
     /// Insert the checkpoint
@@ -78,14 +110,17 @@ pub(crate) struct TestScenarioBuilder {
     events: Vec<RawEvent>,
     #[builder(default = Vec::new())]
     checkpoints: Vec<TestCheckpointBuilder>,
-    #[builder(default)]
     pool: Option<DbPool>,
 }
 
 impl TestScenarioBuilder {
-    /// Create a new scenario builder using bon::Builder
-    pub fn new() -> TestScenarioBuilderBuilder<()> {
-        Self::builder()
+    /// Create a new scenario builder
+    pub fn new() -> Self {
+        Self {
+            events: Vec::new(),
+            checkpoints: Vec::new(),
+            pool: None,
+        }
     }
     /// Add multiple events from the same source
     pub fn with_events_from_source(
@@ -95,7 +130,7 @@ impl TestScenarioBuilder {
         count: usize,
     ) -> Self {
         for i in 0..count {
-            let event = RawEvent::schemaless(
+            let event = RawEvent::new(
                 source.clone(),
                 event_type.clone(),
                 json!({

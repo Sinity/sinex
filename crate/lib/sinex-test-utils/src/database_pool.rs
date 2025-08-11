@@ -108,8 +108,10 @@ impl PoolMetrics {
 
     fn record_acquisition(&self, wait_time: Duration) {
         self.acquisitions.fetch_add(1, Ordering::Relaxed);
-        self.total_wait_time
-            .fetch_add(wait_time.as_millis() as u64, Ordering::Relaxed);
+        self.total_wait_time.fetch_add(
+            wait_time.as_millis().min(u64::MAX as u128) as u64,
+            Ordering::Relaxed,
+        );
     }
 
     fn record_cleanup_failure(&self) {

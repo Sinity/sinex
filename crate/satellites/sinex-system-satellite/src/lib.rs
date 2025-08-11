@@ -71,7 +71,7 @@ impl Default for SystemConfig {
 }
 
 /// Error types for system satellite with rich context support
-#[derive(Debug, thiserror::Error, Clone)]
+#[derive(Debug, thiserror::Error)]
 pub enum SystemSatelliteError {
     #[error("Processing error: {0}")]
     Processing(ErrorDetails),

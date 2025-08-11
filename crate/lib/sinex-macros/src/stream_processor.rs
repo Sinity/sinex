@@ -721,9 +721,9 @@ fn generate_error_handling_helpers(
     let circuit_breaker_impl = if enable_circuit_breaker {
         quote! {
             /// Circuit breaker state for fault tolerance
-            static CIRCUIT_BREAKER_STATE: std::sync::LazyLock<std::sync::Arc<std::sync::Mutex<CircuitBreakerState>>> =
+            static CIRCUIT_BREAKER_STATE: std::sync::LazyLock<std::sync::Arc<parking_lot::Mutex<CircuitBreakerState>>> =
                 std::sync::LazyLock::new(|| {
-                    std::sync::Arc::new(std::sync::Mutex::new(CircuitBreakerState::new(#circuit_breaker_threshold)))
+                    std::sync::Arc::new(parking_lot::Mutex::new(CircuitBreakerState::new(#circuit_breaker_threshold)))
                 });
 
             #[derive(Debug, Clone)]
@@ -835,7 +835,7 @@ fn generate_error_handling_helpers(
 
                 #[cfg(feature = "circuit-breaker")]
                 let circuit_breaker_allows = if #enable_circuit_breaker {
-                    let state = CIRCUIT_BREAKER_STATE.lock().unwrap();
+                    let state = CIRCUIT_BREAKER_STATE.lock();
                     state.should_allow_request()
                 } else {
                     true
@@ -875,7 +875,7 @@ fn generate_error_handling_helpers(
                 // Record failure in circuit breaker
                 #[cfg(feature = "circuit-breaker")]
                 if #enable_circuit_breaker {
-                    let mut state = CIRCUIT_BREAKER_STATE.lock().unwrap();
+                    let mut state = CIRCUIT_BREAKER_STATE.lock();
                     state.record_failure();
                 }
 
@@ -913,7 +913,7 @@ fn generate_error_handling_helpers(
             fn record_operation_success(&self, operation: &str) {
                 #[cfg(feature = "circuit-breaker")]
                 if #enable_circuit_breaker {
-                    let mut state = CIRCUIT_BREAKER_STATE.lock().unwrap();
+                    let mut state = CIRCUIT_BREAKER_STATE.lock();
                     state.record_success();
                 }
 
@@ -955,7 +955,7 @@ fn generate_error_handling_helpers(
                 // Try to reset circuit breaker
                 #[cfg(feature = "circuit-breaker")]
                 if #enable_circuit_breaker {
-                    let mut state = CIRCUIT_BREAKER_STATE.lock().unwrap();
+                    let mut state = CIRCUIT_BREAKER_STATE.lock();
                     state.consecutive_failures = 0;
                     state.is_open = false;
                     state.last_failure_time = None;
@@ -999,7 +999,7 @@ fn generate_error_handling_helpers(
                 // Check circuit breaker state
                 #[cfg(feature = "circuit-breaker")]
                 if #enable_circuit_breaker {
-                    let state = CIRCUIT_BREAKER_STATE.lock().unwrap();
+                    let state = CIRCUIT_BREAKER_STATE.lock();
                     if state.is_open {
                         status.healthy = false;
                         status.issues.push(format!(

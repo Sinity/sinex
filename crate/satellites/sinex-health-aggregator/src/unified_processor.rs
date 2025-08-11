@@ -10,10 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::models::RawEvent;
-use sinex_core::types::events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload};
+use sinex_core::types::{Id, events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload}};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
-    redis_stream_consumer::BatchProcessingResult,
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -26,6 +25,14 @@ use tracing::{debug, info, warn};
 /// Health threshold constants
 const HEALTHY_THRESHOLD_MINUTES: i64 = 2;
 const DEGRADED_THRESHOLD_MINUTES: i64 = 5;
+
+/// Result of batch processing
+#[derive(Debug)]
+pub struct BatchProcessingResult {
+    pub successful_ids: Vec<Id<RawEvent>>,
+    pub failed_ids: Vec<(Id<RawEvent>, String)>,
+    pub synthesis_events: Vec<RawEvent>,
+}
 
 /// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -201,13 +208,6 @@ impl HealthAggregator {
     // }
 }
 
-// TODO: Remove NatsEventBatchProcessor implementation after NatsStreamConsumer removal
-// #[async_trait]
-// impl NatsEventBatchProcessor for HealthAggregator {
-//     async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
-//         // ... implementation removed
-//     }
-// }
 
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
@@ -228,8 +228,29 @@ impl StatefulStreamProcessor for HealthAggregator {
 
         match until {
             TimeHorizon::Continuous => {
-                // TODO: Implement continuous health monitoring after NatsStreamConsumer removal
-                warn!("Health aggregator continuous mode not yet implemented after NatsStreamConsumer removal");
+                // Continuous health monitoring via periodic polling
+                info!("Starting continuous health monitoring");
+                
+                // Set up periodic health check interval (every 30 seconds)
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                
+                loop {
+                    interval.tick().await;
+                    
+                    // Collect and emit health metrics
+                    if let Some(ctx) = &self.context {
+                        let health_event = self.collect_system_health_metrics().await?;
+                        ctx.emit_event(health_event).await?;
+                        events_processed += 1;
+                    }
+                    
+                    // Check for shutdown signal
+                    if args.shutdown_signal.is_some() {
+                        info!("Received shutdown signal, stopping health monitoring");
+                        break;
+                    }
+                }
                 
                 Ok(Self::build_scan_report(
                     events_processed,
@@ -340,13 +361,15 @@ impl StatefulStreamProcessor for HealthAggregator {
         let mut synthesis_events = Vec::new();
 
         for event in events {
-            match self.process_heartbeat(&event).await {
-                Ok(_) => {
-                    successful_ids.push(event.event_id);
-                }
-                Err(e) => {
-                    warn!("Failed to process heartbeat event {}: {}", event.event_id, e);
-                    failed_ids.push((event.event_id, e.to_string()));
+            if let Some(event_id) = event.id {
+                match self.process_heartbeat(&event).await {
+                    Ok(_) => {
+                        successful_ids.push(event_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to process heartbeat event {}: {}", event_id, e);
+                        failed_ids.push((event_id, e.to_string()));
+                    }
                 }
             }
         }

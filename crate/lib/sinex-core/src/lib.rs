@@ -87,11 +87,27 @@ pub use types::{
     Ulid,
 };
 
+// Re-export commonly used event payloads at crate root
+pub use types::events::payloads;
+
 pub use db::{
     constants, create_database_if_not_exists, create_pool, create_pool_strict,
     create_pool_with_config, create_pool_with_config_strict, create_test_pool, distributed_locking,
     get_database_url, models, pool, query_helpers, repositories, run_migrations, sanitization,
     schema_migrations, seaquery_helpers, security, DbPool, DbPoolRef, PoolConfig,
+};
+
+// Re-export the most commonly used database models at crate root
+pub use db::models::{
+    Blob, BlobRecord, Entity, EntityRelation, Provenance, RawEvent, SourceMaterial,
+};
+
+// Re-export the most commonly used repository traits at crate root
+pub use db::repositories::{CheckpointRepository, DbPoolExt, EventRepository, Repository};
+
+// Re-export the most commonly used domain types at crate root
+pub use types::domain::{
+    EventSource, EventType, HostName, ProcessorName, SchemaName, SchemaVersion,
 };
 
 // Re-export migration functionality
@@ -112,39 +128,45 @@ pub use query_helpers::{
 // Re-export SeaQuery ULID helpers
 pub use seaquery_helpers::SeaQueryUlidExt;
 
-// Re-export repository pattern
+// Re-export repository pattern (DbPoolExt already re-exported above)
 pub use repositories::{
-    Checkpoint, DbPoolExt, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters,
-    NewSchema,
+    Checkpoint, DbResult as RepoResult, EventPayloadSchema, EventSearchFilters, NewSchema,
 };
 
 /// Prelude module for commonly used types and functions
+///
+/// Import this module to get access to the most frequently used types and functions:
+/// ```rust
+/// use sinex_core::prelude::*;
+/// ```
 pub mod prelude {
-    // Types from the types module
-    pub use crate::types::{
-        domain::{EventSource, EventType, HostName},
-        error::{Result as SinexResult, SinexError},
-        events::EventPayload,
-        Id, JsonValue, OptionalTimestamp, Timestamp, Ulid,
+    // Core data types - now available at crate root for convenience
+    pub use crate::{
+        Blob, CheckpointRepository, DbPoolExt, EventRepository, EventSource, EventType, HostName,
+        Id, JsonValue, OptionalTimestamp, ProcessorName, RawEvent, Repository, Timestamp, Ulid,
     };
 
-    // Database types and functions
+    // Types from nested modules that are commonly used together
+    pub use crate::types::{
+        error::{Result as SinexResult, SinexError},
+        events::EventPayload,
+        utils::ResourceGuard,
+        validation::{validate_json, validate_path, ValidationError},
+    };
+
+    // Database functionality that's frequently used together
     pub use crate::db::{
-        models::RawEvent,
         query_helpers::{
             db_error, from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db,
             ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction,
             DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
         },
-        repositories::{
-            Checkpoint, CheckpointRepository, DbPoolExt, EventRepository, EventSearchFilters,
-            NewSchema, Repository,
-        },
+        repositories::{Checkpoint, EventSearchFilters, NewSchema},
         seaquery_helpers::SeaQueryUlidExt,
         DbPool, DbPoolRef, PoolConfig,
     };
 
-    // Common external crates
+    // Common external crates that are used throughout the codebase
     pub use color_eyre::eyre::{eyre, Result};
     pub use sqlx::{FromRow, Postgres, Transaction};
 }

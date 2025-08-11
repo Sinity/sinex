@@ -263,6 +263,7 @@ impl CheckpointManager {
     /// # Behavior
     /// - Corrupt checkpoint data logs warnings and falls back to `Checkpoint::None`
     /// - First-time processors get a default checkpoint with `processed_count: 0`
+    #[must_use]
     pub async fn load_checkpoint(&self) -> SatelliteResult<CheckpointState> {
         let processor_name = ProcessorName::new(&self.processor_name);
         let consumer_group = ConsumerGroup::new(&self.consumer_group);
@@ -287,7 +288,9 @@ impl CheckpointManager {
 
             if version >= 2 && row.checkpoint_data.is_some() {
                 // New unified format (version 2+)
-                let checkpoint_data = row.checkpoint_data.unwrap();
+                let checkpoint_data = row.checkpoint_data.ok_or_else(|| {
+                    SatelliteError::Checkpoint("Checkpoint data is unexpectedly None".to_string())
+                })?;
                 let checkpoint: Checkpoint = serde_json::from_value(checkpoint_data)
                     .map_err(|e| {
                         warn!(error = %e, "Failed to deserialize checkpoint data, falling back to legacy");
@@ -352,6 +355,7 @@ impl CheckpointManager {
     /// # Atomicity
     /// - Uses `ON CONFLICT` upsert for atomic updates
     /// - Updates `updated_at` timestamp on each save
+    #[must_use]
     pub async fn save_checkpoint(&self, state: &CheckpointState) -> SatelliteResult<()> {
         let _checkpoint_id = Ulid::new();
 
@@ -397,6 +401,7 @@ impl CheckpointManager {
     }
 
     /// Get checkpoint history for debugging
+    #[must_use]
     pub async fn get_checkpoint_history(
         &self,
         _limit: i64,
@@ -417,6 +422,7 @@ impl CheckpointManager {
     }
 
     /// Reset checkpoint (for testing or manual intervention)
+    #[must_use]
     pub async fn reset_checkpoint(&self) -> SatelliteResult<()> {
         // CheckpointQueries doesn't have delete_checkpoint method in the new API
         // For now, just log a warning
@@ -436,6 +442,7 @@ impl CheckpointManager {
     }
 
     /// Get checkpoint statistics
+    #[must_use]
     pub async fn get_checkpoint_stats(&self) -> SatelliteResult<CheckpointStats> {
         // CheckpointQueries doesn't have get_checkpoint_stats method in the new API
         // For now, return default stats

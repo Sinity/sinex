@@ -68,7 +68,7 @@ sha2 = { workspace = true, optional = true }
 prometheus = { version = "0.13", optional = true }
 sysinfo = { version = "0.30", optional = true }
 procfs = { version = "0.16", optional = true }
-parking_lot = { version = "0.12", optional = true }
+parking_lot = "0.12"
 
 [features]
 default = ["migration", "macros", "sqlx"]
@@ -78,7 +78,7 @@ sqlx = []
 arbitrary = ["dep:proptest"]
 schema-manager = ["dep:clap", "dep:tracing-subscriber", "dep:sha2"]
 json-schema = []
-telemetry = ["dep:prometheus", "dep:sysinfo", "dep:procfs", "dep:parking_lot", "macros"]
+telemetry = ["dep:prometheus", "dep:sysinfo", "dep:procfs", "macros"]
 
 [[bin]]
 name = "sinex-schema"

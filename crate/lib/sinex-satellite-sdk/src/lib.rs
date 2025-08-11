@@ -111,7 +111,6 @@ pub use sinex_macros::{
     SatelliteProcessor,
 };
 
-// pub mod automaton; // REMOVED - use StatefulStreamProcessor instead
 pub mod annex;
 pub mod checkpoint;
 pub mod cli;
@@ -129,6 +128,9 @@ pub mod nats;
 pub mod preflight;
 pub mod processor_runner;
 pub mod replay;
+pub mod replay_control;
+pub mod replay_metrics;
+pub mod replay_progress;
 pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
@@ -140,7 +142,7 @@ pub use cli::{
     SourceState,
 };
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
-pub use grpc_client::IngestClient;
+pub use grpc_client::{GrpcClientConfig, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
@@ -346,6 +348,12 @@ pub enum SatelliteError {
 
     #[error("Lifecycle error: {0}")]
     Lifecycle(String),
+
+    #[error("Operation cancelled: {0}")]
+    OperationCancelled(String),
+
+    #[error("Not implemented: {0}")]
+    NotImplemented(String),
 }
 
 impl From<SatelliteError> for sinex_core::error::SinexError {
@@ -371,6 +379,12 @@ impl From<SatelliteError> for sinex_core::error::SinexError {
             SatelliteError::Automaton(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::Checkpoint(_) => sinex_core::error::SinexError::unknown(e.to_string()),
             SatelliteError::Lifecycle(_) => sinex_core::error::SinexError::unknown(e.to_string()),
+            SatelliteError::OperationCancelled(_) => {
+                sinex_core::error::SinexError::unknown(e.to_string())
+            }
+            SatelliteError::NotImplemented(_) => {
+                sinex_core::error::SinexError::unknown(e.to_string())
+            }
         }
     }
 }

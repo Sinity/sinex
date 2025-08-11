@@ -37,7 +37,7 @@ use tracing_test::traced_test;
 async fn test_telemetry_accumulator_basic_functionality(
     ctx: TestContext,
 ) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("test-component")
         .with_event_sender(tx.clone())
         .with_interval(Duration::from_millis(100));
@@ -166,7 +166,7 @@ async fn test_telemetry_accumulator_basic_functionality(
 
 #[sinex_test]
 async fn test_telemetry_state_reset_between_emissions(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("reset-test").with_event_sender(tx);
 
     // First batch of metrics
@@ -239,7 +239,7 @@ async fn test_telemetry_percentile_calculations(
     ctx: TestContext,
     #[case] values: Vec<f64>,
 ) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("percentile-test").with_event_sender(tx);
 
     if values.is_empty() {
@@ -336,7 +336,7 @@ async fn test_telemetry_percentile_calculations(
 
 #[sinex_test]
 async fn test_telemetry_background_emitter(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("background-test")
         .with_event_sender(tx)
         .with_interval(Duration::from_millis(100));
@@ -389,7 +389,7 @@ async fn test_telemetry_background_emitter(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_system_telemetry_emitter_basic(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let emitter = SystemTelemetryEmitter::new(tx).with_interval(Duration::from_millis(100));
 
     // Emit system resources manually
@@ -428,7 +428,7 @@ async fn test_system_telemetry_emitter_basic(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_system_telemetry_background_emission(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let emitter = SystemTelemetryEmitter::new(tx).with_interval(Duration::from_millis(100));
 
     // Start background system telemetry
@@ -466,7 +466,7 @@ async fn test_system_telemetry_background_emission(ctx: TestContext) -> Result<(
 
 #[sinex_test]
 async fn test_global_telemetry_setup_and_recording(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("global-test").with_event_sender(tx);
 
     // Set as global telemetry
@@ -529,7 +529,7 @@ async fn test_global_telemetry_setup_and_recording(ctx: TestContext) -> Result<(
 
 #[sinex_test]
 async fn test_concurrent_telemetry_recording(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("concurrent-test").with_event_sender(tx);
 
     // Spawn multiple tasks recording metrics concurrently
@@ -603,7 +603,7 @@ async fn test_concurrent_telemetry_recording(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_telemetry_high_frequency_recording(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("high-frequency-test").with_event_sender(tx);
 
     let start_time = Instant::now();
@@ -657,7 +657,7 @@ async fn test_telemetry_high_frequency_recording(ctx: TestContext) -> Result<()>
 
 #[sinex_test]
 async fn test_telemetry_no_data_emission(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("no-data-test").with_event_sender(tx);
 
     // Emit without recording any data
@@ -696,7 +696,7 @@ async fn test_telemetry_without_event_sender(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 #[traced_test]
 async fn test_telemetry_emission_timing(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("timing-test")
         .with_event_sender(tx)
         .with_interval(Duration::from_millis(50));
@@ -742,7 +742,7 @@ async fn test_telemetry_emission_timing(ctx: TestContext) -> Result<()> {
 #[sinex_test]
 async fn test_telemetry_events_in_database(ctx: TestContext) -> Result<()> {
     // This test verifies that telemetry events properly integrate with the event system
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("db-integration-test").with_event_sender(tx);
 
     // Record telemetry data
@@ -789,7 +789,7 @@ async fn test_telemetry_events_in_database(ctx: TestContext) -> Result<()> {
 
 #[sinex_test]
 async fn test_telemetry_snapshot_validation(ctx: TestContext) -> Result<()> {
-    let (tx, mut rx) = mpsc::unbounded_channel();
+    let (tx, mut rx) = mpsc::channel(50); // Test channel with bounded capacity
     let accumulator = TelemetryAccumulator::new("snapshot-test").with_event_sender(tx);
 
     // Record predictable telemetry data for snapshot testing

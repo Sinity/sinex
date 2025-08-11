@@ -232,6 +232,7 @@ impl<'a> CheckpointRepository<'a> {
             WHERE processor_name = $1 
               AND consumer_group = $2 
               AND consumer_name = $3
+             
             "#,
             processor_name.as_str(),
             consumer_group.as_str(),
@@ -404,18 +405,17 @@ impl<'a> CheckpointRepository<'a> {
         consumer_group: &ConsumerGroup,
         consumer_name: &ConsumerName,
     ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            "DELETE FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3",
-            processor_name.as_str(),
-            consumer_group.as_str(),
-            consumer_name.as_str()
+        self.delete_with_context(
+            processor_name,
+            consumer_group,
+            consumer_name,
+            "system",
+            "Checkpoint cleanup",
         )
-        .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "delete checkpoint"))?;
-
-        Ok(result.rows_affected() > 0)
     }
+
+    // Removed: soft delete functionality - use hard delete with operations_log instead
 
     pub async fn list(
         &self,
@@ -445,6 +445,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
+                    
                     ORDER BY updated_at DESC
                     "#
             )
@@ -469,6 +470,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
+                    
                     ORDER BY updated_at DESC
                     LIMIT $1
                     "#,
@@ -498,6 +500,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
+                    
                     ORDER BY updated_at DESC
                     LIMIT 100
                     "#

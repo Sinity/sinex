@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sinex.dev/schemas/v1/schema/schema_deprecated.json",
+  "title": "Schema Deprecated Event",
+  "description": "Event emitted when an event payload schema is deprecated",
+  "type": "object",
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "description": "ULID of the deprecated schema",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "schema_name": {
+      "type": "string",
+      "description": "Name of the deprecated schema",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "Version of the deprecated schema",
+      "minLength": 1
+    },
+    "event_types": {
+      "type": "array", 
+      "items": {
+        "type": "string"
+      },
+      "description": "Event types this schema applied to"
+    },
+    "deprecation_reason": {
+      "type": "string",
+      "description": "Reason for deprecating the schema",
+      "minLength": 1
+    },
+    "deprecated_by": {
+      "type": "string",
+      "description": "Identifier of the actor that deprecated the schema"
+    },
+    "replacement_schema_id": {
+      "type": ["string", "null"],
+      "description": "ULID of the replacement schema, if any",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "migration_required": {
+      "type": "boolean",
+      "description": "Whether existing data needs to be migrated",
+      "default": false
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_name",
+    "schema_version", 
+    "event_types",
+    "deprecation_reason",
+    "deprecated_by",
+    "migration_required"
+  ],
+  "additionalProperties": false
+}

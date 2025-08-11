@@ -1,0 +1,51 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sinex.dev/schemas/v1/checkpoint/checkpoint_deleted.json",
+  "title": "Checkpoint Deleted Event",
+  "description": "Event emitted when a processor checkpoint is deleted",
+  "type": "object",
+  "properties": {
+    "processor_name": {
+      "type": "string",
+      "description": "Name of the processor whose checkpoint was deleted",
+      "minLength": 1
+    },
+    "consumer_group": {
+      "type": "string",
+      "description": "Consumer group for the deleted checkpoint",
+      "default": "default"
+    },
+    "consumer_name": {
+      "type": "string",
+      "description": "Consumer name for the deleted checkpoint", 
+      "default": "default"
+    },
+    "checkpoint_id": {
+      "type": "string",
+      "description": "ULID of the deleted checkpoint record",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "last_processed_count": {
+      "type": "integer",
+      "description": "Final processed count before deletion",
+      "minimum": 0
+    },
+    "deleted_by": {
+      "type": "string",
+      "description": "Identifier of the actor that deleted the checkpoint"
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Reason for checkpoint deletion"
+    }
+  },
+  "required": [
+    "processor_name",
+    "consumer_group",
+    "consumer_name", 
+    "checkpoint_id",
+    "last_processed_count",
+    "deleted_by"
+  ],
+  "additionalProperties": false
+}

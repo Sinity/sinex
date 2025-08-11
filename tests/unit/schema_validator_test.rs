@@ -6,6 +6,12 @@
 use serde_json::json;
 use sinex_test_utils::prelude::*;
 
+// Static regex patterns for schema validation testing - compiled once for performance
+lazy_static::lazy_static! {
+    static ref EVENT_SOURCE_PATTERN: regex::Regex = regex::Regex::new(r"^[a-z][a-z0-9_-]*$").unwrap();
+    static ref EVENT_TYPE_PATTERN: regex::Regex = regex::Regex::new(r"^[a-z][a-z0-9_.]*$").unwrap();
+}
+
 // =============================================================================
 // Schema Validation Logic Tests
 // =============================================================================
@@ -321,10 +327,6 @@ fn test_schema_registry_error_conditions() -> TestResult {
 #[sinex_test]
 fn test_event_source_and_type_patterns() -> TestResult {
     // Test the regex patterns used for event source and type validation
-    use regex::Regex;
-
-    // Event source pattern: ^[a-z][a-z0-9_-]*$
-    let source_pattern = Regex::new(r"^[a-z][a-z0-9_-]*$")?;
 
     let valid_sources = vec![
         "fs_watcher",
@@ -347,7 +349,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
 
     for source in &valid_sources {
         assert!(
-            source_pattern.is_match(source),
+            EVENT_SOURCE_PATTERN.is_match(source),
             "Valid source '{}' should match pattern",
             source
         );
@@ -355,14 +357,13 @@ fn test_event_source_and_type_patterns() -> TestResult {
 
     for source in &invalid_sources {
         assert!(
-            !source_pattern.is_match(source),
+            !EVENT_SOURCE_PATTERN.is_match(source),
             "Invalid source '{}' should not match pattern",
             source
         );
     }
 
     // Event type pattern: ^[a-z][a-z0-9_.]*$
-    let type_pattern = Regex::new(r"^[a-z][a-z0-9_.]*$")?;
 
     let valid_types = vec![
         "file.created",
@@ -385,7 +386,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
 
     for event_type in &valid_types {
         assert!(
-            type_pattern.is_match(event_type),
+            EVENT_TYPE_PATTERN.is_match(event_type),
             "Valid event type '{}' should match pattern",
             event_type
         );
@@ -393,7 +394,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
 
     for event_type in &invalid_types {
         assert!(
-            !type_pattern.is_match(event_type),
+            !EVENT_TYPE_PATTERN.is_match(event_type),
             "Invalid event type '{}' should not match pattern",
             event_type
         );

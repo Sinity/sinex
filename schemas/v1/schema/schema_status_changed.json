@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://sinex.dev/schemas/v1/schema/schema_status_changed.json",
+  "title": "Schema Status Changed Event",
+  "description": "Event emitted when an event payload schema status changes (active/inactive)",
+  "type": "object",
+  "properties": {
+    "schema_id": {
+      "type": "string",
+      "description": "ULID of the schema",
+      "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"
+    },
+    "schema_name": {
+      "type": "string",
+      "description": "Name of the schema",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "string", 
+      "description": "Version of the schema",
+      "minLength": 1
+    },
+    "previous_status": {
+      "type": "boolean",
+      "description": "Previous active status"
+    },
+    "new_status": {
+      "type": "boolean",
+      "description": "New active status"  
+    },
+    "event_types": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Event types this schema applies to"
+    },
+    "changed_by": {
+      "type": "string",
+      "description": "Identifier of the actor that changed the status"
+    },
+    "reason": {
+      "type": ["string", "null"],
+      "description": "Reason for the status change"
+    }
+  },
+  "required": [
+    "schema_id",
+    "schema_name", 
+    "schema_version",
+    "previous_status",
+    "new_status",
+    "event_types",
+    "changed_by"
+  ],
+  "additionalProperties": false
+}

@@ -6,9 +6,12 @@
 
 use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
+use super::events::EventRepository;
 use crate::db::schema::OperationsLog;
-use crate::models::RawEvent;
-use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
+use crate::models::{Provenance, RawEvent};
+use crate::types::domain::{
+    ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName,
+};
 use crate::types::error::SinexError;
 use crate::types::Id;
 use chrono::{DateTime, Utc};
@@ -29,11 +32,10 @@ pub struct OperationRecord {
     pub approved_by: Option<String>,
     pub approved_at: Option<DateTime<Utc>>,
     pub executor_node: Option<String>,
-    pub started_at: Option<DateTime<Utc>>,
+    pub started_at: DateTime<Utc>, // Changed to non-optional, as it's NOT NULL in DB
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
     pub error_details: Option<String>,
-    pub created_at: DateTime<Utc>,
 }
 
 /// Operation log entry matching core.operations_log per TARGET_canonical.md
@@ -84,6 +86,24 @@ impl<'a> EnhancedRepository<'a> for StateRepository<'a> {
 // Use the transaction methods directly on StateRepositoryTx instead.
 
 impl<'a> StateRepository<'a> {
+    // ===== Event Emission Helpers =====
+
+    /// Emit an event for state changes to maintain event sourcing integrity
+    async fn emit_state_change_event(&self, event: RawEvent) -> DbResult<RawEvent> {
+        let event_repo = EventRepository::new(self.pool);
+        event_repo.insert(event).await
+    }
+
+    /// Emit an event within a transaction for state changes
+    async fn emit_state_change_event_tx(
+        &self,
+        tx: &mut Transaction<'_, Postgres>,
+        event: RawEvent,
+    ) -> DbResult<RawEvent> {
+        let event_repo = EventRepository::new(self.pool);
+        event_repo.insert_with_tx(tx, event).await
+    }
+
     // ===== Validation Methods =====
 
     /// Validate an operation ID is not null/empty
@@ -166,7 +186,32 @@ impl<'a> StateRepository<'a> {
             .unwrap_or_else(|| "default".into());
         let consumer_name = checkpoint.consumer_name.unwrap_or_else(|| "default".into());
 
-        sqlx::query_as!(
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin checkpoint transaction"))?;
+
+        // Check if this is an update or create operation
+        let existing_checkpoint = sqlx::query!(
+            "SELECT id, processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3",
+            checkpoint.processor_name.as_ref(),
+            consumer_group.as_ref(),
+            consumer_name.as_ref()
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "check existing checkpoint"))?;
+
+        let operation_type = if existing_checkpoint.is_some() {
+            "update"
+        } else {
+            "create"
+        };
+
+        // Perform the checkpoint upsert
+        let result = sqlx::query_as!(
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
@@ -207,9 +252,39 @@ impl<'a> StateRepository<'a> {
             checkpoint.checkpoint_data,
             checkpoint.state_data
         )
-        .fetch_one(self.pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| db_error(e, "save checkpoint"))
+        .map_err(|e| db_error(e, "save checkpoint"))?;
+
+        // Emit checkpoint saved event AFTER the state change (but still in transaction)
+        // This ensures the checkpoint_id is available from the RETURNING clause
+        let checkpoint_saved_event = RawEvent::new(
+            EventSource::new("sinex.state.checkpoint".to_string()),
+            EventType::new("checkpoint.saved".to_string()),
+            serde_json::json!({
+                "processor_name": result.processor_name.as_ref(),
+                "consumer_group": result.consumer_group.as_ref(),
+                "consumer_name": result.consumer_name.as_ref(),
+                "checkpoint_id": result.id.as_ulid().to_string(),
+                "last_processed_id": result.last_processed_id.as_ref().map(|id| id.as_ulid().to_string()),
+                "last_processed_ts": result.last_processed_ts,
+                "processed_count": result.processed_count,
+                "checkpoint_version": result.checkpoint_version,
+                "operation_type": operation_type,
+                "checkpoint_data": result.checkpoint_data,
+                "state_data": result.state_data
+            })
+        )
+        .with_host(HostName::new("sinex.state".to_string()));
+
+        self.emit_state_change_event_tx(&mut tx, checkpoint_saved_event)
+            .await?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit checkpoint transaction"))?;
+
+        Ok(result)
     }
 
     /// Get checkpoint for a specific processor
@@ -262,7 +337,7 @@ impl<'a> StateRepository<'a> {
                 updated_at
             FROM core.processor_checkpoints 
             WHERE consumer_group = 'default' AND consumer_name = 'default'
-            ORDER BY processor_name
+            ORDER BY name
             "#
         )
         .fetch_all(self.pool)
@@ -272,15 +347,107 @@ impl<'a> StateRepository<'a> {
 
     /// Delete checkpoint for a processor
     pub async fn delete_checkpoint(&self, processor_name: &str) -> DbResult<bool> {
-        let result = sqlx::query!(
-            "DELETE FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default'",
+        self.delete_checkpoint_with_reason(processor_name, "system", "Processor cleanup")
+            .await
+    }
+
+    /// Delete checkpoint with reason logging
+    pub async fn delete_checkpoint_with_reason(
+        &self,
+        processor_name: &str,
+        actor: &str,
+        reason: &str,
+    ) -> DbResult<bool> {
+        // Start transaction to ensure atomicity of operation logging and deletion
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin delete checkpoint transaction"))?;
+
+        // Get the checkpoint details before deletion for logging
+        let checkpoint_to_delete = sqlx::query!(
+            r#"
+            SELECT 
+                id,
+                processed_count,
+                consumer_group,
+                consumer_name
+            FROM core.processor_checkpoints 
+            WHERE processor_name = $1 
+              AND consumer_group = 'default' 
+              AND consumer_name = 'default'
+            "#,
             processor_name
         )
-        .execute(self.pool)
+        .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| db_error(e, "delete checkpoint"))?;
+        .map_err(|e| db_error(e, "fetch checkpoint before deletion"))?;
 
-        Ok(result.rows_affected() > 0)
+        if let Some(checkpoint) = checkpoint_to_delete {
+            // Log the deletion operation to operations_log
+            let deletion_operation = Operation::builder()
+                .actor(actor.to_string())
+                .scope(serde_json::json!({
+                    "operation_type": "delete_checkpoint",
+                    "processor_name": processor_name,
+                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "reason": reason
+                }))
+                .state("completed".to_string())
+                .outcome("success".to_string())
+                .started_at(Utc::now())
+                .finished_at(Utc::now())
+                .created_at(Utc::now())
+                .build();
+
+            let mut repo_tx = StateRepositoryTx { tx: &mut tx };
+            repo_tx.log_operation(deletion_operation).await?;
+
+            // Emit checkpoint deleted event for event sourcing
+            let checkpoint_deleted_event = RawEvent::new(
+                EventSource::new("sinex.state.checkpoint".to_string()),
+                EventType::new("checkpoint.deleted".to_string()),
+                serde_json::json!({
+                    "processor_name": processor_name,
+                    "consumer_group": checkpoint.consumer_group,
+                    "consumer_name": checkpoint.consumer_name,
+                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "last_processed_count": checkpoint.processed_count,
+                    "deleted_by": actor,
+                    "reason": reason
+                })
+            )
+            .with_host(HostName::new("sinex.state".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
+                .await
+                .map_err(|e| db_error(e, "emit checkpoint deleted event"))?;
+
+            // Now perform the actual hard deletion
+            let result = sqlx::query!(
+                r#"
+                DELETE FROM core.processor_checkpoints 
+                WHERE processor_name = $1 
+                  AND consumer_group = 'default' 
+                  AND consumer_name = 'default'
+                "#,
+                processor_name
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "delete checkpoint"))?;
+
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit delete checkpoint transaction"))?;
+
+            Ok(result.rows_affected() > 0)
+        } else {
+            // No checkpoint to delete
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     // ===== Operations Log Methods =====
@@ -316,8 +483,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             "#,
             *id.as_ulid() as _,
             operation.actor,
@@ -355,8 +521,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE id = $1
             "#,
@@ -385,8 +550,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             ORDER BY created_at DESC
             LIMIT $1
@@ -455,8 +619,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE scope @> $1
             ORDER BY created_at DESC
@@ -494,8 +657,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE actor = $1
             ORDER BY created_at DESC
@@ -534,8 +696,7 @@ impl<'a> StateRepository<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             FROM core.operations_log 
             WHERE outcome = 'error' AND created_at > $1
             ORDER BY created_at DESC
@@ -605,7 +766,7 @@ impl<'a> StateRepository<'a> {
             )
             RETURNING 
                 id,
-                processor_name,
+                processor_name as "processor_name!",
                 processor_version,
                 processor_type,
                 hostname,
@@ -632,7 +793,7 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id,
-                processor_name,
+                processor_name as "processor_name!",
                 processor_version,
                 processor_type,
                 hostname,
@@ -661,7 +822,7 @@ impl<'a> StateRepository<'a> {
             r#"
             SELECT 
                 id,
-                processor_name,
+                processor_name as "processor_name!",
                 processor_version,
                 processor_type,
                 hostname,
@@ -998,7 +1159,7 @@ impl<'a> StateRepositoryTx<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                processor_name, consumer_group, consumer_name,
+                processor_name as "processor_name!", consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
@@ -1071,8 +1232,7 @@ impl<'a> StateRepositoryTx<'a> {
                 started_at,
                 finished_at,
                 outcome,
-                error_details,
-                created_at
+                error_details
             "#,
             *id.as_ulid() as _,
             operation.actor,

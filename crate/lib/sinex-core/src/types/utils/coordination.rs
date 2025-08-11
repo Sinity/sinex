@@ -353,4 +353,86 @@ mod tests {
         assert!(result.is_err());
         Ok(())
     }
+
+    #[sinex_test]
+    async fn test_event_counter_factory_method() -> color_eyre::eyre::Result<()> {
+        let counter = CoordinationPrimitive::event_counter(100, "test_events");
+
+        // Initial state
+        assert_eq!(counter.get(), 0);
+        assert!(!counter.is_ready());
+        assert_eq!(counter.name(), "test_events");
+        assert_eq!(counter.threshold(), 100);
+
+        // Increment operations
+        counter.add(50);
+        assert_eq!(counter.get(), 50);
+        assert!(!counter.is_ready());
+
+        counter.add(30);
+        assert_eq!(counter.get(), 80);
+        assert!(!counter.is_ready());
+
+        // Reach threshold
+        counter.add(20);
+        assert_eq!(counter.get(), 100);
+        assert!(counter.is_ready());
+
+        // Event counter never resets automatically
+        counter.add(10);
+        assert_eq!(counter.get(), 110);
+        assert!(counter.is_ready());
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_concurrent_operations() -> color_eyre::eyre::Result<()> {
+        let counter = Arc::new(CoordinationPrimitive::event_counter(
+            1000,
+            "concurrent_test",
+        ));
+        let mut handles = vec![];
+
+        // Spawn 10 tasks adding 100 each = 1000 total
+        for _ in 0..10 {
+            let counter_clone = counter.clone();
+            let handle = tokio::spawn(async move {
+                for _ in 0..100 {
+                    counter_clone.add(1);
+                }
+            });
+            handles.push(handle);
+        }
+
+        // Wait for all tasks
+        for handle in handles {
+            handle.await.unwrap();
+        }
+
+        assert_eq!(counter.get(), 1000);
+        assert!(counter.is_ready());
+
+        Ok(())
+    }
+
+    #[sinex_test]
+    async fn test_edge_cases() -> color_eyre::eyre::Result<()> {
+        // Zero threshold
+        let zero_barrier = CoordinationPrimitive::barrier(0, "zero_test");
+        assert!(zero_barrier.is_ready()); // Should be immediately complete
+
+        // Large threshold
+        let large_counter = CoordinationPrimitive::event_counter(usize::MAX, "large_test");
+        large_counter.add(1000);
+        assert!(!large_counter.is_ready());
+
+        // Empty name
+        let unnamed = CoordinationPrimitive::synchronizer("");
+        assert_eq!(unnamed.name(), "");
+        unnamed.signal();
+        assert!(unnamed.is_ready());
+
+        Ok(())
+    }
 }

@@ -95,6 +95,21 @@ impl TestContext {
         self.start_time.elapsed()
     }
 
+    /// Create and insert a test event
+    pub async fn create_test_event<S, T>(
+        &self,
+        source: S,
+        event_type: T,
+        payload: JsonValue,
+    ) -> Result<RawEvent>
+    where
+        S: AsRef<str>,
+        T: AsRef<str>,
+    {
+        let event = RawEvent::new(source.as_ref(), event_type.as_ref(), payload);
+        self.insert_event(&event).await
+    }
+
     /// Insert single event
     pub async fn insert_event(&self, event: &RawEvent) -> Result<RawEvent> {
         let inserted = self.pool.events().insert(event.clone()).await?;

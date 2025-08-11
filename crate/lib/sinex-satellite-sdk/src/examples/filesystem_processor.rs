@@ -497,7 +497,7 @@ impl ExplorationProvider for FilesystemProcessor {
 
     fn export_data(
         &self,
-        path: &Utf8PathBuf,
+        path: &SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {
@@ -514,7 +514,7 @@ impl ExplorationProvider for FilesystemProcessor {
                 ExportFormat::Raw => format!("{:#?}", state),
             };
 
-            std::fs::write(path, content)?;
+            std::fs::write(path.as_str(), content)?;
         }
 
         Ok(())

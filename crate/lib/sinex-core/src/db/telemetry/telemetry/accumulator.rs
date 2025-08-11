@@ -733,7 +733,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_accumulator_basic(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let accumulator = TelemetryAccumulator::new("test-component")
             .with_event_sender(tx.clone())
             .with_interval(Duration::from_millis(100));
@@ -856,7 +856,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_state_reset(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let accumulator = TelemetryAccumulator::new("reset-test").with_event_sender(tx);
 
         // Record first batch
@@ -932,7 +932,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_background_emitter(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let accumulator = TelemetryAccumulator::new("background-test")
             .with_event_sender(tx)
             .with_interval(Duration::from_millis(100));
@@ -969,7 +969,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_system_telemetry_emitter(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let emitter = SystemTelemetryEmitter::new(tx).with_interval(Duration::from_millis(100));
 
         // Emit system resources
@@ -1005,7 +1005,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_global_telemetry_integration(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let accumulator = TelemetryAccumulator::new("global-test").with_event_sender(tx);
 
         // Set as global
@@ -1045,7 +1045,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_no_data_emission(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let accumulator = TelemetryAccumulator::new("no-data-test").with_event_sender(tx);
 
         // Emit without recording any data
@@ -1066,7 +1066,7 @@ mod tests {
 
     #[sinex_test]
     async fn test_telemetry_concurrent_recording(ctx: TestContext) -> Result<()> {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(100); // Test channel with bounded capacity
         let accumulator = TelemetryAccumulator::new("concurrent-test").with_event_sender(tx);
 
         // Spawn multiple tasks recording metrics concurrently
@@ -1188,7 +1188,7 @@ mod tests {
 
         #[sinex_bench]
         async fn bench_telemetry_emit(ctx: &mut BenchContext) -> color_eyre::eyre::Result<()> {
-            let (tx, _rx) = mpsc::unbounded_channel();
+            let (tx, _rx) = mpsc::channel(100); // Test channel with bounded capacity
             let accumulator = TelemetryAccumulator::new("bench").with_event_sender(tx);
 
             // Pre-populate with data

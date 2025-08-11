@@ -629,4 +629,164 @@ mod tests {
         assert!(ReplayState::Cancelled.is_terminal());
         assert!(!ReplayState::Executing.is_terminal());
     }
+
+    #[test]
+    fn test_replay_checkpoint_serialization() {
+        use sinex_core::types::ulid::Ulid;
+
+        // Create a checkpoint with all fields populated
+        let checkpoint = ReplayCheckpoint {
+            processed_events: 12345,
+            total_events: 50000,
+            last_event_id: Some(Ulid::new()),
+            batch_number: 42,
+            savepoint_id: Some("sp_12345".to_string()),
+        };
+
+        // Serialize to JSON
+        let json = serde_json::to_string(&checkpoint).unwrap();
+
+        // Deserialize back
+        let deserialized: ReplayCheckpoint = serde_json::from_str(&json).unwrap();
+
+        // Verify all fields match
+        assert_eq!(checkpoint.processed_events, deserialized.processed_events);
+        assert_eq!(checkpoint.total_events, deserialized.total_events);
+        assert_eq!(checkpoint.last_event_id, deserialized.last_event_id);
+        assert_eq!(checkpoint.batch_number, deserialized.batch_number);
+        assert_eq!(checkpoint.savepoint_id, deserialized.savepoint_id);
+    }
+
+    #[test]
+    fn test_replay_checkpoint_partial_serialization() {
+        // Create checkpoint with optional fields as None
+        let checkpoint = ReplayCheckpoint {
+            processed_events: 100,
+            total_events: 1000,
+            last_event_id: None,
+            batch_number: 1,
+            savepoint_id: None,
+        };
+
+        // Serialize and deserialize
+        let json = serde_json::to_string(&checkpoint).unwrap();
+        let deserialized: ReplayCheckpoint = serde_json::from_str(&json).unwrap();
+
+        // Verify None values preserved
+        assert!(deserialized.last_event_id.is_none());
+        assert!(deserialized.savepoint_id.is_none());
+        assert_eq!(checkpoint.processed_events, deserialized.processed_events);
+    }
+
+    #[test]
+    fn test_replay_config_serialization() {
+        use chrono::{TimeZone, Utc};
+        use sinex_core::types::ulid::Ulid;
+        use std::collections::HashMap;
+
+        let mut filters = HashMap::new();
+        filters.insert("source".to_string(), serde_json::json!("filesystem"));
+        filters.insert("max_size".to_string(), serde_json::json!(1024));
+
+        let config = ReplayConfig {
+            batch_size: 500,
+            validation_mode: ValidationMode::Strict,
+            target_state: ReplayTargetState::Archived,
+            source_filters: vec!["filesystem".to_string(), "terminal".to_string()],
+            time_window: Some((
+                Utc.with_ymd_and_hms(2024, 1, 1, 0, 0, 0).unwrap(),
+                Utc.with_ymd_and_hms(2024, 12, 31, 23, 59, 59).unwrap(),
+            )),
+            material_filter: Some(vec![Ulid::new(), Ulid::new()]),
+            filters,
+        };
+
+        // Test round-trip serialization
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ReplayConfig = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(config.batch_size, deserialized.batch_size);
+        assert_eq!(config.source_filters, deserialized.source_filters);
+        assert_eq!(config.time_window, deserialized.time_window);
+        assert_eq!(
+            config.material_filter.as_ref().map(|v| v.len()),
+            deserialized.material_filter.as_ref().map(|v| v.len())
+        );
+        assert_eq!(config.filters.len(), deserialized.filters.len());
+    }
+
+    #[test]
+    fn test_replay_result_serialization() {
+        use sinex_core::types::ulid::Ulid;
+
+        let result = ReplayResult {
+            success: true,
+            events_processed: 10000,
+            events_archived: 9500,
+            events_failed: 500,
+            integrity_violations: vec![
+                ViolationType::LiveToArchived,
+                ViolationType::OrphanedAnchor,
+            ],
+            execution_time: std::time::Duration::from_secs(120),
+            final_checkpoint: ReplayCheckpoint {
+                processed_events: 10000,
+                total_events: 10000,
+                last_event_id: Some(Ulid::new()),
+                batch_number: 20,
+                savepoint_id: None,
+            },
+        };
+
+        // Serialize to JSON string
+        let json = serde_json::to_string_pretty(&result).unwrap();
+
+        // Deserialize back
+        let deserialized: ReplayResult = serde_json::from_str(&json).unwrap();
+
+        // Verify complex nested structures
+        assert_eq!(result.success, deserialized.success);
+        assert_eq!(result.events_processed, deserialized.events_processed);
+        assert_eq!(
+            result.integrity_violations.len(),
+            deserialized.integrity_violations.len()
+        );
+        assert_eq!(result.execution_time, deserialized.execution_time);
+        assert_eq!(
+            result.final_checkpoint.last_event_id,
+            deserialized.final_checkpoint.last_event_id
+        );
+    }
+
+    #[test]
+    fn test_replay_state_serialization() {
+        // Test state serialization for persistence
+        let states = vec![
+            ReplayState::Idle,
+            ReplayState::Analyzing,
+            ReplayState::InProgress,
+            ReplayState::Paused,
+            ReplayState::Failed,
+            ReplayState::Completed,
+        ];
+
+        for state in states {
+            let json = serde_json::to_string(&state).unwrap();
+            let deserialized: ReplayState = serde_json::from_str(&json).unwrap();
+
+            // States should serialize to their string representation
+            match state {
+                ReplayState::Idle => assert_eq!(json, "\"Idle\""),
+                ReplayState::Analyzing => assert_eq!(json, "\"Analyzing\""),
+                ReplayState::InProgress => assert_eq!(json, "\"InProgress\""),
+                ReplayState::Paused => assert_eq!(json, "\"Paused\""),
+                ReplayState::Failed => assert_eq!(json, "\"Failed\""),
+                ReplayState::Completed => assert_eq!(json, "\"Completed\""),
+                _ => {}
+            }
+
+            // Deserialized state should match original
+            assert_eq!(format!("{:?}", state), format!("{:?}", deserialized));
+        }
+    }
 }

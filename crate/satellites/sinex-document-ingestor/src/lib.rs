@@ -3,8 +3,6 @@
 //! This module provides a unified StatefulStreamProcessor for ingesting documents
 //! It follows the vision's "documents as source material" approach.
 
-use camino::Utf8PathBuf;
-
 use async_trait::async_trait;
 use camino::Utf8Path;
 use chrono::Utc;
@@ -70,34 +68,40 @@ impl DocumentProcessor {
     /// Process a file using stage-as-you-go pattern for real-time provenance
     async fn process_file(&self, file_path: &SanitizedPath) -> SatelliteResult<()> {
         let _ctx = self.context.as_ref().ok_or_else(|| {
-            SatelliteError::Processing("Document ingestor context not initialized".to_string())
+            SatelliteError::Lifecycle("Document ingestor context not initialized".to_string())
         })?;
 
         if let Some(ref stage_context) = self.stage_context {
             // Use stage-as-you-go pattern for immediate provenance
 
             // Read file content - using validated path
-            let utf8_path = Utf8Path::new(file_path.as_str());
-            let content = match tokio::fs::read(utf8_path).await {
+            let content = match tokio::fs::read(file_path.as_str()).await {
                 Ok(content) => content,
                 Err(e) => {
-                    warn!("Failed to read file {}: {}", utf8_path.as_str(), e);
+                    warn!("Failed to read file {}: {}", file_path.as_str(), e);
                     return Ok(()); // Skip unreadable files
                 }
             };
 
             // Determine material type and metadata
-            let mime_type = mime_guess::from_path(utf8_path)
+            let mime_type = mime_guess::from_path(file_path.as_str())
                 .first_or_octet_stream()
                 .to_string();
+
+            tracing::debug!(
+                file_path = %file_path.as_str(),
+                mime_type = %mime_type,
+                "Detected MIME type for document"
+            );
+
             let material_type = determine_material_type(&mime_type);
-            let source_uri = format!("file://{}", utf8_path.as_str());
+            let source_uri = format!("file://{}", file_path.as_str());
 
             // Step 1: Register in-flight source material
             let initial_metadata = json!({
-                "original_path": utf8_path.as_str(),
-                "file_extension": utf8_path.extension(),
-                "parent_directory": utf8_path.parent().map(|p| p.as_str()),
+                "original_path": file_path.as_str(),
+                "file_extension": camino::Utf8Path::new(file_path.as_str()).extension(),
+                "parent_directory": camino::Utf8Path::new(file_path.as_str()).parent().map(|p| p.as_str()),
                 "material_type": material_type,
                 "mime_type": mime_type,
                 "source_uri": source_uri,
@@ -121,8 +125,8 @@ impl DocumentProcessor {
             };
 
             // Step 2: Create and emit document.ingested event with provenance
-            let event: RawEvent = Event::from_payload(DocumentIngestedPayload {
-                file_path: utf8_path.to_string(),
+            let event: RawEvent = Event::new(DocumentIngestedPayload {
+                file_path: file_path.as_str().to_string(),
                 source_material_id: source_material_id.to_string(),
                 size_bytes: content.len() as u64,
                 mime_type: Some(mime_type.clone()),
@@ -151,7 +155,7 @@ impl DocumentProcessor {
                 .await?;
 
             info!(
-                file_path = %utf8_path.as_str(),
+                file_path = %file_path.as_str(),
                 source_material_id = %source_material_id,
                 material_type = %material_type,
                 size_bytes = content.len(),
@@ -373,7 +377,7 @@ impl ExplorationProvider for DocumentProcessor {
 
     fn export_data(
         &self,
-        _output_path: &Utf8PathBuf,
+        _output_path: &SanitizedPath,
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         // Document processor doesn't support data export

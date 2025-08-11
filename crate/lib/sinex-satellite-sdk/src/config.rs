@@ -37,7 +37,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
+use sinex_core::types::validate_path;
 use std::collections::HashMap;
 use validator::Validate;
 

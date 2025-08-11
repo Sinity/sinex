@@ -2629,4 +2629,70 @@ All optimizations focus on measurable performance improvements without sacrifici
 - URL scheme validation for NATS configs
 - Added 29 new validation tests
 - Enhanced error messages with specific guidance and valid ranges
+
+---
+
+## FS-Watcher Refactoring (2025-08-11 - Systematic Refactorer Agent)
+
+### fs-watcher/unified_processor.rs [✓ COMPLETED]
+
+All 6 refactoring tasks completed:
+
+1. **[✓ DONE] Line 429: Extract should_process variable**
+   - Extracted `let should_process = self.matches_patterns(utf8_path);` for better readability
+   - Improved code flow and reduced inline complexity
+
+2. **[✓ DONE] Lines 452-481: Split into separate match methods** 
+   - Created `matches_watch_patterns()` method for positive pattern matching
+   - Created `matches_ignore_patterns()` method for exclusion pattern matching
+   - Enhanced maintainability and separation of concerns
+
+3. **[✓ DONE] Lines 585-590: Define error constants**
+   - Added error message constants at top of file:
+     - `ERROR_FAILED_TO_CANONICALIZE`
+     - `ERROR_FAILED_TO_READ_METADATA`
+     - `ERROR_INVALID_FILE_TYPE`
+     - `ERROR_FAILED_TO_DETERMINE_FILE_TYPE`
+   - Improved consistency and maintainability
+
+4. **[✓ DONE] Lines 613-621: Pass parameters instead of cloning**
+   - Created static method `process_fs_event_with_config()` to avoid cloning
+   - Created static method `create_discovery_events_static()` for parameter passing
+   - Reduced unnecessary memory allocations
+
+5. **[✓ DONE] Lines 870-881: Extract configure_watch_patterns()**
+   - Extracted `configure_default_watch_patterns()` method
+   - Simplified complex initialization logic in trait method
+   - Better separation of concerns
+
+6. **[✓ DONE] Line 1056: Use .as_str() instead of .to_string()**
+   - Replaced `.to_string()` with `.as_str()` for efficiency
+   - Avoided unnecessary string allocations in iterator usage
+
+### fs-watcher/cli.rs [✓ COMPLETED]
+
+All 3 refactoring tasks completed:
+
+1. **[✓ DONE] Line 61: Return proper error**
+   - Fixed hardcoded string to return `Err(eyre!("Direct mode not supported"))`
+   - Improved error handling consistency with project patterns
+
+2. **[✓ DONE] Lines 50-89: Extract run methods**
+   - Extracted `run_direct_mode()` function 
+   - Extracted `run_sensd_mode()` function
+   - Better separation of concerns and improved maintainability
+
+3. **[✓ DONE] Lines 72-80: Implement From trait**
+   - Created `SensdIntegrationConfigExt` extension trait
+   - Implemented conversion methods for `SensdIntegrationConfig`
+   - Enhanced type conversion capabilities
+
+### Summary
+
+**Total Tasks Completed: 9/9 (100%)**
+- Enhanced code quality through method extraction
+- Improved performance by avoiding unnecessary allocations
+- Better error handling and maintainability
+- Consistent with project patterns and conventions
+- All changes successfully compiled and committed
 EOF < /dev/null

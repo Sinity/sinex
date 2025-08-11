@@ -80,12 +80,32 @@ impl LifecycleManager {
 
     /// Get current status
     pub fn status(&self) -> ServiceStatus {
-        *self.status.lock().unwrap()
+        match self.status.lock() {
+            Ok(guard) => *guard,
+            Err(poisoned) => {
+                warn!(
+                    service = %self.service_name,
+                    "Status mutex was poisoned, recovering from guarded data"
+                );
+                *poisoned.into_inner()
+            }
+        }
     }
 
     /// Set status
     pub fn set_status(&self, status: ServiceStatus) {
-        *self.status.lock().unwrap() = status;
+        match self.status.lock() {
+            Ok(mut guard) => {
+                *guard = status;
+            }
+            Err(mut poisoned) => {
+                warn!(
+                    service = %self.service_name,
+                    "Status mutex was poisoned, recovering and setting status"
+                );
+                *poisoned.get_mut() = status;
+            }
+        }
         info!(
             service = %self.service_name,
             status = %status,
@@ -212,7 +232,18 @@ impl LifecycleManager {
                 let healthy = health_check().await;
                 if !healthy {
                     error!(service = %service_name, "Health check failed");
-                    *status.lock().unwrap() = ServiceStatus::Failed;
+                    match status.lock() {
+                        Ok(mut guard) => {
+                            *guard = ServiceStatus::Failed;
+                        }
+                        Err(mut poisoned) => {
+                            warn!(
+                                service = %service_name,
+                                "Status mutex was poisoned during health check failure, recovering"
+                            );
+                            *poisoned.get_mut() = ServiceStatus::Failed;
+                        }
+                    }
 
                     // Notify systemd of failure
                     let _ = sd_notify::notify(

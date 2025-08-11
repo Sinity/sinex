@@ -8,12 +8,12 @@ impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
         // Phase 1.3: Minimal Database Constraints and Archive Infrastructure
 
-        // 1. Add missing audit fields to existing core.archived_events table
+        // 1. Add missing audit fields to existing audit.archived_events table
         manager
             .get_connection()
             .execute_unprepared(
                 r#"
-                ALTER TABLE core.archived_events 
+                ALTER TABLE audit.archived_events 
                 ADD COLUMN IF NOT EXISTS archived_by TEXT,
                 ADD COLUMN IF NOT EXISTS superseded_by_event_id ULID,
                 ADD COLUMN IF NOT EXISTS operation_id ULID;
@@ -74,15 +74,15 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 r#"
                 CREATE INDEX IF NOT EXISTS ix_archived_events_operation_id 
-                ON core.archived_events (operation_id) 
+                ON audit.archived_events (operation_id) 
                 WHERE operation_id IS NOT NULL;
                 
                 CREATE INDEX IF NOT EXISTS ix_archived_events_superseded_by 
-                ON core.archived_events (superseded_by_event_id) 
+                ON audit.archived_events (superseded_by_event_id) 
                 WHERE superseded_by_event_id IS NOT NULL;
                 
                 CREATE INDEX IF NOT EXISTS ix_archived_events_archived_by 
-                ON core.archived_events (archived_by) 
+                ON audit.archived_events (archived_by) 
                 WHERE archived_by IS NOT NULL;
                 "#,
             )
@@ -109,7 +109,7 @@ impl MigrationTrait for Migration {
             .get_connection()
             .execute_unprepared(
                 r#"
-                ALTER TABLE core.archived_events 
+                ALTER TABLE audit.archived_events 
                 DROP COLUMN IF EXISTS archived_by,
                 DROP COLUMN IF EXISTS superseded_by_event_id,
                 DROP COLUMN IF EXISTS operation_id;

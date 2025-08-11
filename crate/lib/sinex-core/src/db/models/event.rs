@@ -219,8 +219,8 @@ where
     T: crate::types::events::EventPayload + serde::Serialize,
 {
     fn from(payload: T) -> Self {
-        let payload_json =
-            serde_json::to_value(&payload).expect("EventPayload serialization should never fail");
+        let payload_json = serde_json::to_value(&payload)
+            .expect("Failed to serialize EventPayload to JSON - this indicates a bug in the EventPayload implementation");
 
         RawEvent {
             id: None,

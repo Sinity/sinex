@@ -89,12 +89,13 @@
 //! - Use async queries to avoid blocking event stream
 
 use chrono::Utc;
+use parking_lot::Mutex;
 use serde_json::Value;
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
@@ -246,7 +247,7 @@ impl WindowManagerWatcher {
             loop {
                 cleanup_interval.tick().await;
 
-                let mut cache_guard = cache.lock().unwrap();
+                let mut cache_guard = cache.lock();
                 cache_guard.retain(|_, entry| {
                     entry.timestamp.elapsed() < Duration::from_secs(CACHE_ENTRY_MAX_AGE_SECS)
                 });
@@ -315,7 +316,7 @@ impl WindowManagerWatcher {
 
         // Check cache first
         {
-            let cache = self.hyprctl_cache.lock().unwrap();
+            let cache = self.hyprctl_cache.lock();
             if let Some(entry) = cache.get(&cache_key) {
                 if entry.timestamp.elapsed() < Duration::from_secs(5) {
                     return Ok(entry._data.clone());
@@ -344,7 +345,7 @@ impl WindowManagerWatcher {
 
         // Update cache
         {
-            let mut cache = self.hyprctl_cache.lock().unwrap();
+            let mut cache = self.hyprctl_cache.lock();
             cache.insert(
                 cache_key,
                 CacheEntry {
@@ -366,30 +367,7 @@ impl WindowManagerWatcher {
         self._get_hyprctl_data("workspaces", None).await
     }
 
-    /// Update focus history
-    fn _update_focus_history(
-        &self,
-        window_address: String,
-        window_class: Option<String>,
-        window_title: Option<String>,
-    ) {
-        if !self._track_focus_history {
-            return;
-        }
-
-        let mut history = self._focus_history.lock().unwrap();
-        history.push_front(FocusHistoryEntry {
-            _timestamp: Utc::now(),
-            _window_address: window_address,
-            _window_class: window_class,
-            _window_title: window_title,
-        });
-
-        // Keep only last 100 entries
-        if history.len() > 100 {
-            history.pop_back();
-        }
-    }
+    // Note: Focus history functionality removed as it referenced non-existent struct fields
 
     /// Augment window event with additional data
     async fn _augment_window_event(&self, payload: &mut Value) {
@@ -543,7 +521,7 @@ impl WindowManagerWatcher {
             // Create window focused event
 
             let event: RawEvent =
-                Event::from_payload(sinex_core::types::events::HyprlandWindowFocusedPayload {
+                Event::new(sinex_core::types::events::HyprlandWindowFocusedPayload {
                     window_id: window_address.to_string(),
                     window_class: class.to_string(),
                     window_title: title.to_string(),
@@ -577,7 +555,7 @@ impl WindowManagerWatcher {
             // Create window opened event
 
             let event: RawEvent =
-                Event::from_payload(sinex_core::types::events::HyprlandWindowOpenedPayload {
+                Event::new(sinex_core::types::events::HyprlandWindowOpenedPayload {
                     window_id: window_address.to_string(),
                     window_class: window_class.to_string(),
                     window_title: window_title.to_string(),
@@ -624,15 +602,14 @@ impl WindowManagerWatcher {
 
         // Create window closed event
 
-        let event: RawEvent =
-            Event::from_payload(sinex_core::types::events::HyprlandWindowClosedPayload {
-                window_id: window_address.to_string(),
-                window_class: String::new(), // TODO: Get from cache
-                window_title: String::new(), // TODO: Get from cache
-                workspace_id: 0,             // TODO: Get from cache
-                close_reason: None,
-            })
-            .into();
+        let event: RawEvent = Event::new(sinex_core::types::events::HyprlandWindowClosedPayload {
+            window_id: window_address.to_string(),
+            window_class: String::new(), // TODO: Get from cache
+            window_title: String::new(), // TODO: Get from cache
+            workspace_id: 0,             // TODO: Get from cache
+            close_reason: None,
+        })
+        .into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
@@ -655,7 +632,7 @@ impl WindowManagerWatcher {
             // Create window moved event
 
             let event: RawEvent =
-                Event::from_payload(sinex_core::types::events::HyprlandWindowMovedPayload {
+                Event::new(sinex_core::types::events::HyprlandWindowMovedPayload {
                     window_address: address.to_string(),
                     new_workspace_id: self.parse_id(workspace, "workspace_id"),
                     moved_at: chrono::Utc::now().to_rfc3339(),
@@ -683,7 +660,7 @@ impl WindowManagerWatcher {
 
         // Create workspace switched event
 
-        let event: RawEvent = Event::from_payload(
+        let event: RawEvent = Event::new(
             sinex_core::types::events::HyprlandWorkspaceSwitchedPayload {
                 from_workspace_id: self
                     .current_workspace
@@ -716,14 +693,13 @@ impl WindowManagerWatcher {
         if let Some((monitor, workspace)) = data.split_once(',') {
             // Create monitor focused event
 
-            let event =
-                Event::from_payload(sinex_core::types::events::HyprlandMonitorFocusedPayload {
-                    monitor_id: self.parse_id(monitor, "monitor_id"),
-                    workspace_id: self.parse_id(workspace, "workspace_id"),
-                    previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
-                    focused_at: chrono::Utc::now().to_rfc3339(),
-                })
-                .into();
+            let event = Event::new(sinex_core::types::events::HyprlandMonitorFocusedPayload {
+                monitor_id: self.parse_id(monitor, "monitor_id"),
+                workspace_id: self.parse_id(workspace, "workspace_id"),
+                previous_monitor: self.current_monitor.as_ref().and_then(|m| m.parse().ok()),
+                focused_at: chrono::Utc::now().to_rfc3339(),
+            })
+            .into();
 
             self.send_event_or_warn(tx, event);
 
@@ -752,24 +728,23 @@ impl WindowManagerWatcher {
 
         // Create state captured event
 
-        let event: RawEvent =
-            Event::from_payload(sinex_core::types::events::HyprlandStateCapturedPayload {
-                windows: self.serialize_values(self.windows.values()),
-                workspaces: self.serialize_values(self.workspaces.values()),
-                monitors: self.serialize_values(self.monitors.values()),
-                current_workspace: self
-                    .current_workspace
-                    .as_ref()
-                    .map(|w| self.parse_id(w, "current_workspace_id"))
-                    .unwrap_or(0),
-                current_monitor: self
-                    .current_monitor
-                    .as_ref()
-                    .map(|m| self.parse_id(m, "current_monitor_id"))
-                    .unwrap_or(0),
-                captured_at: chrono::Utc::now().to_rfc3339(),
-            })
-            .into();
+        let event: RawEvent = Event::new(sinex_core::types::events::HyprlandStateCapturedPayload {
+            windows: self.serialize_values(self.windows.values()),
+            workspaces: self.serialize_values(self.workspaces.values()),
+            monitors: self.serialize_values(self.monitors.values()),
+            current_workspace: self
+                .current_workspace
+                .as_ref()
+                .map(|w| self.parse_id(w, "current_workspace_id"))
+                .unwrap_or(0),
+            current_monitor: self
+                .current_monitor
+                .as_ref()
+                .map(|m| self.parse_id(m, "current_monitor_id"))
+                .unwrap_or(0),
+            captured_at: chrono::Utc::now().to_rfc3339(),
+        })
+        .into();
 
         if tx.send(event).is_err() {
             warn!("Event channel closed");
