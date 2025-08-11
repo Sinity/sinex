@@ -107,12 +107,7 @@ impl TestContext {
         T: AsRef<str>,
     {
         let event = RawEvent::new(source.as_ref(), event_type.as_ref(), payload);
-        self.insert_event(&event).await
-    }
-
-    /// Insert single event
-    pub async fn insert_event(&self, event: &RawEvent) -> Result<RawEvent> {
-        let inserted = self.pool.events().insert(event.clone()).await?;
+        let inserted = self.pool.events().insert(event).await?;
         if let Some(id) = &inserted.id {
             self.created_events.lock().push(id.clone().into());
         }
@@ -128,20 +123,6 @@ impl TestContext {
             }
         }
         Ok(())
-    }
-
-    /// Assert that an event exists by ID
-    pub async fn assert_event_exists(&self, event_id: Ulid) -> Result<()> {
-        let exists = self.pool.events().exists_by_id(&event_id).await?;
-        if !exists {
-            color_eyre::eyre::bail!("Event with ID {} does not exist", event_id);
-        }
-        Ok(())
-    }
-
-    /// Get count of events in test database
-    pub async fn test_event_count(&self) -> i64 {
-        self.pool.events().count_all().await.unwrap_or(0)
     }
 
     /// Access fixture utilities (placeholder - implement as needed)
@@ -384,7 +365,7 @@ mod tests {
         assert!(ctx.elapsed().as_nanos() > 0);
 
         // Test event count tracking
-        let initial_count = ctx.test_event_count().await;
+        let initial_count = ctx.pool.events().count_all().await?;
         assert_eq!(initial_count, 0);
 
         Ok(())

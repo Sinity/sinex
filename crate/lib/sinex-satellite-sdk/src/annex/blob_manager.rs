@@ -51,9 +51,10 @@ use sinex_core::types::{ulid::Ulid, validate_path, Id};
 use sinex_core::DbPoolExt;
 use sinex_core::{Blob, RawEvent};
 use std::time::Instant;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use super::{AnnexConfig, AnnexKey, GitAnnex};
+use crate::grpc_client::IngestClient;
 
 // Re-export Blob type for compatibility
 pub use sinex_core::Blob as BlobMetadata;
@@ -62,12 +63,21 @@ pub use sinex_core::Blob as BlobMetadata;
 pub struct BlobManager {
     annex: GitAnnex,
     db_pool: DbPool,
+    ingest_client: IngestClient,
 }
 
 impl BlobManager {
-    pub fn new(annex_config: AnnexConfig, db_pool: DbPool) -> Result<Self> {
+    pub fn new(
+        annex_config: AnnexConfig,
+        db_pool: DbPool,
+        ingest_client: IngestClient,
+    ) -> Result<Self> {
         let annex = GitAnnex::new(annex_config)?;
-        Ok(BlobManager { annex, db_pool })
+        Ok(BlobManager {
+            annex,
+            db_pool,
+            ingest_client,
+        })
     }
 
     /// Ingest a file into the blob management system
@@ -101,7 +111,7 @@ impl BlobManager {
                 self.add_original_filename(&existing_id, filename).await?;
             }
 
-            // Emit deduplication event
+            // Emit deduplication event via ingestd
             let event: RawEvent = Event::new(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
@@ -115,11 +125,11 @@ impl BlobManager {
             .with_ts_orig(Some(chrono::Utc::now()))
             .into();
 
-            self.db_pool
-                .events()
-                .insert(event)
+            let mut client = self.ingest_client.clone();
+            client
+                .ingest_event(&event)
                 .await
-                .wrap_err("Failed to emit blob ingested event")?;
+                .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
 
             return Ok(existing);
         }
@@ -160,7 +170,7 @@ impl BlobManager {
             .unwrap_or_else(Ulid::new);
         info!("Successfully ingested blob: {}", blob_id);
 
-        // Emit blob ingested event
+        // Emit blob ingested event via ingestd
         let event: RawEvent = Event::new(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
@@ -172,11 +182,11 @@ impl BlobManager {
         .with_ts_orig(Some(chrono::Utc::now()))
         .into();
 
-        self.db_pool
-            .events()
-            .insert(event)
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&event)
             .await
-            .wrap_err("Failed to emit blob ingested event")?;
+            .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
 
         Ok(blob_metadata)
     }
@@ -210,7 +220,7 @@ impl BlobManager {
             // Update original_filenames array if this is a new filename
             self.add_original_filename(&existing_id, filename).await?;
 
-            // Emit deduplication event
+            // Emit deduplication event via ingestd
             let event: RawEvent = Event::new(BlobIngestedPayload {
                 blob_id: existing_id.to_string(),
                 size_bytes: existing.size_bytes,
@@ -222,11 +232,11 @@ impl BlobManager {
             .with_ts_orig(Some(chrono::Utc::now()))
             .into();
 
-            self.db_pool
-                .events()
-                .insert(event)
+            let mut client = self.ingest_client.clone();
+            client
+                .ingest_event(&event)
                 .await
-                .wrap_err("Failed to emit blob ingested event")?;
+                .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
 
             return Ok(existing);
         }
@@ -272,7 +282,7 @@ impl BlobManager {
             .unwrap_or_else(Ulid::new);
         info!("Successfully ingested blob: {}", blob_id);
 
-        // Emit blob ingested event
+        // Emit blob ingested event via ingestd
         let event: RawEvent = Event::new(BlobIngestedPayload {
             blob_id: blob_id.to_string(),
             size_bytes,
@@ -284,11 +294,11 @@ impl BlobManager {
         .with_ts_orig(Some(chrono::Utc::now()))
         .into();
 
-        self.db_pool
-            .events()
-            .insert(event)
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&event)
             .await
-            .wrap_err("Failed to emit blob ingested event")?;
+            .map_err(|e| eyre!("Failed to emit blob ingested event via ingestd: {}", e))?;
 
         Ok(blob_metadata)
     }

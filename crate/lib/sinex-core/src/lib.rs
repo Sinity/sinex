@@ -121,9 +121,10 @@ pub use db::{
 };
 
 // Re-export the most commonly used database models at crate root
-pub use db::models::{
-    Entity, EntityRelation, Event, EventId, Provenance, RawEvent, SourceMaterial,
-};
+pub use db::models::{Entity, EntityRelation, Provenance, RawEvent, SourceMaterial};
+
+// Re-export the unified Event types
+pub use db::models::event::{Event, EventId};
 
 // Re-export records from sinex-schema
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
@@ -175,9 +176,9 @@ pub use repositories::DbResult as RepoResult;
 pub mod prelude {
     // Core data types - all available at crate root for convenience
     pub use crate::{
-        Blob, BlobRecord, CheckpointRepository, DbPoolExt, Entity, EntityRelation, EventRepository,
-        EventSource, EventType, HostName, Id, JsonValue, OptionalTimestamp, ProcessorName,
-        Provenance, RawEvent, Repository, SourceMaterial, Timestamp, Ulid,
+        BlobRecord, CheckpointRepository, DbPoolExt, Entity, EntityRelation, Event, EventId,
+        EventRepository, EventSource, EventType, HostName, Id, JsonValue, OptionalTimestamp,
+        ProcessorName, Provenance, RawEvent, Repository, SourceMaterial, Timestamp, Ulid,
     };
 
     // All commonly used nested types flattened for convenience
