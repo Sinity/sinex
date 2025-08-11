@@ -621,7 +621,7 @@ impl FilesystemProcessor {
         }
     }
 
-    /// Create discovery events for a file or directory
+    /// Create discovery events for a file or directory with security validation
     fn create_discovery_events(
         &self,
         path: &Utf8Path,
@@ -630,9 +630,29 @@ impl FilesystemProcessor {
         // Validate path before processing
         let path_str = path.as_str();
 
-        // Validate the path structure
-        validate_path(path_str)
-            .map_err(|e| SatelliteError::General(eyre!("Invalid path: {}", e)))?;
+        // SECURITY: Validate discovered file against watch roots
+        let mut path_validated = false;
+        for watch_root in &self.validated_watch_roots {
+            match validate_discovered_file(
+                path_str,
+                watch_root.as_str(),
+                &self.config.security_policy,
+            ) {
+                Ok(_) => {
+                    path_validated = true;
+                    break;
+                }
+                Err(_) => continue,
+            }
+        }
+
+        if !path_validated {
+            warn!(
+                "Rejecting filesystem discovery event for path outside validated boundaries: {}",
+                path_str
+            );
+            return Ok(vec![]); // Return empty events instead of error
+        }
 
         let mut events = Vec::new();
 
@@ -782,7 +802,7 @@ impl FilesystemProcessor {
         Ok(())
     }
 
-    /// Set up filesystem watch paths from configuration
+    /// Set up filesystem watch paths from configuration with security validation
     #[instrument(skip(self, debouncer), fields(processor = "filesystem", patterns_count = self.config.watch_patterns.len()))]
     async fn setup_watch_paths(
         &mut self,
@@ -793,6 +813,10 @@ impl FilesystemProcessor {
     ) -> SatelliteResult<()> {
         let mut watched_paths = HashSet::new();
         self.watch_roots.clear();
+        self.validated_watch_roots.clear();
+
+        // Collect base path strings for validation
+        let mut base_path_strings = Vec::new();
 
         for pattern in &self.config.watch_patterns {
             // Expand home directory
@@ -817,18 +841,33 @@ impl FilesystemProcessor {
                 expanded.to_string()
             };
 
-            // Validate the base path
-            validate_path(&base_path_str)
-                .map_err(|e| SatelliteError::General(eyre!("Invalid watch path: {}", e)))?;
+            base_path_strings.push(base_path_str);
+        }
 
-            let base_path = camino::Utf8Path::new(&base_path_str);
+        // SECURITY: Validate all watch paths before setting up watchers
+        let validated_paths =
+            validate_watch_paths(&base_path_strings, &self.config.security_policy).map_err(
+                |e| {
+                    SatelliteError::General(eyre!("Filesystem watch path validation failed: {}", e))
+                },
+            )?;
 
+        info!(
+            "Validated {} watch paths for filesystem monitoring",
+            validated_paths.len()
+        );
+        for path in &validated_paths {
+            info!("  - {}", path.as_str());
+        }
+
+        // Set up validated watch paths
+        for base_path in &validated_paths {
             // Create directory if it doesn't exist (for testing)
             if !base_path.exists() {
                 info!("Creating directory: {}", base_path.as_str());
                 std::fs::create_dir_all(base_path).map_err(|e| {
                     SatelliteError::General(eyre!(
-                        "Failed to create directory {}: {}",
+                        "Failed to create validated directory {}: {}",
                         base_path.as_str(),
                         e
                     ))
@@ -837,26 +876,33 @@ impl FilesystemProcessor {
 
             // Watch the base directory
             if base_path.exists() && !watched_paths.contains(base_path) {
-                info!("Watching directory: {}", base_path.as_str());
+                info!("Watching validated directory: {}", base_path.as_str());
                 debouncer
                     .watcher()
                     .watch(base_path.as_std_path(), notify::RecursiveMode::Recursive)
                     .map_err(|e| {
-                        SatelliteError::General(eyre!("Failed to watch path {}: {}", base_path, e))
+                        SatelliteError::General(eyre!(
+                            "Failed to watch validated path {}: {}",
+                            base_path,
+                            e
+                        ))
                     })?;
                 watched_paths.insert(base_path.to_path_buf());
 
                 // Add to watch roots for validation
                 if let Ok(canonical) = base_path.canonicalize() {
                     if let Ok(utf8_canonical) = Utf8PathBuf::from_path_buf(canonical) {
-                        self.watch_roots.push(utf8_canonical);
+                        self.watch_roots.push(utf8_canonical.clone());
+                        self.validated_watch_roots.push(utf8_canonical);
                     }
                 }
             }
         }
 
         if self.watch_roots.is_empty() {
-            return Err(SatelliteError::General(eyre!("No valid watch roots found")));
+            return Err(SatelliteError::General(eyre!(
+                "No valid watch roots found after security validation"
+            )));
         }
 
         Ok(())
@@ -887,11 +933,68 @@ impl FilesystemProcessor {
         }
     }
 
-    fn convert_fs_event(&self, _event: NotifyEvent, _host: &str) -> SatelliteResult<Vec<RawEvent>> {
-        // TODO: Implement filesystem event conversion to RawEvent format
-        // Issue: #XXX - Convert notify events to Sinex event format
-        // This should extract metadata like file size, permissions, timestamps
-        Ok(vec![])
+    /// Convert filesystem event to RawEvent with security validation (legacy method)
+    fn convert_fs_event(&self, event: NotifyEvent, host: &str) -> SatelliteResult<Vec<RawEvent>> {
+        // Delegate to secure version
+        self.convert_fs_event_secure(event, host)
+    }
+
+    /// Convert filesystem event to RawEvent with comprehensive security validation
+    fn convert_fs_event_secure(
+        &self,
+        event: NotifyEvent,
+        _host: &str,
+    ) -> SatelliteResult<Vec<RawEvent>> {
+        let mut events = Vec::new();
+
+        // Process each path in the notify event
+        for path in event.paths {
+            let utf8_path = match Utf8PathBuf::from_path_buf(path) {
+                Ok(p) => p,
+                Err(_) => {
+                    debug!("Skipping non-UTF8 path in filesystem event");
+                    continue;
+                }
+            };
+
+            // SECURITY: Validate discovered file against watch roots
+            let mut path_validated = false;
+            for watch_root in &self.validated_watch_roots {
+                match validate_discovered_file(
+                    utf8_path.as_str(),
+                    watch_root.as_str(),
+                    &self.config.security_policy,
+                ) {
+                    Ok(_) => {
+                        path_validated = true;
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            if !path_validated {
+                warn!(
+                    "Rejecting filesystem event for path outside validated boundaries: {}",
+                    utf8_path.as_str()
+                );
+                continue;
+            }
+
+            // Get file metadata for event creation
+            if let Ok(metadata) = std::fs::metadata(&utf8_path) {
+                match self.create_discovery_events(&utf8_path, &metadata) {
+                    Ok(mut file_events) => {
+                        events.append(&mut file_events);
+                    }
+                    Err(e) => {
+                        warn!("Failed to create events for {}: {}", utf8_path, e);
+                    }
+                }
+            }
+        }
+
+        Ok(events)
     }
 }
 
@@ -1380,23 +1483,46 @@ mod tests {
             context: None,
             stage_context: None,
             watch_roots: vec![],
+            validated_watch_roots: vec![],
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
         };
 
-        // Test with invalid path containing null bytes
-        let invalid_path = Utf8Path::new("test\0file.rs");
+        // Test with no validated watch roots (should return empty events)
+        let test_path = Utf8Path::new("test_file.rs");
         let metadata = std::fs::Metadata::from(std::fs::metadata(".").unwrap());
 
-        let result = processor.create_discovery_events(invalid_path, &metadata);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Invalid path"));
-
-        // Test with valid path
-        let valid_path = Utf8Path::new("test_file.rs");
-        let result = processor.create_discovery_events(valid_path, &metadata);
+        let result = processor.create_discovery_events(test_path, &metadata);
         assert!(result.is_ok());
+        assert_eq!(
+            result.unwrap().len(),
+            0,
+            "Should return empty events when no validated watch roots"
+        );
+
+        // Test with valid validated watch root
+        let temp_dir = TempDir::new()?;
+        let temp_path = Utf8PathBuf::from_path_buf(temp_dir.path().to_path_buf()).unwrap();
+        let mut processor_with_roots = FilesystemProcessor {
+            config: processor.config.clone(),
+            context: None,
+            stage_context: None,
+            watch_roots: vec![temp_path.clone()],
+            validated_watch_roots: vec![temp_path.clone()],
+            rename_tracker: Arc::new(Mutex::new(HashMap::new())),
+            last_state: None,
+            checkpoint_manager: None,
+        };
+
+        let test_file_in_temp = temp_path.join("test_file.rs");
+        std::fs::write(&test_file_in_temp, "// test file")?;
+        let result = processor_with_roots.create_discovery_events(&test_file_in_temp, &metadata);
+        assert!(result.is_ok());
+        assert!(
+            result.unwrap().len() > 0,
+            "Should create events for files within validated watch roots"
+        );
 
         Ok(())
     }
@@ -1419,6 +1545,7 @@ mod tests {
             context: None,
             stage_context: None,
             watch_roots: vec![],
+            validated_watch_roots: vec![],
             rename_tracker: Arc::new(Mutex::new(HashMap::new())),
             last_state: None,
             checkpoint_manager: None,
