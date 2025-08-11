@@ -1,20 +1,39 @@
 //! Health Aggregator - Unified StatefulStreamProcessor implementation
 
-use camino::Utf8PathBuf;
+// Local facade module to reduce import verbosity
+mod common {
+    // Core types facade
+    pub use sinex_core::{
+        db::models::RawEvent,
+        types::{events::Event, Id},
+    };
 
-use async_trait::async_trait;
-use chrono::Utc;
-use serde::{Deserialize, Serialize};
-use sinex_satellite_sdk::{
-    stream_processor::{
-        Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
-        StreamProcessorContext, TimeHorizon,
-    },
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteResult,
-    SourceState,
-};
-use std::collections::HashMap;
-use tracing::info;
+    // SDK facade for common processor types
+    pub use sinex_satellite_sdk::{
+        cli::{
+            ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat,
+            IngestionHistoryEntry, MissingItem, SourceState,
+        },
+        stream_processor::{
+            Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
+            StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
+        },
+        SatelliteResult,
+    };
+
+    // External dependencies
+    pub use {
+        async_trait::async_trait,
+        camino::Utf8PathBuf,
+        chrono::{DateTime, Utc},
+        serde::{Deserialize, Serialize},
+        std::{collections::HashMap, time::Duration},
+        tracing::{debug, error, info, instrument, warn},
+    };
+}
+
+// Use local facade for common types
+use crate::common::*;
 
 /// Configuration for Health Aggregator processor
 #[derive(Debug, Clone, Deserialize, Serialize)]

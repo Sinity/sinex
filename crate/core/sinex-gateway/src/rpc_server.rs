@@ -1,17 +1,20 @@
 //! JSON-RPC server for CLI communication
 
+// Local crate imports
+use crate::{handlers::*, service_container::ServiceContainer};
+
+// External crates
 use axum::{extract::State, routing::post, Json, Router};
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
-use tracing::{debug, error, info};
 
-use crate::handlers::*;
-use crate::service_container::ServiceContainer;
+// Standard library
+use std::collections::HashMap;
+use tracing::{debug, error, info};
 
 #[derive(Debug, Clone, Deserialize)]
 struct JsonRpcRequest {

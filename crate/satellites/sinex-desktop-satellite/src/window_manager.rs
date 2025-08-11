@@ -88,25 +88,22 @@
 //! - Batch queries when multiple events arrive
 //! - Use async queries to avoid blocking event stream
 
-use chrono::Utc;
+// Use local facade for common types
+use crate::common::*;
+
+// Window manager specific imports
 use parking_lot::Mutex;
 use serde_json::Value;
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::events::Event;
-use sinex_satellite_sdk::SatelliteResult;
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     fmt,
     str::FromStr,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Instant, SystemTime},
 };
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tokio::time::{interval, sleep};
-use tracing::{debug, error, info, warn};
+use tokio::time::sleep;
 
 const CACHE_CLEANUP_INTERVAL_SECS: u64 = 60;
 const CACHE_ENTRY_MAX_AGE_SECS: u64 = 30;
@@ -484,7 +481,9 @@ impl WindowManagerWatcher {
         &self,
         values: impl Iterator<Item = T>,
     ) -> Vec<serde_json::Value> {
-        values.map(|v| serde_json::to_value(v).unwrap()).collect()
+        values
+            .filter_map(|v| serde_json::to_value(v).ok())
+            .collect()
     }
 
     /// Parse ID string to integer with fallback and warning

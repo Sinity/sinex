@@ -37,5 +37,26 @@ pub use crate::{ProcessorCli, ProcessorCommand, SatelliteArgs};
 // Error types
 pub use crate::{SatelliteError, SatelliteResult};
 
-// Common re-exports from dependencies
-pub use crate::{RawEvent, SinexError, Ulid};
+// Core sinex types - now using flattened imports from sinex-core
+pub use sinex_core::{
+    // Event payloads - using the new facade
+    payloads::*,
+    // Database operations
+    DbPool,
+    DbPoolExt,
+    EventSource,
+    EventType,
+    Id,
+    // Database models
+    RawEvent,
+    // Error handling
+    SinexError,
+    Ulid,
+};
+
+// Additional commonly used external types
+pub use async_trait::async_trait;
+pub use color_eyre::eyre::{eyre, Result as EyreResult};
+pub use serde_json::{json, Value as JsonValue};
+pub use tokio::{sync::mpsc, time::Duration};
+pub use tracing::{debug, error, info, instrument, trace, warn};

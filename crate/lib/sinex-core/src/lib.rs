@@ -87,8 +87,31 @@ pub use types::{
     Ulid,
 };
 
-// Re-export commonly used event payloads at crate root
-pub use types::events::payloads;
+// Re-export event system at crate root for short imports
+pub use types::events::{Event, EventPayload, EventVersion, EventVersionInfo};
+
+// Create facade for event payloads to flatten hierarchy
+pub mod payloads {
+    //! Flattened event payloads for easier imports
+    //! Instead of `sinex_core::types::events::payloads::filesystem::FileCreatedPayload`
+    //! use `sinex_core::payloads::FileCreatedPayload`
+    pub use crate::types::events::payloads::*;
+}
+
+// Type aliases for complex generic types to reduce verbosity
+pub type EventId = Id<RawEvent>;
+pub type BlobId = Id<Blob>;
+pub type EntityId = Id<Entity>;
+pub type SourceMaterialId = Id<SourceMaterial>;
+pub type CheckpointId = Id<CheckpointRecord>;
+pub type OperationId = Id<Operation>;
+
+// Database transaction type alias
+pub type DbTransaction<'a> = sqlx::Transaction<'a, sqlx::Postgres>;
+
+// Result type aliases for common operations
+pub type EventResult<T = ()> = std::result::Result<T, SinexError>;
+// Note: DbResult is already re-exported from repositories
 
 pub use db::{
     constants, create_database_if_not_exists, create_pool, create_pool_strict,
@@ -102,12 +125,22 @@ pub use db::models::{
     Blob, BlobRecord, Entity, EntityRelation, Provenance, RawEvent, SourceMaterial,
 };
 
-// Re-export the most commonly used repository traits at crate root
-pub use db::repositories::{CheckpointRepository, DbPoolExt, EventRepository, Repository};
+// Re-export all repository traits and types at crate root for short imports
+pub use db::repositories::{
+    BatchRepository, BlobRepository, Checkpoint, CheckpointExt, CheckpointRecord,
+    CheckpointRepository, CommandCount, CreateEntity, CreateEntityRelation, DbPoolExt, DbResult,
+    EnhancedRepository, EntityRecord, EntityRelationRecord, EntityType, EventAnnotation,
+    EventPayloadSchema, EventRepository, EventSearchFilters, EventTypeCount,
+    KnowledgeGraphRepository, NewSchema, Operation, OperationRecord, OperationStatistics,
+    Repository, SourceActivity, SourceMaterialExt, SourceMaterialRecord, SourceMaterialRepository,
+    StateRepository, StorageStats, SystemHealthReport, TableDef, TransactionSupport,
+    TransactionalRepository,
+};
 
-// Re-export the most commonly used domain types at crate root
+// Re-export all domain types at crate root for short imports
 pub use types::domain::{
-    EventSource, EventType, HostName, ProcessorName, SchemaName, SchemaVersion,
+    ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName, SanitizedPath,
+    SchemaName, SchemaVersion,
 };
 
 // Re-export migration functionality
@@ -140,30 +173,73 @@ pub use repositories::{
 /// use sinex_core::prelude::*;
 /// ```
 pub mod prelude {
-    // Core data types - now available at crate root for convenience
+    // Core data types - all available at crate root for convenience
     pub use crate::{
-        Blob, CheckpointRepository, DbPoolExt, EventRepository, EventSource, EventType, HostName,
-        Id, JsonValue, OptionalTimestamp, ProcessorName, RawEvent, Repository, Timestamp, Ulid,
+        Blob, BlobRecord, CheckpointRepository, DbPoolExt, Entity, EntityRelation, EventRepository,
+        EventSource, EventType, HostName, Id, JsonValue, OptionalTimestamp, ProcessorName,
+        Provenance, RawEvent, Repository, SourceMaterial, Timestamp, Ulid,
     };
 
-    // Types from nested modules that are commonly used together
-    pub use crate::types::{
-        error::{Result as SinexResult, SinexError},
-        events::EventPayload,
-        utils::ResourceGuard,
-        validation::{validate_json, validate_path, ValidationError},
+    // All commonly used nested types flattened for convenience
+    pub use crate::{
+        validate_json,
+        validate_path,
+        // Domain types
+        ConsumerGroup,
+        ConsumerName,
+        // Event types
+        Event,
+        EventPayload,
+        EventVersion,
+        EventVersionInfo,
+        // Utils
+        ResourceGuard,
+        SanitizedPath,
+        SchemaName,
+        SchemaVersion,
+        // Error types
+        SinexError,
+        // Validation
+        ValidationError,
     };
 
-    // Database functionality that's frequently used together
-    pub use crate::db::{
-        query_helpers::{
-            db_error, from_db, opt_from_db, opt_to_db, opt_vec_from_db, opt_vec_to_db, to_db,
-            ulid_to_uuid, uuid_to_ulid, with_retry_transaction, with_transaction,
-            DbUuidCollectionExt, DbUuidExt, RetryConfig, UlidArrayExt, UlidExt,
-        },
-        repositories::{Checkpoint, EventSearchFilters, NewSchema},
-        seaquery_helpers::SeaQueryUlidExt,
-        DbPool, DbPoolRef, PoolConfig,
+    // Database functionality - all commonly used functions and types
+    pub use crate::{
+        create_pool,
+        create_pool_strict,
+        create_test_pool,
+        // Query helpers
+        db_error,
+        from_db,
+        opt_from_db,
+        opt_to_db,
+        opt_vec_from_db,
+        opt_vec_to_db,
+        to_db,
+        ulid_to_uuid,
+        uuid_to_ulid,
+        with_retry_transaction,
+        with_transaction,
+        // All repository types for convenience
+        BlobRepository,
+        // Repository types
+        Checkpoint,
+        // Connection management
+        DbPool,
+        DbPoolRef,
+        DbUuidCollectionExt,
+        DbUuidExt,
+        EventSearchFilters,
+        KnowledgeGraphRepository,
+        NewSchema,
+        PoolConfig,
+        RetryConfig,
+        // SeaQuery helpers
+        SeaQueryUlidExt,
+        SourceMaterialRepository,
+        StateRepository,
+        UlidArrayExt,
+        UlidExt,
     };
 
     // Common external crates that are used throughout the codebase

@@ -10,14 +10,13 @@
 //! - Modern payload types from sinex_core::types::events::payloads
 //! - color_eyre for error handling
 
-use sinex_core::db::models::RawEvent;
-use sinex_core::db::repositories::DbPoolExt;
+use sinex_test_utils::prelude::*;
+
+// Additional imports for specific payload types
 use sinex_core::types::events::payloads::{
     AtuinCommandExecutedPayload, ClipboardCopiedPayload, FileCreatedPayload, FileDeletedPayload,
     FileModifiedPayload, KittyCommandExecutedPayload,
 };
-use sinex_test_utils::prelude::*;
-use std::collections::HashSet;
 
 // =============================================================================
 // EVENT SOURCE CONSTANTS AND VALIDATION TESTS

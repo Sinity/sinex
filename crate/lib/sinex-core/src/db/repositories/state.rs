@@ -370,7 +370,7 @@ impl<'a> StateRepository<'a> {
         let checkpoint_to_delete = sqlx::query!(
             r#"
             SELECT 
-                id,
+                id as "id: Id<CheckpointRecord>",
                 processed_count,
                 consumer_group,
                 consumer_name
@@ -752,33 +752,36 @@ impl<'a> StateRepository<'a> {
         &self,
         processor_name: &ProcessorName,
         processor_type: &str,
-        processor_version: &str,
-        hostname: &str,
+        version: &str,
+        description: Option<&str>,
     ) -> DbResult<ProcessorManifest> {
         sqlx::query_as!(
             ProcessorManifest,
             r#"
             INSERT INTO core.processor_manifests (
-                processor_name, processor_version, processor_type, hostname
+                processor_name, version, processor_type, description
             ) VALUES (
                 $1, $2, $3, $4
             )
             RETURNING 
                 id,
                 processor_name as "processor_name!",
-                processor_version,
+                version,
+                description,
                 processor_type,
-                hostname,
-                start_time,
-                end_time,
-                config,
-                metadata,
-                created_at
+                input_schemas,
+                output_schemas,
+                configuration_schema,
+                runtime_requirements,
+                deployment_status,
+                created_at,
+                updated_at,
+                build_metadata
             "#,
             processor_name.as_ref(),
-            processor_version,
+            version,
             processor_type,
-            hostname
+            description
         )
         .fetch_one(self.pool)
         .await
@@ -793,17 +796,20 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id,
                 processor_name as "processor_name!",
-                processor_version,
+                version,
+                description,
                 processor_type,
-                hostname,
-                start_time,
-                end_time,
-                config,
-                metadata,
-                created_at
+                input_schemas,
+                output_schemas,
+                configuration_schema,
+                runtime_requirements,
+                deployment_status,
+                created_at,
+                updated_at,
+                build_metadata
             FROM core.processor_manifests
-            WHERE end_time IS NULL
-            ORDER BY processor_name, hostname
+            WHERE deployment_status != 'inactive'
+            ORDER BY processor_name, version
             "#
         )
         .fetch_all(self.pool)
@@ -822,17 +828,20 @@ impl<'a> StateRepository<'a> {
             SELECT 
                 id,
                 processor_name as "processor_name!",
-                processor_version,
+                version,
+                description,
                 processor_type,
-                hostname,
-                start_time,
-                end_time,
-                config,
-                metadata,
-                created_at
+                input_schemas,
+                output_schemas,
+                configuration_schema,
+                runtime_requirements,
+                deployment_status,
+                created_at,
+                updated_at,
+                build_metadata
             FROM core.processor_manifests
-            WHERE processor_type = $1 AND end_time IS NULL
-            ORDER BY processor_name, hostname
+            WHERE processor_type = $1 AND deployment_status != 'inactive'
+            ORDER BY processor_name, version
             "#,
             processor_type
         )
@@ -841,53 +850,37 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get processors by type"))
     }
 
-    /// Update processor heartbeat by marking the end time and creating a new entry
-    pub async fn update_processor_heartbeat(
+    /// Update processor deployment status
+    pub async fn update_processor_status(
         &self,
         processor_name: &ProcessorName,
-        hostname: &str,
+        version: &str,
+        status: &str,
     ) -> DbResult<bool> {
-        // First, mark the current processor as ended
-        let _ = sqlx::query!(
-            r#"
-            UPDATE core.processor_manifests
-            SET end_time = NOW()
-            WHERE processor_name = $1 AND hostname = $2 AND end_time IS NULL
-            "#,
-            processor_name.as_ref(),
-            hostname
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "end processor manifest"))?;
-
-        // Create a new manifest entry to signal the processor is still alive
         let result = sqlx::query!(
             r#"
-            INSERT INTO core.processor_manifests (processor_name, processor_version, processor_type, hostname)
-            SELECT processor_name, processor_version, processor_type, hostname
-            FROM core.processor_manifests
-            WHERE processor_name = $1 AND hostname = $2
-            ORDER BY created_at DESC
-            LIMIT 1
+            UPDATE core.processor_manifests
+            SET deployment_status = $1, updated_at = NOW()
+            WHERE processor_name = $2 AND version = $3
             "#,
+            status,
             processor_name.as_ref(),
-            hostname
+            version
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "update processor heartbeat"))?;
+        .map_err(|e| db_error(e, "update processor status"))?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    /// Mark stale processors as ended
+    /// Mark stale processors as inactive
     pub async fn mark_stale_processors(&self, stale_threshold: DateTime<Utc>) -> DbResult<i64> {
         let result = sqlx::query!(
             r#"
             UPDATE core.processor_manifests
-            SET end_time = NOW()
-            WHERE end_time IS NULL AND start_time < $1
+            SET deployment_status = 'inactive', updated_at = NOW()
+            WHERE deployment_status != 'inactive' AND updated_at < $1
             "#,
             stale_threshold
         )
@@ -1158,7 +1151,7 @@ impl<'a> StateRepositoryTx<'a> {
             CheckpointRecord,
             r#"
             INSERT INTO core.processor_checkpoints (
-                processor_name as "processor_name!", consumer_group, consumer_name,
+                processor_name, consumer_group, consumer_name,
                 last_processed_id, last_processed_ts, checkpoint_data, state_data
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7
@@ -1256,14 +1249,17 @@ impl<'a> StateRepositoryTx<'a> {
 pub struct ProcessorManifest {
     pub id: i32,
     pub processor_name: String,
-    pub processor_version: String,
+    pub version: String,
+    pub description: Option<String>,
     pub processor_type: String,
-    pub hostname: String,
-    pub start_time: DateTime<Utc>,
-    pub end_time: Option<DateTime<Utc>>,
-    pub config: Option<JsonValue>,
-    pub metadata: Option<JsonValue>,
+    pub input_schemas: Option<JsonValue>,
+    pub output_schemas: Option<JsonValue>,
+    pub configuration_schema: Option<JsonValue>,
+    pub runtime_requirements: Option<JsonValue>,
+    pub deployment_status: Option<String>,
     pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub build_metadata: Option<JsonValue>,
 }
 
 /// Processor health summary

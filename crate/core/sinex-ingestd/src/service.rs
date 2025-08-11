@@ -1,5 +1,6 @@
 //! Main ingestion service implementation
 
+// Local crate imports
 use crate::{
     config::IngestdConfig,
     proto::{
@@ -10,15 +11,26 @@ use crate::{
     validator::EventValidator,
     IngestdResult, SinexError,
 };
+
+// External crates
 use ahash::AHashMap;
 use async_nats::{jetstream, Client as NatsClient};
-use sinex_core::db::models::{Provenance, RawEvent};
-use sinex_core::db::query_helpers::{ulid_to_uuid, uuid_to_ulid};
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
-use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::{Id, Ulid};
+use sinex_core::{
+    db::{
+        models::{Provenance, RawEvent},
+        query_helpers::{ulid_to_uuid, uuid_to_ulid},
+        repositories::DbPoolExt,
+        telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator},
+    },
+    types::{
+        domain::{EventSource, EventType, HostName},
+        Id, Ulid,
+    },
+};
 use sqlx::{PgPool, Postgres, Transaction};
+use tonic::{transport::Server, Request, Response, Status};
+
+// Standard library and common crates
 use std::{
     str::FromStr,
     sync::{
@@ -32,7 +44,6 @@ use tokio::{
     sync::{mpsc, Mutex},
     time::{interval, Duration},
 };
-use tonic::{transport::Server, Request, Response, Status};
 use tracing::{debug, error, info, instrument, warn};
 
 // Shared ingestor version as a compile-time constant
@@ -489,10 +500,7 @@ impl IngestService {
         for entry in &pending {
             let event_data = serde_json::to_vec(&entry.payload)?;
             let mut headers = async_nats::HeaderMap::new();
-            headers.insert(
-                "Nats-Msg-Id",
-                uuid_to_ulid(entry.event_id).to_string().as_str(),
-            );
+            headers.insert("Nats-Msg-Id", &uuid_to_ulid(entry.event_id).to_string());
 
             let publish_future =
                 js.publish_with_headers(entry.subject.clone(), headers, event_data.into());

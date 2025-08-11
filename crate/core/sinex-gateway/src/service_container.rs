@@ -2,15 +2,17 @@
 
 use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
-use sinex_core::db::telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator};
-use sinex_core::db::{create_pool, query_helpers::db_error};
-use sinex_core::types::domain::SanitizedPath;
-use sinex_core::types::error::SinexError;
-use sinex_satellite_sdk::annex::BlobManager;
-use sinex_satellite_sdk::IngestClient;
+use sinex_core::{
+    db::{
+        create_pool,
+        query_helpers::db_error,
+        telemetry::telemetry::{SystemTelemetryEmitter, TelemetryAccumulator},
+    },
+    types::{domain::SanitizedPath, error::SinexError},
+};
+use sinex_satellite_sdk::{annex::BlobManager, IngestClient};
 use sinex_services::{AnalyticsService, ContentService, PkmService, SearchService};
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 const TELEMETRY_INTERVAL_SECS: u64 = 300;

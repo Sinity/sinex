@@ -384,7 +384,7 @@ pub mod prelude {
     // Core test infrastructure
     pub use crate::sinex_test;
     pub use crate::TestContext;
-    pub use color_eyre::eyre::{bail, ensure, Context};
+    pub use color_eyre::eyre::{bail, ensure, Context, Result};
 
     // Modern test infrastructure - fully integrated
     pub use insta::{
@@ -402,14 +402,21 @@ pub mod prelude {
         test_context_fixture, test_event_sources, test_event_types, test_paths, test_sources,
     };
 
-    // Common imports that tests need
+    // Core sinex imports that tests always need
 
     pub use sinex_core::db::models::*;
+    pub use sinex_core::db::repositories::DbPoolExt;
     pub use sinex_core::types::domain::*;
     pub use sinex_core::types::error::*;
     pub use sinex_core::types::events::*;
     pub use sinex_core::types::{Id, Ulid};
-    pub use std::time::Duration;
+
+    // Time handling - very common in tests
+    pub use chrono::{Duration as ChronoDuration, Utc};
+    pub use std::time::{Duration, Instant};
+
+    // Collections - very common in tests
+    pub use std::collections::{HashMap, HashSet};
 
     // Path handling
     pub use camino::{Utf8Path, Utf8PathBuf};
@@ -419,9 +426,15 @@ pub mod prelude {
         create_test_temp_dir, create_test_temp_file, remove_test_dir, validate_test_path,
     };
 
-    // JSON handling
+    // JSON handling - essential for tests
     pub use serde_json::{json, Value};
 
+    // Async utilities common in tests
+    pub use futures::{future, stream, StreamExt, TryFutureExt, TryStreamExt};
+    pub use tokio::{sync, task, time as tokio_time};
+
+    // Property testing support
+    pub use proptest::prelude::*;
     // Benchmarking support when feature is enabled
     #[cfg(feature = "bench")]
     pub use crate::bench::BENCH_CONTEXT;

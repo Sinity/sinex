@@ -27,22 +27,11 @@
 //! - Wayland: `wl-paste --list-types` for available MIME types
 //! - X11: `TARGETS` atom request for available formats
 
-use camino::Utf8PathBuf;
-use chrono::Utc;
+// Use local facade for common types
+use crate::common::*;
+
+// Clipboard-specific imports
 use copypasta::{ClipboardContext, ClipboardProvider};
-use sinex_core::db::models::RawEvent;
-use sinex_core::types::domain::SanitizedPath;
-use sinex_core::types::events::Event;
-use sinex_core::types::Timestamp;
-use sinex_satellite_sdk::annex::{AnnexConfig, BlobManager};
-use sinex_satellite_sdk::error_helpers::{path_utils, processing_error};
-use sinex_satellite_sdk::SatelliteResult;
-use std::collections::VecDeque;
-use std::time::Duration;
-use tokio::process::Command;
-use tokio::sync::mpsc;
-use tokio::time::interval;
-use tracing::{debug, error, info, warn};
 
 const DEFAULT_MAX_PREVIEW_LENGTH: usize = 100;
 const DEFAULT_MAX_CONTENT_SIZE: usize = 10 * 1024 * 1024; // 10MB
@@ -304,11 +293,16 @@ impl ClipboardWatcher {
     }
 
     /// Find original hash for deduplication
-    fn find_original_hash(&self, content_hash: &str) -> Option<String> {
-        self.clipboard_history
+    fn find_original_hash(&self, content_hash: &str) -> Option<&str> {
+        if self
+            .clipboard_history
             .iter()
-            .find(|e| e.content_hash == content_hash)
-            .map(|e| e.content_hash.clone())
+            .any(|e| e.content_hash == content_hash)
+        {
+            Some(content_hash)
+        } else {
+            None
+        }
     }
 
     /// Update clipboard history with new entry
@@ -562,7 +556,7 @@ impl ClipboardWatcher {
             source_app: content.source_app.clone(),
             window_title: content.window_title.clone(),
             content_hash: content.hash.clone(),
-            original_hash,
+            original_hash: original_hash.map(|h| h.to_string()),
             annex_key,
             blob_id,
         })
@@ -594,7 +588,7 @@ impl ClipboardWatcher {
             text_preview,
             source_app: content.source_app.clone(),
             content_hash: content.hash.clone(),
-            original_hash,
+            original_hash: original_hash.map(|h| h.to_string()),
             annex_key,
             blob_id,
         })

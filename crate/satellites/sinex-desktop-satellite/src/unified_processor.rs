@@ -3,31 +3,14 @@
 //! This module implements the desktop satellite processor supporting snapshot, historical, and
 //! continuous scanning modes for desktop events.
 
-use async_trait::async_trait;
-use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use sinex_core::db::models::RawEvent;
+// Use local facade for common types
+use crate::common::*;
+
+// Desktop-specific event payloads
 use sinex_core::types::events::{
-    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload, Event,
+    ClipboardHistoricalPayload, DesktopMonitoringStartedPayload, DesktopSnapshotPayload,
     WindowManagerHistoricalPayload,
 };
-use sinex_satellite_sdk::{
-    checkpoint::CheckpointManager,
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    },
-    error_helpers::{parse_config_value, parse_typed_config},
-    stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteResult,
-};
-use std::collections::HashMap;
-use std::time::Duration;
-use tracing::{debug, error, info, instrument, warn, Span};
 
 use crate::{window_manager::WindowManagerType, ClipboardWatcher, WindowManagerWatcher};
 

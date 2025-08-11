@@ -3,31 +3,14 @@
 //! This module implements the system satellite processor supporting snapshot, historical, and
 //! continuous scanning modes for system events.
 
-use sinex_core::db::models::RawEvent;
+// Use local facade for common types
+use crate::common::*;
 
-use async_trait::async_trait;
-use camino::Utf8PathBuf;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+// System-specific event payloads
 use sinex_core::types::events::{
-    Event, JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
+    JournaldHistoricalPayload, SystemMonitoringStartedPayload, SystemSnapshotPayload,
     SystemdUnitsHistoricalPayload, UdevDeviceHistoricalPayload,
 };
-use sinex_satellite_sdk::{
-    checkpoint::CheckpointManager,
-    cli::{
-        ActivityEntry, CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry,
-        MissingItem, SourceState,
-    },
-    stream_processor::{
-        Checkpoint, ProcessorCapabilities, ProcessorType, ScanArgs, ScanEstimate, ScanReport,
-        StatefulStreamProcessor, StreamProcessorContext, TimeHorizon,
-    },
-    SatelliteResult,
-};
-use std::collections::HashMap;
-use std::time::Duration;
-use tracing::{debug, error, info, instrument, warn, Span};
 
 use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 
