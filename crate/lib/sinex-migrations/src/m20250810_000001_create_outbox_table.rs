@@ -1,3 +1,4 @@
+use crate::schema::Outbox;
 use sea_orm_migration::prelude::*;
 
 #[derive(DeriveMigrationName)]
@@ -6,33 +7,21 @@ pub struct Migration;
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Create the outbox table for transactional outbox pattern
+        // Create the outbox table using schema definition
         manager
             .get_connection()
-            .execute_unprepared(
-                r#"
-                CREATE TABLE IF NOT EXISTS core.outbox (
-                    id ULID PRIMARY KEY DEFAULT gen_ulid(),
-                    event_id ULID NOT NULL,
-                    subject TEXT NOT NULL,
-                    payload JSONB NOT NULL,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                "#,
-            )
+            .execute_unprepared(&Outbox::create_table())
             .await?;
 
-        // Create index on created_at for efficient processing order
-        manager
-            .get_connection()
-            .execute_unprepared(
-                r#"
-                CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON core.outbox (created_at);
-                "#,
-            )
-            .await?;
+        // Create indexes
+        for index_sql in Outbox::create_indexes() {
+            manager
+                .get_connection()
+                .execute_unprepared(&index_sql)
+                .await?;
+        }
 
-        // Create index on event_id for potential lookups
+        // Also create index on event_id for potential lookups
         manager
             .get_connection()
             .execute_unprepared(

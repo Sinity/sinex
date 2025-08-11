@@ -5,7 +5,11 @@ pub struct Migration;
 
 #[async_trait::async_trait]
 impl MigrationTrait for Migration {
-    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn up(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // NOTE: LLM infrastructure tables disabled - not needed
+        // Embeddings are handled separately in schema.rs (EmbeddingModels, EmbeddingCache)
+
+        /* DISABLED - Not needed, use event-driven approach instead
         // LLM Models Registry
         manager
             .get_connection()
@@ -138,24 +142,27 @@ impl MigrationTrait for Migration {
             .execute_unprepared(
                 r#"
                 ALTER TABLE core.llm_interactions
-                ADD CONSTRAINT check_interaction_status 
+                ADD CONSTRAINT check_interaction_status
                 CHECK (status IN ('pending', 'success', 'failure', 'timeout', 'cancelled'));
 
                 ALTER TABLE core.llm_generated_content
-                ADD CONSTRAINT check_content_type 
+                ADD CONSTRAINT check_content_type
                 CHECK (content_type IN ('text', 'code', 'json', 'markdown', 'html', 'sql', 'other'));
 
                 ALTER TABLE core.llm_generated_content
-                ADD CONSTRAINT check_validation_status 
+                ADD CONSTRAINT check_validation_status
                 CHECK (validation_status IN ('pending', 'valid', 'invalid', 'partial', 'skipped'));
                 "#
             )
             .await?;
 
+        */
+
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        /* DISABLED
         // Drop tables in reverse order
         manager
             .get_connection()
@@ -169,6 +176,7 @@ impl MigrationTrait for Migration {
                 "#,
             )
             .await?;
+        */
 
         Ok(())
     }

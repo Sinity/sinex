@@ -145,23 +145,20 @@ pub struct ConsumerDefaults {
 pub struct TlsConfig {
     /// CA certificate path
     #[validate(custom(
-        function = "validate_optional_cert_path",
+        function = "validate_cert_path",
         message = "Invalid CA certificate path"
     ))]
     pub ca_cert: Option<String>,
 
     /// Client certificate path
     #[validate(custom(
-        function = "validate_optional_cert_path",
+        function = "validate_cert_path",
         message = "Invalid client certificate path"
     ))]
     pub client_cert: Option<String>,
 
     /// Client key path
-    #[validate(custom(
-        function = "validate_optional_cert_path",
-        message = "Invalid client key path"
-    ))]
+    #[validate(custom(function = "validate_cert_path", message = "Invalid client key path"))]
     pub client_key: Option<String>,
 }
 
@@ -405,26 +402,24 @@ fn validate_nats_urls(urls: &[String]) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validate optional certificate paths
-fn validate_optional_cert_path(path: &Option<String>) -> Result<(), ValidationError> {
-    if let Some(p) = path {
-        if p.is_empty() {
-            return Err(ValidationError::new("empty_cert_path"));
-        }
+/// Validate certificate paths (for Option<String> fields)
+fn validate_cert_path(path: &str) -> Result<(), ValidationError> {
+    if path.is_empty() {
+        return Err(ValidationError::new("empty_cert_path"));
+    }
 
-        // Check for path traversal attempts
-        if p.contains("../") || p.contains("..\\") {
-            return Err(ValidationError::new("path_traversal"));
-        }
+    // Check for path traversal attempts
+    if path.contains("../") || path.contains("..\\") {
+        return Err(ValidationError::new("path_traversal"));
+    }
 
-        // Basic file extension check for certificates
-        if !p.ends_with(".pem")
-            && !p.ends_with(".crt")
-            && !p.ends_with(".cert")
-            && !p.ends_with(".key")
-        {
-            return Err(ValidationError::new("invalid_cert_extension"));
-        }
+    // Basic file extension check for certificates
+    if !path.ends_with(".pem")
+        && !path.ends_with(".crt")
+        && !path.ends_with(".cert")
+        && !path.ends_with(".key")
+    {
+        return Err(ValidationError::new("invalid_cert_extension"));
     }
     Ok(())
 }

@@ -544,7 +544,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                             processor_config,
                             db_pool.clone(),
                             ingest_client,
-                            work_dir.into(),
+                            std::path::PathBuf::from(work_dir.as_str()),
                             dry_run,
                         )
                         .await?;
@@ -567,7 +567,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                             processor_config,
                             db_pool.clone(),
                             "/run/sinex/ingest.sock".to_string(),
-                            work_dir.into(),
+                            std::path::PathBuf::from(work_dir.as_str()),
                             dry_run,
                         )
                         .await?;
@@ -682,7 +682,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                             processor_config,
                             db_pool,
                             ingest_client,
-                            work_dir.into(),
+                            std::path::PathBuf::from(work_dir.as_str()),
                             dry_run,
                         )
                         .await?;
@@ -702,7 +702,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                             processor_config,
                             db_pool,
                             "/run/sinex/ingest.sock".to_string(),
-                            work_dir.into(),
+                            std::path::PathBuf::from(work_dir.as_str()),
                             dry_run,
                         )
                         .await?;
@@ -710,7 +710,7 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
 
                 // Create scan args
                 let scan_args = ScanArgs {
-                    targets,
+                    targets: targets.into_iter().map(|p| p.to_string()).collect(),
                     dry_run,
                     interactive,
                     max_events,
@@ -925,7 +925,8 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                 }
 
                 if let Some(export_path) = export_to {
-                    let format = match export_path.extension() {
+                    let path_buf = std::path::PathBuf::from(export_path.as_str());
+                    let format = match path_buf.extension().and_then(|ext| ext.to_str()) {
                         Some("json") => ExportFormat::Json,
                         Some("csv") => ExportFormat::Csv,
                         _ => ExportFormat::Raw,

@@ -702,6 +702,67 @@ impl SourceMaterials {
     }
 }
 
+/// Outbox table definition for transactional outbox pattern
+#[derive(Copy, Clone)]
+pub struct Outbox;
+
+impl_table_def!(Outbox, "outbox", "core", "id");
+
+impl Outbox {
+    pub const TABLE: &'static str = "outbox";
+    pub const SCHEMA: &'static str = "core";
+
+    pub const ID: &'static str = "id";
+    pub const EVENT_ID: &'static str = "event_id";
+    pub const SUBJECT: &'static str = "subject";
+    pub const PAYLOAD: &'static str = "payload";
+    pub const CREATED_AT: &'static str = "created_at";
+
+    /// Create the outbox table
+    pub fn create_table() -> String {
+        Table::create()
+            .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
+            .if_not_exists()
+            .col(
+                ColumnDef::new(Alias::new(Self::ID))
+                    .custom(Alias::new("ULID"))
+                    .not_null()
+                    .primary_key()
+                    .default(Expr::cust("gen_ulid()")),
+            )
+            .col(
+                ColumnDef::new(Alias::new(Self::EVENT_ID))
+                    .custom(Alias::new("ULID"))
+                    .not_null(),
+            )
+            .col(ColumnDef::new(Alias::new(Self::SUBJECT)).text().not_null())
+            .col(
+                ColumnDef::new(Alias::new(Self::PAYLOAD))
+                    .json_binary()
+                    .not_null(),
+            )
+            .col(
+                ColumnDef::new(Alias::new(Self::CREATED_AT))
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
+            .build(PostgresQueryBuilder)
+    }
+
+    /// Create indexes for the outbox table
+    pub fn create_indexes() -> Vec<String> {
+        vec![
+            // Index on created_at for processing order
+            Index::create()
+                .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
+                .name("idx_outbox_created_at")
+                .col(Alias::new(Self::CREATED_AT))
+                .build(PostgresQueryBuilder),
+        ]
+    }
+}
+
 /// Operations log table definition
 #[derive(Copy, Clone)]
 pub struct OperationsLog;

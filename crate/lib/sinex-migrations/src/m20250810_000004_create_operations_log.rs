@@ -2,6 +2,7 @@
 //!
 //! This table tracks replay/archive/restore operations per TARGET_canonical.md specification
 
+use crate::schema::OperationsLog;
 use async_trait::async_trait;
 use sea_orm_migration::prelude::*;
 
@@ -11,44 +12,19 @@ pub struct Migration;
 #[async_trait]
 impl MigrationTrait for Migration {
     async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Create core.operations_log table with complete schema from the start
+        // Create core.operations_log table using schema definition
         manager
             .get_connection()
-            .execute_unprepared(
-                r#"
-                CREATE TABLE core.operations_log (
-                    id ULID PRIMARY KEY,
-                    actor TEXT NOT NULL,
-                    scope JSONB NOT NULL,
-                    state TEXT NOT NULL DEFAULT 'planning',
-                    preview_summary JSONB,
-                    checkpoint JSONB,
-                    approved_by TEXT,
-                    approved_at TIMESTAMPTZ,
-                    executor_node TEXT,
-                    started_at TIMESTAMPTZ,
-                    finished_at TIMESTAMPTZ,
-                    outcome TEXT CHECK (outcome IN ('success', 'error', 'cancelled')),
-                    error_details TEXT,
-                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-                );
-                
-                -- Create indexes
-                CREATE INDEX idx_operations_log_actor_started
-                ON core.operations_log (actor, started_at);
-                
-                CREATE INDEX idx_operations_log_outcome_started
-                ON core.operations_log (outcome, started_at);
-                
-                CREATE INDEX idx_operations_log_started_at
-                ON core.operations_log (started_at);
-                
-                CREATE INDEX idx_operations_log_state
-                ON core.operations_log (state)
-                WHERE state IN ('planning', 'previewed', 'approved', 'executing');
-                "#,
-            )
+            .execute_unprepared(&OperationsLog::create_table())
             .await?;
+
+        // Create indexes
+        for index_sql in OperationsLog::create_indexes() {
+            manager
+                .get_connection()
+                .execute_unprepared(&index_sql)
+                .await?;
+        }
 
         // Create function to set operation_id session variable (used by triggers)
         manager

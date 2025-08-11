@@ -795,7 +795,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -896,7 +896,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -997,7 +997,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
@@ -1108,7 +1108,7 @@ impl<T: StatefulStreamProcessor + 'static> StreamProcessorRunner<T> {
         let (event_sender, event_receiver) = mpsc::unbounded_channel::<RawEvent>();
 
         // Create shutdown channels
-        let (shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
+        let (_shutdown_sender, shutdown_receiver) = tokio::sync::oneshot::channel();
         let (processor_shutdown_sender, processor_shutdown_receiver) =
             tokio::sync::oneshot::channel();
         self.shutdown_receiver = Some(shutdown_receiver);
