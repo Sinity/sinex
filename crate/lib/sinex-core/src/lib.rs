@@ -42,6 +42,8 @@
 pub mod types {
     // Re-export the entire types module structure
     pub use crate::types_impl::*;
+    // Re-export ids and ulid from sinex_schema
+    pub use sinex_schema::{ids, ulid};
 }
 
 // Database module - database access and models
@@ -69,8 +71,6 @@ pub use types::{
     domain,
     error,
     events,
-    ids,
-    ulid,
     utils,
     // Export validation functions for backward compatibility
     validate_json,
@@ -78,7 +78,6 @@ pub use types::{
     validation,
     HealthCheck,
     HealthStatus,
-    Id,
     JsonValue,
     MetricsEntry,
     OptionalTimestamp,
@@ -86,8 +85,12 @@ pub use types::{
     ServiceInfo,
     ServiceKind,
     SinexError,
-    Timestamp,
-    Ulid,
+};
+
+// Re-export ID types from sinex-schema
+pub use sinex_schema::{
+    ids::Id,
+    ulid::{Timestamp, Ulid},
 };
 
 // Re-export environment functionality at crate level
@@ -106,6 +109,8 @@ pub mod payloads {
 
 // Type aliases for complex generic types to reduce verbosity
 pub type EventId = Id<RawEvent>;
+// Create a placeholder Blob type for now
+pub struct Blob;
 pub type BlobId = Id<Blob>;
 pub type EntityId = Id<Entity>;
 pub type SourceMaterialId = Id<SourceMaterial>;

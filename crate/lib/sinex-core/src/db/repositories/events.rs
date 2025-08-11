@@ -6,9 +6,9 @@ use crate::repositories::common::{
 };
 use crate::types::domain::{EventSource, EventType, HostName, SchemaName, SchemaVersion};
 use crate::types::Id;
+use crate::EventRecord;
 use chrono::{DateTime, Utc};
 use serde_json::Value as JsonValue;
-use sinex_schema::schema::EventRecord;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
 use tracing::instrument;
 
@@ -32,9 +32,13 @@ impl<'a> EnhancedRepository<'a> for EventRepository<'a> {
 }
 
 // Extension methods for EventRecord from sinex-migrations
-impl EventRecord {
+trait EventRecordExt {
+    fn to_event(self) -> RawEvent;
+}
+
+impl EventRecordExt for EventRecord {
     /// Convert database record to domain Event
-    pub fn to_event(self) -> RawEvent {
+    fn to_event(self) -> RawEvent {
         // Reconstruct provenance from separate fields
         let provenance = match (self.source_event_ids, self.source_material_id) {
             (Some(event_ids), None) if !event_ids.is_empty() => Some(Provenance::Events(

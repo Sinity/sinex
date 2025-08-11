@@ -10,7 +10,8 @@ use num_traits::ToPrimitive;
 use sqlx::PgPool;
 use tracing::instrument;
 
-use crate::models::{Blob, BlobRecord};
+use crate::Blob;
+use crate::BlobRecord;
 
 /// Repository for blob operations
 #[derive(Debug, Clone)]

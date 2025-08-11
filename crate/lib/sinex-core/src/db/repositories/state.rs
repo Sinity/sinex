@@ -7,9 +7,9 @@
 use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use crate::db::schema::OperationsLog;
-use crate::types::domain::{ConsumerGroup, ConsumerName, ProcessorName};
+use crate::types::domain::{ConsumerGroup, ConsumerName, EventSource, EventType, ProcessorName};
 use crate::types::error::SinexError;
-use crate::types::Id;
+use crate::{Id, RawEvent};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;

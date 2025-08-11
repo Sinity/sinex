@@ -649,49 +649,23 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                     warn!("--use-nats flag is deprecated and ignored. All events now go through gRPC to ingestd to enforce single-writer principle.");
                 }
 
-                // Always use gRPC to enforce single-writer principle through ingestd
-                if false {
-                    // Legacy NATS mode - bypasses ingestd single-writer principle
-                    warn!("Using legacy NATS mode - bypasses ingestd single-writer principle");
+                info!("Using gRPC for event publishing");
 
-                    let mut nats_config = NatsConfig::default();
-                    nats_config.servers = args
-                        .nats_servers
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    nats_config.client_name = format!("sinex-{}-scan", service_name);
+                let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
+                    .await
+                    .context("Failed to create ingest client")?;
 
-                    runner
-                        .initialize_with_grpc_legacy(
-                            service_name,
-                            processor_config,
-                            db_pool,
-                            "/run/sinex/ingest.sock".to_string(),
-                            std::path::PathBuf::from(work_dir.as_str()),
-                            dry_run,
-                        )
-                        .await?;
-                } else {
-                    // Default to gRPC (always for dry runs)
-                    info!("Using gRPC for event publishing");
-
-                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
-                        .await
-                        .context("Failed to create ingest client")?;
-
-                    // Initialize runner
-                    runner
-                        .initialize(
-                            service_name,
-                            processor_config,
-                            db_pool,
-                            ingest_client,
-                            std::path::PathBuf::from(work_dir.as_str()),
-                            dry_run,
-                        )
-                        .await?;
-                }
+                // Initialize runner
+                runner
+                    .initialize(
+                        service_name,
+                        processor_config,
+                        db_pool,
+                        ingest_client,
+                        std::path::PathBuf::from(work_dir.as_str()),
+                        dry_run,
+                    )
+                    .await?;
 
                 // Create scan args
                 let scan_args = ScanArgs {

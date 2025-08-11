@@ -179,20 +179,16 @@ impl SinexEnvironment {
                     format!("{}-{}", parent_str, self.name)
                 } else {
                     // For other patterns, append environment to the last component
-                    let mut components: Vec<_> = parent.components().collect();
-                    if let Some(last) = components.last_mut() {
-                        if let std::path::Component::Normal(name) = last {
-                            let name_str = name.to_string_lossy();
-                            *last = std::path::Component::Normal(
-                                format!("{}-{}", name_str, self.name).as_str().as_ref(),
-                            );
-                        }
+                    if let Some(parent_name) = parent.file_name() {
+                        let parent_name_str = parent_name.to_string_lossy();
+                        let namespaced_parent_name = format!("{}-{}", parent_name_str, self.name);
+                        parent
+                            .with_file_name(namespaced_parent_name)
+                            .to_string_lossy()
+                            .to_string()
+                    } else {
+                        parent_str.to_string()
                     }
-                    components
-                        .into_iter()
-                        .collect::<PathBuf>()
-                        .to_string_lossy()
-                        .to_string()
                 };
 
                 PathBuf::from(namespaced_parent).join(filename)
