@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
+use ulid::Ulid;
 
 /// Database record for operations_log table
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -194,12 +195,12 @@ impl<'a> StateRepository<'a> {
             .map_err(|e| db_error(e, "begin checkpoint transaction"))?;
 
         // Check if this is an update or create operation
-        let existing_checkpoint = sqlx::query!(
-            "SELECT id, processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3",
-            checkpoint.processor_name.as_ref(),
-            consumer_group.as_ref(),
-            consumer_name.as_ref()
+        let existing_checkpoint = sqlx::query_as::<_, (Ulid, i64, i32)>(
+            "SELECT id, processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3"
         )
+        .bind(checkpoint.processor_name.as_ref())
+        .bind(consumer_group.as_ref())
+        .bind(consumer_name.as_ref())
         .fetch_optional(&mut *tx)
         .await
         .map_err(|e| db_error(e, "check existing checkpoint"))?;
@@ -337,7 +338,7 @@ impl<'a> StateRepository<'a> {
                 updated_at
             FROM core.processor_checkpoints 
             WHERE consumer_group = 'default' AND consumer_name = 'default'
-            ORDER BY name
+            ORDER BY processor_name
             "#
         )
         .fetch_all(self.pool)
