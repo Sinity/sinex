@@ -214,8 +214,8 @@ impl IngestService {
             return;
         }
 
-        // Create a channel for telemetry events
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        // Create a bounded channel for telemetry events (capacity: 500 for moderate telemetry load)
+        let (tx, mut rx) = mpsc::channel(500);
 
         // Clone event buffer for telemetry injection
         let event_buffer = self.event_buffer.clone();

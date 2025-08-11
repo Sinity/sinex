@@ -192,6 +192,109 @@ impl NatsPublisher {
         self.publish(&subject, &alert).await
     }
 
+    /// Batch publish raw events for improved performance
+    pub async fn publish_events_batch(&self, events: &[RawEvent]) -> Result<Vec<PublishAck>> {
+        if events.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Prepare all messages for batch publishing
+        let mut batch_messages = Vec::with_capacity(events.len());
+
+        for event in events {
+            let subject = StreamManager::event_subject(&event.source, &event.event_type);
+
+            // Create headers for this event
+            let mut headers = HeaderMap::new();
+            if let Some(id) = &event.id {
+                headers.insert("Sinex-Event-Id", id.to_string());
+            }
+            headers.insert("Sinex-Source", event.source.as_str().to_string());
+            headers.insert("Sinex-Event-Type", event.event_type.as_str().to_string());
+            headers.insert("Sinex-Host", event.host.as_str().to_string());
+            headers.insert(
+                "Sinex-Timestamp",
+                event.ts_orig.unwrap_or_else(chrono::Utc::now).to_rfc3339(),
+            );
+
+            // Add provenance information if present
+            if let Some(provenance) = &event.provenance {
+                match provenance {
+                    Provenance::Events(ids) => {
+                        if !ids.is_empty() {
+                            let ids_str = ids
+                                .iter()
+                                .map(|id| id.to_string())
+                                .collect::<Vec<_>>()
+                                .join(",");
+                            headers.insert("Sinex-Source-Event-Ids", ids_str);
+                        }
+                    }
+                    Provenance::Material { id, .. } => {
+                        headers.insert("Sinex-Source-Material-Id", id.to_string());
+                    }
+                }
+            }
+
+            // Serialize event to JSON
+            let payload = serde_json::to_vec(event).map_err(|e| NatsError::Serialization(e))?;
+
+            batch_messages.push((subject, headers, payload));
+        }
+
+        debug!(
+            batch_size = batch_messages.len(),
+            "Publishing event batch to NATS"
+        );
+
+        // Use the JetStream batch publishing method
+        match self
+            .jetstream
+            .publish_batch_with_headers(batch_messages)
+            .await
+        {
+            Ok(acks) => {
+                debug!(
+                    batch_size = acks.len(),
+                    "Event batch published successfully"
+                );
+                Ok(acks)
+            }
+            Err(e) => {
+                warn!(
+                    batch_size = events.len(),
+                    error = %e,
+                    "Failed to publish event batch"
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Batch publish serializable messages
+    pub async fn publish_batch<T: Serialize>(
+        &self,
+        messages: &[(String, T)],
+    ) -> Result<Vec<PublishAck>> {
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Serialize all messages
+        let mut batch_messages = Vec::with_capacity(messages.len());
+        for (subject, message) in messages {
+            let payload = serde_json::to_vec(message).map_err(|e| NatsError::Serialization(e))?;
+            batch_messages.push((subject.clone(), payload));
+        }
+
+        debug!(
+            batch_size = batch_messages.len(),
+            "Publishing message batch to NATS"
+        );
+
+        self.jetstream.publish_batch(batch_messages).await
+    }
+
     /// Buffer a message for later retry
     async fn buffer_message(
         &self,

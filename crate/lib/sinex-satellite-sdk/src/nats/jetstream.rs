@@ -269,6 +269,85 @@ impl JetStream {
             .await
             .map_err(|e| NatsError::JetStream(format!("Failed to get publish ack: {}", e)))
     }
+
+    /// Batch publish messages to improve performance
+    pub async fn publish_batch<I, P>(
+        &self,
+        messages: I,
+    ) -> Result<Vec<jetstream::publish::PublishAck>>
+    where
+        I: IntoIterator<Item = (String, P)>,
+        P: Into<bytes::Bytes>,
+    {
+        let context = self.context.read().await;
+        let context_clone = context.clone();
+        drop(context); // Explicitly drop the guard
+
+        let mut ack_futures = Vec::new();
+
+        // Submit all publish requests concurrently
+        for (subject, payload) in messages {
+            let ack_future = context_clone
+                .publish(subject, payload.into())
+                .await
+                .map_err(|e| {
+                    NatsError::JetStream(format!("Failed to publish batch item: {}", e))
+                })?;
+            ack_futures.push(ack_future);
+        }
+
+        // Wait for all acknowledgments concurrently
+        let mut acks = Vec::with_capacity(ack_futures.len());
+        for ack_future in ack_futures {
+            let ack = ack_future.await.map_err(|e| {
+                NatsError::JetStream(format!("Failed to get batch publish ack: {}", e))
+            })?;
+            acks.push(ack);
+        }
+
+        Ok(acks)
+    }
+
+    /// Batch publish messages with headers
+    pub async fn publish_batch_with_headers<I, P>(
+        &self,
+        messages: I,
+    ) -> Result<Vec<jetstream::publish::PublishAck>>
+    where
+        I: IntoIterator<Item = (String, async_nats::HeaderMap, P)>,
+        P: Into<bytes::Bytes>,
+    {
+        let context = self.context.read().await;
+        let context_clone = context.clone();
+        drop(context); // Explicitly drop the guard
+
+        let mut ack_futures = Vec::new();
+
+        // Submit all publish requests concurrently
+        for (subject, headers, payload) in messages {
+            let ack_future = context_clone
+                .publish_with_headers(subject, headers, payload.into())
+                .await
+                .map_err(|e| {
+                    NatsError::JetStream(format!(
+                        "Failed to publish batch item with headers: {}",
+                        e
+                    ))
+                })?;
+            ack_futures.push(ack_future);
+        }
+
+        // Wait for all acknowledgments concurrently
+        let mut acks = Vec::with_capacity(ack_futures.len());
+        for ack_future in ack_futures {
+            let ack = ack_future.await.map_err(|e| {
+                NatsError::JetStream(format!("Failed to get batch publish ack: {}", e))
+            })?;
+            acks.push(ack);
+        }
+
+        Ok(acks)
+    }
 }
 
 use futures::TryStreamExt;

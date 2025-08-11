@@ -103,7 +103,7 @@ impl ProcessorManifests {
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
                 .name("idx_processor_manifests_name_version")
-                .col(Alias::new(Self::PROCESSOR_NAME))
+                .col(Alias::new(Self::NAME))
                 .col(Alias::new(Self::VERSION))
                 .unique()
                 .build(PostgresQueryBuilder),

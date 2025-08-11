@@ -65,8 +65,8 @@ impl ServiceContainer {
 
         // Initialize telemetry
         let telemetry = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
-            // Create channel for telemetry events
-            let (tx, mut rx) = mpsc::unbounded_channel();
+            // Create bounded channel for telemetry events (capacity: 500 for telemetry forwarding)
+            let (tx, mut rx) = mpsc::channel(500);
 
             // Spawn task to forward telemetry events to ingestd
             let ingest_socket_clone = ingest_socket.clone();

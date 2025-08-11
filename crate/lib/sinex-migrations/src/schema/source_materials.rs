@@ -13,7 +13,7 @@ impl TableDef for SourceMaterials {
         "raw"
     }
     fn primary_key() -> &'static str {
-        "source_material_id"
+        "id"
     }
 }
 
@@ -21,7 +21,7 @@ impl SourceMaterials {
     pub const TABLE: &'static str = "source_material_registry";
     pub const SCHEMA: &'static str = "raw";
 
-    pub const SOURCE_MATERIAL_ID: &'static str = "source_material_id";
+    pub const ID: &'static str = "id";
     pub const SOURCE_URI: &'static str = "source_uri";
     pub const INGESTION_TIME: &'static str = "ingestion_time";
     pub const ENCODING: &'static str = "encoding";
@@ -42,7 +42,7 @@ impl SourceMaterials {
             .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
             .if_not_exists()
             .col(
-                ColumnDef::new(Alias::new(Self::SOURCE_MATERIAL_ID))
+                ColumnDef::new(Alias::new(Self::ID))
                     .custom(Alias::new("ULID"))
                     .primary_key()
                     .default(Expr::cust("gen_ulid()")),
