@@ -3,8 +3,8 @@
 //! Tests schema validation logic, error handling, and edge cases
 //! without requiring full database integration.
 
-use sinex_test_utils::prelude::*;
 use serde_json::json;
+use sinex_test_utils::prelude::*;
 
 // =============================================================================
 // Schema Validation Logic Tests
@@ -14,7 +14,7 @@ use serde_json::json;
 fn test_json_schema_basic_validation() -> TestResult {
     // Test basic JSON Schema validation using jsonschema crate directly
     use jsonschema::JSONSchema;
-    
+
     let schema = json!({
         "type": "object",
         "properties": {
@@ -23,30 +23,35 @@ fn test_json_schema_basic_validation() -> TestResult {
         },
         "required": ["name"]
     });
-    
-    let compiled = JSONSchema::compile(&schema)
-        .expect("Schema should compile successfully");
-    
+
+    let compiled = JSONSchema::compile(&schema).expect("Schema should compile successfully");
+
     // Test valid data
     let valid_data = json!({"name": "test", "age": 25});
     let result = compiled.validate(&valid_data);
     assert!(result.is_ok(), "Valid data should pass validation");
-    
+
     // Test invalid data - missing required field
     let invalid_data1 = json!({"age": 25});
     let result = compiled.validate(&invalid_data1);
-    assert!(result.is_err(), "Missing required field should fail validation");
-    
+    assert!(
+        result.is_err(),
+        "Missing required field should fail validation"
+    );
+
     // Test invalid data - wrong type
     let invalid_data2 = json!({"name": "test", "age": "not_a_number"});
     let result = compiled.validate(&invalid_data2);
     assert!(result.is_err(), "Wrong type should fail validation");
-    
+
     // Test invalid data - constraint violation
     let invalid_data3 = json!({"name": "test", "age": -5});
     let result = compiled.validate(&invalid_data3);
-    assert!(result.is_err(), "Constraint violation should fail validation");
-    
+    assert!(
+        result.is_err(),
+        "Constraint violation should fail validation"
+    );
+
     Ok(())
 }
 
@@ -54,18 +59,24 @@ fn test_json_schema_basic_validation() -> TestResult {
 fn test_schema_compilation_error_handling() -> TestResult {
     // Test various malformed schemas to ensure robust error handling
     use jsonschema::JSONSchema;
-    
+
     let malformed_schemas = vec![
         (json!(null), "Null schema"),
         (json!("not an object"), "String schema"),
         (json!({"type": "invalid_type"}), "Invalid type"),
-        (json!({"type": "object", "properties": null}), "Null properties"),
-        (json!({"type": "array", "items": {"type": "invalid"}}), "Invalid item type"),
+        (
+            json!({"type": "object", "properties": null}),
+            "Null properties",
+        ),
+        (
+            json!({"type": "array", "items": {"type": "invalid"}}),
+            "Invalid item type",
+        ),
     ];
-    
+
     for (schema, description) in malformed_schemas {
         println!("Testing malformed schema: {}", description);
-        
+
         let result = JSONSchema::compile(&schema);
         match result {
             Ok(_) => {
@@ -75,7 +86,7 @@ fn test_schema_compilation_error_handling() -> TestResult {
             Err(e) => {
                 // Expected case - schema compilation should fail gracefully
                 println!("  Schema compilation failed as expected: {}", e);
-                
+
                 // Error should be informative
                 let error_str = e.to_string();
                 assert!(
@@ -85,15 +96,15 @@ fn test_schema_compilation_error_handling() -> TestResult {
             }
         }
     }
-    
+
     Ok(())
 }
 
-#[sinex_test] 
+#[sinex_test]
 fn test_nested_schema_validation() -> TestResult {
     // Test validation of deeply nested schemas
     use jsonschema::JSONSchema;
-    
+
     let nested_schema = json!({
         "type": "object",
         "properties": {
@@ -119,10 +130,10 @@ fn test_nested_schema_validation() -> TestResult {
         },
         "required": ["event"]
     });
-    
-    let compiled = JSONSchema::compile(&nested_schema)
-        .expect("Nested schema should compile successfully");
-    
+
+    let compiled =
+        JSONSchema::compile(&nested_schema).expect("Nested schema should compile successfully");
+
     // Test valid nested data
     let valid_nested = json!({
         "event": {
@@ -137,10 +148,10 @@ fn test_nested_schema_validation() -> TestResult {
             }
         }
     });
-    
+
     let result = compiled.validate(&valid_nested);
     assert!(result.is_ok(), "Valid nested data should pass validation");
-    
+
     // Test invalid nested data - pattern mismatch
     let invalid_nested = json!({
         "event": {
@@ -151,10 +162,10 @@ fn test_nested_schema_validation() -> TestResult {
             }
         }
     });
-    
+
     let result = compiled.validate(&invalid_nested);
     assert!(result.is_err(), "Pattern violation should fail validation");
-    
+
     Ok(())
 }
 
@@ -166,89 +177,94 @@ fn test_nested_schema_validation() -> TestResult {
 fn test_schema_content_hash_consistency() -> TestResult {
     // Test that identical schema content produces consistent hashes
     use blake3::hash;
-    
+
     let schema1 = json!({
         "type": "object",
         "properties": {
             "name": {"type": "string"}
         }
     });
-    
+
     let schema2 = json!({
         "type": "object",
         "properties": {
             "name": {"type": "string"}
         }
     });
-    
+
     // Same content should produce same hash
     let content1 = serde_json::to_string(&schema1)?;
     let content2 = serde_json::to_string(&schema2)?;
-    
+
     let hash1 = hash(content1.as_bytes());
     let hash2 = hash(content2.as_bytes());
-    
-    assert_eq!(hash1, hash2, "Identical schema content should have same hash");
-    
+
+    assert_eq!(
+        hash1, hash2,
+        "Identical schema content should have same hash"
+    );
+
     // Different content should produce different hashes
     let schema3 = json!({
-        "type": "object", 
+        "type": "object",
         "properties": {
             "name": {"type": "number"}  // Changed type
         }
     });
-    
+
     let content3 = serde_json::to_string(&schema3)?;
     let hash3 = hash(content3.as_bytes());
-    
-    assert_ne!(hash1, hash3, "Different schema content should have different hashes");
-    
+
+    assert_ne!(
+        hash1, hash3,
+        "Different schema content should have different hashes"
+    );
+
     Ok(())
 }
 
 #[sinex_test]
 fn test_schema_version_string_validation() -> TestResult {
     // Test validation of schema version strings
-    let valid_versions = vec![
-        "1.0.0",
-        "v2.1.0",
-        "1.0",
-        "dev",
-        "1.0.0-beta",
-        "2023.01.01",
-    ];
-    
-    let invalid_versions = vec![
-        "",
-        " ",
-        "1.0.0 ",
-        " 1.0.0",
-        "1.0.0\n",
-        "1.0.0\0",
-    ];
-    
+    let valid_versions = vec!["1.0.0", "v2.1.0", "1.0", "dev", "1.0.0-beta", "2023.01.01"];
+
+    let invalid_versions = vec!["", " ", "1.0.0 ", " 1.0.0", "1.0.0\n", "1.0.0\0"];
+
     // Test valid versions
     for version in &valid_versions {
         println!("Testing valid version: '{}'", version);
         // Basic validation - non-empty, reasonable length, no control characters
         assert!(!version.is_empty(), "Version should not be empty");
-        assert!(version.len() <= 50, "Version should not be excessively long");
-        assert!(!version.contains('\0'), "Version should not contain null bytes");
-        assert!(!version.contains('\n'), "Version should not contain newlines");
+        assert!(
+            version.len() <= 50,
+            "Version should not be excessively long"
+        );
+        assert!(
+            !version.contains('\0'),
+            "Version should not contain null bytes"
+        );
+        assert!(
+            !version.contains('\n'),
+            "Version should not contain newlines"
+        );
     }
-    
+
     // Test invalid versions
     for version in &invalid_versions {
         println!("Testing invalid version: '{}'", version);
         // These should be caught by validation
-        let has_issues = version.is_empty() || 
-                        version.starts_with(' ') || 
-                        version.ends_with(' ') ||
-                        version.contains('\0') ||
-                        version.contains('\n');
-        assert!(has_issues, "Invalid version should be detectable: '{}'", version);
+        let has_issues = version.is_empty()
+            || version.starts_with(' ')
+            || version.ends_with(' ')
+            || version.contains('\0')
+            || version.contains('\n');
+        assert!(
+            has_issues,
+            "Invalid version should be detectable: '{}'",
+            version
+        );
     }
-    
+
     Ok(())
 }
 
@@ -259,21 +275,21 @@ fn test_schema_version_string_validation() -> TestResult {
 #[sinex_test]
 fn test_schema_registry_error_conditions() -> TestResult {
     // Test various error conditions that the schema registry should handle gracefully
-    
+
     // Test handling of very large schemas
     let mut large_properties = serde_json::Map::new();
     for i in 0..1000 {
         large_properties.insert(
             format!("prop_{}", i),
-            json!({"type": "string", "description": format!("Property {}", i)})
+            json!({"type": "string", "description": format!("Property {}", i)}),
         );
     }
-    
+
     let large_schema = json!({
         "type": "object",
         "properties": large_properties
     });
-    
+
     // Schema should still be compilable (even if large)
     use jsonschema::JSONSchema;
     let result = JSONSchema::compile(&large_schema);
@@ -281,7 +297,7 @@ fn test_schema_registry_error_conditions() -> TestResult {
         Ok(_) => println!("Large schema compiled successfully"),
         Err(e) => println!("Large schema failed to compile: {}", e),
     }
-    
+
     // Test deeply nested schemas
     let mut nested = json!({"type": "string"});
     for _ in 0..10 {
@@ -292,13 +308,13 @@ fn test_schema_registry_error_conditions() -> TestResult {
             }
         });
     }
-    
+
     let result = JSONSchema::compile(&nested);
     match result {
         Ok(_) => println!("Deeply nested schema compiled successfully"),
         Err(e) => println!("Deeply nested schema failed: {}", e),
     }
-    
+
     Ok(())
 }
 
@@ -306,10 +322,10 @@ fn test_schema_registry_error_conditions() -> TestResult {
 fn test_event_source_and_type_patterns() -> TestResult {
     // Test the regex patterns used for event source and type validation
     use regex::Regex;
-    
+
     // Event source pattern: ^[a-z][a-z0-9_-]*$
     let source_pattern = Regex::new(r"^[a-z][a-z0-9_-]*$")?;
-    
+
     let valid_sources = vec![
         "fs_watcher",
         "terminal",
@@ -318,7 +334,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
         "test-source",
         "source_1",
     ];
-    
+
     let invalid_sources = vec![
         "",
         "1invalid",      // Starts with digit
@@ -328,7 +344,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
         "_invalid",      // Starts with underscore
         "-invalid",      // Starts with dash
     ];
-    
+
     for source in &valid_sources {
         assert!(
             source_pattern.is_match(source),
@@ -336,7 +352,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
             source
         );
     }
-    
+
     for source in &invalid_sources {
         assert!(
             !source_pattern.is_match(source),
@@ -344,10 +360,10 @@ fn test_event_source_and_type_patterns() -> TestResult {
             source
         );
     }
-    
-    // Event type pattern: ^[a-z][a-z0-9_.]*$  
+
+    // Event type pattern: ^[a-z][a-z0-9_.]*$
     let type_pattern = Regex::new(r"^[a-z][a-z0-9_.]*$")?;
-    
+
     let valid_types = vec![
         "file.created",
         "command.executed",
@@ -356,17 +372,17 @@ fn test_event_source_and_type_patterns() -> TestResult {
         "test_event",
         "event.sub.type",
     ];
-    
+
     let invalid_types = vec![
         "",
-        "1invalid",        // Starts with digit
-        "INVALID",         // Uppercase
-        "invalid space",   // Contains space
-        "invalid-dash",    // Contains dash
-        "_invalid",        // Starts with underscore
-        ".invalid",        // Starts with dot
+        "1invalid",      // Starts with digit
+        "INVALID",       // Uppercase
+        "invalid space", // Contains space
+        "invalid-dash",  // Contains dash
+        "_invalid",      // Starts with underscore
+        ".invalid",      // Starts with dot
     ];
-    
+
     for event_type in &valid_types {
         assert!(
             type_pattern.is_match(event_type),
@@ -374,7 +390,7 @@ fn test_event_source_and_type_patterns() -> TestResult {
             event_type
         );
     }
-    
+
     for event_type in &invalid_types {
         assert!(
             !type_pattern.is_match(event_type),
@@ -382,6 +398,6 @@ fn test_event_source_and_type_patterns() -> TestResult {
             event_type
         );
     }
-    
+
     Ok(())
 }

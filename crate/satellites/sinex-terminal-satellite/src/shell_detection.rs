@@ -200,6 +200,11 @@ fn check_command_exists(cmd: &str) -> bool {
 
 /// Get shell version
 fn get_shell_version(shell_type: &ShellType) -> Option<String> {
+    get_shell_version_impl(shell_type).ok()
+}
+
+/// Helper function that uses ? operator for cleaner error handling
+fn get_shell_version_impl(shell_type: &ShellType) -> Result<String, Box<dyn std::error::Error>> {
     use std::process::Command;
 
     let version_flag = match shell_type {
@@ -207,31 +212,25 @@ fn get_shell_version(shell_type: &ShellType) -> Option<String> {
         _ => "--version",
     };
 
-    Command::new(shell_type.name())
-        .arg(version_flag)
-        .output()
-        .ok()
-        .and_then(|output| {
-            String::from_utf8(output.stdout)
-                .ok()
-                .map(|s| s.lines().next().unwrap_or("").to_string())
-        })
+    let output = Command::new(shell_type.name()).arg(version_flag).output()?;
+
+    let stdout = String::from_utf8(output.stdout)?;
+    let version = stdout.lines().next().unwrap_or("").to_string();
+    Ok(version)
 }
 
-/// Get parent process ID
+/// Get parent process ID using sysinfo crate for cross-platform compatibility
 fn get_parent_pid() -> Option<u32> {
-    #[cfg(unix)]
-    {
-        use std::fs;
-        let stat = fs::read_to_string("/proc/self/stat").ok()?;
-        let fields: Vec<&str> = stat.split_whitespace().collect();
-        fields.get(3)?.parse().ok()
-    }
+    use sysinfo::{ProcessExt, SystemExt};
 
-    #[cfg(not(unix))]
-    {
-        None
-    }
+    let mut system = sysinfo::System::new();
+    system.refresh_processes();
+
+    let current_pid = std::process::id();
+    system
+        .process(current_pid.into())?
+        .parent()
+        .map(|pid| pid.as_u32())
 }
 
 #[cfg(test)]
