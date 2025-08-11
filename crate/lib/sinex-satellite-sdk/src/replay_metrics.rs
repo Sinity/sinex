@@ -182,7 +182,7 @@ impl Default for ReplayMetrics {
 }
 
 /// Snapshot of replay metrics at a point in time
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct MetricsSnapshot {
     /// When this snapshot was taken
     pub captured_at: DateTime<Utc>,

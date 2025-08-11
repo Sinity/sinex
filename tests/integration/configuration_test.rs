@@ -41,7 +41,7 @@ impl Default for ValidationReport {
 // ============================================================================
 
 /// Comprehensive mapping of all configuration options across the codebase
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct ConfigurationCoverage {
     pub core_configs: HashMap<String, ConfigSchemaInfo>,
     pub satellite_configs: HashMap<String, ConfigSchemaInfo>,
@@ -49,7 +49,7 @@ pub struct ConfigurationCoverage {
     pub environment_variables: HashMap<String, EnvVarInfo>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct ConfigSchemaInfo {
     pub required_fields: Vec<String>,
     pub optional_fields: Vec<String>,
@@ -58,7 +58,7 @@ pub struct ConfigSchemaInfo {
     pub interdependencies: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct EnvVarInfo {
     pub description: String,
     pub default_value: Option<String>,
@@ -66,7 +66,7 @@ pub struct EnvVarInfo {
     pub used_by: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct ValidationRule {
     pub field_path: String,
     pub rule_type: String,

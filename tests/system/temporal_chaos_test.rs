@@ -57,7 +57,7 @@ use tokio::time::Duration;
 // ==================== TEMPORAL CHAOS INFRASTRUCTURE ====================
 
 /// Comprehensive metrics for tracking temporal chaos test patterns
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
 pub struct TemporalChaosMetrics {
     pub events_sent: AtomicUsize,
     pub events_processed: AtomicUsize,

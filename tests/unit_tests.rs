@@ -9,17 +9,14 @@
 //! - Core utilities and helpers
 
 use serde_json::json;
-use sinex_core::db::models::RawEvent as DbEvent;
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::{Id, Ulid};
+// Using shorter imports from sinex-core's re-exports
+use sinex_core::{DbPoolExt, EventSource, EventType, HostName, Id, RawEvent as DbEvent, Ulid};
 use sinex_test_utils::prelude::*;
 use std::collections::HashSet;
 use std::str::FromStr;
 
 // Database unit tests module
 mod unit {
-    pub mod advisory_lock_test;
     pub mod coordination_primitive_test;
     pub mod database_test;
     pub mod error_paths_test;

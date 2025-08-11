@@ -16,10 +16,8 @@ mod integration {
 
 // Import test utilities with proper prelude for consistent testing
 use serde_json::json;
-use sinex_core::db::models::{Blob, RawEvent as DbEvent};
-use sinex_core::db::repositories::DbPoolExt;
-use sinex_core::types::domain::{EventSource, EventType};
-use sinex_core::types::Id;
+// Using shorter imports from sinex-core's re-exports
+use sinex_core::{Blob, DbPoolExt, EventSource, EventType, Id, RawEvent as DbEvent};
 use sinex_test_utils::prelude::*;
 
 // =============================================================================

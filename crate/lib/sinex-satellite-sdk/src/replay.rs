@@ -12,6 +12,12 @@ use sinex_core::types::domain::{EventSource, EventType};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
+/// Get epoch timestamp as a safe fallback
+fn epoch_timestamp() -> DateTime<Utc> {
+    DateTime::from_timestamp(0, 0)
+        .expect("Failed to create epoch timestamp - this should never fail")
+}
+
 /// Replay mode configuration
 #[derive(Debug, Clone)]
 pub enum ReplayMode {
@@ -39,7 +45,7 @@ pub enum ReplayMode {
 }
 
 /// Flexible filters for custom replay
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct ReplayFilters {
     /// Source patterns (supports wildcards)
     pub sources: Option<Vec<String>>,
@@ -140,8 +146,7 @@ impl ReplayManager {
                     self.pool.events().count_by_source(&event_source).await? as u64
                 } else {
                     // Use a complex query for source with time range
-                    let start_time =
-                        start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                    let start_time = start_time.unwrap_or_else(epoch_timestamp);
                     let end_time = end_time.unwrap_or_else(Utc::now);
 
                     let event_source = EventSource::new(source);
@@ -276,8 +281,7 @@ impl ReplayManager {
                             .await?
                     } else {
                         // For source with time range, use time range query and filter
-                        let start_time =
-                            start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
+                        let start_time = start_time.unwrap_or_else(epoch_timestamp);
                         let end_time = end_time.unwrap_or_else(Utc::now);
 
                         // Use the new source + time range query method

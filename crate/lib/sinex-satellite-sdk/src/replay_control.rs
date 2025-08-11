@@ -117,7 +117,7 @@ impl Default for ReplayController {
 }
 
 /// State management for replay operations
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct ReplayState {
     /// Current batch number being processed
     pub current_batch: usize,

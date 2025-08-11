@@ -35,7 +35,7 @@ use crate::{DbusWatcher, JournalWatcher, SystemdWatcher, UdevWatcher};
 pub use crate::SystemConfig;
 
 /// System state snapshot for exploration and diagnostics
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, bon::Builder)]
 pub struct SystemState {
     /// When the snapshot was taken
     pub captured_at: DateTime<Utc>,

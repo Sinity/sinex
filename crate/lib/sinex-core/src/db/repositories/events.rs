@@ -341,6 +341,7 @@ impl<'a> EventRepository<'a> {
         Ok(record.map(|r| r.to_event()))
     }
 
+    #[instrument(skip(self))]
     pub async fn count_all(&self) -> DbResult<i64> {
         let result = sqlx::query_scalar!("SELECT COUNT(*) FROM core.events")
             .fetch_one(self.pool)
@@ -350,6 +351,7 @@ impl<'a> EventRepository<'a> {
         Ok(result.unwrap_or(0))
     }
 
+    #[instrument(skip(self), fields(limit = limit))]
     pub async fn get_recent(&self, limit: i64) -> DbResult<Vec<RawEvent>> {
         let records = sqlx::query_as::<_, EventRecord>(
             r#"
@@ -384,6 +386,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
+    #[instrument(skip(self), fields(source = %source, limit = ?limit, offset = ?offset))]
     pub async fn get_by_source(
         &self,
         source: &EventSource,
@@ -429,6 +432,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
+    #[instrument(skip(self), fields(event_type = %event_type, limit = ?limit, offset = ?offset))]
     pub async fn get_by_event_type(
         &self,
         event_type: &EventType,
@@ -474,6 +478,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
+    #[instrument(skip(self), fields(source = %source))]
     pub async fn count_by_source(&self, source: &EventSource) -> DbResult<i64> {
         let result = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM core.events WHERE source = $1",
@@ -486,6 +491,7 @@ impl<'a> EventRepository<'a> {
         Ok(result.unwrap_or(0))
     }
 
+    #[instrument(skip(self), fields(event_type = %event_type))]
     pub async fn count_by_event_type(&self, event_type: &EventType) -> DbResult<i64> {
         let result = sqlx::query_scalar!(
             "SELECT COUNT(*) FROM core.events WHERE event_type = $1",

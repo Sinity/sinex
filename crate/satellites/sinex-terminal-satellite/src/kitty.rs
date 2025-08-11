@@ -41,6 +41,24 @@ use tokio::sync::mpsc;
 use tokio::time::sleep;
 use tracing::{debug, error, info, warn};
 
+// Static regex patterns for prompt matching - compiled once for performance
+lazy_static::lazy_static! {
+    static ref PROMPT_PATTERNS: Vec<Regex> = vec![
+        // Basic bash/zsh prompts
+        Regex::new(r"^\$ (.+)$").unwrap(),
+        Regex::new(r"^# (.+)$").unwrap(),
+        // Starship prompt
+        Regex::new(r"^❯ (.+)$").unwrap(),
+        // Oh-my-zsh variations
+        Regex::new(r"^➜\s+[^\s]+\s+(.+)$").unwrap(),
+        Regex::new(r"^.*%\s+(.+)$").unwrap(),
+        // Fish shell
+        Regex::new(r"^.*>\s+(.+)$").unwrap(),
+        // Custom prompts with timestamps
+        Regex::new(r"^\[\d{2}:\d{2}:\d{2}\].*\$\s+(.+)$").unwrap(),
+    ];
+}
+
 /// Kitty window information
 #[derive(Debug, Clone)]
 struct KittyWindow {
@@ -106,7 +124,6 @@ pub struct KittyWatcher {
     socket_path: Option<String>,
     poll_interval: Duration,
     window_states: HashMap<String, KittyWindowState>,
-    prompt_patterns: Vec<Regex>,
     last_scrollback_line_counts: HashMap<String, u32>,
     last_focused_tab: Option<String>,
     process_states: HashMap<String, KittyProcessInfo>,
@@ -119,7 +136,6 @@ impl KittyWatcher {
             socket_path: None,
             poll_interval: Duration::from_millis(500),
             window_states: HashMap::with_capacity(20),
-            prompt_patterns: Self::create_prompt_patterns(),
             last_scrollback_line_counts: HashMap::with_capacity(20),
             last_focused_tab: None,
             process_states: HashMap::with_capacity(50),
@@ -136,23 +152,6 @@ impl KittyWatcher {
         }
 
         Ok(watcher)
-    }
-
-    fn create_prompt_patterns() -> Vec<Regex> {
-        vec![
-            // Basic bash/zsh prompts
-            Regex::new(r"^\$ (.+)$").unwrap(),
-            Regex::new(r"^# (.+)$").unwrap(),
-            // Starship prompt
-            Regex::new(r"^❯ (.+)$").unwrap(),
-            // Oh-my-zsh variations
-            Regex::new(r"^➜\s+[^\s]+\s+(.+)$").unwrap(),
-            Regex::new(r"^.*%\s+(.+)$").unwrap(),
-            // Fish shell
-            Regex::new(r"^.*>\s+(.+)$").unwrap(),
-            // Custom prompts with timestamps
-            Regex::new(r"^\[\d{2}:\d{2}:\d{2}\].*\$\s+(.+)$").unwrap(),
-        ]
     }
 
     async fn discover_kitty_socket(&mut self) -> SatelliteResult<String> {
@@ -448,7 +447,7 @@ impl KittyWatcher {
 
                 // Try to extract command from the output (look for prompt patterns)
                 let extracted_command =
-                    Self::extract_command_from_output(&self.prompt_patterns, &last_output);
+                    Self::extract_command_from_output(&PROMPT_PATTERNS, &last_output);
 
                 if let Some(command_text) = extracted_command {
                     // Create command completion event with both command and output

@@ -9,9 +9,8 @@
 use proptest::option;
 use proptest::prelude::*;
 use serde_json::json;
-use sinex_core::db::models::RawEvent as DbEvent;
-use sinex_core::types::domain::{EventSource, EventType, HostName};
-use sinex_core::types::{Id, Ulid};
+// Using shorter imports from sinex-core's re-exports
+use sinex_core::{EventSource, EventType, HostName, Id, RawEvent as DbEvent, Ulid};
 use sinex_test_utils::sinex_test;
 
 // =============================================================================
