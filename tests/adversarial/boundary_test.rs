@@ -9,18 +9,13 @@
 // - **Numeric Boundaries**: Overflow conditions, timestamp limits, precision limits
 // - **Resource Boundaries**: Memory limits, disk space, file handle limits
 
-use color_eyre::eyre::Result;
+use sinex_test_utils::prelude::*;
+
+// Additional specific imports
 use chrono::Datelike;
-use futures::future::join_all;
 use sinex_core::types::events::{event_types, services, EventFactory};
 use sinex_test_utils::events;
-use sinex_test_utils::prelude::*;
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    Arc,
-};
-use std::time::Instant;
-use tokio::time::{timeout, Duration};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 // =============================================================================
 // Database Boundary Tests
