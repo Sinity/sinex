@@ -830,19 +830,26 @@ impl FilesystemProcessor {
         // Set up validated watch paths
         for base_path in &validated_paths {
             // Create directory if it doesn't exist (for testing)
-            if !base_path.exists() {
-                info!("Creating directory: {}", base_path.as_str());
-                std::fs::create_dir_all(base_path).map_err(|e| {
-                    SatelliteError::General(eyre!(
+            // Using create_dir_all which is atomic - it either succeeds or fails safely
+            match std::fs::create_dir_all(base_path) {
+                Ok(()) => {
+                    debug!("Ensured directory exists: {}", base_path.as_str());
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Directory already exists, this is fine
+                    debug!("Directory already exists: {}", base_path.as_str());
+                }
+                Err(e) => {
+                    return Err(SatelliteError::General(eyre!(
                         "Failed to create validated directory {}: {}",
                         base_path.as_str(),
                         e
-                    ))
-                })?;
+                    )));
+                }
             }
 
-            // Watch the base directory
-            if base_path.exists() && !watched_paths.contains(base_path) {
+            // Watch the base directory (no need to check exists() since we just ensured it exists above)
+            if !watched_paths.contains(base_path) {
                 info!("Watching validated directory: {}", base_path.as_str());
                 debouncer
                     .watcher()

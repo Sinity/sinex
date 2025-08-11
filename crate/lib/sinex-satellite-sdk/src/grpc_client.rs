@@ -6,16 +6,131 @@ use crate::proto::{
 };
 use crate::{SatelliteError, SatelliteResult};
 use sinex_core::db::models::RawEvent;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::RwLock;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tracing::{debug, error, info, instrument, warn};
 
 /// Default schema version for events
 const DEFAULT_SCHEMA_VERSION: &str = "1.0.0";
 
+/// Default timeout for normal gRPC operations
+const DEFAULT_OPERATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Default timeout for health checks
+const DEFAULT_HEALTH_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Circuit breaker states
+#[derive(Debug, Clone, PartialEq)]
+enum CircuitState {
+    Closed,   // Normal operation
+    Open,     // Circuit breaker is open, fail fast
+    HalfOpen, // Testing if service is back
+}
+
+/// Circuit breaker for gRPC client
+#[derive(Debug)]
+struct CircuitBreaker {
+    state: Arc<RwLock<CircuitState>>,
+    failure_count: Arc<RwLock<u32>>,
+    failure_threshold: u32,
+    recovery_timeout: Duration,
+    last_failure_time: Arc<RwLock<Option<std::time::Instant>>>,
+}
+
+impl CircuitBreaker {
+    fn new(failure_threshold: u32, recovery_timeout: Duration) -> Self {
+        Self {
+            state: Arc::new(RwLock::new(CircuitState::Closed)),
+            failure_count: Arc::new(RwLock::new(0)),
+            failure_threshold,
+            recovery_timeout,
+            last_failure_time: Arc::new(RwLock::new(None)),
+        }
+    }
+
+    async fn can_execute(&self) -> bool {
+        let state = self.state.read().await;
+        match *state {
+            CircuitState::Closed => true,
+            CircuitState::Open => {
+                drop(state); // Release read lock
+                let last_failure = self.last_failure_time.read().await;
+                if let Some(time) = *last_failure {
+                    if time.elapsed() > self.recovery_timeout {
+                        drop(last_failure); // Release read lock
+                        let mut state = self.state.write().await;
+                        *state = CircuitState::HalfOpen;
+                        info!("Circuit breaker transitioning to half-open state");
+                        return true;
+                    }
+                }
+                false
+            }
+            CircuitState::HalfOpen => true,
+        }
+    }
+
+    async fn record_success(&self) {
+        let mut failure_count = self.failure_count.write().await;
+        *failure_count = 0;
+        let mut state = self.state.write().await;
+        *state = CircuitState::Closed;
+        debug!("Circuit breaker reset to closed state");
+    }
+
+    async fn record_failure(&self) {
+        let mut failure_count = self.failure_count.write().await;
+        *failure_count += 1;
+
+        if *failure_count >= self.failure_threshold {
+            let mut state = self.state.write().await;
+            *state = CircuitState::Open;
+            let mut last_failure = self.last_failure_time.write().await;
+            *last_failure = Some(std::time::Instant::now());
+            warn!(
+                failure_count = *failure_count,
+                threshold = self.failure_threshold,
+                "Circuit breaker opened due to repeated failures"
+            );
+        }
+    }
+}
+
+/// Configuration for gRPC client timeouts and reliability
+#[derive(Debug, Clone)]
+pub struct GrpcClientConfig {
+    /// Timeout for normal operations (ingest_event, ingest_batch)
+    pub operation_timeout: Duration,
+    /// Timeout for health checks
+    pub health_timeout: Duration,
+    /// Maximum retries for failed operations
+    pub max_retries: u32,
+    /// Circuit breaker failure threshold
+    pub circuit_breaker_threshold: u32,
+    /// Circuit breaker recovery timeout
+    pub circuit_breaker_recovery: Duration,
+}
+
+impl Default for GrpcClientConfig {
+    fn default() -> Self {
+        Self {
+            operation_timeout: DEFAULT_OPERATION_TIMEOUT,
+            health_timeout: DEFAULT_HEALTH_TIMEOUT,
+            max_retries: 3,
+            circuit_breaker_threshold: 5,
+            circuit_breaker_recovery: Duration::from_secs(30),
+        }
+    }
+}
+
 /// Client for communicating with sinex-ingestd via gRPC over Unix Domain Socket
 #[derive(Clone, Debug)]
 pub struct IngestClient {
     client: IngestServiceClient<Channel>,
+    config: GrpcClientConfig,
+    circuit_breaker: CircuitBreaker,
 }
 
 impl IngestClient {

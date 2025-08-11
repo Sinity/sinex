@@ -12,7 +12,9 @@ use sinex_core::db::models::{Provenance, RawEvent};
 use sinex_core::types::domain::ServiceName;
 use sinex_core::types::ulid::Ulid;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::Duration;
+use tokio::sync::{mpsc, Mutex};
+use tokio::time::{sleep, timeout};
 use tracing::{debug, error, warn};
 
 /// NATS publisher for Sinex events
@@ -331,36 +333,81 @@ impl NatsPublisher {
         Ok(())
     }
 
-    /// Flush buffered messages
+    /// Flush buffered messages using batch publishing for improved performance
     pub async fn flush_buffer(&self) -> Result<Vec<Ulid>> {
         let mut buffer = self.buffer.lock().await;
         let messages: Vec<PendingMessage> = buffer.drain(..).collect();
         drop(buffer);
 
+        if messages.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        debug!(
+            buffer_size = messages.len(),
+            "Flushing buffered messages using batch publishing"
+        );
+
+        // Prepare batch messages for publishing
+        let batch_messages: Vec<(String, HeaderMap, bytes::Bytes)> = messages
+            .iter()
+            .map(|msg| {
+                (
+                    msg.subject.clone(),
+                    msg.headers.clone(),
+                    msg.payload.clone(),
+                )
+            })
+            .collect();
+
         let mut failed_ids = Vec::new();
 
-        for msg in messages {
-            match self
-                .jetstream
-                .publish_with_headers(&msg.subject, msg.headers, msg.payload)
-                .await
-            {
-                Ok(ack) => {
-                    debug!(
-                        subject = msg.subject,
-                        event_id = %msg.event_id,
-                        sequence = ack.sequence,
-                        "Buffered message published successfully"
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        subject = msg.subject,
-                        event_id = %msg.event_id,
-                        error = %e,
-                        "Failed to publish buffered message"
-                    );
-                    failed_ids.push(msg.event_id);
+        // Use batch publishing for much better performance
+        match self
+            .jetstream
+            .publish_batch_with_headers(batch_messages)
+            .await
+        {
+            Ok(acks) => {
+                debug!(
+                    batch_size = acks.len(),
+                    "Batch flush completed successfully"
+                );
+
+                // All messages succeeded - no failed IDs
+            }
+            Err(e) => {
+                error!(
+                    batch_size = messages.len(),
+                    error = %e,
+                    "Batch flush failed, falling back to individual publishes"
+                );
+
+                // Fall back to individual publishes to identify which ones failed
+                for msg in messages {
+                    match self
+                        .jetstream
+                        .publish_with_headers(&msg.subject, msg.headers, msg.payload)
+                        .await
+                    {
+                        Ok(ack) => {
+                            debug!(
+                                subject = msg.subject,
+                                event_id = %msg.event_id,
+                                sequence = ack.sequence,
+                                "Buffered message published successfully (fallback)"
+                            );
+                        }
+                        Err(e) => {
+                            error!(
+                                subject = msg.subject,
+                                event_id = %msg.event_id,
+                                error = %e,
+                                "Failed to publish buffered message (fallback)"
+                            );
+                            failed_ids.push(msg.event_id);
+                        }
+                    }
                 }
             }
         }

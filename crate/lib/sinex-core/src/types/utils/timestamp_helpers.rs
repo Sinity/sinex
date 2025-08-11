@@ -37,8 +37,9 @@ pub fn timestamp_micros_to_datetime(timestamp_us: i64) -> Option<DateTime<Utc>> 
 ///
 /// Returns current time if conversion fails
 pub fn timestamp_nanos_to_datetime(timestamp_ns: i64) -> DateTime<Utc> {
-    let secs = timestamp_ns / 1_000_000_000;
-    let nanos = (timestamp_ns % 1_000_000_000) as u32;
+    let secs = timestamp_ns.checked_div(1_000_000_000).unwrap_or(0);
+    let nanos_remainder = timestamp_ns.checked_rem(1_000_000_000).unwrap_or(0);
+    let nanos = nanos_remainder.abs() as u32; // Handle negative remainders correctly
     DateTime::from_timestamp(secs, nanos).unwrap_or_else(Utc::now)
 }
 
@@ -66,8 +67,9 @@ pub fn parse_flexible_timestamp(value: &str) -> Option<DateTime<Utc>> {
             5_000_000_000_001..=5_000_000_000_000_000 => DateTime::from_timestamp_micros(timestamp),
             // Nanoseconds: anything larger
             _ => {
-                let secs = timestamp / 1_000_000_000;
-                let nanos = (timestamp % 1_000_000_000) as u32;
+                let secs = timestamp.checked_div(1_000_000_000).unwrap_or(0);
+                let nanos_remainder = timestamp.checked_rem(1_000_000_000).unwrap_or(0);
+                let nanos = nanos_remainder.abs() as u32; // Handle negative remainders correctly
                 DateTime::from_timestamp(secs, nanos)
             }
         }

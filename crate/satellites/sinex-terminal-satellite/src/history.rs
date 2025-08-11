@@ -263,14 +263,21 @@ impl HistoryWatcher {
             self.files.len()
         );
 
-        // Set up file watcher
-        let (notify_tx, mut notify_rx) = mpsc::unbounded_channel::<NotifyEvent>();
+        // Set up file watcher (capacity: 100 for file notification events)
+        let (notify_tx, mut notify_rx) = mpsc::channel::<NotifyEvent>(100);
 
         let mut watcher = RecommendedWatcher::new(
             move |result: Result<NotifyEvent, notify::Error>| match result {
                 Ok(event) => {
-                    if let Err(e) = notify_tx.send(event) {
-                        error!("Failed to send notify event: {}", e);
+                    if let Err(e) = notify_tx.try_send(event) {
+                        match e {
+                            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                                warn!("File notification channel full, dropping event");
+                            }
+                            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                                error!("File notification channel closed");
+                            }
+                        }
                     }
                 }
                 Err(e) => {
