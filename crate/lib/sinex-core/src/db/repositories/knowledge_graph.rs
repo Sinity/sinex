@@ -581,7 +581,7 @@ impl<'a> KnowledgeGraphRepository<'a> {
             r#"
             INSERT INTO core.entity_relations (
                 id, from_entity_id, to_entity_id, relation_type, 
-                strength as f32, metadata, valid_from, valid_until, created_from_event_id
+                strength, metadata, valid_from, valid_until, created_from_event_id
             ) VALUES (
                 $1, $2, $3, $4, $5, $6, $7, $8, $9
             )

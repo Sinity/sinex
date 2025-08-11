@@ -494,9 +494,10 @@ async fn check_hyprland_availability() -> bool {
 
 async fn check_atuin_availability() -> bool {
     // Check if Atuin is installed and configured
-    std::process::Command::new("which")
+    tokio::process::Command::new("which")
         .arg("atuin")
         .output()
+        .await
         .map(|output| output.status.success())
         .unwrap_or(false)
 }
@@ -545,7 +546,7 @@ async fn verify_service_configuration_compatibility(messages: &mut Vec<String>) 
 
 async fn check_systemd_compatibility() -> Result<Value> {
     // Check if systemd is available and running
-    let systemd_version = std::process::Command::new("systemctl")
+    let systemd_version = tokio::process::Command::new("systemctl")
         .arg("--version")
         .output()
         .wrap_err("Failed to check systemd version")?;
@@ -566,8 +567,10 @@ async fn check_systemd_compatibility() -> Result<Value> {
 
 async fn check_nixos_compatibility() -> Result<Value> {
     // Check if we're running on NixOS
-    let nixos_version = tokio::fs::read_to_string("/etc/NIXOS")
-        .or_else(|_| std::fs::read_to_string("/etc/os-release"));
+    let nixos_version = match tokio::fs::read_to_string("/etc/NIXOS").await {
+        Ok(content) => Ok(content),
+        Err(_) => tokio::fs::read_to_string("/etc/os-release").await,
+    };
 
     match nixos_version {
         Ok(content) => {
@@ -590,7 +593,8 @@ async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
     let validated_path = validate_path(path.as_str())
         .wrap_err_with(|| format!("Invalid or dangerous path: {:?}", path))?;
 
-    let content = std::fs::read_to_string(&validated_path)
+    let content = tokio::fs::read_to_string(&validated_path)
+        .await
         .wrap_err_with(|| format!("Failed to read TOML file: {:?}", validated_path))?;
 
     validate_toml_content(&content)

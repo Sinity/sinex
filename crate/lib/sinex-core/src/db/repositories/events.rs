@@ -1571,18 +1571,10 @@ impl<'a> EventRepository<'a> {
         deletion_reason: &str,
     ) -> DbResult<bool> {
         let result = sqlx::query!(
-            r#"
-            UPDATE core.event_annotations
-            SET deleted_at = CURRENT_TIMESTAMP,
-                deleted_by = $2,
-                deletion_reason = $3
-            WHERE id = $1
-            "#,
-            *id.as_ulid() as _,
-            deleted_by,
-            deletion_reason
+            "DELETE FROM core.event_annotations WHERE id = $1",
+            *id.as_ulid() as _
         )
-        .execute(&self.db_pool)
+        .execute(self.pool)
         .await
         .map_err(|e| db_error(e, "delete annotation"))?;
 

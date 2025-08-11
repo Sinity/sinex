@@ -199,7 +199,9 @@ impl ArchivedEvents {
             CREATE TABLE IF NOT EXISTS {}.{} (
                 LIKE {}.{} INCLUDING ALL,
                 archived_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                archived_by TEXT
+                archived_by TEXT,
+                superseded_by_event_id ULID,
+                operation_id ULID
             )
             "#,
             Self::SCHEMA,
@@ -218,6 +220,30 @@ impl ArchivedEvents {
                 .name("idx_archived_events_archived_at")
                 .col(Alias::new("archived_at"))
                 .build(PostgresQueryBuilder),
+            // Index on operation_id
+            format!(
+                "CREATE INDEX idx_archived_events_operation_id ON {}.{} ({}) WHERE {} IS NOT NULL",
+                Self::SCHEMA,
+                Self::TABLE,
+                "operation_id",
+                "operation_id"
+            ),
+            // Index on superseded_by_event_id
+            format!(
+                "CREATE INDEX idx_archived_events_superseded_by ON {}.{} ({}) WHERE {} IS NOT NULL",
+                Self::SCHEMA,
+                Self::TABLE,
+                "superseded_by_event_id",
+                "superseded_by_event_id"
+            ),
+            // Index on archived_by
+            format!(
+                "CREATE INDEX idx_archived_events_archived_by ON {}.{} ({}) WHERE {} IS NOT NULL",
+                Self::SCHEMA,
+                Self::TABLE,
+                "archived_by",
+                "archived_by"
+            ),
         ]
     }
 }

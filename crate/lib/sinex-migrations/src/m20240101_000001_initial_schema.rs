@@ -1,8 +1,8 @@
 use crate::schema::{
     ArchivedEvents, Blobs, EmbeddingCache, EmbeddingModels, Entities, EntityRelations,
     EventAnnotations, EventClusterMembers, EventClusters, EventEmbeddings, EventPayloadSchemas,
-    EventRelations, Events, GitopsSchemaSource, ProcessorCheckpoints, ProcessorManifests,
-    SchemaCompatibility, SourceMaterials, Tags, ValidationCache,
+    EventRelations, Events, GitopsSchemaSource, OperationsLog, ProcessorCheckpoints,
+    ProcessorManifests, SchemaCompatibility, SourceMaterials, Tags, ValidationCache,
 };
 use sea_orm_migration::prelude::*;
 
@@ -141,7 +141,23 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Create events constraints (removed - already created via indexes)
+        // Create events constraints
+        // Add Provenance XOR CHECK constraint - ensures event has either source_material_id OR source_event_ids, not both
+        manager
+            .get_connection()
+            .execute_unprepared(
+                r#"
+                ALTER TABLE core.events
+                ADD CONSTRAINT events_provenance_xor CHECK (
+                    (source_material_id IS NOT NULL AND source_event_ids IS NULL)
+                    OR
+                    (source_material_id IS NULL AND source_event_ids IS NOT NULL)
+                    OR
+                    (source_material_id IS NULL AND source_event_ids IS NULL)
+                );
+                "#,
+            )
+            .await?;
 
         // Create archived events
         manager
@@ -169,7 +185,18 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Note: operations_log table is now created in m20250810_000004_create_operations_log migration
+        // Create operations log
+        manager
+            .get_connection()
+            .execute_unprepared(&OperationsLog::create_table())
+            .await?;
+
+        for index_sql in OperationsLog::create_indexes() {
+            manager
+                .get_connection()
+                .execute_unprepared(&index_sql)
+                .await?;
+        }
 
         // Create event payload schemas
         manager
