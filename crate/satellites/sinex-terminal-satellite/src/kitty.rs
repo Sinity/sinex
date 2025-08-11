@@ -64,6 +64,8 @@ struct KittyWindowState {
     tab_id: String,
     last_command: Option<String>,
     last_prompt_time: Option<SystemTime>,
+    command_start_time: Option<SystemTime>,
+    shell_pid: Option<u32>,
 }
 
 /// Process information for tracking changes
@@ -389,6 +391,8 @@ impl KittyWatcher {
                             tab_id: window.parent_tab_id.clone(),
                             last_command: None,
                             last_prompt_time: None,
+                            command_start_time: None,
+                            shell_pid: window.foreground_process.as_ref().map(|p| p.pid),
                         });
 
                 // Try to extract command from the output (look for prompt patterns)
@@ -397,8 +401,28 @@ impl KittyWatcher {
 
                 if let Some(command_text) = extracted_command {
                     // Create command completion event with both command and output
-                    // Create command completion event
+                    // Calculate command duration
+                    let duration_ms = if let Some(start_time) = window_state.command_start_time {
+                        SystemTime::now()
+                            .duration_since(start_time)
+                            .unwrap_or_default()
+                            .as_millis() as u64
+                    } else {
+                        // Estimate based on last prompt time if we don't have exact start
+                        window_state.last_prompt_time
+                            .and_then(|t| SystemTime::now().duration_since(t).ok())
+                            .map(|d| d.as_millis() as u64)
+                            .unwrap_or(0)
+                    };
 
+                    // Get current shell PID (might have changed)
+                    let shell_pid = window.foreground_process
+                        .as_ref()
+                        .map(|p| p.pid)
+                        .or(window_state.shell_pid)
+                        .unwrap_or(0);
+
+                    // Create command completion event
                     let completion_event: RawEvent =
                         Event::new(sinex_core::types::events::KittyCommandCompletedPayload {
                             command: CommandText::new(command_text.clone()),
@@ -406,8 +430,8 @@ impl KittyWatcher {
                                 window.cwd.clone().unwrap_or_default(),
                             ),
                             exit_status: window.last_cmd_exit_status.unwrap_or(0),
-                            duration_ms: 0, // TODO: Requires tracking command start times
-                            shell_pid: 0,   // TODO: Get actual shell PID
+                            duration_ms,
+                            shell_pid,
                             kitty_window_id: window_id.clone(),
                             kitty_tab_id: window_state.tab_id.clone(),
                             output_lines: Some(last_output.lines().count() as u32),
@@ -420,9 +444,11 @@ impl KittyWatcher {
                         return Ok(());
                     }
 
-                    // Update state
+                    // Update state for next command
                     window_state.last_command = Some(command_text);
                     window_state.last_prompt_time = Some(SystemTime::now());
+                    window_state.command_start_time = Some(SystemTime::now());
+                    window_state.shell_pid = Some(shell_pid);
                 }
             }
         }

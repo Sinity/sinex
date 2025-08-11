@@ -139,21 +139,19 @@ impl OperationsLog {
     pub const SCHEMA: &'static str = "core";
 
     pub const ID: &'static str = "id";
-    pub const OPERATION_ID: &'static str = "operation_id";
-    pub const OPERATION_TYPE: &'static str = "operation_type";
-    pub const OPERATOR: &'static str = "operator";
-    pub const TARGET_TABLE: &'static str = "target_table";
-    pub const TARGET_SCHEMA: &'static str = "target_schema";
-    pub const TARGET_IDS: &'static str = "target_ids";
-    pub const OPERATION_PARAMS: &'static str = "operation_params";
-    pub const STATUS: &'static str = "status";
+    pub const ACTOR: &'static str = "actor";
+    pub const SCOPE: &'static str = "scope";
+    pub const STATE: &'static str = "state";
+    pub const PREVIEW_SUMMARY: &'static str = "preview_summary";
+    pub const CHECKPOINT: &'static str = "checkpoint";
+    pub const APPROVED_BY: &'static str = "approved_by";
+    pub const APPROVED_AT: &'static str = "approved_at";
+    pub const EXECUTOR_NODE: &'static str = "executor_node";
     pub const STARTED_AT: &'static str = "started_at";
-    pub const COMPLETED_AT: &'static str = "completed_at";
-    pub const ERROR_MESSAGE: &'static str = "error_message";
-    pub const AFFECTED_ROWS: &'static str = "affected_rows";
-    pub const METADATA: &'static str = "metadata";
-    pub const JUSTIFICATION: &'static str = "justification";
-    pub const APPROVAL_ID: &'static str = "approval_id";
+    pub const FINISHED_AT: &'static str = "finished_at";
+    pub const OUTCOME: &'static str = "outcome";
+    pub const ERROR_DETAILS: &'static str = "error_details";
+    pub const CREATED_AT: &'static str = "created_at";
 
     /// Create the operations log table
     pub fn create_table() -> String {
@@ -166,69 +164,49 @@ impl OperationsLog {
                     .primary_key()
                     .default(Expr::cust("gen_ulid()")),
             )
+            .col(ColumnDef::new(Alias::new(Self::ACTOR)).text().not_null())
             .col(
-                ColumnDef::new(Alias::new(Self::OPERATION_ID))
-                    .custom(Alias::new("ULID"))
-                    .not_null()
-                    .unique_key(),
+                ColumnDef::new(Alias::new(Self::SCOPE))
+                    .json_binary()
+                    .not_null(),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::OPERATION_TYPE))
+                ColumnDef::new(Alias::new(Self::STATE))
                     .text()
                     .not_null(),
             )
-            .col(ColumnDef::new(Alias::new(Self::OPERATOR)).text().not_null())
-            .col(ColumnDef::new(Alias::new(Self::TARGET_TABLE)).text())
-            .col(ColumnDef::new(Alias::new(Self::TARGET_SCHEMA)).text())
+            .col(ColumnDef::new(Alias::new(Self::PREVIEW_SUMMARY)).json_binary())
+            .col(ColumnDef::new(Alias::new(Self::CHECKPOINT)).json_binary())
+            .col(ColumnDef::new(Alias::new(Self::APPROVED_BY)).text())
+            .col(ColumnDef::new(Alias::new(Self::APPROVED_AT)).timestamp_with_time_zone())
+            .col(ColumnDef::new(Alias::new(Self::EXECUTOR_NODE)).text())
+            .col(ColumnDef::new(Alias::new(Self::STARTED_AT)).timestamp_with_time_zone())
+            .col(ColumnDef::new(Alias::new(Self::FINISHED_AT)).timestamp_with_time_zone())
+            .col(ColumnDef::new(Alias::new(Self::OUTCOME)).text())
+            .col(ColumnDef::new(Alias::new(Self::ERROR_DETAILS)).text())
             .col(
-                ColumnDef::new(Alias::new(Self::TARGET_IDS)).array(sea_query::ColumnType::Custom(
-                    Alias::new("ULID").into_iden(),
-                )),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::OPERATION_PARAMS))
-                    .json_binary()
-                    .default(Expr::cust("'{}'::jsonb")),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::STATUS))
-                    .text()
-                    .not_null()
-                    .default("pending"),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::STARTED_AT))
+                ColumnDef::new(Alias::new(Self::CREATED_AT))
                     .timestamp_with_time_zone()
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(Alias::new(Self::COMPLETED_AT)).timestamp_with_time_zone())
-            .col(ColumnDef::new(Alias::new(Self::ERROR_MESSAGE)).text())
-            .col(ColumnDef::new(Alias::new(Self::AFFECTED_ROWS)).big_integer())
-            .col(
-                ColumnDef::new(Alias::new(Self::METADATA))
-                    .json_binary()
-                    .default(Expr::cust("'{}'::jsonb")),
-            )
-            .col(ColumnDef::new(Alias::new(Self::JUSTIFICATION)).text())
-            .col(ColumnDef::new(Alias::new(Self::APPROVAL_ID)).custom(Alias::new("ULID")))
             .build(PostgresQueryBuilder)
     }
 
     /// Create indexes for the operations log table
     pub fn create_indexes() -> Vec<String> {
         vec![
-            // Index on operation_type
+            // Index on state
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_operations_log_type")
-                .col(Alias::new(Self::OPERATION_TYPE))
+                .name("idx_operations_log_state")
+                .col(Alias::new(Self::STATE))
                 .build(PostgresQueryBuilder),
-            // Index on status
+            // Index on actor
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_operations_log_status")
-                .col(Alias::new(Self::STATUS))
+                .name("idx_operations_log_actor")
+                .col(Alias::new(Self::ACTOR))
                 .build(PostgresQueryBuilder),
             // Index on started_at
             Index::create()
@@ -236,18 +214,18 @@ impl OperationsLog {
                 .name("idx_operations_log_started")
                 .col((Alias::new(Self::STARTED_AT), IndexOrder::Desc))
                 .build(PostgresQueryBuilder),
-            // Index on operator
+            // Index on created_at
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_operations_log_operator")
-                .col(Alias::new(Self::OPERATOR))
+                .name("idx_operations_log_created")
+                .col((Alias::new(Self::CREATED_AT), IndexOrder::Desc))
                 .build(PostgresQueryBuilder),
-            // GIN index on target_ids
+            // GIN index on scope for JSON queries
             format!(
-                "CREATE INDEX idx_operations_log_target_ids ON {}.{} USING GIN ({})",
+                "CREATE INDEX idx_operations_log_scope ON {}.{} USING GIN ({})",
                 Self::SCHEMA,
                 Self::TABLE,
-                Self::TARGET_IDS
+                Self::SCOPE
             ),
         ]
     }

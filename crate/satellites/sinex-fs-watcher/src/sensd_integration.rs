@@ -162,16 +162,20 @@ impl SensdFilesystemProcessor {
                 let slices = sqlx::query!(
                     r#"
                     SELECT 
-                        material_id as "material_id: Ulid",
-                        offset_start,
-                        offset_end,
-                        ts_capture_start,
-                        ts_capture_end,
-                        capture_metadata
-                    FROM raw.temporal_ledger
-                    WHERE material_id = $1::ulid
-                    AND offset_start >= $2
-                    ORDER BY offset_start
+                        tl.material_id as "material_id: Ulid",
+                        tl.offset_start,
+                        tl.offset_end,
+                        tl.ts_capture_start,
+                        tl.ts_capture_end,
+                        tl.capture_metadata,
+                        sm.optional_blob_id as "blob_id?: Ulid",
+                        sm.data as "inline_data?: Vec<u8>"
+                    FROM raw.temporal_ledger tl
+                    LEFT JOIN raw.source_material_registry sm 
+                        ON sm.source_material_id = tl.material_id
+                    WHERE tl.material_id = $1::ulid
+                    AND tl.offset_start >= $2
+                    ORDER BY tl.offset_start
                     LIMIT $3
                     "#,
                     material_id as Ulid,
@@ -188,13 +192,44 @@ impl SensdFilesystemProcessor {
                         }
 
                         for record in records {
+                            // Load data from storage
+                            let data = if let Some(inline_data) = record.inline_data {
+                                // Data is stored inline in the source_material_registry
+                                inline_data
+                            } else if let Some(blob_id) = record.blob_id {
+                                // Load from blob storage
+                                match self.load_blob_data(blob_id).await {
+                                    Ok(blob_data) => {
+                                        // Extract slice from blob based on offsets
+                                        let start = record.offset_start as usize;
+                                        let end = record.offset_end as usize;
+                                        if end <= blob_data.len() {
+                                            blob_data[start..end].to_vec()
+                                        } else {
+                                            error!(
+                                                "Blob data size {} is smaller than slice end offset {}",
+                                                blob_data.len(), end
+                                            );
+                                            vec![]
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to load blob {}: {}", blob_id, e);
+                                        vec![]
+                                    }
+                                }
+                            } else {
+                                debug!("No data source found for material {}", material_id);
+                                vec![]
+                            };
+
                             let slice = MaterialSlice {
                                 material_id: record.material_id,
                                 offset_start: record.offset_start,
                                 offset_end: record.offset_end,
                                 ts_capture_start: record.ts_capture_start,
                                 ts_capture_end: record.ts_capture_end,
-                                data: vec![], // TODO: Load from storage
+                                data,
                                 metadata: record.capture_metadata,
                             };
 
@@ -211,6 +246,56 @@ impl SensdFilesystemProcessor {
         };
 
         Ok(stream)
+    }
+
+    /// Load blob data from storage
+    async fn load_blob_data(&self, blob_id: Ulid) -> Result<Vec<u8>> {
+        // First query the blob metadata
+        let blob = sqlx::query!(
+            r#"
+            SELECT 
+                annex_key,
+                size_bytes,
+                checksum_sha256,
+                storage_backend
+            FROM core.blobs
+            WHERE id = $1::ulid
+            "#,
+            blob_id as Ulid,
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .ok_or_else(|| eyre!("Blob {} not found", blob_id))?;
+
+        match blob.storage_backend.as_str() {
+            "git-annex" => {
+                // Load from git-annex storage
+                let annex_path = std::path::Path::new(".git/annex/objects")
+                    .join(&blob.annex_key[0..2])
+                    .join(&blob.annex_key[2..4])
+                    .join(&blob.annex_key);
+                
+                if annex_path.exists() {
+                    tokio::fs::read(&annex_path).await
+                        .map_err(|e| eyre!("Failed to read annex file: {}", e))
+                } else {
+                    Err(eyre!("Annex file not found at {:?}", annex_path))
+                }
+            }
+            "filesystem" => {
+                // Load from filesystem path stored in annex_key
+                let path = std::path::Path::new(&blob.annex_key);
+                tokio::fs::read(path).await
+                    .map_err(|e| eyre!("Failed to read file: {}", e))
+            }
+            "s3" => {
+                // S3 support would go here
+                Err(eyre!("S3 storage backend not yet implemented"))
+            }
+            backend => {
+                Err(eyre!("Unknown storage backend: {}", backend))
+            }
+        }
     }
 
     /// Convert a material slice to filesystem events

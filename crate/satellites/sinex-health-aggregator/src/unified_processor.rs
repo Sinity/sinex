@@ -201,13 +201,6 @@ impl HealthAggregator {
     // }
 }
 
-// TODO: Remove NatsEventBatchProcessor implementation after NatsStreamConsumer removal
-// #[async_trait]
-// impl NatsEventBatchProcessor for HealthAggregator {
-//     async fn process_batch(&mut self, events: Vec<RawEvent>) -> SatelliteResult<NatsBatchProcessingResult> {
-//         // ... implementation removed
-//     }
-// }
 
 #[async_trait]
 impl StatefulStreamProcessor for HealthAggregator {
@@ -228,8 +221,29 @@ impl StatefulStreamProcessor for HealthAggregator {
 
         match until {
             TimeHorizon::Continuous => {
-                // TODO: Implement continuous health monitoring after NatsStreamConsumer removal
-                warn!("Health aggregator continuous mode not yet implemented after NatsStreamConsumer removal");
+                // Continuous health monitoring via periodic polling
+                info!("Starting continuous health monitoring");
+                
+                // Set up periodic health check interval (every 30 seconds)
+                let mut interval = tokio::time::interval(Duration::from_secs(30));
+                interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                
+                loop {
+                    interval.tick().await;
+                    
+                    // Collect and emit health metrics
+                    if let Some(ctx) = &self.context {
+                        let health_event = self.collect_system_health_metrics().await?;
+                        ctx.emit_event(health_event).await?;
+                        events_processed += 1;
+                    }
+                    
+                    // Check for shutdown signal
+                    if args.shutdown_signal.is_some() {
+                        info!("Received shutdown signal, stopping health monitoring");
+                        break;
+                    }
+                }
                 
                 Ok(Self::build_scan_report(
                     events_processed,

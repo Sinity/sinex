@@ -382,9 +382,82 @@ mod tests {
         }
     }
 
-    // TODO: Add proper test with test database pool
-    // #[tokio::test]
-    // async fn test_processor_runner_creation() {
-    //     // Needs test database pool setup
-    // }
+    #[tokio::test]
+    async fn test_processor_runner_creation() {
+        use sinex_test_utils::test_harness::{TestContext, TestHarness};
+        
+        // Create test context with database pool
+        let test_ctx = TestContext::new_with_prefix("processor_runner_test").await;
+        let db_pool = test_ctx.pool().clone();
+        
+        // Create mock processor
+        let processor = MockProcessor {
+            name: "test-processor".to_string(),
+            processor_type: ProcessorType::Satellite,
+            scans_performed: Arc::new(Mutex::new(0)),
+        };
+        
+        // Create processor runner
+        let runner = ProcessorRunner::new(
+            Arc::new(Mutex::new(processor)),
+            db_pool.clone(),
+            None,
+        );
+        
+        // Test scan capability
+        let args = ScanArgs {
+            targets: vec![],
+            filters: EventFilterCollection::empty(),
+            shutdown_signal: None,
+            dry_run: false,
+        };
+        
+        let checkpoint = Checkpoint::None;
+        let horizon = TimeHorizon::Snapshot;
+        
+        let result = runner.scan(checkpoint, horizon, args).await;
+        assert!(result.is_ok());
+        
+        let report = result.unwrap();
+        assert_eq!(report.events_processed, 0);
+    }
+    
+    #[tokio::test]
+    async fn test_processor_runner_with_checkpoint() {
+        use sinex_test_utils::test_harness::{TestContext, TestHarness};
+        use chrono::Utc;
+        
+        // Create test context
+        let test_ctx = TestContext::new_with_prefix("processor_checkpoint_test").await;
+        let db_pool = test_ctx.pool().clone();
+        
+        // Create mock processor that tracks checkpoint
+        let processor = MockProcessor {
+            name: "checkpoint-processor".to_string(),
+            processor_type: ProcessorType::Automaton,
+            scans_performed: Arc::new(Mutex::new(0)),
+        };
+        
+        // Create runner
+        let runner = ProcessorRunner::new(
+            Arc::new(Mutex::new(processor)),
+            db_pool.clone(),
+            None,
+        );
+        
+        // Test checkpoint retrieval
+        let checkpoint = runner.current_checkpoint().await;
+        assert!(checkpoint.is_ok());
+        assert_eq!(checkpoint.unwrap(), Checkpoint::None);
+        
+        // Test historical scan with timestamp checkpoint
+        let start_time = Utc::now() - chrono::Duration::hours(1);
+        let end_time = Utc::now();
+        let checkpoint = Checkpoint::timestamp(start_time, None);
+        let horizon = TimeHorizon::Historical { end_time };
+        
+        let args = ScanArgs::default();
+        let result = runner.scan(checkpoint, horizon, args).await;
+        assert!(result.is_ok());
+    }
 }

@@ -229,11 +229,161 @@ For each issue found, document:
 
 ---
 
+## 10. **Type System Opportunities**
+
+### Areas to Analyze:
+- **Stringly-typed code**: Using strings where enums would be better
+- **Missing newtypes**: Primitive types where domain types would add safety
+- **Phantom types unused**: Could use phantom types for compile-time guarantees
+- **Missing const generics**: Runtime checks that could be compile-time
+
+### Search Patterns:
+- String literals used for state/type discrimination
+- Primitive types in function signatures (especially IDs, paths)
+- Runtime validation that could be type-level
+- Generic bounds that could be const generics
+
+---
+
+## 11. **Documentation & Examples**
+
+### Areas to Analyze:
+- **Missing invariant documentation**: Complex invariants not documented
+- **Outdated examples**: Example code that doesn't compile
+- **Missing module-level docs**: Modules without //! documentation
+- **Undocumented panics**: Functions that can panic without documentation
+
+### Search Patterns:
+- Functions with complex logic but no doc comments
+- `panic!()` or `expect()` without `# Panics` section
+- Modules missing `//!` documentation
+- Examples in doc comments that reference old APIs
+
+---
+
+## 12. **State Machine & Business Logic**
+
+### Areas to Analyze:
+- **Invalid state transitions**: State machines allowing illegal transitions
+- **Missing state persistence**: State machines not saving state correctly
+- **Business logic in wrong layer**: Domain logic in infrastructure code
+- **Missing domain events**: State changes without corresponding events
+
+### Search Patterns:
+- Enum-based state machines without transition validation
+- State changes without event emission
+- Business rules in database repositories
+- Complex if/else chains that should be state machines
+
+---
+
 ## Priority Order
 
 1. **Critical**: Security vulnerabilities, data loss risks, resource leaks
-2. **High**: Performance bottlenecks in hot paths, correctness issues
-3. **Medium**: API inconsistencies, missing tests, namespace issues
-4. **Low**: Style improvements, minor optimizations
+2. **High**: Performance bottlenecks in hot paths, correctness issues, state machine bugs
+3. **Medium**: API inconsistencies, missing tests, namespace issues, type safety
+4. **Low**: Documentation, style improvements, minor optimizations
 
 Focus on issues with real production impact rather than stylistic preferences.
+
+---
+
+# ANALYSIS RESULTS FROM 10 PARALLEL AGENTS
+
+## Agent 1: Async Patterns & Resource Management
+**Critical Issues Found**: 8
+- 2 unbounded channels causing memory exhaustion risk
+- 3 missing timeouts on gRPC operations
+- 3 tokio::select! without proper cleanup
+
+**Most Critical**: Unbounded channels in telemetry and event processing
+
+## Agent 2: Performance Bottlenecks
+**Critical Issues Found**: 4
+- N+1 query patterns in event publishing
+- Database batch inserts using individual queries
+- Blocking I/O in async contexts
+- String allocations in hot paths
+
+**Most Critical**: NATS publishing N+1 pattern - 80-95% potential latency reduction
+
+## Agent 3: Correctness Issues
+**Critical Issues Found**: 12
+- 2 TOCTOU race conditions in file operations
+- 5 integer overflow vulnerabilities
+- 5 missing database transactions
+
+**Most Critical**: File system TOCTOU bugs allowing symlink attacks
+
+## Agent 4: Test Organization & Namespaces
+**Issues Found**: 
+- 7 unit test files that should be inline
+- 15+ instances of verbose namespace usage
+- Missing preludes for common imports
+
+**Most Critical**: Resource guard tests (390 lines) should be inline
+
+## Agent 5: API Design Inconsistencies
+**Issues Found**:
+- 4 structs with 4+ fields missing builders
+- 29 instances of panic!/unwrap in library code
+- Missing #[must_use] annotations
+
+**Most Critical**: Panicking methods in public APIs
+
+## Agent 6: Concurrency & Synchronization
+**Critical Issues Found**: 47
+- 29 instances of .lock().unwrap() without poison handling
+- 3 OnceCell race conditions
+- 8 potential deadlock scenarios
+
+**Most Critical**: ServiceStatus management without poison recovery
+
+## Agent 7: Type System Opportunities
+**Issues Found**:
+- systemd using strings for unit types/states
+- Sensor jobs using strings for types
+- Terminal sources using string discrimination
+
+**Most Critical**: systemd unit type/state string matching
+
+## Agent 8: State Machines & Business Logic
+**Issues Found**:
+- Missing event emission for state changes
+- Business logic in infrastructure layer
+- Direct state field updates without validation
+
+**Most Critical**: Health status changes without event emission
+
+## Agent 9: Documentation Gaps
+**Issues Found**: 15
+- 1 missing module documentation
+- 3 undocumented panics
+- 8 undocumented unwrap/expect calls
+- 2 missing invariant documentation
+
+**Most Critical**: Missing panic documentation in filesystem watcher
+
+## Agent 10: Data Validation & Consistency
+**Critical Issues Found**:
+- DELETE operations bypassing audit trails
+- CASCADE deletes without archival
+- Inconsistent validation between Rust and SQL
+- Missing referential integrity checks
+
+**Most Critical**: DELETE operations bypassing mandatory archival triggers
+
+---
+
+## TOP 10 ISSUES TO FIX IMMEDIATELY
+
+1. **Unbounded channels** (Agent 1) - Memory exhaustion risk
+2. **DELETE without audit trail** (Agent 10) - Data loss risk
+3. **TOCTOU file bugs** (Agent 3) - Security vulnerability
+4. **Mutex poisoning** (Agent 6) - Service crash risk
+5. **N+1 NATS publishing** (Agent 2) - 80-95% latency reduction
+6. **Missing gRPC timeouts** (Agent 1) - Hanging operations
+7. **Panic in public APIs** (Agent 5) - Library stability
+8. **Integer overflow** (Agent 3) - Correctness issues
+9. **OnceCell races** (Agent 6) - Initialization failures
+10. **Missing event emission** (Agent 8) - Event sourcing violations

@@ -13,7 +13,7 @@ impl TableDef for SourceMaterials {
         "raw"
     }
     fn primary_key() -> &'static str {
-        "id"
+        "source_material_id"
     }
 }
 
@@ -21,27 +21,20 @@ impl SourceMaterials {
     pub const TABLE: &'static str = "source_material_registry";
     pub const SCHEMA: &'static str = "raw";
 
-    pub const ID: &'static str = "id";
-    pub const SOURCE: &'static str = "source";
-    pub const ACQUISITION_TIME: &'static str = "acquisition_time";
-    pub const PATH: &'static str = "path";
-    pub const FORMAT: &'static str = "format";
-    pub const COMPRESSION: &'static str = "compression";
-    pub const SIZE_BYTES: &'static str = "size_bytes";
-    pub const CHECKSUM_SHA256: &'static str = "checksum_sha256";
+    pub const SOURCE_MATERIAL_ID: &'static str = "source_material_id";
+    pub const SOURCE_URI: &'static str = "source_uri";
+    pub const INGESTION_TIME: &'static str = "ingestion_time";
+    pub const ENCODING: &'static str = "encoding";
     pub const METADATA: &'static str = "metadata";
-    pub const PROCESSING_STATUS: &'static str = "processing_status";
-    pub const PROCESSING_ERROR: &'static str = "processing_error";
+    pub const CONTENT_PREVIEW: &'static str = "content_preview";
+    pub const IS_ARCHIVED: &'static str = "is_archived";
+    pub const ARCHIVE_TIME: &'static str = "archive_time";
+    pub const RETENTION_POLICY: &'static str = "retention_policy";
     pub const CREATED_AT: &'static str = "created_at";
     pub const UPDATED_AT: &'static str = "updated_at";
-    pub const FILE_METADATA: &'static str = "file_metadata";
-    pub const EXTRACTION_METADATA: &'static str = "extraction_metadata";
-    pub const CONTENT_TYPE: &'static str = "content_type";
-    pub const ENCODING: &'static str = "encoding";
-    pub const PARENT_ID: &'static str = "parent_id";
-    pub const TEMPORAL_LEDGER_ID: &'static str = "temporal_ledger_id";
-    pub const BLOB_STORAGE_ID: &'static str = "blob_storage_id";
-    pub const DATA: &'static str = "data";
+    // Removed temporal_ledger_id - no longer used in the schema
+    pub const OPTIONAL_BLOB_ID: &'static str = "optional_blob_id";
+    pub const MATERIAL_TYPE: &'static str = "material_type";
 
     /// Create the source materials table
     pub fn create_table() -> String {
@@ -49,33 +42,34 @@ impl SourceMaterials {
             .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
             .if_not_exists()
             .col(
-                ColumnDef::new(Alias::new(Self::ID))
+                ColumnDef::new(Alias::new(Self::SOURCE_MATERIAL_ID))
                     .custom(Alias::new("ULID"))
                     .primary_key()
                     .default(Expr::cust("gen_ulid()")),
             )
-            .col(ColumnDef::new(Alias::new(Self::SOURCE)).text().not_null())
+            .col(ColumnDef::new(Alias::new(Self::MATERIAL_TYPE)).text().not_null())
+            .col(ColumnDef::new(Alias::new(Self::SOURCE_URI)).text())
             .col(
-                ColumnDef::new(Alias::new(Self::ACQUISITION_TIME))
+                ColumnDef::new(Alias::new(Self::INGESTION_TIME))
                     .timestamp_with_time_zone()
-                    .not_null(),
+                    .not_null()
+                    .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(Alias::new(Self::PATH)).text())
-            .col(ColumnDef::new(Alias::new(Self::FORMAT)).text())
-            .col(ColumnDef::new(Alias::new(Self::COMPRESSION)).text())
-            .col(ColumnDef::new(Alias::new(Self::SIZE_BYTES)).big_integer())
-            .col(ColumnDef::new(Alias::new(Self::CHECKSUM_SHA256)).text())
+            .col(ColumnDef::new(Alias::new(Self::ENCODING)).text())
             .col(
                 ColumnDef::new(Alias::new(Self::METADATA))
                     .json_binary()
                     .default(Expr::cust("'{}'::jsonb")),
             )
+            .col(ColumnDef::new(Alias::new(Self::CONTENT_PREVIEW)).text())
             .col(
-                ColumnDef::new(Alias::new(Self::PROCESSING_STATUS))
-                    .text()
-                    .default("pending"),
+                ColumnDef::new(Alias::new(Self::IS_ARCHIVED))
+                    .boolean()
+                    .not_null()
+                    .default(false),
             )
-            .col(ColumnDef::new(Alias::new(Self::PROCESSING_ERROR)).text())
+            .col(ColumnDef::new(Alias::new(Self::ARCHIVE_TIME)).timestamp_with_time_zone())
+            .col(ColumnDef::new(Alias::new(Self::RETENTION_POLICY)).text())
             .col(
                 ColumnDef::new(Alias::new(Self::CREATED_AT))
                     .timestamp_with_time_zone()
@@ -88,61 +82,35 @@ impl SourceMaterials {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(
-                ColumnDef::new(Alias::new(Self::FILE_METADATA))
-                    .json_binary()
-                    .default(Expr::cust("'{}'::jsonb")),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::EXTRACTION_METADATA))
-                    .json_binary()
-                    .default(Expr::cust("'{}'::jsonb")),
-            )
-            .col(ColumnDef::new(Alias::new(Self::CONTENT_TYPE)).text())
-            .col(ColumnDef::new(Alias::new(Self::ENCODING)).text())
-            .col(ColumnDef::new(Alias::new(Self::PARENT_ID)).custom(Alias::new("ULID")))
-            .col(ColumnDef::new(Alias::new(Self::TEMPORAL_LEDGER_ID)).custom(Alias::new("ULID")))
-            .col(ColumnDef::new(Alias::new(Self::BLOB_STORAGE_ID)).custom(Alias::new("ULID")))
-            .col(ColumnDef::new(Alias::new(Self::DATA)).binary())
+            .col(ColumnDef::new(Alias::new(Self::OPTIONAL_BLOB_ID)).custom(Alias::new("ULID")))
             .build(PostgresQueryBuilder)
     }
 
     /// Create indexes for the source materials table
     pub fn create_indexes() -> Vec<String> {
         vec![
-            // Index on source
+            // Index on source_uri
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_source_material_source")
-                .col(Alias::new(Self::SOURCE))
+                .name("idx_source_material_source_uri")
+                .col(Alias::new(Self::SOURCE_URI))
                 .build(PostgresQueryBuilder),
-            // Index on acquisition_time
+            // Index on ingestion_time
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_source_material_acquisition_time")
-                .col((Alias::new(Self::ACQUISITION_TIME), IndexOrder::Desc))
+                .name("idx_source_material_ingestion_time")
+                .col((Alias::new(Self::INGESTION_TIME), IndexOrder::Desc))
                 .build(PostgresQueryBuilder),
-            // Index on processing_status for processing queries
+            // Index on material_type
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_source_material_processing_status")
-                .col(Alias::new(Self::PROCESSING_STATUS))
+                .name("idx_source_material_type")
+                .col(Alias::new(Self::MATERIAL_TYPE))
                 .build(PostgresQueryBuilder),
-            // Index on checksum for deduplication
-            Index::create()
-                .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_source_material_checksum")
-                .col(Alias::new(Self::CHECKSUM_SHA256))
-                .build(PostgresQueryBuilder),
-            // Index on parent_id for hierarchical queries
+            // Index on optional_blob_id
             format!(
-                "CREATE INDEX idx_source_material_parent ON {}.{} ({}) WHERE {} IS NOT NULL",
-                Self::SCHEMA, Self::TABLE, Self::PARENT_ID, Self::PARENT_ID
-            ),
-            // Index on temporal_ledger_id
-            format!(
-                "CREATE INDEX idx_source_material_temporal_ledger ON {}.{} ({}) WHERE {} IS NOT NULL",
-                Self::SCHEMA, Self::TABLE, Self::TEMPORAL_LEDGER_ID, Self::TEMPORAL_LEDGER_ID
+                "CREATE INDEX idx_source_material_blob ON {}.{} ({}) WHERE {} IS NOT NULL",
+                Self::SCHEMA, Self::TABLE, Self::OPTIONAL_BLOB_ID, Self::OPTIONAL_BLOB_ID
             ),
         ]
     }
