@@ -1,3 +1,17 @@
+//! Database migrations for the Sinex event-driven data capture system.
+//!
+//! This crate contains all database schema migrations using SeaORM migration framework.
+//! Migrations are organized chronologically and handle the evolution of the database schema
+//! for the core Sinex data substrate (PostgreSQL + TimescaleDB).
+//!
+//! ## Migration Strategy
+//!
+//! - All migrations are atomic and reversible where possible
+//! - ULID-based primary keys for distributed-safe time-ordered IDs
+//! - JSON Schema validation via pg_jsonschema for event payloads
+//! - TimescaleDB hypertables for time-series optimization
+//! - Comprehensive indexing for query performance
+
 pub use sea_orm_migration::prelude::*;
 
 /// Macro to create migration vector with less boilerplate
