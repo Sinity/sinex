@@ -29,7 +29,11 @@ use std::collections::HashMap;
 use std::time::Duration;
 use tracing::{debug, error, info, instrument, warn, Span};
 
-use crate::{ClipboardWatcher, WindowManagerWatcher};
+use crate::{
+    window_manager::WindowManagerType,
+    ClipboardWatcher,
+    WindowManagerWatcher,
+};
 
 /// Desktop monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,7 +43,7 @@ pub struct DesktopConfig {
     /// Enable window manager monitoring  
     pub window_manager_enabled: bool,
     /// Window manager type (currently only "hyprland")
-    pub window_manager_type: String,
+    pub window_manager_type: WindowManagerType,
     /// Clipboard monitoring interval (seconds)
     pub clipboard_poll_interval_secs: u64,
 }
@@ -49,7 +53,7 @@ impl Default for DesktopConfig {
         Self {
             clipboard_enabled: true,
             window_manager_enabled: true,
-            window_manager_type: "hyprland".to_string(),
+            window_manager_type: WindowManagerType::Hyprland,
             clipboard_poll_interval_secs: 2,
         }
     }
@@ -166,7 +170,7 @@ impl DesktopProcessor {
 
             // Try to get window manager status
             window_manager_status = Some(WindowManagerStatus {
-                wm_type: self.config.window_manager_type.clone(),
+                wm_type: self.config.window_manager_type,
                 connection_active: self.window_manager_watcher.is_some(),
                 current_workspace: None, // Would need to query WM
                 active_window: None,     // Would need to query WM
@@ -269,7 +273,7 @@ impl DesktopProcessor {
             if self.config.window_manager_enabled && emit_events {
                 let event: RawEvent = Event::new(WindowManagerHistoricalPayload {
                     source: "window_manager".to_string(),
-                    wm_type: self.config.window_manager_type.clone(),
+                    wm_type: self.config.window_manager_type,
                     scan_type: "historical".to_string(),
                     note: "Limited historical data available for window manager events".to_string(),
                 })

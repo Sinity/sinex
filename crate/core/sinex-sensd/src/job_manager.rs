@@ -14,7 +14,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sinex_core::types::Ulid;
 use sqlx::{PgPool, Type};
-use std::sync::Arc;
+use std::{
+    fmt,
+    str::FromStr,
+    sync::Arc,
+};
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
@@ -30,11 +34,39 @@ pub enum JobStatus {
     Cancelled,
 }
 
+/// Sensor type enumeration
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum SensorType {
+    AppendStream,
+    TreeWatch,
+}
+
+impl fmt::Display for SensorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SensorType::AppendStream => write!(f, "append_stream"),
+            SensorType::TreeWatch => write!(f, "tree_watch"),
+        }
+    }
+}
+
+impl FromStr for SensorType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "append_stream" => Ok(SensorType::AppendStream),
+            "tree_watch" => Ok(SensorType::TreeWatch),
+            _ => Err(format!("Unknown sensor type: {}", s)),
+        }
+    }
+}
+
 /// Sensor job record
 #[derive(Debug, Clone)]
 pub struct SensorJob {
     pub job_id: Ulid,
-    pub sensor_type: String,
+    pub sensor_type: SensorType,
     pub target_path: String,
     pub config: Value,
     pub status: JobStatus,
@@ -173,22 +205,21 @@ impl JobManager {
     ) -> Result<()> {
         info!("Executing job {} for {}", job.job_id, job.target_path);
 
-        let result = match job.sensor_type.as_str() {
-            "append_stream" => {
+        let result = match job.sensor_type {
+            SensorType::AppendStream => {
                 if let Some(sensor) = append_sensor {
                     sensor.process_job(&job, &self.temporal_ledger).await
                 } else {
                     Err(eyre!("append_stream sensor not enabled"))
                 }
             }
-            "tree_watch" => {
+            SensorType::TreeWatch => {
                 if let Some(sensor) = tree_sensor {
                     sensor.process_job(&job, &self.temporal_ledger).await
                 } else {
                     Err(eyre!("tree_watch sensor not enabled"))
                 }
             }
-            _ => Err(eyre!("Unknown sensor type: {}", job.sensor_type)),
         };
 
         // Update job status based on result

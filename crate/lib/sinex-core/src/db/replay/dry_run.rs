@@ -156,7 +156,7 @@ impl DryRunExecutor {
         let mut events_to_modify = Vec::new();
 
         for op in &self.operations {
-            let event_id = Id::<RawEvent>::from_string(&op.target).ok();
+            let event_id = Id::<RawEvent>::from_str(&op.target).ok();
             if let Some(id) = event_id {
                 match op.operation.as_str() {
                     "ARCHIVE" => events_to_archive.push(id),
@@ -193,14 +193,14 @@ pub async fn execute_dry_run(config: ReplayConfig, events: Vec<RawEvent>) -> Res
     // Simulate processing each event
     for event in events {
         // In a real implementation, would check replay rules here
-        if let Some(event_id) = event.id {
-            executor.simulate_archive(event_id);
+        if let Some(ref event_id) = event.id {
+            executor.simulate_archive(event_id.clone());
 
             // Check for dependencies
             if let Some(source_ids) = event.get_source_event_ids() {
                 if !source_ids.is_empty() {
                     let deps: Vec<Id<RawEvent>> = source_ids.to_vec();
-                    executor.check_integrity(event_id, deps);
+                    executor.check_integrity(event_id.clone(), deps);
                 }
             }
         }

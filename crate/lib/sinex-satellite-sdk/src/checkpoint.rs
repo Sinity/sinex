@@ -135,6 +135,22 @@ impl CheckpointState {
         }
     }
 
+    /// Update the checkpoint with a new processed ID.
+    ///
+    /// # Complex Invariants
+    ///
+    /// This function implements complex logic to determine checkpoint type based on ID format:
+    /// - **ULID strings**: Parsed and stored as `Checkpoint::Internal` for automata
+    /// - **Other strings**: Stored as `Checkpoint::Stream` for message stream IDs
+    /// - **None**: Resets to `Checkpoint::None` (initial state)
+    ///
+    /// The function maintains important invariants:
+    /// - `processed_count` is preserved when converting checkpoint types
+    /// - Stream checkpoints set `event_id: None` (they don't map to events)
+    /// - Invalid ULIDs gracefully fall back to stream ID interpretation
+    ///
+    /// This design allows the same checkpoint API to work for both ingestors
+    /// (external positions) and automata (event IDs).
     pub fn set_last_processed_id(&mut self, id: Option<String>) {
         self.checkpoint = match id {
             Some(id_str) => {
@@ -205,7 +221,7 @@ impl From<LegacyCheckpointState> for CheckpointState {
 ///
 /// # Usage Pattern
 /// ```rust
-/// use sinex_satellite_sdk::checkpoint::CheckpointManager;
+/// use sinex_satellite_sdk::CheckpointManager;
 ///
 /// let manager = CheckpointManager::new(
 ///     pool,

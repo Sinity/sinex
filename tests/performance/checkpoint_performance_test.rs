@@ -6,8 +6,8 @@
 
 use color_eyre::eyre::Result;
 use serde_json::json;
-use sinex_satellite_sdk::checkpoint::{CheckpointManager, CheckpointState};
-use sinex_satellite_sdk::stream_processor::Checkpoint;
+use sinex_satellite_sdk::{CheckpointManager, CheckpointState};
+use sinex_satellite_sdk::Checkpoint;
 use sinex_satellite_sdk::RedisStreamClient;
 use sinex_test_utils::prelude::*;
 use std::collections::HashMap;

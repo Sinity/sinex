@@ -8,7 +8,7 @@ use color_eyre::eyre::Result;
 use sinex_core::types::domain::EventSource;
 use sinex_test_utils::prelude::*;
 use serde_json::json;
-use sinex_satellite_sdk::checkpoint::CheckpointManager;
+use sinex_satellite_sdk::CheckpointManager;
 use tracing::info;
 
 #[sinex_test]

@@ -60,7 +60,7 @@ lazy_static::lazy_static! {
 }
 
 /// Kitty window information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 struct KittyWindow {
     id: i64,
     cwd: Option<String>,
@@ -77,7 +77,7 @@ struct KittyProcess {
 }
 
 /// Kitty window state tracking
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
 struct KittyWindowState {
     tab_id: String,
     last_command: Option<String>,
@@ -120,6 +120,7 @@ struct KittyProcessJson {
 }
 
 /// Kitty terminal watcher
+#[derive(bon::Builder)]
 pub struct KittyWatcher {
     socket_path: Option<String>,
     poll_interval: Duration,

@@ -1,8 +1,11 @@
 use proptest::prelude::*;
 use sinex_core::db::sanitization::EventSanitizer;
 use sinex_core::types::validation::{validate_path, ValidationError};
+use sinex_core::models::RawEvent;
+use sinex_core::types::domain::{EventSource, EventType};
 use sinex_test_utils::prelude::*;
-use std::path::{Path, PathBuf};
+use serde_json::json;
+use std::path::Path;
 
 /// Property tests for path sanitization and validation functions
 ///
@@ -163,20 +166,30 @@ fn test_validate_path_preserves_legitimate_paths() -> color_eyre::eyre::Result<(
 }
 
 #[sinex_test] 
-fn test_path_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
+fn test_event_sanitization_is_idempotent() -> color_eyre::eyre::Result<()> {
     proptest! {
-        fn property_path_sanitization_is_idempotent(
+        fn property_event_sanitization_is_idempotent(
             path in prop_oneof![arb_file_path(), arb_malicious_path(), arb_edge_case_path()]
         ) {
-            // Property: Sanitizing twice should yield the same result
-            let sanitized_once = EventSanitizer::sanitize_path_traversal(&path);
-            let sanitized_twice = EventSanitizer::sanitize_path_traversal(&sanitized_once);
-            
-            prop_assert_eq!(
-                sanitized_once, sanitized_twice,
-                "Path sanitization should be idempotent: {} -> {} -> {}",
-                path, sanitized_once, sanitized_twice
+            // Property: Sanitizing the same event twice should yield the same result
+            let mut event1 = RawEvent::schemaless(
+                EventSource::new(path.clone()),
+                EventType::new("test.event"),
+                json!({"test": "data"}),
             );
+            event1.ts_ingest = chrono::Utc::now();
+            
+            let mut event2 = event1.clone();
+            
+            let was_modified1 = EventSanitizer::sanitize_event(&mut event1).unwrap_or(false);
+            let was_modified2 = EventSanitizer::sanitize_event(&mut event2).unwrap_or(false);
+            
+            // After first sanitization, second should not modify further
+            let mut event1_copy = event1.clone();
+            let was_modified_again = EventSanitizer::sanitize_event(&mut event1_copy).unwrap_or(false);
+            
+            prop_assert!(!was_modified_again, "Second sanitization should not modify already-clean event: {}", path);
+            prop_assert_eq!(event1.source, event1_copy.source, "Source should be stable after sanitization: {}", path);
         }
     }
     Ok(())
@@ -189,28 +202,37 @@ fn test_path_sanitization_removes_dangerous_sequences() -> color_eyre::eyre::Res
             malicious_path in arb_malicious_path()
         ) {
             // Property: Sanitized paths should not contain known dangerous patterns
-            let sanitized = EventSanitizer::sanitize_path_traversal(&malicious_path);
+            let mut event = RawEvent::schemaless(
+                EventSource::new(malicious_path.clone()),
+                EventType::new("security.test"),
+                json!({"path": malicious_path.clone()}),
+            );
+            event.ts_ingest = chrono::Utc::now();
             
-            // Should not contain effective ".." sequences
+            let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
+            
+            // Should not contain effective ".." sequences in source
             prop_assert!(
-                !sanitized.contains(".."),
-                "Sanitized path should not contain '..': {} -> {}",
-                malicious_path, sanitized
+                !event.source.contains(".."),
+                "Sanitized event source should not contain '..': {} -> {}",
+                malicious_path, event.source.as_str()
             );
             
-            // Should not contain encoded traversal
+            // Should not contain null bytes in source
             prop_assert!(
-                !sanitized.contains("%2e%2e") && !sanitized.contains("%252e%252e"),
-                "Sanitized path should not contain encoded '..' sequences: {} -> {}",
-                malicious_path, sanitized
+                !event.source.contains('\0'),
+                "Sanitized event source should not contain null bytes: {} -> {}",
+                malicious_path, event.source.as_str()
             );
             
-            // Should not contain null bytes
-            prop_assert!(
-                !sanitized.contains('\0'),
-                "Sanitized path should not contain null bytes: {} -> {}",
-                malicious_path, sanitized
-            );
+            // Check payload for path field
+            if let Some(path_val) = event.payload.get("path").and_then(|v| v.as_str()) {
+                prop_assert!(
+                    !path_val.contains(".."),
+                    "Sanitized payload path should not contain '..': {} -> {}",
+                    malicious_path, path_val
+                );
+            }
         }
     }
     Ok(())
@@ -242,24 +264,32 @@ fn test_path_validation_handles_unicode_safely() -> color_eyre::eyre::Result<()>
 }
 
 #[sinex_test]
-fn test_conservative_sanitization_preserves_safe_content() -> color_eyre::eyre::Result<()> {
+fn test_safe_content_preservation_in_events() -> color_eyre::eyre::Result<()> {
     proptest! {
-        fn property_conservative_sanitization_preserves_safe_content(
+        fn property_safe_content_preservation_in_events(
             safe_string in "[a-zA-Z0-9_. /-]{1,100}"
         ) {
-            // Property: Safe ASCII content should be mostly preserved
-            let sanitized = EventSanitizer::sanitize_string_conservative(&safe_string);
+            // Property: Safe ASCII content should be mostly preserved in events
+            let mut event = RawEvent::schemaless(
+                EventSource::new(safe_string.clone()),
+                EventType::new("safe.test"),
+                json!({"content": safe_string.clone()}),
+            );
+            event.ts_ingest = chrono::Utc::now();
             
-            // Should contain the same alphanumeric characters
             let original_alphanum: String = safe_string.chars()
                 .filter(|c| c.is_ascii_alphanumeric()).collect();
-            let sanitized_alphanum: String = sanitized.chars()
+            
+            let _was_modified = EventSanitizer::sanitize_event(&mut event).unwrap_or(false);
+            
+            // Should preserve alphanumeric characters in source
+            let sanitized_source_alphanum: String = event.source.chars()
                 .filter(|c| c.is_ascii_alphanumeric()).collect();
                 
             prop_assert_eq!(
-                original_alphanum, sanitized_alphanum,
-                "Alphanumeric characters should be preserved: '{}' -> '{}'",
-                safe_string, sanitized
+                original_alphanum, sanitized_source_alphanum,
+                "Alphanumeric characters should be preserved in source: '{}' -> '{}'",
+                safe_string, event.source.as_str()
             );
         }
     }

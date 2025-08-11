@@ -1,7 +1,6 @@
 use chrono::{DateTime, Duration, Utc};
 use proptest::prelude::*;
-use sinex_core::db::repositories::events::EventRepository;
-use sinex_core::repositories::Repository;
+use sinex_core::db::repositories::{common::Repository, events::EventRepository};
 use sinex_test_utils::prelude::*;
 
 /// Property tests for time range operations and overlap logic

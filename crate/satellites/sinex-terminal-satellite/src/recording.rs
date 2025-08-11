@@ -43,7 +43,7 @@ use tokio::time::interval;
 use tracing::{debug, error, info, warn};
 
 /// Recording session information
-#[derive(Debug)]
+#[derive(Debug, bon::Builder)]
 struct RecordingSession {
     id: String,
     _file_path: Utf8PathBuf,
@@ -53,7 +53,7 @@ struct RecordingSession {
 }
 
 /// Asciinema header structure
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 struct AsciinemaHeader {
     version: u32,
     width: u32,
@@ -66,6 +66,7 @@ struct AsciinemaHeader {
 }
 
 /// Terminal recording watcher
+#[derive(bon::Builder)]
 pub struct RecordingWatcher {
     recordings_dir: Utf8PathBuf,
     file_pattern: String,

@@ -11,6 +11,7 @@ pub mod content;
 pub mod error;
 /// PKM (Personal Knowledge Management) service for entity and relationship tracking
 pub mod pkm;
+pub mod prelude;
 /// Search service for querying events and content
 pub mod search;
 

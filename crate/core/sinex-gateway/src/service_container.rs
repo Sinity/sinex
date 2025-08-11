@@ -48,7 +48,7 @@ impl ServiceContainer {
         let annex_path = Utf8PathBuf::from(annex_path.as_str());
 
         // Ensure the annex directory exists
-        std::fs::create_dir_all(&annex_path).map_err(|e| {
+        tokio::fs::create_dir_all(&annex_path).await.map_err(|e| {
             SinexError::io("Failed to create annex directory")
                 .with_path(&annex_path)
                 .with_source(e.to_string())

@@ -2158,11 +2158,7 @@ impl<'a> EventRepository<'a> {
             .execute(self.pool)
             .await;
 
-        // Always disable bypass mode, even if delete failed
-        sqlx::query!("SELECT disable_audit_bypass()")
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "disable audit bypass"))?;
+        // Note: Audit bypass mode not implemented
 
         let result = result.map_err(|e| db_error(e, "hard delete by source"))?;
         Ok(result.rows_affected())

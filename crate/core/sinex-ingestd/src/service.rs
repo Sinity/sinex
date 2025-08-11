@@ -286,7 +286,7 @@ impl IngestService {
         {
             use std::os::unix::fs::PermissionsExt;
             let perms = std::fs::Permissions::from_mode(0o660);
-            std::fs::set_permissions(&self.config.socket_path, perms)?;
+            tokio::fs::set_permissions(&self.config.socket_path, perms).await?;
         }
 
         // Create gRPC service

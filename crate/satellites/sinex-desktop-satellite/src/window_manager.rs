@@ -94,9 +94,13 @@ use serde_json::Value;
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::{
+    collections::{HashMap, VecDeque},
+    fmt,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime},
+};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
 use tokio::process::Command;
@@ -107,8 +111,33 @@ use tracing::{debug, error, info, warn};
 const CACHE_CLEANUP_INTERVAL_SECS: u64 = 60;
 const CACHE_ENTRY_MAX_AGE_SECS: u64 = 30;
 
+/// Supported window manager types
+#[derive(Debug, Clone, PartialEq)]
+pub enum WindowManagerType {
+    Hyprland,
+}
+
+impl fmt::Display for WindowManagerType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WindowManagerType::Hyprland => write!(f, "hyprland"),
+        }
+    }
+}
+
+impl FromStr for WindowManagerType {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "hyprland" => Ok(WindowManagerType::Hyprland),
+            _ => Err(format!("Unsupported window manager type: {}", s)),
+        }
+    }
+}
+
 /// Enhanced window information with metadata
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 struct WindowInfo {
     address: String,
     class: String,
@@ -121,7 +150,7 @@ struct WindowInfo {
 }
 
 /// Window geometry
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 struct WindowGeometry {
     x: i32,
     y: i32,
@@ -130,7 +159,7 @@ struct WindowGeometry {
 }
 
 /// Enhanced workspace information
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 struct WorkspaceInfo {
     id: String,
     name: String,
@@ -141,7 +170,7 @@ struct WorkspaceInfo {
 }
 
 /// Enhanced monitor information
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 struct MonitorInfo {
     name: String,
     width: u32,
@@ -159,7 +188,7 @@ struct CacheEntry {
 }
 
 /// Focus history entry  
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 struct FocusHistoryEntry {
     timestamp: chrono::DateTime<Utc>,
     window_address: String,
@@ -185,8 +214,9 @@ enum WorkspaceTracking {
 }
 
 /// Advanced window manager watcher with caching and history
+#[derive(bon::Builder)]
 pub struct WindowManagerWatcher {
-    wm_type: String,
+    wm_type: WindowManagerType,
     socket_path: Option<String>,
     command_socket_path: Option<String>,
     windows: HashMap<String, WindowInfo>,
@@ -203,9 +233,9 @@ pub struct WindowManagerWatcher {
 
 impl WindowManagerWatcher {
     /// Create new advanced window manager watcher
-    pub async fn new(wm_type: String) -> SatelliteResult<Self> {
+    pub async fn new(wm_type: WindowManagerType) -> SatelliteResult<Self> {
         let mut watcher = Self {
-            wm_type: wm_type.clone(),
+            wm_type,
             socket_path: None,
             command_socket_path: None,
             windows: HashMap::new(),
@@ -220,7 +250,7 @@ impl WindowManagerWatcher {
         };
 
         // Discover socket paths based on WM type
-        if wm_type == "hyprland" {
+        if wm_type == WindowManagerType::Hyprland {
             watcher.discover_hyprland_sockets().await?;
             watcher.spawn_cache_cleanup_task();
         } else {
@@ -765,7 +795,7 @@ impl WindowManagerWatcher {
             self.wm_type
         );
 
-        if self.wm_type == "hyprland" {
+        if self.wm_type == WindowManagerType::Hyprland {
             self.stream_hyprland_events(tx).await
         } else {
             Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
