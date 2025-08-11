@@ -1163,7 +1163,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 warnings.push(format!("Invalid target path '{}': {}", target, e));
                 continue;
             }
-            
+
             let path = camino::Utf8Path::new(target);
             if path.exists() {
                 // Quick estimate by counting entries

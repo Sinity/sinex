@@ -348,7 +348,6 @@ impl WindowManagerWatcher {
             cache.insert(
                 cache_key,
                 CacheEntry {
-                    _data: data.clone(),
                     timestamp: Instant::now(),
                 },
             );
