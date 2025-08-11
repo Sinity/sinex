@@ -1373,7 +1373,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
         tokio::spawn(async move {
             while monitoring.load(Ordering::Relaxed) {
                 // Simulate memory usage check (in real system would use process stats)
-                if let Ok(stats) = std::fs::read_to_string("/proc/self/status") {
+                if let Ok(stats) = tokio::fs::read_to_string("/proc/self/status").await {
                     if let Some(line) = stats.lines().find(|l| l.starts_with("VmRSS:")) {
                         if let Some(kb_str) = line.split_whitespace().nth(1) {
                             if let Ok(kb) = kb_str.parse::<u64>() {
