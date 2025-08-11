@@ -12,3 +12,6 @@ use sinex_test_utils::prelude::*;
 
 /// Unicode security testing including homograph attacks, normalization exploits, etc.
 pub mod unicode_attack_test;
+
+/// Path validation security testing including path traversal attack prevention
+pub mod path_validation_test;

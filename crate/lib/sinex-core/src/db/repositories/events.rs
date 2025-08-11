@@ -1107,6 +1107,18 @@ impl<'a> EventRepository<'a> {
 
         // Execute batch insert using UNNEST
         // Note: Using sqlx::query instead of sqlx::query! because of ULID type handling issues
+        // Also converting array of arrays to JSON for source_event_ids and associated_blob_ids
+        // because SQLx doesn't support 2D UUID arrays
+        let source_event_ids_json: Vec<Option<serde_json::Value>> = source_event_id_arrays
+            .iter()
+            .map(|opt| opt.as_ref().map(|vec| serde_json::json!(vec)))
+            .collect();
+
+        let associated_blob_ids_json: Vec<Option<serde_json::Value>> = associated_blob_id_arrays
+            .iter()
+            .map(|opt| opt.as_ref().map(|vec| serde_json::json!(vec)))
+            .collect();
+
         sqlx::query(
             r#"
             INSERT INTO core.events (
@@ -1116,12 +1128,32 @@ impl<'a> EventRepository<'a> {
                 anchor_byte, associated_blob_ids,
                 payload_schema_name, payload_schema_version
             )
-            SELECT * FROM UNNEST(
-                $1::ulid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
-                $6::timestamptz[], $7::text[], $8::ulid[], $9::ulid[][],
-                $10::ulid[], $11::bigint[], $12::bigint[],
-                $13::bigint[], $14::ulid[][],
+            SELECT 
+                id::ulid, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, 
+                CASE WHEN source_event_ids IS NOT NULL 
+                     THEN ARRAY(SELECT (e::text)::ulid FROM jsonb_array_elements_text(source_event_ids) e)
+                     ELSE NULL 
+                END,
+                source_material_id::ulid,
+                source_material_offset_start, source_material_offset_end, anchor_byte,
+                CASE WHEN associated_blob_ids IS NOT NULL 
+                     THEN ARRAY(SELECT (e::text)::ulid FROM jsonb_array_elements_text(associated_blob_ids) e)
+                     ELSE NULL 
+                END,
+                payload_schema_name, payload_schema_version
+            FROM UNNEST(
+                $1::uuid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
+                $6::timestamptz[], $7::text[], $8::uuid[], $9::jsonb[],
+                $10::uuid[], $11::bigint[], $12::bigint[],
+                $13::bigint[], $14::jsonb[],
                 $15::text[], $16::text[]
+            ) AS t(
+                id, source, event_type, host, payload,
+                ts_orig, ingestor_version, payload_schema_id, source_event_ids,
+                source_material_id, source_material_offset_start, source_material_offset_end,
+                anchor_byte, associated_blob_ids,
+                payload_schema_name, payload_schema_version
             )
             "#,
         )
@@ -1133,12 +1165,12 @@ impl<'a> EventRepository<'a> {
         .bind(&ts_origs)
         .bind(&ingestor_versions)
         .bind(&payload_schema_ids)
-        .bind(&source_event_id_arrays)
+        .bind(&source_event_ids_json)
         .bind(&source_material_ids)
         .bind(&source_material_offset_starts)
         .bind(&source_material_offset_ends)
         .bind(&anchor_bytes)
-        .bind(&associated_blob_id_arrays)
+        .bind(&associated_blob_ids_json)
         .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
         .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
         .execute(&mut *tx)
