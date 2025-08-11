@@ -48,7 +48,7 @@
 //! - **Testing**: 100+ connections for parallel test execution
 
 use crate::{DbPool, PoolConfig};
-use color_eyre::eyre::{eyre, Result};
+use color_eyre::eyre::Result;
 use once_cell::sync::OnceCell;
 use tracing::info;
 

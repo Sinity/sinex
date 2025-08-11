@@ -4,11 +4,10 @@
 
 use crate::db::models::event::RawEvent;
 use crate::db::replay::{config::ReplayConfig, logging::ReplayLogger};
-use crate::types::Id;
+use crate::types::{Id, Ulid};
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::str::FromStr;
 
 /// Results from a dry-run execution
 #[derive(Debug, Clone, Serialize, Deserialize)]

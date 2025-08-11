@@ -8,7 +8,7 @@ use super::checkpoints::{Checkpoint as CheckpointInput, CheckpointRecord};
 use super::common::{db_error, DbResult, EnhancedRepository, Repository};
 use super::events::EventRepository;
 use crate::db::schema::OperationsLog;
-use crate::models::{Provenance, RawEvent};
+use crate::models::RawEvent;
 use crate::types::domain::{
     ConsumerGroup, ConsumerName, EventSource, EventType, HostName, ProcessorName,
 };
@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value as JsonValue;
 use sqlx::types::BigDecimal;
 use sqlx::{FromRow, PgPool, Postgres, Transaction};
-use ulid::Ulid;
 
 /// Database record for operations_log table
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
@@ -33,7 +32,7 @@ pub struct OperationRecord {
     pub approved_by: Option<String>,
     pub approved_at: Option<DateTime<Utc>>,
     pub executor_node: Option<String>,
-    pub started_at: DateTime<Utc>, // Changed to non-optional, as it's NOT NULL in DB
+    pub started_at: Option<DateTime<Utc>>, // Nullable in database
     pub finished_at: Option<DateTime<Utc>>,
     pub outcome: Option<String>, // success|error|cancelled
     pub error_details: Option<String>,
@@ -196,7 +195,7 @@ impl<'a> StateRepository<'a> {
 
         // Check if this is an update or create operation
         let existing_checkpoint = sqlx::query!(
-            r#"SELECT id as "id!", processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3"#,
+            r#"SELECT id::uuid as "id!", processed_count, checkpoint_version FROM core.processor_checkpoints WHERE processor_name = $1 AND consumer_group = $2 AND consumer_name = $3"#,
             checkpoint.processor_name.as_ref(),
             consumer_group.as_ref(),
             consumer_name.as_ref()
@@ -401,8 +400,33 @@ impl<'a> StateRepository<'a> {
                 .finished_at(Utc::now())
                 .build();
 
-            let mut repo_tx = StateRepositoryTx { tx: &mut tx };
-            repo_tx.log_operation(deletion_operation).await?;
+            // Log the deletion operation directly
+            let op_id = Id::<Operation>::new();
+            let op_started_at = deletion_operation.started_at.unwrap_or_else(Utc::now);
+            let op_state = deletion_operation.state.unwrap_or_else(|| "completed".to_string());
+            
+            sqlx::query!(
+                r#"
+                INSERT INTO core.operations_log (
+                    id, actor, scope, state, preview_summary,
+                    started_at, finished_at, outcome, error_details
+                ) VALUES (
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9
+                )
+                "#,
+                *op_id.as_ulid() as _,
+                deletion_operation.actor,
+                deletion_operation.scope,
+                op_state,
+                deletion_operation.preview_summary,
+                op_started_at,
+                deletion_operation.finished_at,
+                deletion_operation.outcome,
+                deletion_operation.error_details
+            )
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| db_error(e, "log deletion operation"))?;
 
             // Emit checkpoint deleted event for event sourcing
             let checkpoint_deleted_event = RawEvent::new(
@@ -477,10 +501,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             "#,
@@ -515,10 +539,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -544,10 +568,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -613,10 +637,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -651,10 +675,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -690,10 +714,10 @@ impl<'a> StateRepository<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             FROM core.operations_log 
@@ -1219,10 +1243,10 @@ impl<'a> StateRepositoryTx<'a> {
                 preview_summary,
                 checkpoint,
                 approved_by,
-                approved_at,
+                approved_at as "approved_at: Option<DateTime<Utc>>",
                 executor_node,
-                started_at,
-                finished_at,
+                started_at as "started_at: Option<DateTime<Utc>>",
+                finished_at as "finished_at: Option<DateTime<Utc>>",
                 outcome,
                 error_details
             "#,
