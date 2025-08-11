@@ -287,7 +287,9 @@ impl CheckpointManager {
 
             if version >= 2 && row.checkpoint_data.is_some() {
                 // New unified format (version 2+)
-                let checkpoint_data = row.checkpoint_data.unwrap();
+                let checkpoint_data = row.checkpoint_data.ok_or_else(|| {
+                    SatelliteError::Checkpoint("Checkpoint data is unexpectedly None".to_string())
+                })?;
                 let checkpoint: Checkpoint = serde_json::from_value(checkpoint_data)
                     .map_err(|e| {
                         warn!(error = %e, "Failed to deserialize checkpoint data, falling back to legacy");

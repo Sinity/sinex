@@ -128,6 +128,7 @@ pub mod nats;
 pub mod preflight;
 pub mod processor_runner;
 pub mod replay;
+pub mod replay_progress;
 pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
@@ -139,7 +140,7 @@ pub use cli::{
     SourceState,
 };
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
-pub use grpc_client::IngestClient;
+pub use grpc_client::{GrpcClientConfig, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};

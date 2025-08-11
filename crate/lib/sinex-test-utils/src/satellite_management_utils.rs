@@ -119,41 +119,35 @@ impl TestAutomatonHandle {
 
 /// Orchestrator for managing multiple satellites and automata
 pub struct SatelliteOrchestrator {
-    satellites: std::sync::Mutex<std::collections::HashMap<String, TestSatelliteHandle>>,
-    automata: std::sync::Mutex<std::collections::HashMap<String, TestAutomatonHandle>>,
+    satellites: parking_lot::Mutex<std::collections::HashMap<String, TestSatelliteHandle>>,
+    automata: parking_lot::Mutex<std::collections::HashMap<String, TestAutomatonHandle>>,
 }
 
 impl SatelliteOrchestrator {
     pub fn new() -> Self {
         Self {
-            satellites: std::sync::Mutex::new(std::collections::HashMap::new()),
-            automata: std::sync::Mutex::new(std::collections::HashMap::new()),
+            satellites: parking_lot::Mutex::new(std::collections::HashMap::new()),
+            automata: parking_lot::Mutex::new(std::collections::HashMap::new()),
         }
     }
 
     pub fn register_satellite(&self, name: &str, handle: TestSatelliteHandle) {
-        self.satellites
-            .lock()
-            .unwrap()
-            .insert(name.to_string(), handle);
+        self.satellites.lock().insert(name.to_string(), handle);
     }
 
     pub fn register_automaton(&self, name: &str, handle: TestAutomatonHandle) {
-        self.automata
-            .lock()
-            .unwrap()
-            .insert(name.to_string(), handle);
+        self.automata.lock().insert(name.to_string(), handle);
     }
 
     pub async fn shutdown_all(&self) -> Result<()> {
         // Shutdown all satellites
-        let mut satellites = self.satellites.lock().unwrap();
+        let mut satellites = self.satellites.lock();
         for (_, mut handle) in satellites.drain() {
             handle.stop().await?;
         }
 
         // Shutdown all automata
-        let mut automata = self.automata.lock().unwrap();
+        let mut automata = self.automata.lock();
         for (_, mut handle) in automata.drain() {
             handle.stop().await?;
         }
@@ -298,8 +292,8 @@ mod tests {
         let orchestrator = SatelliteOrchestrator::new();
 
         // Initial state should be empty
-        assert!(orchestrator.satellites.lock().unwrap().is_empty());
-        assert!(orchestrator.automata.lock().unwrap().is_empty());
+        assert!(orchestrator.satellites.lock().is_empty());
+        assert!(orchestrator.automata.lock().is_empty());
 
         Ok(())
     }
@@ -318,7 +312,7 @@ mod tests {
         orchestrator.register_satellite("test", handle);
 
         // Should be registered
-        assert_eq!(orchestrator.satellites.lock().unwrap().len(), 1);
+        assert_eq!(orchestrator.satellites.lock().len(), 1);
 
         Ok(())
     }
@@ -345,8 +339,8 @@ mod tests {
         orchestrator.shutdown_all().await?;
 
         // All collections should be empty after shutdown
-        assert!(orchestrator.satellites.lock().unwrap().is_empty());
-        assert!(orchestrator.automata.lock().unwrap().is_empty());
+        assert!(orchestrator.satellites.lock().is_empty());
+        assert!(orchestrator.automata.lock().is_empty());
 
         Ok(())
     }
@@ -378,7 +372,7 @@ mod tests {
         }
 
         // Should have all satellites registered
-        assert_eq!(orchestrator.satellites.lock().unwrap().len(), 5);
+        assert_eq!(orchestrator.satellites.lock().len(), 5);
 
         // Shutdown all
         orchestrator.shutdown_all().await?;
@@ -435,7 +429,7 @@ mod tests {
         }
 
         // Should have all satellites
-        assert_eq!(orchestrator.satellites.lock().unwrap().len(), 10);
+        assert_eq!(orchestrator.satellites.lock().len(), 10);
         Ok(())
     }
 }

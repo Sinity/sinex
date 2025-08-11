@@ -167,7 +167,11 @@ impl ProcessorCheckpoints {
                     .primary_key()
                     .default(Expr::cust("gen_ulid()")),
             )
-            .col(ColumnDef::new(Alias::new(Self::NAME)).text().not_null())
+            .col(
+                ColumnDef::new(Alias::new(Self::PROCESSOR_NAME))
+                    .text()
+                    .not_null(),
+            )
             .col(
                 ColumnDef::new(Alias::new(Self::CONSUMER_GROUP))
                     .text()

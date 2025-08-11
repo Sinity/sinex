@@ -426,6 +426,256 @@ impl NatsPublisher {
     }
 }
 
+/// Configuration for buffered publishing
+#[derive(Debug, Clone)]
+pub struct BufferedPublisherConfig {
+    /// Maximum number of messages to batch together
+    pub batch_size: usize,
+    /// Maximum time to wait before flushing a partial batch
+    pub flush_timeout: Duration,
+    /// Maximum number of messages to buffer before applying backpressure
+    pub max_buffer_size: usize,
+}
+
+impl Default for BufferedPublisherConfig {
+    fn default() -> Self {
+        Self {
+            batch_size: 100,
+            flush_timeout: Duration::from_millis(100),
+            max_buffer_size: 10000,
+        }
+    }
+}
+
+/// Automatically batching publisher that provides optimal performance
+#[derive(Clone)]
+pub struct BufferedPublisher {
+    sender: mpsc::UnboundedSender<BufferedMessage>,
+}
+
+/// Message queued for buffered publishing
+#[derive(Debug)]
+enum BufferedMessage {
+    Event(RawEvent, tokio::sync::oneshot::Sender<Result<PublishAck>>),
+    Message(
+        String,
+        Bytes,
+        tokio::sync::oneshot::Sender<Result<PublishAck>>,
+    ),
+    Flush,
+    Shutdown,
+}
+
+impl BufferedPublisher {
+    /// Create a new buffered publisher with default configuration
+    pub fn new(publisher: NatsPublisher) -> Self {
+        Self::with_config(publisher, BufferedPublisherConfig::default())
+    }
+
+    /// Create a new buffered publisher with custom configuration
+    pub fn with_config(publisher: NatsPublisher, config: BufferedPublisherConfig) -> Self {
+        let (sender, receiver) = mpsc::unbounded_channel();
+
+        // Spawn background task to handle batching
+        tokio::spawn(Self::batch_worker(publisher, config, receiver));
+
+        Self { sender }
+    }
+
+    /// Publish an event (returns immediately, batching happens in background)
+    pub async fn publish_event(&self, event: RawEvent) -> Result<PublishAck> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        self.sender
+            .send(BufferedMessage::Event(event, response_tx))
+            .map_err(|_| NatsError::Connection("BufferedPublisher receiver dropped".to_string()))?;
+
+        response_rx
+            .await
+            .map_err(|_| NatsError::Connection("Response channel dropped".to_string()))?
+    }
+
+    /// Publish a message (returns immediately, batching happens in background)
+    pub async fn publish(&self, subject: String, payload: Bytes) -> Result<PublishAck> {
+        let (response_tx, response_rx) = tokio::sync::oneshot::channel();
+
+        self.sender
+            .send(BufferedMessage::Message(subject, payload, response_tx))
+            .map_err(|_| NatsError::Connection("BufferedPublisher receiver dropped".to_string()))?;
+
+        response_rx
+            .await
+            .map_err(|_| NatsError::Connection("Response channel dropped".to_string()))?
+    }
+
+    /// Force flush all buffered messages immediately
+    pub async fn flush(&self) -> Result<()> {
+        self.sender
+            .send(BufferedMessage::Flush)
+            .map_err(|_| NatsError::Connection("BufferedPublisher receiver dropped".to_string()))?;
+
+        // Give some time for flush to complete
+        sleep(Duration::from_millis(10)).await;
+        Ok(())
+    }
+
+    /// Shutdown the buffered publisher, flushing all pending messages
+    pub async fn shutdown(&self) -> Result<()> {
+        self.sender
+            .send(BufferedMessage::Shutdown)
+            .map_err(|_| NatsError::Connection("BufferedPublisher receiver dropped".to_string()))?;
+
+        // Give time for graceful shutdown
+        sleep(Duration::from_millis(50)).await;
+        Ok(())
+    }
+
+    /// Background worker that handles batching and publishing
+    async fn batch_worker(
+        publisher: NatsPublisher,
+        config: BufferedPublisherConfig,
+        mut receiver: mpsc::UnboundedReceiver<BufferedMessage>,
+    ) {
+        let mut event_batch = Vec::new();
+        let mut message_batch = Vec::new();
+        let mut pending_responses: Vec<Option<tokio::sync::oneshot::Sender<Result<PublishAck>>>> =
+            Vec::new();
+
+        let mut flush_timer = tokio::time::interval(config.flush_timeout);
+        flush_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+        loop {
+            tokio::select! {
+                // Process incoming messages
+                msg = receiver.recv() => {
+                    match msg {
+                        Some(BufferedMessage::Event(event, response_tx)) => {
+                            event_batch.push(event);
+                            pending_responses.push(Some(response_tx));
+
+                            // Flush if batch is full
+                            if event_batch.len() >= config.batch_size {
+                                Self::flush_events(&publisher, &mut event_batch, &mut pending_responses).await;
+                            }
+                        }
+                        Some(BufferedMessage::Message(subject, payload, response_tx)) => {
+                            message_batch.push((subject, payload));
+                            pending_responses.push(Some(response_tx));
+
+                            // Flush if batch is full
+                            if message_batch.len() >= config.batch_size {
+                                Self::flush_messages(&publisher, &mut message_batch, &mut pending_responses).await;
+                            }
+                        }
+                        Some(BufferedMessage::Flush) => {
+                            // Force flush all batches
+                            Self::flush_events(&publisher, &mut event_batch, &mut pending_responses).await;
+                            Self::flush_messages(&publisher, &mut message_batch, &mut pending_responses).await;
+                        }
+                        Some(BufferedMessage::Shutdown) => {
+                            // Flush everything and exit
+                            Self::flush_events(&publisher, &mut event_batch, &mut pending_responses).await;
+                            Self::flush_messages(&publisher, &mut message_batch, &mut pending_responses).await;
+                            break;
+                        }
+                        None => {
+                            // Channel closed, flush and exit
+                            Self::flush_events(&publisher, &mut event_batch, &mut pending_responses).await;
+                            Self::flush_messages(&publisher, &mut message_batch, &mut pending_responses).await;
+                            break;
+                        }
+                    }
+                }
+
+                // Periodic flush on timeout
+                _ = flush_timer.tick() => {
+                    if !event_batch.is_empty() || !message_batch.is_empty() {
+                        Self::flush_events(&publisher, &mut event_batch, &mut pending_responses).await;
+                        Self::flush_messages(&publisher, &mut message_batch, &mut pending_responses).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn flush_events(
+        publisher: &NatsPublisher,
+        event_batch: &mut Vec<RawEvent>,
+        pending_responses: &mut Vec<Option<tokio::sync::oneshot::Sender<Result<PublishAck>>>>,
+    ) {
+        if event_batch.is_empty() {
+            return;
+        }
+
+        debug!(batch_size = event_batch.len(), "Flushing event batch");
+
+        match publisher.publish_events_batch(&event_batch).await {
+            Ok(acks) => {
+                // Send successful responses
+                for (i, ack) in acks.into_iter().enumerate() {
+                    if i < pending_responses.len() {
+                        if let Some(response_tx) =
+                            std::mem::replace(&mut pending_responses[i], None)
+                        {
+                            let _ = response_tx.send(Ok(ack));
+                        }
+                    }
+                }
+                // Clear responses for this batch
+                pending_responses.drain(0..event_batch.len());
+            }
+            Err(e) => {
+                // Send error to all pending responses
+                for response_tx in pending_responses.drain(0..event_batch.len()) {
+                    if let Some(response_tx) = response_tx {
+                        let _ = response_tx.send(Err(e.clone()));
+                    }
+                }
+            }
+        }
+
+        event_batch.clear();
+    }
+
+    async fn flush_messages(
+        publisher: &NatsPublisher,
+        message_batch: &mut Vec<(String, Bytes)>,
+        pending_responses: &mut Vec<Option<tokio::sync::oneshot::Sender<Result<PublishAck>>>>,
+    ) {
+        if message_batch.is_empty() {
+            return;
+        }
+
+        debug!(batch_size = message_batch.len(), "Flushing message batch");
+
+        // For messages, we need to convert Bytes to a serializable type
+        // For now, we'll fall back to individual publishing for mixed message types
+        // TODO: Optimize this further if needed
+        let responses: Vec<Result<PublishAck>> = {
+            let mut results = Vec::with_capacity(message_batch.len());
+            for (subject, payload) in message_batch.iter() {
+                match publisher.jetstream.publish(subject, payload.clone()).await {
+                    Ok(ack) => results.push(Ok(ack)),
+                    Err(e) => results.push(Err(e)),
+                }
+            }
+            results
+        };
+
+        // Send responses back
+        for (i, result) in responses.into_iter().enumerate() {
+            if i < pending_responses.len() {
+                if let Some(response_tx) = std::mem::replace(&mut pending_responses[i], None) {
+                    let _ = response_tx.send(result);
+                }
+            }
+        }
+
+        pending_responses.drain(0..message_batch.len());
+        message_batch.clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

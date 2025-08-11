@@ -89,12 +89,13 @@
 //! - Use async queries to avoid blocking event stream
 
 use chrono::Utc;
+use parking_lot::Mutex;
 use serde_json::Value;
 use sinex_core::db::models::RawEvent;
 use sinex_core::types::events::Event;
 use sinex_satellite_sdk::SatelliteResult;
 use std::collections::{HashMap, VecDeque};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::net::UnixStream;
@@ -246,7 +247,7 @@ impl WindowManagerWatcher {
             loop {
                 cleanup_interval.tick().await;
 
-                let mut cache_guard = cache.lock().unwrap();
+                let mut cache_guard = cache.lock();
                 cache_guard.retain(|_, entry| {
                     entry.timestamp.elapsed() < Duration::from_secs(CACHE_ENTRY_MAX_AGE_SECS)
                 });
@@ -315,7 +316,7 @@ impl WindowManagerWatcher {
 
         // Check cache first
         {
-            let cache = self.hyprctl_cache.lock().unwrap();
+            let cache = self.hyprctl_cache.lock();
             if let Some(entry) = cache.get(&cache_key) {
                 if entry.timestamp.elapsed() < Duration::from_secs(5) {
                     return Ok(entry._data.clone());
@@ -344,7 +345,7 @@ impl WindowManagerWatcher {
 
         // Update cache
         {
-            let mut cache = self.hyprctl_cache.lock().unwrap();
+            let mut cache = self.hyprctl_cache.lock();
             cache.insert(
                 cache_key,
                 CacheEntry {
@@ -366,30 +367,7 @@ impl WindowManagerWatcher {
         self._get_hyprctl_data("workspaces", None).await
     }
 
-    /// Update focus history
-    fn _update_focus_history(
-        &self,
-        window_address: String,
-        window_class: Option<String>,
-        window_title: Option<String>,
-    ) {
-        if !self._track_focus_history {
-            return;
-        }
-
-        let mut history = self._focus_history.lock().unwrap();
-        history.push_front(FocusHistoryEntry {
-            _timestamp: Utc::now(),
-            _window_address: window_address,
-            _window_class: window_class,
-            _window_title: window_title,
-        });
-
-        // Keep only last 100 entries
-        if history.len() > 100 {
-            history.pop_back();
-        }
-    }
+    // Note: Focus history functionality removed as it referenced non-existent struct fields
 
     /// Augment window event with additional data
     async fn _augment_window_event(&self, payload: &mut Value) {

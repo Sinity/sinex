@@ -259,9 +259,22 @@ impl IngestService {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        // Remove existing socket file if it exists
-        if std::path::Path::new(&self.config.socket_path).exists() {
-            tokio::fs::remove_file(&self.config.socket_path).await?;
+        // Remove existing socket file (use direct remove_file to avoid TOCTOU)
+        // This is atomic and handles non-existent files gracefully
+        match tokio::fs::remove_file(&self.config.socket_path).await {
+            Ok(()) => {
+                debug!("Removed existing socket file: {}", self.config.socket_path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("Socket file does not exist: {}", self.config.socket_path);
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to remove socket file {}: {}",
+                    self.config.socket_path, e
+                );
+                // Continue anyway - bind will fail if socket is in use
+            }
         }
 
         // Create Unix Domain Socket listener
@@ -826,10 +839,19 @@ impl IngestService {
         )
         .await;
 
-        // Clean up socket file
-        if std::path::Path::new(&self.config.socket_path).exists() {
-            if let Err(e) = tokio::fs::remove_file(&self.config.socket_path).await {
-                warn!("Failed to remove socket file: {}", e);
+        // Clean up socket file (using direct remove_file to avoid TOCTOU)
+        match tokio::fs::remove_file(&self.config.socket_path).await {
+            Ok(()) => {
+                debug!(
+                    "Removed socket file during shutdown: {}",
+                    self.config.socket_path
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("Socket file already removed: {}", self.config.socket_path);
+            }
+            Err(e) => {
+                warn!("Failed to remove socket file during shutdown: {}", e);
             }
         }
 

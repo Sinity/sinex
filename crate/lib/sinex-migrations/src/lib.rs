@@ -25,6 +25,7 @@ mod m20250810_000006_add_archive_trigger;
 mod m20250810_000007_add_recommended_indexes;
 mod m20250810_132050_drop_obsolete_artifact_tables;
 mod m20250811_000002_add_path_validation_functions;
+mod m20250811_000003_add_audit_trail_support;
 pub mod schema;
 
 pub struct Migrator;
@@ -48,6 +49,7 @@ impl MigratorTrait for Migrator {
             m20250810_000007_add_recommended_indexes,
             m20250810_132050_drop_obsolete_artifact_tables,
             m20250811_000002_add_path_validation_functions,
+            m20250811_000003_add_audit_trail_support,
             m20250111_000001_schema_alignment,
         ]
     }

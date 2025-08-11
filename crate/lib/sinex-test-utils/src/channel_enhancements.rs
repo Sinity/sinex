@@ -33,14 +33,18 @@ impl PerformanceTracker {
 
     pub fn record_send_success(&self, duration: Duration) {
         self.send_successes.fetch_add(1, Ordering::Relaxed);
-        self.total_send_duration_ms
-            .fetch_add(duration.as_millis() as u64, Ordering::Relaxed);
+        self.total_send_duration_ms.fetch_add(
+            duration.as_millis().min(u64::MAX as u128) as u64,
+            Ordering::Relaxed,
+        );
     }
 
     pub fn record_send_failure(&self, duration: Duration) {
         self.send_failures.fetch_add(1, Ordering::Relaxed);
-        self.total_send_duration_ms
-            .fetch_add(duration.as_millis() as u64, Ordering::Relaxed);
+        self.total_send_duration_ms.fetch_add(
+            duration.as_millis().min(u64::MAX as u128) as u64,
+            Ordering::Relaxed,
+        );
     }
 
     pub fn get_metrics(&self) -> PerformanceMetrics {

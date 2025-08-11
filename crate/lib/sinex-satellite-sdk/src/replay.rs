@@ -1,5 +1,6 @@
 //! Replay mode for historical event processing
 
+use crate::replay_progress::{ProgressTracker, ReplayPhase};
 use crate::SatelliteResult;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -150,8 +151,14 @@ impl ReplayManager {
         })
     }
 
-    /// Process events in replay mode
-    pub async fn replay_events<F, Fut>(&self, mut processor: F) -> SatelliteResult<ReplayResult>
+    /// Process events in replay mode with progress tracking
+    pub async fn replay_events_with_progress<F, Fut>(
+        &self,
+        mut processor: F,
+        progress_callback: Option<
+            impl Fn(&crate::replay_progress::ReplayProgress) + Send + Sync + 'static,
+        >,
+    ) -> SatelliteResult<ReplayResult>
     where
         F: FnMut(Vec<RawEvent>) -> Fut,
         Fut: std::future::Future<Output = SatelliteResult<usize>>,
@@ -164,7 +171,7 @@ impl ReplayManager {
             });
         }
 
-        info!("Starting replay mode processing");
+        info!("Starting replay mode processing with progress tracking");
 
         let stats = self.get_replay_stats().await?;
         info!(
@@ -174,10 +181,22 @@ impl ReplayManager {
             "Replay statistics"
         );
 
+        // Create progress tracker
+        let mut tracker = ProgressTracker::new(stats.total_events, stats.estimated_batches);
+        if let Some(callback) = progress_callback {
+            tracker = tracker.with_callback(callback);
+        }
+
+        // Initialize phase
+        tracker.set_phase(ReplayPhase::Initializing).await;
+
         let mut total_processed = 0;
         let mut total_batches = 0;
         let mut errors = Vec::new();
         let mut offset = 0;
+
+        // Start processing phase
+        tracker.set_phase(ReplayPhase::Processing).await;
 
         loop {
             // Fetch events using the query system based on mode
@@ -309,6 +328,7 @@ impl ReplayManager {
                 break;
             }
 
+            let batch_size = events.len();
             {
                 // Process the batch
                 match processor(events).await {
@@ -320,6 +340,9 @@ impl ReplayManager {
                             total = total_processed,
                             "Processed replay batch"
                         );
+
+                        // Update progress tracker
+                        tracker.increment_processed(processed as u64).await;
                     }
                     Err(e) => {
                         warn!(
@@ -328,6 +351,9 @@ impl ReplayManager {
                             "Failed to process replay batch"
                         );
                         errors.push(format!("Batch {} error: {}", total_batches + 1, e));
+
+                        // Update failed count
+                        tracker.increment_failed(batch_size as u64).await;
                     }
                 }
             }
@@ -335,16 +361,27 @@ impl ReplayManager {
             total_batches += 1;
             offset += self.batch_size;
 
-            // Log progress every 10 batches
+            // Update batch completion in tracker
+            tracker.complete_batch().await;
+
+            // Save checkpoint periodically (every 10 batches)
             if total_batches % 10 == 0 {
-                info!(
-                    batches = total_batches,
-                    processed = total_processed,
-                    estimated_remaining = stats.estimated_batches.saturating_sub(total_batches),
-                    "Replay progress"
-                );
+                let last_event_id = None; // Would need to extract from events
+                tracker
+                    .save_checkpoint(
+                        last_event_id,
+                        offset as u64,
+                        serde_json::json!({
+                            "mode": format!("{:?}", self.mode),
+                            "batch_size": self.batch_size,
+                        }),
+                    )
+                    .await;
             }
         }
+
+        // Set completion phase
+        tracker.set_phase(ReplayPhase::Completed).await;
 
         info!(
             total_processed = total_processed,
@@ -353,11 +390,28 @@ impl ReplayManager {
             "Replay processing completed"
         );
 
+        // Get final summary
+        let summary = tracker.get_summary().await;
+        info!("{}", summary.format_report());
+
         Ok(ReplayResult {
             total_processed,
             total_batches,
             errors,
         })
+    }
+
+    /// Process events in replay mode (backwards compatibility)
+    pub async fn replay_events<F, Fut>(&self, processor: F) -> SatelliteResult<ReplayResult>
+    where
+        F: FnMut(Vec<RawEvent>) -> Fut,
+        Fut: std::future::Future<Output = SatelliteResult<usize>>,
+    {
+        self.replay_events_with_progress(
+            processor,
+            None::<fn(&crate::replay_progress::ReplayProgress)>,
+        )
+        .await
     }
 
     /// Apply custom filters to an event

@@ -16,5 +16,5 @@ pub use config::JetStreamConfig;
 pub use config::NatsConfig;
 pub use consumer::{ConsumerConfig, NatsConsumer};
 pub use error::{NatsError, Result};
-pub use publisher::NatsPublisher;
+pub use publisher::{BufferedPublisher, BufferedPublisherConfig, NatsPublisher};
 pub use streams::{StreamConfig, StreamManager};

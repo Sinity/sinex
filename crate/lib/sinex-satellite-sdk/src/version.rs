@@ -32,16 +32,39 @@ pub struct SatelliteVersion {
 
 impl SatelliteVersion {
     /// Get the current satellite version information
-    pub fn current() -> Self {
-        Self {
-            version: satellite_version(),
+    ///
+    /// # Errors
+    /// Returns `SatelliteError::Configuration` if any version information is invalid
+    #[must_use]
+    pub fn current() -> crate::SatelliteResult<Self> {
+        Ok(Self {
+            version: satellite_version()?,
             full_version: satellite_full_version(),
             commit_hash: satellite_commit_hash(),
-            commit_count: satellite_commit_count(),
+            commit_count: satellite_commit_count()?,
             branch: satellite_branch(),
             build_timestamp: satellite_build_timestamp(),
-            is_dirty: satellite_is_dirty(),
-        }
+            is_dirty: satellite_is_dirty()?,
+        })
+    }
+
+    /// Get the current satellite version information with fallback to defaults on error
+    ///
+    /// This provides a non-panicking alternative for cases where you need version info
+    /// but can tolerate fallback values if the build metadata is corrupted.
+    pub fn current_or_default() -> Self {
+        Self::current().unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "Failed to get satellite version info, using defaults");
+            Self {
+                version: Version::new(0, 1, 0), // Fallback version
+                full_version: "0.1.0-unknown".to_string(),
+                commit_hash: "unknown".to_string(),
+                commit_count: 0,
+                branch: "unknown".to_string(),
+                build_timestamp: chrono::Utc::now().to_rfc3339(),
+                is_dirty: true, // Conservative assumption
+            }
+        })
     }
 
     /// Compare versions for leadership election (newer version wins)
@@ -163,8 +186,14 @@ impl SatelliteInstance {
 // Version accessor functions using compile-time environment variables
 
 /// Get semantic version of the satellite
-pub fn satellite_version() -> Version {
-    Version::from_str(env!("SATELLITE_VERSION")).expect("Invalid satellite version")
+///
+/// # Errors
+/// Returns `SatelliteError::Configuration` if the satellite version is invalid
+#[must_use]
+pub fn satellite_version() -> crate::SatelliteResult<Version> {
+    Version::from_str(env!("SATELLITE_VERSION")).map_err(|e| {
+        crate::SatelliteError::Configuration(format!("Invalid satellite version: {}", e))
+    })
 }
 
 /// Get full version string with build metadata
@@ -178,10 +207,14 @@ pub fn satellite_commit_hash() -> String {
 }
 
 /// Get git commit count (used as patch version)
-pub fn satellite_commit_count() -> u32 {
+///
+/// # Errors
+/// Returns `SatelliteError::Configuration` if the commit count is invalid
+#[must_use]
+pub fn satellite_commit_count() -> crate::SatelliteResult<u32> {
     env!("SATELLITE_COMMIT_COUNT")
         .parse()
-        .expect("Invalid commit count")
+        .map_err(|e| crate::SatelliteError::Configuration(format!("Invalid commit count: {}", e)))
 }
 
 /// Get git branch name
@@ -195,10 +228,14 @@ pub fn satellite_build_timestamp() -> String {
 }
 
 /// Check if working directory was dirty during build
-pub fn satellite_is_dirty() -> bool {
+///
+/// # Errors
+/// Returns `SatelliteError::Configuration` if the dirty flag is invalid
+#[must_use]
+pub fn satellite_is_dirty() -> crate::SatelliteResult<bool> {
     env!("SATELLITE_IS_DIRTY")
         .parse()
-        .expect("Invalid dirty flag")
+        .map_err(|e| crate::SatelliteError::Configuration(format!("Invalid dirty flag: {}", e)))
 }
 
 /// Print version information to stdout (for --version flags)

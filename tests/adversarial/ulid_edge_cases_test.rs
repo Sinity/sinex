@@ -213,7 +213,7 @@ async fn test_ulid_generation_same_millisecond_ordering(ctx: TestContext) -> col
     let start_ms = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
-        .as_millis() as u64;
+        .as_millis().min(u64::MAX as u128) as u64;
 
     // Generate ULIDs until we get a different millisecond
     while std::time::SystemTime::now()

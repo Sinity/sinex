@@ -270,7 +270,7 @@ impl KittyWatcher {
                     tabs.push((
                         tab_id_str.clone(),
                         tab_title.to_string(),
-                        tab_index as u32,
+                        tab_index.min(u32::MAX as usize) as u32,
                         is_focused,
                     ));
 
@@ -284,7 +284,7 @@ impl KittyWatcher {
                                 .unwrap_or_default()
                                 .into_iter()
                                 .map(|process| KittyProcess {
-                                    pid: process.pid as u32,
+                                    pid: process.pid.min(u32::MAX as u64) as u32,
                                     name: process.name,
                                 })
                                 .collect();
@@ -295,7 +295,7 @@ impl KittyWatcher {
                                 foreground_processes,
                                 last_cmd_exit_status: window_json
                                     .last_cmd_exit_status
-                                    .map(|s| s as i32),
+                                    .map(|s| s.clamp(i32::MIN as i64, i32::MAX as i64) as i32),
                                 parent_tab_id: tab_id_str.clone(),
                             });
                         }
@@ -309,6 +309,57 @@ impl KittyWatcher {
 
     async fn get_last_command_output(&self, window_id: &str) -> SatelliteResult<String> {
         self.get_kitty_text(window_id, "last_cmd_output").await
+    }
+
+    async fn get_last_stderr(&self, window_id: &str) -> SatelliteResult<String> {
+        // Kitty shell integration can capture stderr separately with proper configuration
+        // Try to get stderr using last_cmd_stderr extent (requires shell integration)
+        match self.get_kitty_text(window_id, "last_cmd_stderr").await {
+            Ok(stderr) => Ok(stderr),
+            Err(_) => {
+                // Fallback: Try to extract stderr from combined output
+                // This is less reliable but better than nothing
+                self.extract_stderr_from_combined_output(window_id).await
+            }
+        }
+    }
+
+    async fn extract_stderr_from_combined_output(
+        &self,
+        window_id: &str,
+    ) -> SatelliteResult<String> {
+        // Get the last command output which may contain interleaved stderr
+        let output = self.get_kitty_text(window_id, "last_cmd_output").await?;
+
+        // Common stderr patterns to look for
+        // This is a heuristic approach - not perfect but useful
+        let stderr_lines: Vec<String> = output
+            .lines()
+            .filter(|line| {
+                // Common stderr indicators
+                line.starts_with("Error:")
+                    || line.starts_with("ERROR:")
+                    || line.starts_with("Warning:")
+                    || line.starts_with("WARNING:")
+                    || line.starts_with("Fatal:")
+                    || line.starts_with("FATAL:")
+                    || line.contains("error:")
+                    || line.contains("warning:")
+                    || line.contains("failed")
+                    || line.contains("cannot")
+                    || line.contains("unable to")
+                    || line.contains("permission denied")
+                    || line.contains("not found")
+                    || line.contains("No such")
+            })
+            .map(|s| s.to_string())
+            .collect();
+
+        if stderr_lines.is_empty() {
+            Ok(String::new())
+        } else {
+            Ok(stderr_lines.join("\n"))
+        }
     }
 
     async fn get_kitty_text(&self, window_id: &str, extent: &str) -> SatelliteResult<String> {
@@ -406,13 +457,14 @@ impl KittyWatcher {
                         SystemTime::now()
                             .duration_since(start_time)
                             .unwrap_or_default()
-                            .as_millis() as u64
+                            .as_millis()
+                            .min(u64::MAX as u128) as u64
                     } else {
                         // Estimate based on last prompt time if we don't have exact start
                         window_state
                             .last_prompt_time
                             .and_then(|t| SystemTime::now().duration_since(t).ok())
-                            .map(|d| d.as_millis() as u64)
+                            .map(|d| d.as_millis().min(u64::MAX as u128) as u64)
                             .unwrap_or(0)
                     };
 
@@ -437,7 +489,7 @@ impl KittyWatcher {
                             kitty_window_id: window_id.clone(),
                             kitty_tab_id: window_state.tab_id.clone(),
                             output_lines: Some(last_output.lines().count() as u32),
-                            error_output: None, // TODO: Separate stderr capture
+                            error_output: self.get_last_stderr(&window_id).await.ok(),
                         })
                         .into();
 
@@ -493,7 +545,7 @@ impl KittyWatcher {
                         kitty_tab_id: focused_tab_id.clone(),
                         kitty_window_id: "unknown".to_string(),
                         tab_title: title.clone(),
-                        tab_index: *index as usize,
+                        tab_index: (*index as usize).min(usize::MAX),
                         previous_tab_id: previous_tab_id,
                         focus_timestamp: timestamp,
                     })
@@ -522,7 +574,7 @@ impl KittyWatcher {
         // Get current scrollback content
         let scrollback = self.get_kitty_text(&window_id, "all").await?;
         let current_lines: Vec<&str> = scrollback.lines().collect();
-        let current_line_count = current_lines.len() as u32;
+        let current_line_count = current_lines.len().min(u32::MAX as usize) as u32;
 
         // Get previous line count for this window
         let previous_line_count = self
@@ -555,10 +607,10 @@ impl KittyWatcher {
                 return Ok(());
             }
 
+            let new_line_count = current_line_count.saturating_sub(previous_line_count);
             debug!(
                 "Captured {} new lines for window {}",
-                current_line_count - previous_line_count,
-                window_id
+                new_line_count, window_id
             );
         }
 

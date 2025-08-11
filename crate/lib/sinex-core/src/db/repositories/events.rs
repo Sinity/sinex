@@ -1562,14 +1562,30 @@ impl<'a> EventRepository<'a> {
         .map_err(|e| db_error(e, "update annotation"))
     }
 
-    /// Delete an annotation
+    /// Delete an annotation (soft delete)
     pub async fn delete_annotation(&self, id: Id<EventAnnotation>) -> DbResult<bool> {
+        self.delete_annotation_with_context(id, "system", "Programmatic deletion")
+            .await
+    }
+
+    /// Delete an annotation with audit context (soft delete)
+    pub async fn delete_annotation_with_context(
+        &self,
+        id: Id<EventAnnotation>,
+        deleted_by: &str,
+        deletion_reason: &str,
+    ) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
-            DELETE FROM core.event_annotations
-            WHERE id = $1
+            UPDATE core.event_annotations
+            SET deleted_at = NOW(),
+                deleted_by = $2,
+                deletion_reason = $3
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
-            *id.as_ulid() as _
+            *id.as_ulid() as _,
+            deleted_by,
+            deletion_reason
         )
         .execute(self.pool)
         .await
@@ -1843,56 +1859,114 @@ impl<'a> EventRepository<'a> {
         Ok(result.rows_affected() > 0)
     }
 
-    /// Delete a test event
+    /// Delete a test event (soft delete)
     pub async fn delete_test_event(&self, id: Id<RawEvent>) -> DbResult<bool> {
+        self.delete_event_with_context(id, "test_system", "Test cleanup")
+            .await
+    }
+
+    /// Delete an event with audit context (soft delete)
+    pub async fn delete_event_with_context(
+        &self,
+        id: Id<RawEvent>,
+        deleted_by: &str,
+        deletion_reason: &str,
+    ) -> DbResult<bool> {
         let result = sqlx::query!(
             r#"
-            DELETE FROM core.events
-            WHERE id = $1
+            UPDATE core.events
+            SET deleted_at = NOW(),
+                deleted_by = $2,
+                deletion_reason = $3
+            WHERE id = $1 AND deleted_at IS NULL
             "#,
-            *id.as_ulid() as _
+            *id.as_ulid() as _,
+            deleted_by,
+            deletion_reason
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "delete test event"))?;
+        .map_err(|e| db_error(e, "delete event"))?;
 
         Ok(result.rows_affected() > 0)
     }
 
-    /// Cleanup test events by source and type
+    /// Cleanup test events by source and type (soft delete)
     pub async fn cleanup_test_events(
         &self,
         source: &EventSource,
         event_type: &EventType,
     ) -> DbResult<u64> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM core.events
-            WHERE source = $1 AND event_type = $2
-            "#,
-            source.as_ref(),
-            event_type.as_ref()
+        self.cleanup_test_events_with_context(
+            Some(source),
+            Some(event_type),
+            "test_system",
+            "Test cleanup by source and type",
         )
-        .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "cleanup test events"))?;
-
-        Ok(result.rows_affected())
     }
 
-    /// Cleanup test events by source only
+    /// Cleanup test events by source only (soft delete)
     pub async fn cleanup_test_events_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        let result = sqlx::query!(
-            r#"
-            DELETE FROM core.events
-            WHERE source = $1
-            "#,
-            source.as_ref()
+        self.cleanup_test_events_with_context(
+            Some(source),
+            None,
+            "test_system",
+            "Test cleanup by source",
         )
-        .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "cleanup test events by source"))?;
+    }
 
+    /// Cleanup events with audit context (soft delete)
+    pub async fn cleanup_test_events_with_context(
+        &self,
+        source: Option<&EventSource>,
+        event_type: Option<&EventType>,
+        deleted_by: &str,
+        deletion_reason: &str,
+    ) -> DbResult<u64> {
+        let result = match (source, event_type) {
+            (Some(src), Some(et)) => {
+                sqlx::query!(
+                    r#"
+                    UPDATE core.events
+                    SET deleted_at = NOW(),
+                        deleted_by = $3,
+                        deletion_reason = $4
+                    WHERE source = $1 AND event_type = $2 AND deleted_at IS NULL
+                    "#,
+                    src.as_ref(),
+                    et.as_ref(),
+                    deleted_by,
+                    deletion_reason
+                )
+                .execute(self.pool)
+                .await
+            }
+            (Some(src), None) => {
+                sqlx::query!(
+                    r#"
+                    UPDATE core.events
+                    SET deleted_at = NOW(),
+                        deleted_by = $2,
+                        deletion_reason = $3
+                    WHERE source = $1 AND deleted_at IS NULL
+                    "#,
+                    src.as_ref(),
+                    deleted_by,
+                    deletion_reason
+                )
+                .execute(self.pool)
+                .await
+            }
+            _ => {
+                return Err(crate::db::error::DbError::ValidationError {
+                    message: "Must specify at least source for cleanup".to_string(),
+                })
+            }
+        };
+
+        let result = result.map_err(|e| db_error(e, "cleanup events"))?;
         Ok(result.rows_affected())
     }
 
@@ -2133,18 +2207,29 @@ impl<'a> EventRepository<'a> {
         Ok(rows)
     }
 
-    /// Delete all events from a specific source (useful for test cleanup)
+    /// Delete all events from a specific source (soft delete, useful for test cleanup)
     pub async fn delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
+        self.cleanup_test_events_with_context(Some(source), None, "system", "Delete by source")
+            .await
+    }
+
+    /// Hard delete events from a specific source (ADMIN USE ONLY)
+    ///
+    /// This bypasses audit controls and permanently removes data.
+    /// Only use for test cleanup or administrative operations where
+    /// you need to actually reclaim disk space.
+    pub async fn hard_delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
         let result = sqlx::query!(
             r#"
-            DELETE FROM core.events
-            WHERE source = $1
+            SELECT enable_audit_bypass();
+            DELETE FROM core.events WHERE source = $1;
+            SELECT disable_audit_bypass();
             "#,
             source.as_str()
         )
         .execute(self.pool)
         .await
-        .map_err(|e| db_error(e, "delete by source"))?;
+        .map_err(|e| db_error(e, "hard delete by source"))?;
 
         Ok(result.rows_affected())
     }

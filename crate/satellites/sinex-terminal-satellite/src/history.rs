@@ -82,27 +82,25 @@ impl HistoryWatcher {
     /// Initialize file positions to current end of files
     fn initialize_positions(&mut self) -> SatelliteResult<()> {
         for file_path in &self.files {
-            if file_path.exists() {
-                match fs::metadata(file_path) {
-                    Ok(metadata) => {
-                        self.file_positions
-                            .insert(file_path.clone(), metadata.len());
-                        info!(
-                            "Tracking history file: {} (starting at byte {})",
-                            file_path.as_str(),
-                            metadata.len()
-                        );
-                    }
-                    Err(e) => {
-                        warn!("Failed to get metadata for {}: {}", file_path.as_str(), e);
-                    }
+            // Use direct metadata call without existence check to avoid TOCTOU race
+            // This is atomic and handles non-existent files gracefully
+            match fs::metadata(file_path) {
+                Ok(metadata) => {
+                    self.file_positions
+                        .insert(file_path.clone(), metadata.len());
+                    info!(
+                        "Tracking history file: {} (starting at byte {})",
+                        file_path.as_str(),
+                        metadata.len()
+                    );
                 }
-            } else {
-                info!(
-                    "History file does not exist (will watch if created): {}",
-                    file_path.as_str()
-                );
-                self.file_positions.insert(file_path.clone(), 0);
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    debug!("History file does not exist yet: {}", file_path.as_str());
+                    // File doesn't exist yet, will be handled when it's created
+                }
+                Err(e) => {
+                    warn!("Failed to get metadata for {}: {}", file_path.as_str(), e);
+                }
             }
         }
         Ok(())

@@ -4,7 +4,7 @@ use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
 use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 use validator::Validate;
 
 /// Configuration for the ingestion daemon
@@ -130,28 +130,42 @@ impl IngestdConfig {
         })?;
 
         // Additional runtime validation - create directories if needed
+        // Using atomic create_dir_all to avoid TOCTOU race conditions
         if let Some(parent) = Utf8PathBuf::from(&self.socket_path).parent() {
-            if !parent.exists() {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    SinexError::configuration(format!(
+            match tokio::fs::create_dir_all(parent).await {
+                Ok(()) => {
+                    debug!("Ensured socket directory exists: {}", parent.as_str());
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Directory already exists, this is fine
+                    debug!("Socket directory already exists: {}", parent.as_str());
+                }
+                Err(e) => {
+                    return Err(SinexError::configuration(format!(
                         "Cannot create socket directory {}: {}",
                         parent.as_str(),
                         e
-                    ))
-                })?;
+                    )));
+                }
             }
         }
 
-        if !self.work_dir.exists() {
-            tokio::fs::create_dir_all(&self.work_dir)
-                .await
-                .map_err(|e| {
-                    SinexError::configuration(format!(
-                        "Cannot create work directory {}: {}",
-                        self.work_dir.as_str(),
-                        e
-                    ))
-                })?;
+        // Ensure work directory exists using atomic create_dir_all
+        match tokio::fs::create_dir_all(&self.work_dir).await {
+            Ok(()) => {
+                debug!("Ensured work directory exists: {}", self.work_dir.as_str());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Directory already exists, this is fine
+                debug!("Work directory already exists: {}", self.work_dir.as_str());
+            }
+            Err(e) => {
+                return Err(SinexError::configuration(format!(
+                    "Cannot create work directory {}: {}",
+                    self.work_dir.as_str(),
+                    e
+                )));
+            }
         }
 
         // Test database connection

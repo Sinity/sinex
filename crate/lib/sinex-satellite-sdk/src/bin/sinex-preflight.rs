@@ -227,7 +227,7 @@ async fn run_complete_verification(
                 report.errors.push(format!("Phase {:?}: {}", phase, e));
                 PhaseResult {
                     status: VerificationStatus::Fail,
-                    duration_ms: phase_start.elapsed().as_millis() as u64,
+                    duration_ms: phase_start.elapsed().as_millis().min(u64::MAX as u128) as u64,
                     details: serde_json::json!({"error": e.to_string()}),
                     messages: vec![e.to_string()],
                 }
@@ -254,7 +254,7 @@ async fn run_complete_verification(
 
     report.overall_status = overall_status.clone();
     report.completed_at = Some(chrono::Utc::now());
-    report.duration_ms = Some(start_time.elapsed().as_millis() as u64);
+    report.duration_ms = Some(start_time.elapsed().as_millis().min(u64::MAX as u128) as u64);
 
     // Output report
     output_report(&report, output_format).await?;
@@ -284,7 +284,7 @@ async fn run_verification_phase(phase: &VerificationPhase) -> Result<PhaseResult
 
     Ok(PhaseResult {
         status,
-        duration_ms: start.elapsed().as_millis() as u64,
+        duration_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
         details,
         messages,
     })

@@ -40,7 +40,7 @@ use std::time::{Duration, SystemTime};
 use tokio::fs;
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Recording session information
 #[derive(Debug)]
@@ -79,15 +79,29 @@ pub struct RecordingWatcher {
 impl RecordingWatcher {
     /// Create new recording watcher
     pub async fn new(recordings_dir: Utf8PathBuf) -> SatelliteResult<Self> {
-        // Ensure recordings directory exists
-        if !recordings_dir.exists() {
-            fs::create_dir_all(&recordings_dir).await.map_err(|e| {
-                sinex_satellite_sdk::SatelliteError::Processing(format!(
+        // Ensure recordings directory exists using atomic create_dir_all
+        // This is safe from TOCTOU attacks as it's a single atomic operation
+        match fs::create_dir_all(&recordings_dir).await {
+            Ok(()) => {
+                debug!(
+                    "Ensured recordings directory exists: {}",
+                    recordings_dir.as_str()
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // Directory already exists, this is fine
+                debug!(
+                    "Recordings directory already exists: {}",
+                    recordings_dir.as_str()
+                );
+            }
+            Err(e) => {
+                return Err(sinex_satellite_sdk::SatelliteError::Processing(format!(
                     "Failed to create recordings directory {}: {}",
                     recordings_dir.as_str(),
                     e
-                ))
-            })?;
+                )));
+            }
         }
 
         let watcher = Self {

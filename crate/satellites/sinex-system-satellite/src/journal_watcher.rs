@@ -217,7 +217,7 @@ impl JournalWatcher {
                 entries_count,
                 time_start: None,
                 time_end: None,
-                duration_ms: start_time.elapsed().as_millis() as u64,
+                duration_ms: start_time.elapsed().as_millis().min(u64::MAX as u128) as u64,
             };
 
             let sync_event: RawEvent = Event::new(EventJournalSyncCompletedPayload {

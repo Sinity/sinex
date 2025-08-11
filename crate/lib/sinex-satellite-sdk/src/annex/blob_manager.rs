@@ -311,7 +311,7 @@ impl BlobManager {
         // Emit blob retrieved event
         let event: RawEvent = Event::new(BlobRetrievedPayload {
             blob_id: annex_key.to_string(), // Using annex_key as blob identifier
-            retrieval_time_ms: start.elapsed().as_millis() as u64,
+            retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
             cache_hit: true, // git-annex get ensures it's local
         })
         .with_ts_orig(Some(chrono::Utc::now()))
@@ -337,7 +337,7 @@ impl BlobManager {
         // Emit blob retrieved event
         let event: RawEvent = Event::new(BlobRetrievedPayload {
             blob_id: blob_id.to_string(),
-            retrieval_time_ms: start.elapsed().as_millis() as u64,
+            retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
             cache_hit: true, // git-annex get ensures it's local
         })
         .with_ts_orig(Some(chrono::Utc::now()))
