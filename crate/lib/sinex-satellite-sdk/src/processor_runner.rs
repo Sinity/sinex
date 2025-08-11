@@ -92,11 +92,7 @@ impl<P: StatefulStreamProcessor> ProcessorRunner<P> {
 
         info!(
             "Starting {} '{}' in service mode",
-            match processor_type {
-                ProcessorType::Ingestor => "ingestor",
-                ProcessorType::Automaton => "automaton",
-            },
-            processor_name
+            processor_type, processor_name
         );
 
         match processor_type {

@@ -415,38 +415,7 @@ impl<'a> CheckpointRepository<'a> {
         .await
     }
 
-    /// Delete checkpoint with audit context (soft delete)
-    pub async fn delete_with_context(
-        &self,
-        processor_name: &ProcessorName,
-        consumer_group: &ConsumerGroup,
-        consumer_name: &ConsumerName,
-        deleted_by: &str,
-        deletion_reason: &str,
-    ) -> DbResult<bool> {
-        let result = sqlx::query!(
-            r#"
-            UPDATE core.processor_checkpoints 
-            SET deleted_at = NOW(),
-                deleted_by = $4,
-                deletion_reason = $5
-            WHERE processor_name = $1 
-              AND consumer_group = $2 
-              AND consumer_name = $3
-             
-            "#,
-            processor_name.as_str(),
-            consumer_group.as_str(),
-            consumer_name.as_str(),
-            deleted_by,
-            deletion_reason
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "delete checkpoint"))?;
-
-        Ok(result.rows_affected() > 0)
-    }
+    // Removed: soft delete functionality - use hard delete with operations_log instead
 
     pub async fn list(
         &self,
@@ -476,7 +445,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
-                    WHERE deleted_at IS NULL
+                    
                     ORDER BY updated_at DESC
                     "#
             )
@@ -501,7 +470,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
-                    WHERE deleted_at IS NULL
+                    
                     ORDER BY updated_at DESC
                     LIMIT $1
                     "#,
@@ -531,7 +500,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
-                    WHERE deleted_at IS NULL
+                    
                     ORDER BY updated_at DESC
                     LIMIT 100
                     "#
