@@ -440,13 +440,13 @@ impl ReplayManager {
 
         // Check time range
         if let Some(start_time) = filters.start_time {
-            if event.ts_ingest < start_time {
+            if event.ts_orig.as_ref().map_or(false, |ts| *ts < start_time) {
                 return false;
             }
         }
 
         if let Some(end_time) = filters.end_time {
-            if event.ts_ingest > end_time {
+            if event.ts_orig.as_ref().map_or(false, |ts| *ts > end_time) {
                 return false;
             }
         }

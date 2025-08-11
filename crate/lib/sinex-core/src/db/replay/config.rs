@@ -4,7 +4,6 @@
 //! including cascade analysis, batch processing, and depth limits.
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
 
 /// Configuration for cascade analysis operations
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,12 +6,10 @@ description = "Unified document ingestor for all file types using source materia
 
 [dependencies]
 mimalloc = { workspace = true }
-anyhow = "1.0"
 async-trait = "0.1"
 color-eyre.workspace = true
 camino = { workspace = true }
 chrono = { version = "0.4", features = ["serde"] }
-clap = { version = "4.0", features = ["derive"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tokio = { version = "1.0", features = ["full"] }
@@ -23,4 +21,3 @@ sinex-core = { path = "../../lib/sinex-core" }
 
 # File processing
 mime_guess = "2.0"
-blake3 = "1.0"

@@ -3,13 +3,14 @@
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use serde_json;
 use sinex_satellite_sdk::{
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon,
     },
-    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteResult,
-    SourceState,
+    CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SatelliteError,
+    SatelliteResult, SourceState,
 };
 use std::collections::HashMap;
 use tracing::{info, warn};

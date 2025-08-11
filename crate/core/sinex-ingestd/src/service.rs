@@ -143,7 +143,7 @@ impl IngestService {
             validator: Arc::new(Mutex::new(validator)),
             stats: Arc::new(IngestStats::new()),
             shutdown_flag: Arc::new(AtomicBool::new(false)),
-            event_buffer: Arc::new(Mutex::new(Vec::new())),
+            event_buffer: Arc::new(Mutex::new(Vec::with_capacity(config.batch_size))),
             last_flush: Arc::new(Mutex::new(SystemTime::now())),
             telemetry,
             subject_cache: Arc::new(Mutex::new(AHashMap::new())),
@@ -550,24 +550,25 @@ impl IngestService {
         // Begin transaction for atomicity
         let mut tx = pool.begin().await?;
 
-        // Prepare arrays for UNNEST batch insert
-        let mut event_ids = Vec::new();
-        let mut sources = Vec::new();
-        let mut event_types = Vec::new();
-        let mut hosts = Vec::new();
-        let mut payloads = Vec::new();
-        let mut ts_origs = Vec::new();
-        let mut ingestor_versions = Vec::new();
-        let mut payload_schema_ids = Vec::new();
-        let mut source_event_id_arrays = Vec::new();
-        let mut source_material_ids = Vec::new();
-        let mut source_material_offset_starts = Vec::new();
-        let mut source_material_offset_ends = Vec::new();
-        let mut anchor_bytes = Vec::new();
-        let mut associated_blob_id_arrays = Vec::new();
+        // Prepare arrays for UNNEST batch insert with pre-sized capacity
+        let event_count = events.len();
+        let mut event_ids = Vec::with_capacity(event_count);
+        let mut sources = Vec::with_capacity(event_count);
+        let mut event_types = Vec::with_capacity(event_count);
+        let mut hosts = Vec::with_capacity(event_count);
+        let mut payloads = Vec::with_capacity(event_count);
+        let mut ts_origs = Vec::with_capacity(event_count);
+        let mut ingestor_versions = Vec::with_capacity(event_count);
+        let mut payload_schema_ids = Vec::with_capacity(event_count);
+        let mut source_event_id_arrays = Vec::with_capacity(event_count);
+        let mut source_material_ids = Vec::with_capacity(event_count);
+        let mut source_material_offset_starts = Vec::with_capacity(event_count);
+        let mut source_material_offset_ends = Vec::with_capacity(event_count);
+        let mut anchor_bytes = Vec::with_capacity(event_count);
+        let mut associated_blob_id_arrays = Vec::with_capacity(event_count);
 
         // Outbox entries for NATS publishing
-        let mut outbox_entries = Vec::new();
+        let mut outbox_entries = Vec::with_capacity(event_count);
 
         for event in events {
             // Generate ID if not present
@@ -693,7 +694,7 @@ impl IngestService {
 
     /// Add event to buffer
     async fn add_event_to_buffer(&self, event: RawEvent) -> IngestdResult<()> {
-        let event_type = event.event_type.clone();
+        let event_type = &event.event_type;
         let start = std::time::Instant::now();
 
         let mut buffer = self.event_buffer.lock().await;
@@ -702,7 +703,7 @@ impl IngestService {
         // Record telemetry
         if let Some(ref telemetry) = self.telemetry {
             let duration_ms = start.elapsed().as_secs_f64() * 1000.0;
-            telemetry.record_event_processed(&event_type, duration_ms);
+            telemetry.record_event_processed(event_type.as_str(), duration_ms);
         }
 
         // Check if we should flush immediately
@@ -872,7 +873,7 @@ impl IngestServiceTrait for IngestServiceImpl {
             }));
         }
 
-        let mut event_ids = Vec::new();
+        let mut event_ids = Vec::with_capacity(event_count);
         let mut processed_count = 0;
         let mut failed_count = 0;
 
