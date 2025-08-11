@@ -625,7 +625,7 @@ impl<'a> EventRepository<'a> {
                 payload_schema_name,
                 payload_schema_version
             FROM core.events 
-            WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 AND deleted_at IS NULL
+            WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
             ORDER BY ts_ingest DESC
             LIMIT $4
             "#,
@@ -685,6 +685,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
+    #[instrument(skip(self, filters), fields(limit = ?filters.limit, offset = ?filters.offset, source = ?filters.source, event_type = ?filters.event_type))]
     pub async fn search(&self, filters: EventSearchFilters) -> DbResult<Vec<RawEvent>> {
         use crate::db::schema::Events;
         use sea_query::{Alias, Expr, PostgresQueryBuilder, Query};
@@ -851,6 +852,7 @@ impl<'a> EventRepository<'a> {
         Ok(records.into_iter().map(|r| r.to_event()).collect())
     }
 
+    #[instrument(skip(self), fields(interval = interval, start = %start, end = %end))]
     pub async fn time_series_aggregate(
         &self,
         interval: &str,
@@ -909,6 +911,7 @@ impl<'a> EventRepository<'a> {
             .map_err(|e| db_error(e, "time series aggregate"))
     }
 
+    #[instrument(skip(self, tx, event), fields(event_source = %event.source, event_type = %event.event_type))]
     pub async fn insert_with_tx(
         &self,
         tx: &mut Transaction<'_, Postgres>,
@@ -1044,7 +1047,10 @@ impl<'a> EventRepository<'a> {
 
         // For very small batches, use individual inserts to avoid overhead
         if events.len() == 1 {
-            let event = events.into_iter().next().unwrap();
+            let event = events
+                .into_iter()
+                .next()
+                .expect("events.len() == 1 but no element found - this should never happen");
             let inserted = self.insert(event).await?;
             return Ok(vec![inserted]);
         }
@@ -1589,7 +1595,7 @@ impl<'a> EventRepository<'a> {
             SET deleted_at = NOW(),
                 deleted_by = $2,
                 deletion_reason = $3
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1
             "#,
             *id.as_ulid() as _,
             deleted_by,
@@ -1623,7 +1629,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.event_annotations
-            WHERE content ILIKE $1 AND deleted_at IS NULL
+            WHERE content ILIKE $1
             ORDER BY created_at DESC
             LIMIT $2
             "#,
@@ -1886,7 +1892,7 @@ impl<'a> EventRepository<'a> {
             SET deleted_at = NOW(),
                 deleted_by = $2,
                 deletion_reason = $3
-            WHERE id = $1 AND deleted_at IS NULL
+            WHERE id = $1
             "#,
             *id.as_ulid() as _,
             deleted_by,
@@ -1941,7 +1947,7 @@ impl<'a> EventRepository<'a> {
                     SET deleted_at = NOW(),
                         deleted_by = $3,
                         deletion_reason = $4
-                    WHERE source = $1 AND event_type = $2 AND deleted_at IS NULL
+                    WHERE source = $1 AND event_type = $2
                     "#,
                     src.as_ref(),
                     et.as_ref(),
@@ -1958,7 +1964,7 @@ impl<'a> EventRepository<'a> {
                     SET deleted_at = NOW(),
                         deleted_by = $2,
                         deletion_reason = $3
-                    WHERE source = $1 AND deleted_at IS NULL
+                    WHERE source = $1
                     "#,
                     src.as_ref(),
                     deleted_by,

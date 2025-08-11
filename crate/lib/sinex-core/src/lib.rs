@@ -87,6 +87,9 @@ pub use types::{
     Ulid,
 };
 
+// Re-export commonly used event payloads at crate root
+pub use types::events::payloads;
+
 pub use db::{
     constants, create_database_if_not_exists, create_pool, create_pool_strict,
     create_pool_with_config, create_pool_with_config_strict, create_test_pool, distributed_locking,

@@ -307,7 +307,7 @@ impl<'a> StateRepository<'a> {
                 created_at,
                 updated_at
             FROM core.processor_checkpoints 
-            WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default' AND deleted_at IS NULL
+            WHERE processor_name = $1 AND consumer_group = 'default' AND consumer_name = 'default'
             "#,
             processor_name
         )
@@ -336,7 +336,7 @@ impl<'a> StateRepository<'a> {
                 created_at,
                 updated_at
             FROM core.processor_checkpoints 
-            WHERE consumer_group = 'default' AND consumer_name = 'default' AND deleted_at IS NULL
+            WHERE consumer_group = 'default' AND consumer_name = 'default'
             ORDER BY name
             "#
         )
@@ -345,27 +345,27 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "get all checkpoints"))
     }
 
-    /// Delete checkpoint for a processor (soft delete)
+    /// Delete checkpoint for a processor
     pub async fn delete_checkpoint(&self, processor_name: &str) -> DbResult<bool> {
-        self.delete_checkpoint_with_context(processor_name, "system", "Processor cleanup")
+        self.delete_checkpoint_with_reason(processor_name, "system", "Processor cleanup")
             .await
     }
 
-    /// Delete checkpoint with audit context (soft delete)
-    pub async fn delete_checkpoint_with_context(
+    /// Delete checkpoint with reason logging
+    pub async fn delete_checkpoint_with_reason(
         &self,
         processor_name: &str,
-        deleted_by: &str,
-        deletion_reason: &str,
+        actor: &str,
+        reason: &str,
     ) -> DbResult<bool> {
-        // Start transaction to ensure atomicity of event emission and state change
+        // Start transaction to ensure atomicity of operation logging and deletion
         let mut tx = self
             .pool
             .begin()
             .await
             .map_err(|e| db_error(e, "begin delete checkpoint transaction"))?;
 
-        // Get the checkpoint details before deletion for the event
+        // Get the checkpoint details before deletion for logging
         let checkpoint_to_delete = sqlx::query!(
             r#"
             SELECT 
@@ -377,7 +377,6 @@ impl<'a> StateRepository<'a> {
             WHERE processor_name = $1 
               AND consumer_group = 'default' 
               AND consumer_name = 'default'
-              AND deleted_at IS NULL
             "#,
             processor_name
         )
@@ -386,7 +385,26 @@ impl<'a> StateRepository<'a> {
         .map_err(|e| db_error(e, "fetch checkpoint before deletion"))?;
 
         if let Some(checkpoint) = checkpoint_to_delete {
-            // Emit checkpoint deleted event BEFORE the state change
+            // Log the deletion operation to operations_log
+            let deletion_operation = Operation::builder()
+                .actor(actor.to_string())
+                .scope(serde_json::json!({
+                    "operation_type": "delete_checkpoint",
+                    "processor_name": processor_name,
+                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "reason": reason
+                }))
+                .state("completed".to_string())
+                .outcome("success".to_string())
+                .started_at(Utc::now())
+                .finished_at(Utc::now())
+                .created_at(Utc::now())
+                .build();
+
+            let mut repo_tx = StateRepositoryTx { tx: &mut tx };
+            repo_tx.log_operation(deletion_operation).await?;
+
+            // Emit checkpoint deleted event for event sourcing
             let checkpoint_deleted_event = RawEvent::new(
                 EventSource::new("sinex.state.checkpoint".to_string()),
                 EventType::new("checkpoint.deleted".to_string()),
@@ -396,8 +414,8 @@ impl<'a> StateRepository<'a> {
                     "consumer_name": checkpoint.consumer_name,
                     "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
                     "last_processed_count": checkpoint.processed_count,
-                    "deleted_by": deleted_by,
-                    "reason": deletion_reason
+                    "deleted_by": actor,
+                    "reason": reason
                 })
             )
             .with_host(HostName::new("sinex.state".to_string()));
@@ -405,33 +423,31 @@ impl<'a> StateRepository<'a> {
             self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
                 .await
                 .map_err(|e| db_error(e, "emit checkpoint deleted event"))?;
-        }
 
-        // Now perform the soft deletion
-        let result = sqlx::query!(
-            r#"
-            UPDATE core.processor_checkpoints 
-            SET deleted_at = NOW(),
-                deleted_by = $2,
-                deletion_reason = $3
-            WHERE processor_name = $1 
-              AND consumer_group = 'default' 
-              AND consumer_name = 'default'
-              AND deleted_at IS NULL
-            "#,
-            processor_name,
-            deleted_by,
-            deletion_reason
-        )
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| db_error(e, "delete checkpoint"))?;
-
-        tx.commit()
+            // Now perform the actual hard deletion
+            let result = sqlx::query!(
+                r#"
+                DELETE FROM core.processor_checkpoints 
+                WHERE processor_name = $1 
+                  AND consumer_group = 'default' 
+                  AND consumer_name = 'default'
+                "#,
+                processor_name
+            )
+            .execute(&mut *tx)
             .await
-            .map_err(|e| db_error(e, "commit delete checkpoint transaction"))?;
+            .map_err(|e| db_error(e, "delete checkpoint"))?;
 
-        Ok(result.rows_affected() > 0)
+            tx.commit()
+                .await
+                .map_err(|e| db_error(e, "commit delete checkpoint transaction"))?;
+
+            Ok(result.rows_affected() > 0)
+        } else {
+            // No checkpoint to delete
+            tx.rollback().await.ok();
+            Ok(false)
+        }
     }
 
     // ===== Operations Log Methods =====

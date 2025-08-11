@@ -45,7 +45,7 @@ impl<'a> EventRepository<'a> {
             WHERE source = $1 
               AND ts_ingest >= $2 
               AND ts_ingest <= $3
-              AND deleted_at IS NULL
+
             ORDER BY ts_ingest DESC
             LIMIT $4 OFFSET $5
             "#,
@@ -77,7 +77,7 @@ impl<'a> EventRepository<'a> {
             WHERE source = $1 
               AND ts_ingest >= $2 
               AND ts_ingest <= $3
-              AND deleted_at IS NULL
+
             "#,
             source.as_str(),
             start,

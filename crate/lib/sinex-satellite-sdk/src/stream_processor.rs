@@ -689,6 +689,15 @@ pub enum ProcessorType {
     Automaton,
 }
 
+impl std::fmt::Display for ProcessorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ingestor => write!(f, "ingestor"),
+            Self::Automaton => write!(f, "automaton"),
+        }
+    }
+}
+
 /// Processor capabilities
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessorCapabilities {

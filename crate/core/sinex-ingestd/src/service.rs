@@ -452,6 +452,7 @@ impl IngestService {
     ///
     /// Optimized version that batches NATS publishes and database operations
     /// for better async performance and reduced latency.
+    /// Uses proper transactions to ensure atomicity between outbox reads and deletes.
     async fn process_outbox(pool: &PgPool, js: &jetstream::Context) -> IngestdResult<u32> {
         #[derive(sqlx::FromRow)]
         struct OutboxEntry {
@@ -462,14 +463,22 @@ impl IngestService {
             created_at: sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>,
         }
 
-        // Read pending outbox entries (limit 100 for batching)
+        // Begin transaction for atomic read-and-lock operation
+        let mut tx = pool.begin().await?;
+
+        // Read and lock pending outbox entries (limit 100 for batching)
+        // Use SELECT FOR UPDATE to prevent concurrent processing of same entries
         let pending = sqlx::query_as::<_, OutboxEntry>(
-            "SELECT id, event_id, subject, payload, created_at FROM core.outbox ORDER BY created_at LIMIT 100"
+            "SELECT id, event_id, subject, payload, created_at FROM core.outbox 
+             ORDER BY created_at 
+             LIMIT 100 
+             FOR UPDATE SKIP LOCKED",
         )
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
 
         if pending.is_empty() {
+            tx.rollback().await?;
             return Ok(0);
         }
 
@@ -477,7 +486,7 @@ impl IngestService {
         let mut publish_futures = Vec::new();
         let mut entry_data = Vec::new();
 
-        for entry in pending {
+        for entry in &pending {
             let event_data = serde_json::to_vec(&entry.payload)?;
             let mut headers = async_nats::HeaderMap::new();
             headers.insert(
@@ -488,13 +497,13 @@ impl IngestService {
             let publish_future =
                 js.publish_with_headers(entry.subject.clone(), headers, event_data.into());
             publish_futures.push(publish_future);
-            entry_data.push((entry.id, entry.subject));
+            entry_data.push((entry.id, entry.subject.clone()));
         }
 
         // Execute all NATS publishes concurrently
         let publish_results = futures::future::join_all(publish_futures).await;
 
-        // Collect IDs of successfully published entries for batch deletion
+        // Collect IDs of successfully published entries for transactional deletion
         let mut successful_ids = Vec::new();
         let mut processed = 0;
 
@@ -510,16 +519,16 @@ impl IngestService {
                         "Failed to publish outbox entry {} (subject: {}) to NATS: {}",
                         entry_id, subject, e
                     );
-                    // Keep entry in outbox for retry
+                    // Keep entry in outbox for retry - it will remain locked until tx ends
                 }
             }
         }
 
-        // Batch delete all successfully published entries
+        // Transactionally delete all successfully published entries
         if !successful_ids.is_empty() {
             match sqlx::query("DELETE FROM core.outbox WHERE id = ANY($1)")
                 .bind(&successful_ids)
-                .execute(pool)
+                .execute(&mut *tx)
                 .await
             {
                 Ok(result) => {
@@ -531,6 +540,8 @@ impl IngestService {
                             deleted_count
                         );
                     }
+                    // Commit transaction - this makes the deletions atomic
+                    tx.commit().await?;
                 }
                 Err(e) => {
                     error!(
@@ -538,10 +549,14 @@ impl IngestService {
                         successful_ids.len(),
                         e
                     );
-                    // This is problematic as we may have published but not cleaned up
-                    // In a production system, you might want to log these IDs for manual cleanup
+                    // Rollback transaction on delete failure
+                    tx.rollback().await?;
+                    return Err(e.into());
                 }
             }
+        } else {
+            // No successful publishes, rollback to release locks
+            tx.rollback().await?;
         }
 
         Ok(processed)

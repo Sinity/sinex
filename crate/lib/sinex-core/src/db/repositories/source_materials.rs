@@ -194,7 +194,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id,
+                id,
                 material_type,
                 source_uri,
                 encoding,
@@ -204,7 +204,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 optional_blob_id
             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
             RETURNING 
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -241,7 +241,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -255,7 +255,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 updated_at,
                 optional_blob_id as "blob_id: Id<crate::models::Blob>"
             FROM raw.source_material_registry
-            WHERE source_material_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _
         )
@@ -273,7 +273,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -302,7 +302,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -338,7 +338,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -378,7 +378,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -413,7 +413,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 is_archived = true,
                 archive_time = NOW(),
                 updated_at = NOW()
-            WHERE source_material_id = $1 AND NOT is_archived
+            WHERE id = $1 AND NOT is_archived
             "#,
             *id.as_ulid() as _
         )
@@ -436,7 +436,7 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             SELECT
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -476,9 +476,9 @@ impl<'a> SourceMaterialRepository<'a> {
             SET 
                 metadata = $2,
                 updated_at = NOW()
-            WHERE source_material_id = $1
+            WHERE id = $1
             RETURNING 
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -549,12 +549,12 @@ impl<'a> SourceMaterialRepository<'a> {
             SourceMaterialRecord,
             r#"
             INSERT INTO raw.source_material_registry (
-                source_material_id, material_type, source_uri, metadata, content_preview
+                id, material_type, source_uri, metadata, content_preview
             ) VALUES (
                 $1, $2, $3, $4, $5
             )
             RETURNING 
-                source_material_id as "id: Id<SourceMaterialRecord>",
+                id as "id: Id<SourceMaterialRecord>",
                 material_type,
                 source_uri,
                 ingestion_time,
@@ -594,7 +594,7 @@ impl<'a> SourceMaterialRepository<'a> {
                 encoding = $3,
                 content_preview = $4,
                 updated_at = NOW()
-            WHERE source_material_id = $1
+            WHERE id = $1
             "#,
             *id.as_ulid() as _,
             blob_id.map(|id| *id.as_ulid()) as _,

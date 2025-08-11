@@ -463,7 +463,9 @@ mod tests {
 
         // Should have acquired the lock (check by accessing the inner resource)
         let resource_ref = resource_lock.resource().await;
-        let inner_lock = resource_ref.as_ref().expect("Resource should exist");
+        let inner_lock = resource_ref
+            .as_ref()
+            .expect("Resource should exist after acquiring lock");
         assert!(inner_lock.is_acquired());
         drop(resource_ref); // Release the lock on the resource
 

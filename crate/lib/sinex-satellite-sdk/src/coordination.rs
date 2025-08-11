@@ -190,6 +190,7 @@ impl SatelliteCoordination {
     }
 
     /// Run as leader with event processing and handoff monitoring
+    #[instrument(skip(self, leadership, process_events), fields(service = %self.instance.service_name, instance = %self.instance.instance_id))]
     async fn run_as_leader<F, Fut>(
         &mut self,
         leadership: LeadershipGuard,
@@ -266,6 +267,7 @@ impl SatelliteCoordination {
     }
 
     /// Run as standby, monitoring for leadership opportunities
+    #[instrument(skip(self), fields(service = %self.instance.service_name, instance = %self.instance.instance_id))]
     async fn run_as_standby(&self) -> Result<()> {
         debug!("Running in STANDBY mode");
 
@@ -290,6 +292,7 @@ impl SatelliteCoordination {
     }
 
     /// Verify preflight checks before becoming leader
+    #[instrument(skip(self), fields(service = %self.instance.service_name))]
     async fn verify_preflight_checks(&self) -> Result<bool> {
         match crate::preflight::services::verify_service_dependencies().await {
             Ok((status, _details, messages)) => {
@@ -377,18 +380,24 @@ impl SatelliteCoordination {
             "🔄 Starting graceful handoff process"
         );
 
+        // Begin transaction to ensure atomicity between work completion and signaling
+        let mut tx = self.pool.begin().await?;
+
         // Finish current critical work
         self.finish_critical_work().await?;
 
-        // Signal ready for handoff
+        // Signal ready for handoff - within transaction
         sqlx::query!(
             "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
              VALUES ($1, 'handoff_ready', $2, NOW())",
             request.from_instance,
             "Ready for leadership transfer"
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
+
+        // Commit transaction - makes work completion and signaling atomic
+        tx.commit().await?;
 
         // 📊 COORDINATION EVENT: Handoff Ready
         info!(
@@ -412,14 +421,21 @@ impl SatelliteCoordination {
 
     /// Signal critical failure to other instances
     async fn signal_critical_failure(&self, error: &str) -> Result<()> {
+        // Begin transaction to ensure atomicity between database signal and coordinator signal
+        let mut tx = self.pool.begin().await?;
+
         sqlx::query!(
             "INSERT INTO core.satellite_signals (target_instance, signal_type, message, created_at)
              VALUES ('ALL', 'leader_failure', $1, NOW())",
             error
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await?;
 
+        // Commit the database signal first
+        tx.commit().await?;
+
+        // Only signal the coordinator after successful database commit
         error!("Signaled critical failure to standbys: {}", error);
         self.failure_coordinator.signal();
         Ok(())

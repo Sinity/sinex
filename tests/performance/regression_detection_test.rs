@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use std::time::{Duration as StdDuration, Instant};
 
 /// Performance regression detection results
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct RegressionDetectionResult {
     pub operation_name: String,
     pub baseline_performance: PerformanceBaseline,
@@ -27,7 +27,7 @@ pub struct RegressionDetectionResult {
     pub recommendations: Vec<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct PerformanceMeasurement {
     pub average_latency: StdDuration,
     pub percentile_95_latency: StdDuration,
@@ -47,6 +47,7 @@ pub enum RegressionSeverity {
 }
 
 /// Regression detection engine
+#[derive(bon::Builder)]
 pub struct RegressionDetector {
     baselines: HashMap<String, PerformanceBaseline>,
     thresholds: RegressionThresholds,
@@ -56,7 +57,7 @@ pub struct RegressionDetector {
     start_time: Instant,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, bon::Builder)]
 pub struct RegressionThresholds {
     pub latency_minor_threshold: f64,       // 1.1 = 10% increase
     pub latency_moderate_threshold: f64,    // 1.25 = 25% increase

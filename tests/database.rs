@@ -11,8 +11,11 @@
 //! for unified database access patterns.
 
 use serde_json::json;
-use sinex_core::types::events::payloads::filesystem::{FileCreatedPayload, FileModifiedPayload};
-use sinex_core::DbPoolExt;
+// Using shorter imports from sinex-core's re-exports
+use sinex_core::{
+    payloads::filesystem::{FileCreatedPayload, FileModifiedPayload},
+    DbPoolExt,
+};
 use sinex_test_utils::prelude::*;
 use std::time::Duration as StdDuration;
 

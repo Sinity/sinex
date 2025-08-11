@@ -87,7 +87,7 @@ struct KittyWindowState {
 }
 
 /// Process information for tracking changes
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, bon::Builder)]
 pub struct KittyProcessInfo {
     pid: u32,
     name: String,

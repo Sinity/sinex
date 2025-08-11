@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 const TELEMETRY_INTERVAL_SECS: u64 = 300;
 
 /// Container holding all service instances
-#[derive(Clone)]
+#[derive(Clone, bon::Builder)]
 pub struct ServiceContainer {
     pub analytics: Arc<AnalyticsService>,
     pub content: Arc<ContentService>,

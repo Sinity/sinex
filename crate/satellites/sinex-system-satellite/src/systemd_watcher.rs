@@ -19,6 +19,87 @@ use tokio::sync::mpsc;
 use tokio::time::timeout;
 use tracing::{debug, error, info, warn};
 
+/// SystemD unit types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SystemdUnitType {
+    Service,
+    Timer,
+    Socket,
+    Target,
+    Mount,
+    Other,
+}
+
+impl SystemdUnitType {
+    /// Determine unit type from unit name
+    pub fn from_unit_name(unit_name: &str) -> Self {
+        if unit_name.ends_with(".service") {
+            Self::Service
+        } else if unit_name.ends_with(".timer") {
+            Self::Timer
+        } else if unit_name.ends_with(".socket") {
+            Self::Socket
+        } else if unit_name.ends_with(".target") {
+            Self::Target
+        } else if unit_name.ends_with(".mount") {
+            Self::Mount
+        } else {
+            Self::Other
+        }
+    }
+}
+
+impl std::fmt::Display for SystemdUnitType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Service => write!(f, "service"),
+            Self::Timer => write!(f, "timer"),
+            Self::Socket => write!(f, "socket"),
+            Self::Target => write!(f, "target"),
+            Self::Mount => write!(f, "mount"),
+            Self::Other => write!(f, "other"),
+        }
+    }
+}
+
+/// SystemD unit states
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum SystemdUnitState {
+    Active,
+    Inactive,
+    Failed,
+    Activating,
+    Deactivating,
+    Unknown,
+}
+
+impl SystemdUnitState {
+    /// Parse unit state from systemctl output
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "active" => Self::Active,
+            "inactive" => Self::Inactive,
+            "failed" => Self::Failed,
+            "activating" => Self::Activating,
+            "deactivating" => Self::Deactivating,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+impl std::fmt::Display for SystemdUnitState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Active => write!(f, "active"),
+            Self::Inactive => write!(f, "inactive"),
+            Self::Failed => write!(f, "failed"),
+            Self::Activating => write!(f, "activating"),
+            Self::Deactivating => write!(f, "deactivating"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
 /// systemd watcher configuration
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SystemdConfig {
@@ -76,19 +157,7 @@ impl SystemdWatcher {
                 let description = parts[1].trim();
 
                 // Determine unit type
-                let unit_type = if unit_name.ends_with(".service") {
-                    "service"
-                } else if unit_name.ends_with(".timer") {
-                    "timer"
-                } else if unit_name.ends_with(".socket") {
-                    "socket"
-                } else if unit_name.ends_with(".target") {
-                    "target"
-                } else if unit_name.ends_with(".mount") {
-                    "mount"
-                } else {
-                    "other"
-                };
+                let unit_type = SystemdUnitType::from_unit_name(unit_name);
 
                 return Some(
                     Event::new(SystemdUnitStatusPayload {
@@ -106,10 +175,11 @@ impl SystemdWatcher {
         // Look for Active: lines
         if line.trim().starts_with("Active: ") {
             let status_part = line.trim().strip_prefix("Active: ").unwrap_or("");
-            let status = status_part.split(' ').next().unwrap_or("unknown");
+            let status_str = status_part.split(' ').next().unwrap_or("unknown");
+            let status = SystemdUnitState::from_str(status_str);
 
             return match status {
-                "active" => Some(
+                SystemdUnitState::Active => Some(
                     Event::new(SystemdUnitStartedPayload {
                         unit_name: "unknown".to_string(), // Will be filled by journal monitoring
                         unit_type: "unknown".to_string(),
@@ -119,7 +189,7 @@ impl SystemdWatcher {
                     })
                     .into(),
                 ),
-                "inactive" => Some(
+                SystemdUnitState::Inactive => Some(
                     Event::new(SystemdUnitStoppedPayload {
                         unit_name: "unknown".to_string(),
                         unit_type: "unknown".to_string(),
@@ -129,7 +199,7 @@ impl SystemdWatcher {
                     })
                     .into(),
                 ),
-                "failed" => Some(
+                SystemdUnitState::Failed => Some(
                     Event::new(SystemdUnitFailedPayload {
                         unit_name: "unknown".to_string(),
                         message: status_part.to_string(),
@@ -141,7 +211,7 @@ impl SystemdWatcher {
                     })
                     .into(),
                 ),
-                "activating" => Some(
+                SystemdUnitState::Activating => Some(
                     Event::new(SystemdUnitStartingPayload {
                         status: status.to_string(),
                         status_detail: status_part.to_string(),
@@ -149,7 +219,7 @@ impl SystemdWatcher {
                     })
                     .into(),
                 ),
-                "deactivating" => Some(
+                SystemdUnitState::Deactivating => Some(
                     Event::new(SystemdUnitStoppingPayload {
                         status: status.to_string(),
                         status_detail: status_part.to_string(),
@@ -157,7 +227,7 @@ impl SystemdWatcher {
                     })
                     .into(),
                 ),
-                _ => Some(
+                SystemdUnitState::Unknown => Some(
                     Event::new(SystemdUnitStateChangedPayload {
                         status: status.to_string(),
                         status_detail: status_part.to_string(),
@@ -322,50 +392,30 @@ impl SystemdWatcher {
                 // Look for systemd state change messages
                 if message.contains("Started ") {
                     let unit_type = unit_name
-                        .map(|n| {
-                            if n.ends_with(".service") {
-                                "service"
-                            } else if n.ends_with(".timer") {
-                                "timer"
-                            } else if n.ends_with(".socket") {
-                                "socket"
-                            } else {
-                                "unknown"
-                            }
-                        })
-                        .unwrap_or("unknown");
+                        .map(SystemdUnitType::from_unit_name)
+                        .unwrap_or(SystemdUnitType::Other);
 
                     Some(
                         Event::new(SystemdUnitStartedPayload {
                             unit_name: unit_name.unwrap_or("unknown").to_string(),
                             unit_type: unit_type.to_string(),
                             main_pid: entry["_PID"].as_str().and_then(|s| s.parse().ok()),
-                            active_state: "active".to_string(),
+                            active_state: SystemdUnitState::Active.to_string(),
                             sub_state: "running".to_string(),
                         })
                         .into(),
                     )
                 } else if message.contains("Stopped ") {
                     let unit_type = unit_name
-                        .map(|n| {
-                            if n.ends_with(".service") {
-                                "service"
-                            } else if n.ends_with(".timer") {
-                                "timer"
-                            } else if n.ends_with(".socket") {
-                                "socket"
-                            } else {
-                                "unknown"
-                            }
-                        })
-                        .unwrap_or("unknown");
+                        .map(SystemdUnitType::from_unit_name)
+                        .unwrap_or(SystemdUnitType::Other);
 
                     Some(
                         Event::new(SystemdUnitStoppedPayload {
                             unit_name: unit_name.unwrap_or("unknown").to_string(),
                             unit_type: unit_type.to_string(),
                             exit_code: None,
-                            active_state: "inactive".to_string(),
+                            active_state: SystemdUnitState::Inactive.to_string(),
                             sub_state: "dead".to_string(),
                         })
                         .into(),

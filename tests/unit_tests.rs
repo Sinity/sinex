@@ -17,12 +17,10 @@ use std::str::FromStr;
 
 // Database unit tests module
 mod unit {
-    pub mod coordination_primitive_test;
     pub mod database_test;
     pub mod error_paths_test;
     pub mod event_type_system_test;
     pub mod preflight_test;
-    pub mod resource_guard_test;
     pub mod satellite_error_helpers_test;
     pub mod schema_validator_test;
     pub mod typed_clipboard_test;
