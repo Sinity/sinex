@@ -207,18 +207,15 @@ impl ReplayManager {
                 } => {
                     let end_time = end_time.unwrap_or_else(Utc::now);
 
-                    // TODO: Add time range query to repository
-                    // For now, use search with filters
-                    use sinex_core::db::repositories::{DbPoolExt, EventSearchFilters};
+                    // Use the existing time range query method
                     self.pool
                         .events()
-                        .search(EventSearchFilters {
-                            after: Some(*start_time),
-                            before: Some(end_time),
-                            limit: Some(self.batch_size as u64),
-                            offset: Some(offset as u64),
-                            ..Default::default()
-                        })
+                        .get_by_time_range(
+                            *start_time,
+                            end_time,
+                            Some(self.batch_size as i64),
+                            Some(offset as i64),
+                        )
                         .await?
                 }
                 ReplayMode::Source {

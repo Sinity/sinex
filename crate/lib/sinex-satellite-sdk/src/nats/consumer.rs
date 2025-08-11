@@ -90,7 +90,10 @@ impl Default for ConsumerConfig {
 
 impl ConsumerConfig {
     /// Convert to JetStream consumer config
-    pub fn to_jetstream_config(&self) -> PullConfig {
+    ///
+    /// # Errors
+    /// Returns `Result<PullConfig, NatsError>` if time conversion fails
+    pub fn to_jetstream_config(&self) -> Result<PullConfig> {
         let replay_policy = match self.replay_policy {
             ConsumerReplayPolicy::Instant => JsReplayPolicy::Instant,
             ConsumerReplayPolicy::Original => JsReplayPolicy::Original,
@@ -108,14 +111,14 @@ impl ConsumerConfig {
                 let timestamp = time.timestamp();
                 let nanos = time.timestamp_subsec_nanos();
                 let start_time = time::OffsetDateTime::from_unix_timestamp(timestamp)
-                    .unwrap()
+                    .map_err(|e| NatsError::Consumer(format!("Invalid unix timestamp: {}", e)))?
                     .replace_nanosecond(nanos)
-                    .unwrap();
+                    .map_err(|e| NatsError::Consumer(format!("Invalid nanosecond value: {}", e)))?;
                 DeliverPolicy::ByStartTime { start_time }
             }
         };
 
-        PullConfig {
+        Ok(PullConfig {
             name: Some(self.name.clone()),
             durable_name: Some(self.group.clone()),
             description: Some(format!("Sinex consumer: {}", self.name)),
@@ -127,7 +130,7 @@ impl ConsumerConfig {
             deliver_policy,
             filter_subjects: self.filter_subject.clone().into_iter().collect(),
             ..Default::default()
-        }
+        })
     }
 }
 
@@ -143,7 +146,7 @@ impl NatsConsumer {
     /// Create a new consumer
     pub async fn new(jetstream: JetStream, config: ConsumerConfig) -> Result<Self> {
         let consumer = jetstream
-            .get_or_create_consumer(&config.stream, config.to_jetstream_config())
+            .get_or_create_consumer(&config.stream, config.to_jetstream_config()?)
             .await?;
 
         info!(

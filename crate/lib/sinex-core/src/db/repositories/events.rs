@@ -617,7 +617,7 @@ impl<'a> EventRepository<'a> {
                 payload_schema_name,
                 payload_schema_version
             FROM core.events 
-            WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3
+            WHERE event_type = $1 AND ts_ingest >= $2 AND ts_ingest <= $3 AND deleted_at IS NULL
             ORDER BY ts_ingest DESC
             LIMIT $4
             "#,
@@ -1615,7 +1615,7 @@ impl<'a> EventRepository<'a> {
                 created_at as "created_at!",
                 updated_at as "updated_at!"
             FROM core.event_annotations
-            WHERE content ILIKE $1
+            WHERE content ILIKE $1 AND deleted_at IS NULL
             ORDER BY created_at DESC
             LIMIT $2
             "#,

@@ -91,7 +91,7 @@ impl FixtureRegistry {
         // Create new fixture with proper error propagation
         // This avoids panicking and poisoning the mutex
         let fixture = creator().await.map_err(|e| {
-            SinexError::fixture("Failed to create fixture")
+            SinexError::service("Failed to create fixture")
                 .with_source(e)
                 .with_context("key", &key)
         })?;

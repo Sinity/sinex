@@ -414,7 +414,8 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
         thread_count in 2..10usize,
         operations_per_thread in 10..100usize
     )| {
-        use std::sync::{Arc, Mutex};
+        use parking_lot::Mutex;
+        use std::sync::Arc;
         use std::thread;
 
         let results = Arc::new(Mutex::new(Vec::new()));
@@ -428,7 +429,7 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
                 for _ in 0..operations_per_thread {
                     thread_ulids.push(Ulid::new());
                 }
-                results_clone.lock().unwrap().extend(thread_ulids);
+                results_clone.lock().extend(thread_ulids);
             });
             handles.push(handle);
         }
@@ -437,7 +438,7 @@ fn test_concurrent_operation_properties() -> color_eyre::eyre::Result<()> {
             handle.join().unwrap();
         }
 
-        let final_results = results.lock().unwrap();
+        let final_results = results.lock();
         let expected_count = thread_count * operations_per_thread;
 
         // Property: Should have expected number of ULIDs

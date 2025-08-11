@@ -287,7 +287,7 @@ mod tests {
 
     #[sinex_test]
     fn test_version_parsing() -> color_eyre::eyre::Result<()> {
-        let version = satellite_version();
+        let version = satellite_version()?;
         assert!(version.major >= 1);
         assert!(version.patch > 0); // Should have some commits
         Ok(())

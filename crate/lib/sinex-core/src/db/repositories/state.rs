@@ -279,8 +279,7 @@ impl<'a> StateRepository<'a> {
         .with_host(HostName::new("sinex.state".to_string()));
 
         self.emit_state_change_event_tx(&mut tx, checkpoint_saved_event)
-            .await
-            .map_err(|e| db_error(e, "emit checkpoint saved event"))?;
+            .await?;
 
         tx.commit()
             .await
@@ -338,7 +337,7 @@ impl<'a> StateRepository<'a> {
                 created_at,
                 updated_at
             FROM core.processor_checkpoints 
-            WHERE consumer_group = 'default' AND consumer_name = 'default'
+            WHERE consumer_group = 'default' AND consumer_name = 'default' AND deleted_at IS NULL
             ORDER BY name
             "#
         )
@@ -360,6 +359,56 @@ impl<'a> StateRepository<'a> {
         deleted_by: &str,
         deletion_reason: &str,
     ) -> DbResult<bool> {
+        // Start transaction to ensure atomicity of event emission and state change
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| db_error(e, "begin delete checkpoint transaction"))?;
+
+        // Get the checkpoint details before deletion for the event
+        let checkpoint_to_delete = sqlx::query!(
+            r#"
+            SELECT 
+                id,
+                processed_count,
+                consumer_group,
+                consumer_name
+            FROM core.processor_checkpoints 
+            WHERE processor_name = $1 
+              AND consumer_group = 'default' 
+              AND consumer_name = 'default'
+              AND deleted_at IS NULL
+            "#,
+            processor_name
+        )
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| db_error(e, "fetch checkpoint before deletion"))?;
+
+        if let Some(checkpoint) = checkpoint_to_delete {
+            // Emit checkpoint deleted event BEFORE the state change
+            let checkpoint_deleted_event = RawEvent::new(
+                EventSource::new("sinex.state.checkpoint".to_string()),
+                EventType::new("checkpoint.deleted".to_string()),
+                serde_json::json!({
+                    "processor_name": processor_name,
+                    "consumer_group": checkpoint.consumer_group,
+                    "consumer_name": checkpoint.consumer_name,
+                    "checkpoint_id": Id::<CheckpointRecord>::from(*checkpoint.id.as_ulid()).as_ulid().to_string(),
+                    "last_processed_count": checkpoint.processed_count,
+                    "deleted_by": deleted_by,
+                    "reason": deletion_reason
+                })
+            )
+            .with_host(HostName::new("sinex.state".to_string()));
+
+            self.emit_state_change_event_tx(&mut tx, checkpoint_deleted_event)
+                .await
+                .map_err(|e| db_error(e, "emit checkpoint deleted event"))?;
+        }
+
+        // Now perform the soft deletion
         let result = sqlx::query!(
             r#"
             UPDATE core.processor_checkpoints 
@@ -375,9 +424,13 @@ impl<'a> StateRepository<'a> {
             deleted_by,
             deletion_reason
         )
-        .execute(self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| db_error(e, "delete checkpoint"))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| db_error(e, "commit delete checkpoint transaction"))?;
 
         Ok(result.rows_affected() > 0)
     }

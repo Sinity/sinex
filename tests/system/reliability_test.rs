@@ -1360,7 +1360,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
     // Test 1: Memory usage monitoring during high-volume operations
     let memory_test_start = Instant::now();
     let events_to_create = 1000;
-    let memory_usage_samples = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let memory_usage_samples = Arc::new(parking_lot::Mutex::new(Vec::new()));
 
     // Monitor memory usage while creating many events
     let memory_monitoring = Arc::new(AtomicBool::new(true));
@@ -1435,7 +1435,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
                 // Collect memory sample every 50 events
                 if processed % 50 == 0 {
                     let memory_kb = memory_counter.load(Ordering::Relaxed);
-                    memory_samples.lock().unwrap().push((processed, memory_kb));
+                    memory_samples.lock().push((processed, memory_kb));
                     println!("  Processed {} events, memory: {}KB", processed, memory_kb);
                 }
             }
@@ -1462,7 +1462,7 @@ async fn test_resource_limits_monitoring(ctx: TestContext) -> color_eyre::eyre::
             );
 
             // Analyze memory usage patterns
-            let samples = memory_usage_samples.lock().unwrap();
+            let samples = memory_usage_samples.lock();
             if samples.len() >= 2 {
                 let initial_memory = samples[0].1;
                 let final_memory = samples.last().unwrap().1;
