@@ -14,28 +14,70 @@ use sinex_satellite_sdk::{
 };
 use std::collections::HashMap;
 use tracing::{info, warn};
+use validator::{Validate, ValidationError};
 
 /// Configuration for RPC Dispatcher processor
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Validate, bon::Builder)]
+#[builder(derive(Debug))]
 pub struct RpcDispatcherConfig {
     /// Maximum number of concurrent connections
+    #[validate(range(
+        min = 1,
+        max = 10000,
+        message = "Max connections must be between 1 and 10000"
+    ))]
     pub max_connections: Option<u32>,
     /// Request timeout in seconds
+    #[validate(range(
+        min = 1,
+        max = 300,
+        message = "Request timeout must be between 1 and 300 seconds"
+    ))]
     pub request_timeout_secs: Option<u64>,
     /// Time range for historical scans in hours
+    #[validate(range(
+        min = 1,
+        max = 8760,
+        message = "Historical scan hours must be between 1 and 8760 (1 year)"
+    ))]
     pub historical_scan_hours: Option<u64>,
-    /// Additional RPC server configuration
-    pub server_config: HashMap<String, serde_json::Value>,
+    /// RPC server host to bind to
+    pub server_host: Option<String>,
+    /// RPC server port to bind to
+    #[validate(range(
+        min = 1024,
+        max = 65535,
+        message = "Server port must be between 1024 and 65535"
+    ))]
+    pub server_port: Option<u16>,
+    /// Enable TLS for RPC server
+    pub enable_tls: bool,
+    /// Path to TLS certificate file
+    pub tls_cert_path: Option<String>,
+    /// Path to TLS private key file
+    pub tls_key_path: Option<String>,
+    /// Maximum RPC payload size in MB
+    #[validate(range(
+        min = 1,
+        max = 1024,
+        message = "Max payload size must be between 1 and 1024 MB"
+    ))]
+    pub max_payload_size_mb: Option<u64>,
 }
 
 impl Default for RpcDispatcherConfig {
     fn default() -> Self {
-        Self {
-            max_connections: Some(1000),
-            request_timeout_secs: Some(30),
-            historical_scan_hours: Some(24),
-            server_config: HashMap::new(),
-        }
+        Self::builder()
+            .max_connections(Some(1000))
+            .request_timeout_secs(Some(30))
+            .historical_scan_hours(Some(24))
+            .server_host(Some("127.0.0.1".to_string()))
+            .server_port(Some(8080))
+            .enable_tls(false)
+            .tls_cert_path(None)
+            .tls_key_path(None)
+            .max_payload_size_mb(Some(64))
+            .build()
     }
 }
 
@@ -77,9 +119,10 @@ impl StatefulStreamProcessor for RpcDispatcherProcessor {
         match until {
             TimeHorizon::Snapshot => {
                 info!("RPC dispatcher taking snapshot of current RPC configuration");
+                warn!("RPC dispatcher snapshot mode is not implemented - would capture RPC server status and active connections");
                 // In a real implementation, this would capture current RPC server status,
                 // active connections, registered handlers, etc.
-                warnings.push("RPC dispatcher snapshot mode is a placeholder".to_string());
+                warnings.push("RPC dispatcher snapshot mode is not implemented".to_string());
             }
             TimeHorizon::Historical { .. } => {
                 info!("RPC dispatcher scanning historical RPC invocations");
@@ -138,45 +181,46 @@ impl Default for RpcDispatcherProcessor {
 
 impl ExplorationProvider for RpcDispatcherProcessor {
     fn get_source_state(&self) -> color_eyre::eyre::Result<SourceState> {
-        Ok(SourceState {
-            description: "RPC dispatcher".to_string(),
-            last_updated: chrono::Utc::now(),
-            total_items: Some(0),
-            metadata: HashMap::new(),
-            healthy: true,
-            recent_activity: Vec::new(),
-        })
+        warn!("RPC dispatcher source state requested but not implemented");
+        Err(color_eyre::eyre::eyre!(
+            "RPC dispatcher source state not implemented - would report RPC server status, active connections, and registered handlers"
+        ))
     }
 
     fn get_ingestion_history(
         &self,
         _limit: u64,
     ) -> color_eyre::eyre::Result<Vec<IngestionHistoryEntry>> {
-        Ok(Vec::new())
+        warn!("RPC dispatcher ingestion history requested but not implemented");
+        Err(color_eyre::eyre::eyre!(
+            "RPC dispatcher ingestion history not implemented - would report recent RPC call ingestion statistics"
+        ))
     }
 
     fn get_coverage_analysis(
         &self,
-        _time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
+        time_range: Option<(chrono::DateTime<chrono::Utc>, chrono::DateTime<chrono::Utc>)>,
     ) -> color_eyre::eyre::Result<CoverageAnalysis> {
+        // Use provided time range or default to configured historical scan hours
         let now = chrono::Utc::now();
-        Ok(CoverageAnalysis {
-            time_range: (now - chrono::Duration::days(1), now),
-            source_total: 0,
-            sinex_total: 0,
-            coverage_percentage: 0.0,
-            missing_count: 0,
-            missing_samples: Vec::new(),
-            duplicate_count: 0,
-            recommendations: Vec::new(),
-        })
+        let default_hours = 24; // fallback if no config available
+        let (start, end) =
+            time_range.unwrap_or_else(|| (now - chrono::Duration::hours(default_hours), now));
+
+        Err(color_eyre::eyre::eyre!(
+            "RPC dispatcher coverage analysis not implemented - would analyze RPC call patterns from {} to {}",
+            start, end
+        ))
     }
 
     fn export_data(
         &self,
-        _path: &camino::Utf8PathBuf,
+        _path: &sinex_core::types::domain::SanitizedPath,
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
-        Ok(())
+        warn!("RPC dispatcher data export requested but not implemented");
+        Err(color_eyre::eyre::eyre!(
+            "RPC dispatcher data export not implemented - would export RPC call logs and metrics"
+        ))
     }
 }
