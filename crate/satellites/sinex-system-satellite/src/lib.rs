@@ -84,6 +84,14 @@ pub enum SystemSatelliteError {
 
     #[error("JSON error: {0}")]
     Json(ErrorDetails),
+
+    #[error(transparent)]
+    #[from]
+    StdIo(#[from] std::io::Error),
+
+    #[error(transparent)]
+    #[from]
+    SerdeJson(#[from] serde_json::Error),
 }
 
 /// Detailed error information with context and source chain

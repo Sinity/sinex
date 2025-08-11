@@ -102,6 +102,21 @@ impl IngestdConfig {
         Ok(builder.build())
     }
 
+    /// Validate configuration and exit with appropriate status code
+    pub async fn validate_and_exit(&self) -> ! {
+        info!("Validating configuration...");
+        match self.validate().await {
+            Ok(()) => {
+                info!("✅ Configuration is valid");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                error!("❌ Configuration validation failed: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
     /// Validate the configuration
     pub async fn validate(&self) -> IngestdResult<()> {
         use validator::Validate as ValidateTrait;

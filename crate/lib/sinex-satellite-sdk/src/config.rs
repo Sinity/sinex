@@ -350,10 +350,13 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_work_dir() -> Utf8PathBuf {
+    get_cache_dir_or_fallback().join("sinex")
+}
+
+fn get_cache_dir_or_fallback() -> Utf8PathBuf {
     dirs::cache_dir()
         .map(|p| Utf8PathBuf::from_path_buf(p).unwrap_or_else(|_| Utf8PathBuf::from("/tmp")))
         .unwrap_or_else(|| Utf8PathBuf::from("/tmp"))
-        .join("sinex")
 }
 
 fn default_batch_size() -> usize {

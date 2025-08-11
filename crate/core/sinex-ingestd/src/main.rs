@@ -80,17 +80,7 @@ async fn main() -> Result<()> {
     )?;
 
     if args.validate_config {
-        info!("Validating configuration...");
-        match config.validate().await {
-            Ok(()) => {
-                info!("✅ Configuration is valid");
-                std::process::exit(0);
-            }
-            Err(e) => {
-                error!("❌ Configuration validation failed: {}", e);
-                std::process::exit(1);
-            }
-        }
+        config.validate_and_exit().await;
     }
 
     info!(?config, "Configuration loaded");
