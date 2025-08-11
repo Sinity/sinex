@@ -47,14 +47,14 @@ impl NatsPublisher {
     /// Create optimized headers for an event to reduce string allocations
     fn create_event_headers(event: &RawEvent) -> HeaderMap {
         let mut headers = HeaderMap::new();
-        
+
         // Use pre-allocated capacity for header map
         headers.reserve(6); // Typical number of headers
-        
+
         if let Some(id) = &event.id {
             headers.insert("Sinex-Event-Id", id.to_string());
         }
-        
+
         // Avoid redundant .to_string() calls where possible
         headers.insert("Sinex-Source", event.source.as_str());
         headers.insert("Sinex-Event-Type", event.event_type.as_str());

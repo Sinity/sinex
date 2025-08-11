@@ -586,10 +586,12 @@ impl KittyWatcher {
         // Only capture if we have new lines
         if current_line_count > previous_line_count {
             let new_line_start = previous_line_count as usize;
-            let new_lines: Vec<String> = current_lines[new_line_start..]
-                .iter()
-                .map(|s| s.to_string())
-                .collect();
+            let new_line_count = current_line_count - previous_line_count;
+            let mut new_lines = Vec::with_capacity(new_line_count as usize);
+
+            for line in &current_lines[new_line_start..] {
+                new_lines.push(line.to_string());
+            }
 
             // Create content streamed event
 
