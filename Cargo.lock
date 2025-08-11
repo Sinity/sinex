@@ -4535,12 +4535,9 @@ dependencies = [
 name = "sinex-document-ingestor"
 version = "0.4.2"
 dependencies = [
- "anyhow",
  "async-trait",
- "blake3",
  "camino",
  "chrono",
- "clap",
  "color-eyre",
  "mimalloc",
  "mime_guess",
@@ -4690,7 +4687,6 @@ dependencies = [
  "serde_json",
  "sinex-test-utils",
  "syn 2.0.104",
- "thiserror 1.0.69",
  "tokio",
  "toml",
 ]
