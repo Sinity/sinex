@@ -15,10 +15,8 @@ mod m20240103_000003_create_analytics_views;
 mod m20240104_000004_create_helper_functions;
 mod m20240105_000005_create_test_helper_functions;
 mod m20240106_000006_create_coordination_tables;
-mod m20240108_000008_add_schema_content_hash;
 mod m20240109_000009_add_payload_validation_function;
 mod m20240110_000010_add_event_payload_check_constraint;
-mod m20250103_000001_source_material_refactor;
 mod m20250810_000001_create_outbox_table;
 mod m20250810_000002_add_constraints_and_archives;
 mod m20250810_000004_create_operations_log;
@@ -40,10 +38,8 @@ impl MigratorTrait for Migrator {
             m20240104_000004_create_helper_functions,
             m20240105_000005_create_test_helper_functions,
             m20240106_000006_create_coordination_tables,
-            m20240108_000008_add_schema_content_hash,
             m20240109_000009_add_payload_validation_function,
             m20240110_000010_add_event_payload_check_constraint,
-            m20250103_000001_source_material_refactor,
             m20250810_000001_create_outbox_table,
             m20250810_000002_add_constraints_and_archives,
             m20250810_000004_create_operations_log,

@@ -1,4 +1,4 @@
-use super::{Events, TableDef};
+use crate::schema::{Events, TableDef};
 use sea_query::{Alias, ColumnDef, Expr, Index, PostgresQueryBuilder, Table};
 
 /// Embedding models table schema definition
@@ -46,7 +46,7 @@ impl EmbeddingModels {
                 ColumnDef::new(Alias::new(Self::NAME))
                     .text()
                     .not_null()
-                    .unique(),
+                    .unique_key(),
             )
             .col(ColumnDef::new(Alias::new(Self::PROVIDER)).text().not_null())
             .col(

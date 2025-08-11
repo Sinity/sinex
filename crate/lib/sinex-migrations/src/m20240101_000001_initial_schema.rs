@@ -34,6 +34,7 @@ impl MigrationTrait for Migration {
                 CREATE SCHEMA IF NOT EXISTS core;
                 CREATE SCHEMA IF NOT EXISTS raw;
                 CREATE SCHEMA IF NOT EXISTS audit;
+                CREATE SCHEMA IF NOT EXISTS kg;
                 CREATE SCHEMA IF NOT EXISTS sinex_schemas;
                 CREATE SCHEMA IF NOT EXISTS metrics;
                 CREATE SCHEMA IF NOT EXISTS sinex;
@@ -85,14 +86,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        // Create processor manifests constraints
-        for constraint_sql in ProcessorManifests::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -148,13 +141,7 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Create events constraints
-        for constraint_sql in Events::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
+        // Create events constraints (removed - already created via indexes)
 
         // Create archived events
         manager
@@ -182,14 +169,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        // Add unique constraint
-        for constraint_sql in ProcessorCheckpoints::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Note: operations_log table is now created in m20250810_000004_create_operations_log migration
 
         // Create event payload schemas
@@ -202,13 +181,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EventPayloadSchemas::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -225,13 +197,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in SchemaCompatibility::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create gitops schema sources table
         manager
             .get_connection()
@@ -242,13 +207,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in GitopsSchemaSource::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -265,13 +223,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in ValidationCache::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create embedding models
         manager
             .get_connection()
@@ -285,13 +236,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in EmbeddingModels::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create embedding cache
         manager
             .get_connection()
@@ -302,13 +246,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EmbeddingCache::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -348,13 +285,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in Entities::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create entity relations
         manager
             .get_connection()
@@ -365,13 +295,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EntityRelations::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -388,13 +311,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in EventAnnotations::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create blobs
         manager
             .get_connection()
@@ -405,13 +321,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in Blobs::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -428,13 +337,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in Tags::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create event relations
         manager
             .get_connection()
@@ -445,13 +347,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EventRelations::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -468,13 +363,6 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
-        for constraint_sql in EventClusters::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
-                .await?;
-        }
-
         // Create event cluster members
         manager
             .get_connection()
@@ -485,13 +373,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EventClusterMembers::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 
@@ -508,13 +389,6 @@ impl MigrationTrait for Migration {
             manager
                 .get_connection()
                 .execute_unprepared(&index_sql)
-                .await?;
-        }
-
-        for constraint_sql in EventEmbeddings::create_constraints() {
-            manager
-                .get_connection()
-                .execute_unprepared(&constraint_sql)
                 .await?;
         }
 

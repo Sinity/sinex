@@ -1,5 +1,5 @@
-use super::TableDef;
-use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, PostgresQueryBuilder, Table};
+use crate::schema::TableDef;
+use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, IntoIden, PostgresQueryBuilder, Table};
 
 /// Events table schema definition
 #[derive(Copy, Clone)]
@@ -147,10 +147,11 @@ impl Events {
                 .name("idx_core_events_source_material")
                 .col(Alias::new(Self::SOURCE_MATERIAL_ID))
                 .build(PostgresQueryBuilder),
-            // Unique index on (source_material_id, anchor_byte) for first-order idempotency
+            // Unique index on (source_material_id, anchor_byte, id) for first-order idempotency
+            // Note: id column is required for TimescaleDB hypertable partitioning
             format!(
-                "CREATE UNIQUE INDEX idx_events_material_anchor ON {}.{} ({}, {}) WHERE {} IS NOT NULL AND {} IS NOT NULL",
-                Self::SCHEMA, Self::TABLE, Self::SOURCE_MATERIAL_ID, Self::ANCHOR_BYTE,
+                "CREATE UNIQUE INDEX idx_events_material_anchor ON {}.{} ({}, {}, {}) WHERE {} IS NOT NULL AND {} IS NOT NULL",
+                Self::SCHEMA, Self::TABLE, Self::SOURCE_MATERIAL_ID, Self::ANCHOR_BYTE, Self::ID,
                 Self::SOURCE_MATERIAL_ID, Self::ANCHOR_BYTE
             ),
         ]
@@ -162,6 +163,11 @@ impl Events {
             "ALTER TABLE {}.{} ADD COLUMN {} TIMESTAMP WITH TIME ZONE GENERATED ALWAYS AS (ulid_to_timestamp({})) STORED",
             Self::SCHEMA, Self::TABLE, Self::TS_INGEST, Self::ID
         )
+    }
+
+    /// Create constraints (none needed for events table itself)
+    pub fn create_constraints() -> Vec<String> {
+        vec![]
     }
 }
 

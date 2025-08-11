@@ -146,14 +146,14 @@ impl TerminalCommandCanonicalizer {
 
         Some(CommandData {
             command,
-            working_directory: json_helpers::get_string(payload, "working_directory"),
-            exit_code: json_helpers::get_i32(payload, "exit_code"),
-            duration_ms: json_helpers::get_i64(payload, "duration_ms"),
+            working_directory: payload.get_string("working_directory"),
+            exit_code: payload.get_i32("exit_code"),
+            duration_ms: payload.get_i64("duration_ms"),
             start_time: event.ts_orig.unwrap_or_else(|| Utc::now()),
-            end_time: json_helpers::get_datetime(payload, "end_time"),
-            user: json_helpers::get_string(payload, "user"),
-            session_id: json_helpers::get_string(payload, "session_id"),
-            environment_hash: json_helpers::get_string(payload, "environment_hash"),
+            end_time: payload.get_datetime("end_time"),
+            user: payload.get_string("user"),
+            session_id: payload.get_string("session_id"),
+            environment_hash: payload.get_string("environment_hash"),
             source_events: vec![Self::extract_ulid_safely(&event.id)],
         })
     }
@@ -509,7 +509,7 @@ impl ExplorationProvider for TerminalCommandCanonicalizer {
 
     fn export_data(
         &self,
-        _path: &Utf8PathBuf,
+        _path: &sinex_core::types::domain::SanitizedPath,
         _format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         Err(eyre!("Export not supported for automata"))

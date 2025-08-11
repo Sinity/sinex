@@ -1,5 +1,5 @@
-use super::TableDef;
-use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, PostgresQueryBuilder, Table};
+use crate::schema::TableDef;
+use sea_query::{Alias, ColumnDef, Expr, Index, PostgresQueryBuilder, Table};
 
 /// Event payload schemas table schema definition
 #[derive(Copy, Clone)]
@@ -10,7 +10,7 @@ impl TableDef for EventPayloadSchemas {
         "event_payload_schemas"
     }
     fn schema_name() -> &'static str {
-        "core"
+        "sinex_schemas"
     }
     fn primary_key() -> &'static str {
         "id"
@@ -19,11 +19,11 @@ impl TableDef for EventPayloadSchemas {
 
 impl EventPayloadSchemas {
     pub const TABLE: &'static str = "event_payload_schemas";
-    pub const SCHEMA: &'static str = "core";
+    pub const SCHEMA: &'static str = "sinex_schemas";
 
     pub const ID: &'static str = "id";
     pub const SCHEMA_NAME: &'static str = "schema_name";
-    pub const VERSION: &'static str = "version";
+    pub const SCHEMA_VERSION: &'static str = "schema_version";
     pub const JSON_SCHEMA: &'static str = "json_schema";
     pub const DESCRIPTION: &'static str = "description";
     pub const CREATED_AT: &'static str = "created_at";
@@ -31,6 +31,7 @@ impl EventPayloadSchemas {
     pub const DEPRECATED_AT: &'static str = "deprecated_at";
     pub const SUCCESSOR_ID: &'static str = "successor_id";
     pub const CONTENT_HASH: &'static str = "content_hash";
+    pub const IS_ACTIVE: &'static str = "is_active";
 
     /// Create the event payload schemas table
     pub fn create_table() -> String {
@@ -48,7 +49,11 @@ impl EventPayloadSchemas {
                     .text()
                     .not_null(),
             )
-            .col(ColumnDef::new(Alias::new(Self::VERSION)).text().not_null())
+            .col(
+                ColumnDef::new(Alias::new(Self::SCHEMA_VERSION))
+                    .text()
+                    .not_null(),
+            )
             .col(
                 ColumnDef::new(Alias::new(Self::JSON_SCHEMA))
                     .json_binary()
@@ -70,18 +75,24 @@ impl EventPayloadSchemas {
             .col(ColumnDef::new(Alias::new(Self::DEPRECATED_AT)).timestamp_with_time_zone())
             .col(ColumnDef::new(Alias::new(Self::SUCCESSOR_ID)).custom(Alias::new("ULID")))
             .col(ColumnDef::new(Alias::new(Self::CONTENT_HASH)).text())
+            .col(
+                ColumnDef::new(Alias::new(Self::IS_ACTIVE))
+                    .boolean()
+                    .not_null()
+                    .default(true),
+            )
             .build(PostgresQueryBuilder)
     }
 
     /// Create indexes for the event payload schemas table
     pub fn create_indexes() -> Vec<String> {
         vec![
-            // Unique index on (schema_name, version)
+            // Unique index on (schema_name, schema_version)
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
                 .name("idx_event_payload_schemas_unique")
                 .col(Alias::new(Self::SCHEMA_NAME))
-                .col(Alias::new(Self::VERSION))
+                .col(Alias::new(Self::SCHEMA_VERSION))
                 .unique()
                 .build(PostgresQueryBuilder),
             // Index on content_hash for deduplication
@@ -103,7 +114,7 @@ impl TableDef for SchemaCompatibility {
         "schema_compatibility"
     }
     fn schema_name() -> &'static str {
-        "core"
+        "sinex_schemas"
     }
     fn primary_key() -> &'static str {
         "id"
@@ -112,7 +123,7 @@ impl TableDef for SchemaCompatibility {
 
 impl SchemaCompatibility {
     pub const TABLE: &'static str = "schema_compatibility";
-    pub const SCHEMA: &'static str = "core";
+    pub const SCHEMA: &'static str = "sinex_schemas";
 
     pub const ID: &'static str = "id";
     pub const FROM_SCHEMA_ID: &'static str = "from_schema_id";
@@ -210,7 +221,7 @@ impl TableDef for GitopsSchemaSource {
         "gitops_schema_source"
     }
     fn schema_name() -> &'static str {
-        "core"
+        "sinex_schemas"
     }
     fn primary_key() -> &'static str {
         "id"
@@ -219,7 +230,7 @@ impl TableDef for GitopsSchemaSource {
 
 impl GitopsSchemaSource {
     pub const TABLE: &'static str = "gitops_schema_source";
-    pub const SCHEMA: &'static str = "core";
+    pub const SCHEMA: &'static str = "sinex_schemas";
 
     pub const ID: &'static str = "id";
     pub const REPOSITORY_URL: &'static str = "repository_url";
@@ -309,7 +320,7 @@ impl TableDef for ValidationCache {
         "validation_cache"
     }
     fn schema_name() -> &'static str {
-        "core"
+        "sinex_schemas"
     }
     fn primary_key() -> &'static str {
         "id"
@@ -318,7 +329,7 @@ impl TableDef for ValidationCache {
 
 impl ValidationCache {
     pub const TABLE: &'static str = "validation_cache";
-    pub const SCHEMA: &'static str = "core";
+    pub const SCHEMA: &'static str = "sinex_schemas";
 
     pub const ID: &'static str = "id";
     pub const PAYLOAD_HASH: &'static str = "payload_hash";

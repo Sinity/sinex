@@ -1464,7 +1464,7 @@ impl ExplorationProvider for FilesystemProcessor {
 
     fn export_data(
         &self,
-        path: &Utf8PathBuf,
+        path: &sinex_core::types::domain::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         // Validate export path for security

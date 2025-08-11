@@ -1,4 +1,4 @@
-use super::TableDef;
+use crate::schema::TableDef;
 use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, PostgresQueryBuilder, Table};
 
 /// Processor manifests table schema definition
@@ -114,6 +114,11 @@ impl ProcessorManifests {
                 .col(Alias::new(Self::DEPLOYMENT_STATUS))
                 .build(PostgresQueryBuilder),
         ]
+    }
+
+    /// Create constraints (none needed)
+    pub fn create_constraints() -> Vec<String> {
+        vec![]
     }
 }
 
@@ -256,5 +261,10 @@ impl ProcessorCheckpoints {
                 .col((Alias::new(Self::TIMESTAMP), IndexOrder::Desc))
                 .build(PostgresQueryBuilder),
         ]
+    }
+
+    /// Create constraints (none needed)
+    pub fn create_constraints() -> Vec<String> {
+        vec![]
     }
 }

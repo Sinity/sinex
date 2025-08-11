@@ -29,6 +29,9 @@ indexmap.workspace = true
 # Time handling
 chrono.workspace = true
 
+# Retry logic
+tokio-retry.workspace = true
+
 # System integration
 dirs.workspace = true
 

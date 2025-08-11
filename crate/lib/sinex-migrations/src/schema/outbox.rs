@@ -1,5 +1,5 @@
-use super::{Events, TableDef};
-use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, PostgresQueryBuilder, Table};
+use crate::schema::{Events, TableDef};
+use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, IntoIden, PostgresQueryBuilder, Table};
 
 /// Outbox table schema definition
 #[derive(Copy, Clone)]
@@ -127,7 +127,7 @@ impl TableDef for OperationsLog {
         "operations_log"
     }
     fn schema_name() -> &'static str {
-        "audit"
+        "core"
     }
     fn primary_key() -> &'static str {
         "id"
@@ -136,7 +136,7 @@ impl TableDef for OperationsLog {
 
 impl OperationsLog {
     pub const TABLE: &'static str = "operations_log";
-    pub const SCHEMA: &'static str = "audit";
+    pub const SCHEMA: &'static str = "core";
 
     pub const ID: &'static str = "id";
     pub const OPERATION_ID: &'static str = "operation_id";
@@ -170,7 +170,7 @@ impl OperationsLog {
                 ColumnDef::new(Alias::new(Self::OPERATION_ID))
                     .custom(Alias::new("ULID"))
                     .not_null()
-                    .unique(),
+                    .unique_key(),
             )
             .col(
                 ColumnDef::new(Alias::new(Self::OPERATION_TYPE))

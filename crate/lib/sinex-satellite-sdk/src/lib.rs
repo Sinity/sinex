@@ -132,7 +132,6 @@ pub mod stage_as_you_go;
 pub mod stream_processor;
 pub mod version;
 
-pub use crate::default_exploration_provider;
 pub use checkpoint::{CheckpointManager, CheckpointState};
 pub use cli::{
     parse_checkpoint, parse_time_horizon, CoverageAnalysis, ExplorationProvider, ExportFormat,
@@ -150,9 +149,6 @@ pub use stream_processor::{
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
     StreamProcessorRunner, TimeHorizon,
 };
-
-pub use crate::define_automaton_processor;
-pub use automaton::{BaseAutomatonConfig, BaseAutomatonProcessor};
 
 /// Version information for satellite components
 #[derive(Debug, Clone)]

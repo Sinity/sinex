@@ -1,4 +1,4 @@
-use super::TableDef;
+use crate::schema::TableDef;
 use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, PostgresQueryBuilder, Table};
 
 /// Source materials table schema definition

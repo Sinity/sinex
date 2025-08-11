@@ -739,7 +739,7 @@ impl ExplorationProvider for SystemProcessor {
 
     fn export_data(
         &self,
-        path: &Utf8PathBuf,
+        path: &sinex_core::types::domain::SanitizedPath,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
         if let Some(ref state) = self.last_state {
