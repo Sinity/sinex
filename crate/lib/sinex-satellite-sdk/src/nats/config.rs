@@ -90,7 +90,7 @@ pub struct JetStreamConfig {
 }
 
 /// Default stream configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct StreamDefaults {
     /// Maximum message age
     #[serde(with = "humantime_serde", default = "default_max_age")]

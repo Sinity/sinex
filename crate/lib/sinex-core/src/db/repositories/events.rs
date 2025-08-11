@@ -1135,9 +1135,9 @@ impl<'a> EventRepository<'a> {
                 )
                 "#,
                 event_ids[i],
-                sources[i].as_str(),
-                event_types[i].as_str(),
-                hosts[i].as_str(),
+                &sources[i] as &str,
+                &event_types[i] as &str,
+                &hosts[i] as &str,
                 &payloads[i],
                 ts_origs[i],
                 ingestor_versions[i],
