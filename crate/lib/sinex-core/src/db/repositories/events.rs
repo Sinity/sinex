@@ -2219,18 +2219,24 @@ impl<'a> EventRepository<'a> {
     /// Only use for test cleanup or administrative operations where
     /// you need to actually reclaim disk space.
     pub async fn hard_delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        let result = sqlx::query!(
-            r#"
-            SELECT enable_audit_bypass();
-            DELETE FROM core.events WHERE source = $1;
-            SELECT disable_audit_bypass();
-            "#,
-            source.as_str()
-        )
-        .execute(self.pool)
-        .await
-        .map_err(|e| db_error(e, "hard delete by source"))?;
+        // Enable bypass mode
+        sqlx::query!("SELECT enable_audit_bypass()")
+            .execute(self.pool)
+            .await
+            .map_err(|e| db_error(e, "enable audit bypass"))?;
 
+        // Perform the hard delete
+        let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source.as_str())
+            .execute(self.pool)
+            .await;
+
+        // Always disable bypass mode, even if delete failed
+        sqlx::query!("SELECT disable_audit_bypass()")
+            .execute(self.pool)
+            .await
+            .map_err(|e| db_error(e, "disable audit bypass"))?;
+
+        let result = result.map_err(|e| db_error(e, "hard delete by source"))?;
         Ok(result.rows_affected())
     }
 

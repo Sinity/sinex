@@ -10,10 +10,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::repositories::DbPoolExt;
 use sinex_core::db::models::RawEvent;
-use sinex_core::types::events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload};
+use sinex_core::types::{Id, events::{Event, HealthStatus, ComponentHealth, SystemHealthSummaryPayload}};
 use sinex_satellite_sdk::{
     cli::{ExplorationProvider, SourceState, IngestionHistoryEntry, CoverageAnalysis, ExportFormat, ActivityEntry},
-    redis_stream_consumer::BatchProcessingResult,
     stream_processor::{
         Checkpoint, ProcessorType, ScanArgs, ScanReport, StatefulStreamProcessor,
         StreamProcessorContext, TimeHorizon},
@@ -26,6 +25,14 @@ use tracing::{debug, info, warn};
 /// Health threshold constants
 const HEALTHY_THRESHOLD_MINUTES: i64 = 2;
 const DEGRADED_THRESHOLD_MINUTES: i64 = 5;
+
+/// Result of batch processing
+#[derive(Debug)]
+pub struct BatchProcessingResult {
+    pub successful_ids: Vec<Id<RawEvent>>,
+    pub failed_ids: Vec<(Id<RawEvent>, String)>,
+    pub synthesis_events: Vec<RawEvent>,
+}
 
 /// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -239,19 +239,17 @@ impl ReplayManager {
                             start_time.unwrap_or_else(|| DateTime::from_timestamp(0, 0).unwrap());
                         let end_time = end_time.unwrap_or_else(Utc::now);
 
-                        // TODO: Add time range query with source filter to repository
-                        // For now, use search with filters
-                        use sinex_core::db::repositories::EventSearchFilters;
+                        // Use the new source + time range query method
+                        let event_source = EventSource::new(source);
                         self.pool
                             .events()
-                            .search(EventSearchFilters {
-                                source: Some(EventSource::new(source)),
-                                after: Some(start_time),
-                                before: Some(end_time),
-                                limit: Some(self.batch_size as u64),
-                                offset: Some(offset as u64),
-                                ..Default::default()
-                            })
+                            .get_by_source_and_time_range(
+                                &event_source,
+                                start_time,
+                                end_time,
+                                Some(self.batch_size as i64),
+                                Some(offset as i64),
+                            )
                             .await?
                     }
                 }
@@ -504,12 +502,76 @@ impl ReplayManager {
             }
         }
 
-        // TODO: Implement payload filters when needed
-        // if let Some(payload_filters) = &filters.payload_filters {
-        //     // Complex JSON filtering logic would go here
-        // }
+        // Apply payload filters
+        if let Some(payload_filters) = &filters.payload_filters {
+            // Check each filter against the event payload
+            for (key, expected_value) in payload_filters {
+                // Use JSON pointer syntax for nested field access (e.g., "/field/nested")
+                let actual_value = if key.starts_with('/') {
+                    // JSON pointer style access
+                    event.payload.pointer(key)
+                } else {
+                    // Direct field access
+                    event.payload.get(key)
+                };
+
+                match actual_value {
+                    Some(actual) => {
+                        // Check if values match (handles different JSON value types)
+                        if !json_values_match(actual, expected_value) {
+                            return false;
+                        }
+                    }
+                    None => {
+                        // If field doesn't exist and we're not checking for null, filter out
+                        if !expected_value.is_null() {
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
 
         true
+    }
+}
+
+/// Helper function to compare JSON values with type coercion
+fn json_values_match(actual: &serde_json::Value, expected: &serde_json::Value) -> bool {
+    use serde_json::Value;
+
+    match (actual, expected) {
+        // Exact matches
+        (a, e) if a == e => true,
+
+        // String contains matching for partial searches
+        (Value::String(a), Value::String(e)) if e.starts_with('*') && e.ends_with('*') => {
+            let pattern = &e[1..e.len() - 1];
+            a.contains(pattern)
+        }
+        (Value::String(a), Value::String(e)) if e.starts_with('*') => {
+            let suffix = &e[1..];
+            a.ends_with(suffix)
+        }
+        (Value::String(a), Value::String(e)) if e.ends_with('*') => {
+            let prefix = &e[..e.len() - 1];
+            a.starts_with(prefix)
+        }
+
+        // Number comparisons (handle int/float differences)
+        (Value::Number(a), Value::Number(e)) => {
+            // Try to compare as floats for compatibility
+            match (a.as_f64(), e.as_f64()) {
+                (Some(av), Some(ev)) => (av - ev).abs() < f64::EPSILON,
+                _ => false,
+            }
+        }
+
+        // Array contains check
+        (Value::Array(arr), single) => arr.iter().any(|item| json_values_match(item, single)),
+
+        // Default to false for type mismatches
+        _ => false,
     }
 }
 

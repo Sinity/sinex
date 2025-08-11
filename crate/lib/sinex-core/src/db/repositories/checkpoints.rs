@@ -501,6 +501,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
+                    WHERE deleted_at IS NULL
                     ORDER BY updated_at DESC
                     LIMIT $1
                     "#,
@@ -530,6 +531,7 @@ impl<'a> CheckpointRepository<'a> {
                         created_at as "created_at!",
                         updated_at as "updated_at!"
                     FROM core.processor_checkpoints 
+                    WHERE deleted_at IS NULL
                     ORDER BY updated_at DESC
                     LIMIT 100
                     "#

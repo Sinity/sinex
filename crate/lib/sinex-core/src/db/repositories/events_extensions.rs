@@ -1,6 +1,6 @@
 //! Extensions for EventRepository to add missing query methods
 
-use crate::db::repositories::common::{db_error, DbResult};
+use crate::db::repositories::common::{db_error, DbResult, Repository};
 use crate::db::repositories::events::{EventRecord, EventRepository};
 use crate::models::RawEvent;
 use crate::types::domain::EventSource;
@@ -60,5 +60,33 @@ impl<'a> EventRepository<'a> {
         .map_err(|e| db_error(e, "get events by source and time range"))?;
 
         Ok(records.into_iter().map(|r| r.to_event()).collect())
+    }
+
+    /// Count events by source and time range
+    #[instrument(skip(self), fields(source = %source.as_str()))]
+    pub async fn count_by_source_and_time_range(
+        &self,
+        source: &EventSource,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> DbResult<i64> {
+        let count = sqlx::query_scalar!(
+            r#"
+            SELECT COUNT(*) as "count!"
+            FROM core.events 
+            WHERE source = $1 
+              AND ts_ingest >= $2 
+              AND ts_ingest <= $3
+              AND deleted_at IS NULL
+            "#,
+            source.as_str(),
+            start,
+            end
+        )
+        .fetch_one(self.pool())
+        .await
+        .map_err(|e| db_error(e, "count events by source and time range"))?;
+
+        Ok(count)
     }
 }
