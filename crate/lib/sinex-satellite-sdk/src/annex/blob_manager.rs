@@ -305,7 +305,7 @@ impl BlobManager {
 
     /// Retrieve blob content as bytes
     pub async fn retrieve_content(&self, annex_key: &str) -> Result<Vec<u8>> {
-        let _start = Instant::now();
+        let start = Instant::now();
 
         // Ensure content is available locally
         self.annex.get_content(annex_key).await?;
@@ -318,7 +318,7 @@ impl BlobManager {
             .await
             .wrap_err("Failed to read blob content")?;
 
-        // Emit blob retrieved event
+        // Emit blob retrieved event via ingestd
         let event: RawEvent = Event::new(BlobRetrievedPayload {
             blob_id: annex_key.to_string(), // Using annex_key as blob identifier
             retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
@@ -327,24 +327,24 @@ impl BlobManager {
         .with_ts_orig(Some(chrono::Utc::now()))
         .into();
 
-        self.db_pool
-            .events()
-            .insert(event)
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&event)
             .await
-            .wrap_err("Failed to emit blob retrieved event")?;
+            .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
 
         Ok(content)
     }
 
     /// Retrieve a blob's content path
     pub async fn get_blob_path(&self, blob_id: &Ulid) -> Result<Utf8PathBuf> {
-        let _start = Instant::now();
+        let start = Instant::now();
         let blob = self.get_blob_metadata(blob_id).await?;
 
         // Ensure content is available locally
         self.annex.get_content(&blob.annex_key).await?;
 
-        // Emit blob retrieved event
+        // Emit blob retrieved event via ingestd
         let event: RawEvent = Event::new(BlobRetrievedPayload {
             blob_id: blob_id.to_string(),
             retrieval_time_ms: start.elapsed().as_millis().min(u64::MAX as u128) as u64,
@@ -353,11 +353,11 @@ impl BlobManager {
         .with_ts_orig(Some(chrono::Utc::now()))
         .into();
 
-        self.db_pool
-            .events()
-            .insert(event)
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&event)
             .await
-            .wrap_err("Failed to emit blob retrieved event")?;
+            .map_err(|e| eyre!("Failed to emit blob retrieved event via ingestd: {}", e))?;
 
         // Find the symlink path in the repository
         self.find_symlink_path(&blob.annex_key).await
@@ -378,7 +378,7 @@ impl BlobManager {
         let status = if is_verified { "verified" } else { "corrupted" };
         self.update_verification_status(blob_id, status).await?;
 
-        // Emit blob verified event
+        // Emit blob verified event via ingestd
         let event: RawEvent = Event::new(BlobVerifiedPayload {
             blob_id: blob_id.to_string(),
             verification_status: status.to_string(),
@@ -387,11 +387,11 @@ impl BlobManager {
         .with_ts_orig(Some(chrono::Utc::now()))
         .into();
 
-        self.db_pool
-            .events()
-            .insert(event)
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&event)
             .await
-            .wrap_err("Failed to emit blob verified event")?;
+            .map_err(|e| eyre!("Failed to emit blob verified event via ingestd: {}", e))?;
 
         Ok(is_verified)
     }

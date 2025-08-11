@@ -50,6 +50,9 @@ pub mod db {
     pub use crate::db_impl::*;
 }
 
+// Environment namespacing module
+pub mod environment;
+
 // Internal implementation modules (not directly exposed)
 #[path = "types/mod.rs"]
 mod types_impl;
@@ -87,6 +90,9 @@ pub use types::{
     Ulid,
 };
 
+// Re-export environment functionality at crate level
+pub use environment::{environment, SinexEnvironment};
+
 // Re-export event system at crate root for short imports
 pub use types::events::{Event, EventPayload};
 
@@ -123,8 +129,8 @@ pub use db::{
 // Re-export the most commonly used database models at crate root
 pub use db::models::{Entity, EntityRelation, Provenance, RawEvent, SourceMaterial};
 
-// Re-export the unified Event types
-pub use db::models::event::{Event, EventId};
+// Re-export the unified Event type (EventId is already defined above as type alias)
+pub use db::models::event::Event;
 
 // Re-export records from sinex-schema
 pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};

@@ -12,7 +12,7 @@ impl MigrationTrait for Migration {
             .execute_unprepared("DROP INDEX IF EXISTS core.idx_events_material_anchor;")
             .await?;
 
-        // Create the correct partial unique index on (source_material_id, anchor_byte) 
+        // Create the correct partial unique index on (source_material_id, anchor_byte)
         // without the 'id' field to properly enforce idempotency
         manager
             .get_connection()

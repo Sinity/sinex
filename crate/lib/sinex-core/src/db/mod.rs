@@ -133,14 +133,23 @@ pub async fn create_pool_with_config(database_url: &str, config: &PoolConfig) ->
     Ok(pool)
 }
 
-/// Get database URL from environment - DATABASE_URL required
+/// Get database URL from environment with environment namespacing
+///
+/// This function gets the DATABASE_URL and applies environment-specific namespacing
+/// to ensure proper isolation between dev/staging/prod environments.
 pub fn get_database_url() -> Result<String> {
-    env::var("DATABASE_URL").map_err(|_| {
+    use crate::environment::environment;
+
+    let base_url = env::var("DATABASE_URL").map_err(|_| {
         eyre!(
             "DATABASE_URL environment variable is required. Set it like: \
-             export DATABASE_URL=postgresql:///sinex_dev?host=/run/postgresql"
+             export DATABASE_URL=postgresql:///sinex?host=/run/postgresql \
+             (database name will be automatically namespaced for environment)"
         )
-    })
+    })?;
+
+    // Apply environment namespacing to ensure isolation
+    environment().database_url(&base_url)
 }
 
 /// Create a database connection pool

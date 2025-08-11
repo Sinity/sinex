@@ -41,7 +41,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::Result<()> {
             .build()
             .with_ts_orig(Some(*ts));
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     // Query events to verify timestamp preservation
@@ -152,7 +152,7 @@ async fn test_timestamp_precision(ctx: TestContext) -> color_eyre::Result<()> {
             .build()
             .with_ts_orig(Some(ts));
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     // Verify precision is maintained
@@ -202,7 +202,7 @@ async fn test_timezone_handling(ctx: TestContext) -> color_eyre::Result<()> {
             .build()
             .with_ts_orig(Some(ts));
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     // All events should have essentially the same timestamp
@@ -282,7 +282,7 @@ async fn test_timestamp_query_ordering(ctx: TestContext) -> color_eyre::Result<(
             .build()
             .with_ts_orig(Some(logical_time));
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     // Query events and verify they maintain logical ordering
@@ -341,7 +341,7 @@ async fn test_timestamps_with_various_payloads(ctx: TestContext) -> color_eyre::
             .build()
             .with_ts_orig(Some(test_time));
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     // Verify all events preserve their timestamps regardless of payload complexity

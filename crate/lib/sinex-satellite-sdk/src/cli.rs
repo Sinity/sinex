@@ -45,11 +45,11 @@ pub struct ProcessorCli {
     #[arg(long)]
     pub processor_config: Option<String>,
 
-    /// Use gRPC for event publishing instead of NATS (legacy mode)
-    #[arg(long, env = "SINEX_USE_GRPC")]
-    pub use_grpc: bool,
+    /// Use direct NATS publishing instead of gRPC (bypasses ingestd - violates single-writer principle)
+    #[arg(long, env = "SINEX_USE_NATS")]
+    pub use_nats: bool,
 
-    /// NATS server URLs (comma-separated)
+    /// NATS server URLs (comma-separated) - only used with --use-nats flag
     #[arg(
         long,
         env = "SINEX_NATS_SERVERS",
@@ -526,10 +526,10 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // Initialize runner with NATS by default, gRPC as legacy option
-                if args.use_grpc {
-                    // Legacy gRPC mode
-                    info!("Using legacy gRPC mode for event publishing");
+                // Initialize runner with gRPC by default, NATS as legacy bypass option
+                if args.use_nats {
+                    // Legacy NATS mode - bypasses ingestd single-writer principle
+                    warn!("Using legacy NATS mode - bypasses ingestd single-writer principle");
 
                     // Create ingest client
                     let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
