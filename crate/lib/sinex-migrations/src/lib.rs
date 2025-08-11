@@ -31,12 +31,8 @@ mod m20240105_000005_create_test_helper_functions;
 mod m20240106_000006_create_coordination_tables;
 mod m20240109_000009_add_payload_validation_function;
 mod m20240110_000010_add_event_payload_check_constraint;
-mod m20250111_000001_schema_alignment;
 mod m20250810_000001_create_outbox_table;
-mod m20250810_000002_add_constraints_and_archives;
-mod m20250810_000004_create_operations_log;
 mod m20250810_000006_add_archive_trigger;
-mod m20250810_000007_add_recommended_indexes;
 mod m20250810_132050_drop_obsolete_artifact_tables;
 mod m20250811_000002_add_path_validation_functions;
 pub mod schema;
@@ -56,13 +52,9 @@ impl MigratorTrait for Migrator {
             m20240109_000009_add_payload_validation_function,
             m20240110_000010_add_event_payload_check_constraint,
             m20250810_000001_create_outbox_table,
-            m20250810_000002_add_constraints_and_archives,
-            m20250810_000004_create_operations_log,
             m20250810_000006_add_archive_trigger,
-            m20250810_000007_add_recommended_indexes,
             m20250810_132050_drop_obsolete_artifact_tables,
             m20250811_000002_add_path_validation_functions,
-            m20250111_000001_schema_alignment,
         ]
     }
 }

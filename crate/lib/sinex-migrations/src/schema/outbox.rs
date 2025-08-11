@@ -1,5 +1,5 @@
 use crate::schema::{Events, TableDef};
-use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, IntoIden, PostgresQueryBuilder, Table};
+use sea_query::{Alias, ColumnDef, Expr, Index, IndexOrder, PostgresQueryBuilder, Table};
 
 /// Outbox table schema definition
 #[derive(Copy, Clone)]

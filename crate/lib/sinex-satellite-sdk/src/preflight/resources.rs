@@ -345,10 +345,10 @@ async fn check_directory_permissions(dir_path: &str) -> Result<Value> {
     // Test write permissions by creating a temporary file
     let test_file = path.join(".sinex_preflight_test");
 
-    match std::fs::write(&test_file, "test") {
+    match tokio::fs::write(&test_file, "test").await {
         Ok(_) => {
             // Clean up test file
-            std::fs::remove_file(&test_file).ok();
+            tokio::fs::remove_file(&test_file).await.ok();
 
             Ok(json!({
                 "exists": true,

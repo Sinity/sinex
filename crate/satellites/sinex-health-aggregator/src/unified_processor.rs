@@ -26,6 +26,14 @@ use tracing::{debug, info, warn};
 const HEALTHY_THRESHOLD_MINUTES: i64 = 2;
 const DEGRADED_THRESHOLD_MINUTES: i64 = 5;
 
+/// Constants for health-related event discrimination
+mod constants {
+    /// Event source for journal/systemd events
+    pub const JOURNALD_SOURCE: &str = "journald";
+    /// Event type for satellite heartbeat events
+    pub const SATELLITE_HEARTBEAT_TYPE: &str = "satellite.heartbeat";
+}
+
 /// Result of batch processing
 #[derive(Debug)]
 pub struct BatchProcessingResult {
@@ -73,7 +81,7 @@ impl HealthAggregator {
 
     /// Process a heartbeat event and update component health
     async fn process_heartbeat(&self, event: &RawEvent) -> SatelliteResult<()> {
-        if event.source == "journald" && event.event_type == "satellite.heartbeat" {
+        if event.source == constants::JOURNALD_SOURCE && event.event_type == constants::SATELLITE_HEARTBEAT_TYPE {
             let payload = &event.payload;
             
             let service_name = payload

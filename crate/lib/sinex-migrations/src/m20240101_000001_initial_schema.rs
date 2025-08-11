@@ -185,6 +185,14 @@ impl MigrationTrait for Migration {
                 .await?;
         }
 
+        // Create processor checkpoints constraints
+        for constraint_sql in ProcessorCheckpoints::create_constraints() {
+            manager
+                .get_connection()
+                .execute_unprepared(&constraint_sql)
+                .await?;
+        }
+
         // Create operations log
         manager
             .get_connection()
