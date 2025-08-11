@@ -814,11 +814,11 @@ impl OperationsLog {
 #[derive(Copy, Clone)]
 pub struct ArchivedEvents;
 
-impl_table_def!(ArchivedEvents, "archived_events", "core", "id");
+impl_table_def!(ArchivedEvents, "archived_events", "audit", "id");
 
 impl ArchivedEvents {
     pub const TABLE: &'static str = "archived_events";
-    pub const SCHEMA: &'static str = "core"; // Changed from "audit" to match SQL
+    pub const SCHEMA: &'static str = "audit";
 
     pub const ARCHIVED_AT: &'static str = "archived_at";
     pub const ARCHIVE_REASON: &'static str = "archive_reason";

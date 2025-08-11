@@ -10,8 +10,13 @@ pub struct Migration;
 
 #[async_trait]
 impl MigrationTrait for Migration {
-    async fn up(&self, manager: &SchemaManager) -> Result<(), DbErr> {
-        // Create raw.source_materials table
+    async fn up(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // NOTE: Disabled - source_material_registry already exists
+        // This migration originally created duplicate tables (source_materials, temporal_ledger, sensor_jobs)
+        // These should use the existing source_material_registry table
+        // Keep for historical record but skip execution
+
+        /*  DISABLED - Creates duplicate tables
         manager
             .create_table(
                 Table::create()
@@ -228,11 +233,14 @@ impl MigrationTrait for Migration {
                 "#,
             )
             .await?;
+        */
 
         Ok(())
     }
 
-    async fn down(&self, manager: &SchemaManager) -> Result<(), DbErr> {
+    async fn down(&self, _manager: &SchemaManager) -> Result<(), DbErr> {
+        // Disabled - migration was disabled
+        /*
         // Drop triggers
         manager
             .get_connection()
@@ -268,6 +276,7 @@ impl MigrationTrait for Migration {
                     .to_owned(),
             )
             .await?;
+        */
 
         Ok(())
     }

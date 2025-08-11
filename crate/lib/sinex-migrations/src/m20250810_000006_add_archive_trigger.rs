@@ -30,7 +30,7 @@ impl MigrationTrait for Migration {
                     RAISE EXCEPTION 'DELETE requires sinex.operation_id to be set in this session';
                   END IF;
 
-                  INSERT INTO core.archived_events (
+                  INSERT INTO audit.archived_events (
                     id, event_type, source, ts_orig, ts_ingest, host, payload,
                     source_material_id, offset_kind, offset_start, offset_end, anchor_byte,
                     source_event_ids, payload_schema_id, processor_manifest_id,
