@@ -566,7 +566,7 @@ async fn check_systemd_compatibility() -> Result<Value> {
 
 async fn check_nixos_compatibility() -> Result<Value> {
     // Check if we're running on NixOS
-    let nixos_version = std::fs::read_to_string("/etc/NIXOS")
+    let nixos_version = tokio::fs::read_to_string("/etc/NIXOS")
         .or_else(|_| std::fs::read_to_string("/etc/os-release"));
 
     match nixos_version {
