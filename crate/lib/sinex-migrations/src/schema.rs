@@ -30,6 +30,8 @@ pub use knowledge_graph::*;
 pub use outbox::*;
 pub use processors::*;
 pub use records::*;
+// Re-export key record types for backwards compatibility
+pub use records::{EventRecord, BlobRecord, SourceMaterialRecord};
 pub use schemas::*;
 pub use source_materials::*;
 

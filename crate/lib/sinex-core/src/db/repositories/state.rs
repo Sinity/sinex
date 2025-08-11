@@ -549,7 +549,7 @@ impl<'a> StateRepository<'a> {
                 "finished_at": operation.finished_at,
                 "outcome": operation.outcome,
                 "error_details": operation.error_details
-            })
+            }),
         )
         .with_host(HostName::new("sinex.operations".to_string()));
 
@@ -609,7 +609,7 @@ impl<'a> StateRepository<'a> {
                 "finished_at": result.finished_at,
                 "outcome": result.outcome,
                 "error_details": result.error_details
-            })
+            }),
         )
         .with_host(HostName::new("sinex.operations".to_string()));
 

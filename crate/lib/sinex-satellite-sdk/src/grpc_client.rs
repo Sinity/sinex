@@ -52,7 +52,7 @@ enum CircuitState {
 }
 
 /// Circuit breaker for gRPC client
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CircuitBreaker {
     state: Arc<RwLock<CircuitState>>,
     failure_count: Arc<RwLock<u32>>,
@@ -195,16 +195,20 @@ impl IngestClient {
     #[instrument(skip(self, event), fields(source = %event.source, event_type = %event.event_type, host = %event.host))]
     pub async fn ingest_event(&mut self, event: &RawEvent) -> SatelliteResult<String> {
         let event_clone = event.clone();
+        let mut client = self.client.clone();
+        let operation_timeout = self.config.operation_timeout;
+
         self.execute_with_retry_and_circuit_breaker(
             move || {
                 let event = event_clone.clone();
+                let mut client = client.clone();
                 async move {
-                    let proto_event = self.convert_to_proto(&event)?;
+                    let proto_event = Self::convert_to_proto_static(&event)?;
                 let request = tonic::Request::new(proto_event);
 
                 let response = tokio::time::timeout(
-                    self.config.operation_timeout,
-                    self.client.ingest_event(request)
+                    operation_timeout,
+                    client.ingest_event(request)
                 )
                 .await
                 .map_err(|_| SatelliteError::Processing("gRPC call timed out".to_string()))?
@@ -247,12 +251,16 @@ impl IngestClient {
         }
 
         let events_clone = events.to_vec();
+        let mut client = self.client.clone();
+        let operation_timeout = self.config.operation_timeout;
+
         self.execute_with_retry_and_circuit_breaker(move || {
             let events = events_clone.clone();
+            let mut client = client.clone();
             async move {
                 let mut proto_events = Vec::with_capacity(events.len());
                 for event in &events {
-                    proto_events.push(self.convert_to_proto(event)?);
+                    proto_events.push(Self::convert_to_proto_static(event)?);
                 }
                 let batch = EventBatch {
                     events: proto_events,
@@ -260,8 +268,8 @@ impl IngestClient {
 
                 let request = tonic::Request::new(batch);
                 let response = tokio::time::timeout(
-                self.config.operation_timeout,
-                self.client.ingest_batch(request),
+                operation_timeout,
+                client.ingest_batch(request),
             )
             .await
             .map_err(|_| SatelliteError::Processing("gRPC batch call timed out".to_string()))?
@@ -366,6 +374,10 @@ impl IngestClient {
 
     /// Convert Event to protobuf format
     fn convert_to_proto(&self, event: &RawEvent) -> SatelliteResult<ProtoRawEvent> {
+        Self::convert_to_proto_static(event)
+    }
+
+    fn convert_to_proto_static(event: &RawEvent) -> SatelliteResult<ProtoRawEvent> {
         let payload_json = serde_json::to_string(&event.payload)?;
 
         Ok(ProtoRawEvent {

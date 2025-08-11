@@ -697,7 +697,7 @@ impl WindowManagerWatcher {
                     .map(|w| self.parse_id(w, "current_workspace_id"))
                     .unwrap_or(0),
                 to_workspace_id: self.parse_id(&workspace_id, "workspace_id"),
-                monitor_id: 0,          // TODO(desktop-satellite): Get actual monitor ID from Hyprland
+                monitor_id: 0, // TODO(desktop-satellite): Get actual monitor ID from Hyprland
                 active_window_id: None, // TODO(desktop-satellite): Get active window from workspace state
             },
         )

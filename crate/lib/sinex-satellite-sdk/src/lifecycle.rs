@@ -103,7 +103,7 @@ impl LifecycleManager {
                     service = %self.service_name,
                     "Status mutex was poisoned, recovering and setting status"
                 );
-                *poisoned.get_mut() = status;
+                **poisoned.get_mut() = status;
             }
         }
         info!(

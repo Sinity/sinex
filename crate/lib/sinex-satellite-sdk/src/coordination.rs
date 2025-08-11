@@ -48,7 +48,11 @@ pub struct SatelliteCoordination {
 }
 
 impl SatelliteCoordination {
-    pub fn new(service_name: String, instance_id: String, pool: DbPool) -> crate::SatelliteResult<Self> {
+    pub fn new(
+        service_name: String,
+        instance_id: String,
+        pool: DbPool,
+    ) -> crate::SatelliteResult<Self> {
         let instance = SatelliteInstance::new(instance_id, service_name)?;
         let coordination = DistributedCoordination::new(pool.clone());
         let failure_coordinator = CoordinationPrimitive::synchronizer(format!(

@@ -1,0 +1,302 @@
+# Sinex Architectural Cancer Analysis
+
+## Executive Summary
+
+This document captures a comprehensive architectural audit of the Sinex codebase, identifying violations of the canonical architecture, areas of technical debt, and opportunities for improvement. The audit was conducted through systematic analysis of the codebase against the canonical architecture defined in `docs/TARGET_canonical.md`.
+
+## Methodology
+
+The audit employed multiple specialized analyses examining:
+- Single-writer principle enforcement
+- Post-commit publish guarantees
+- Provenance tracking patterns
+- Unified processor model compliance
+- Schema redundancy and orphaned features
+- Database constraint enforcement
+- Test infrastructure patterns
+
+## Critical Findings
+
+### 1. Missing sensd Schema Definitions
+
+**Status**: CRITICAL GAP
+
+The `sensd` service references two tables that have no schema definitions:
+- `raw.sensor_jobs` - for managing sensor job lifecycle
+- `raw.temporal_ledger` - for tracking byte-level capture timing
+
+**Evidence**:
+- Code in `crate/core/sinex-sensd/src/job_manager.rs` queries these tables
+- `crate/satellites/sinex-fs-watcher/src/sensd_integration.rs` attempts to insert records
+- No schema files exist in `crate/lib/sinex-migrations/src/schema/`
+- No migrations create these tables
+
+**Impact**: The sensd service will fail on startup when it attempts to access non-existent tables.
+
+**Required Action**: Create schema files defining these tables, then create migrations that use the schemas.
+
+### 2. Event Construction and Provenance Patterns
+
+**Status**: CRITICAL MISUNDERSTANDING - REQUIRES ARCHITECTURAL CORRECTION
+
+According to the canonical architecture, the provenance model is strictly binary (XOR):
+1. **External provenance** (source_material_id, anchor_byte) - ALL first-order events from captured data
+2. **Internal provenance** (source_event_ids) - ALL synthesized events from other events
+
+**Critical Correction**: 
+The (NULL, NULL) state is INVALID according to the canonical architecture. The document states:
+- "Source Material is Ground Truth" - ALL raw observations must be captured as Source Material
+- Even system events like `system.heartbeat` should reference Source Material (e.g., from a system metrics collection stream)
+- The XOR constraint MUST be enforced: "Every event in `core.events` **MUST** have either external provenance OR internal provenance, but **NEVER** both, and **NEVER** neither"
+
+**Architectural Violation**:
+- Current code creates events with no provenance (both fields NULL)
+- This violates Invariant #3: "Dual-Layer Provenance (XOR)"
+- ALL first-order events MUST be tied to Source Material captured by sensd
+
+**Required Fix**:
+- All "raw observation" events must be captured through sensd first
+- sensd creates Source Material entries for system observations (process lists, metrics, etc.)
+- Ingestors then create events with proper external provenance to this material
+- No event should ever have (NULL, NULL) provenance
+
+**ts_orig Nullability Issue**:
+- Currently nullable but this was unintended
+- ALL events should have timestamps
+- Consider making ts_orig NOT NULL in future migration
+
+### 3. Test Infrastructure Wrapper Methods
+
+**Status**: MINOR CLEANUP
+
+Three unnecessary wrapper methods in `TestContext`:
+
+1. **`insert_event()` (lines 114-120)**:
+   - Wraps `pool.events().insert()` with event tracking
+   - Tests should use: `ctx.pool.events().insert(event).await?`
+
+2. **`assert_event_exists()` (lines 134-140)**:
+   - Wraps `pool.events().exists_by_id()` with basic error message
+   - Tests should use: `assert!(ctx.pool.events().exists_by_id(&id).await?)`
+
+3. **`test_event_count()` (lines 143-145)**:
+   - Wraps `pool.events().count_all()` and swallows errors with `unwrap_or(0)`
+   - Tests should use: `ctx.pool.events().count_all().await?`
+
+### 4. Validation Cache Schema Mismatch
+
+**Status**: BUG
+
+The `sinex_schemas.validation_cache` table has a schema mismatch:
+- Table expects: `(payload_hash, schema_id)` as key
+- Function uses: `(event_id, schema_id)` in insert
+- This will cause runtime failures when validation caching is enabled
+
+## Validated Architecture Patterns
+
+### 1. Post-Commit Publish Implementation
+
+**Status**: CORRECTLY IMPLEMENTED
+
+The system properly implements the transactional outbox pattern:
+- Satellites communicate via gRPC to ingestd (not direct NATS)
+- ingestd writes events and outbox entries in same transaction
+- Background task processes outbox entries after commit
+- NATS publishing only occurs for committed events
+
+**Evidence**:
+- `IngestService::batch_write_to_db()` atomically writes to both tables
+- `process_outbox()` runs asynchronously every 100ms
+- Uses `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent processing
+
+### 2. Archive-on-Delete Pattern
+
+**Status**: CORRECTLY IMPLEMENTED
+
+The `audit.archived_events` table serves a legitimate purpose:
+- Preserves complete event data when deleted from `core.events`
+- Maintains audit trail with who/when/why metadata
+- Supports "rebuildability via replay" principle
+- NOT redundant with `operations_log` (which tracks operational metadata)
+
+### 3. Caching Infrastructure
+
+**Status**: LEGITIMATE BUT NEEDS BUG FIX
+
+Two distinct caching tables serve different purposes:
+- `validation_cache`: Caches expensive JSON schema validation results
+- `embedding_cache`: Caches expensive AI embedding API calls
+
+These are NOT parallel systems but domain-specific optimizations.
+
+### 4. Preflight Service Design
+
+**Status**: ARCHITECTURALLY CORRECT
+
+The preflight tool's direct database access is justified:
+- Runs BEFORE ingestd starts (service dependency ordering)
+- Functions as system verification, not a satellite
+- `process.heartbeat` events are appropriate for health reporting
+- Alternative tables (operations_log, processor_manifests) don't fit the use case
+
+### 5. StageAsYouGoProcessor Pattern
+
+**Status**: LEGITIMATE HELPER PATTERN
+
+This is NOT a violation of the unified processor model:
+- Optional helper trait for real-time provenance tracking
+- Complements (doesn't replace) StatefulStreamProcessor
+- All processors still implement the required unified interface
+- Provides `StageAsYouGoContext` for processors needing in-flight material registration
+
+## Architectural Strengths
+
+### 1. Unified Processor Model
+
+All satellites correctly use the `processor_main!` macro and implement `StatefulStreamProcessor`. The architecture successfully unifies ingestors and automata under a single interface with:
+- Unified checkpoints supporting both external and internal positions
+- Three time horizons (Snapshot, Historical, Continuous)
+- Consistent CLI structure across all processors
+
+### 2. Event Type System
+
+The three-tier type hierarchy provides excellent type safety:
+- `Event<T: EventPayload>` - compile-time type safety
+- `RawEvent` - runtime flexibility with JSON payloads
+- `EventRecord` - database representation
+
+### 3. Repository Pattern
+
+Clean separation between domain models and database access:
+- Repositories handle all SQL interactions
+- Domain models remain database-agnostic
+- Test infrastructure correctly exposes `pool` for direct repository access
+
+## Misconceptions Corrected
+
+### 1. NATS Migration Status
+
+Initial audit claimed satellites publish directly to NATS. Investigation revealed:
+- All satellites use gRPC to communicate with ingestd
+- No satellites have direct NATS clients
+- The system correctly implements post-commit publish
+
+### 2. Duplicate State Tracking
+
+Initial audit claimed `archived_events` duplicates `operations_log`. Analysis showed:
+- These serve completely different purposes
+- `archived_events`: Stores complete deleted event data
+- `operations_log`: Tracks operational workflows and metadata
+- They are complementary, not redundant
+
+### 3. Parallel Processor Implementations
+
+Initial concern about `StageAsYouGoProcessor` creating a parallel system. Investigation revealed:
+- It's an optional helper, not a replacement
+- All processors still implement `StatefulStreamProcessor`
+- Provides additional capability for specific use cases
+
+### 4. Provenance Model Understanding
+
+Initial misunderstanding: Believed (NULL, NULL) provenance was valid for "raw observation" events.
+
+Corrected understanding from canonical architecture:
+- The XOR constraint is absolute - NEVER (NULL, NULL) allowed
+- ALL first-order events must reference Source Material
+- Even system observations (heartbeats, process lists) must be captured as Source Material first
+- The architecture requires: "Source Material is Ground Truth"
+
+## Implementation Gaps
+
+### 1. sensd Service (20% Complete)
+
+**What exists**:
+- Job manager framework
+- Material stream abstractions
+- Sensor type definitions
+
+**What's missing**:
+- Database schema definitions
+- gRPC server implementation  
+- MaterialSliceStream data loading
+- Integration with satellites
+
+### 2. Event Provenance Safety
+
+**Current state**:
+- Default constructors create events with no provenance
+- No compile-time enforcement of provenance requirements
+- Runtime validation only at database level
+
+**Improvements needed**:
+- Factory methods for different event types
+- Compile-time safety for synthesis events
+- Better documentation of provenance requirements
+
+## Recommendations
+
+### Immediate Actions
+
+1. **Create sensd schema files**:
+   - Define `sensor_jobs` and `temporal_ledger` in schema directory
+   - Create migration using these schemas
+   - Complete MaterialSliceStream implementation
+
+2. **Fix validation_cache bug**:
+   - Update function to use `payload_hash` instead of `event_id`
+   - Add tests for validation caching
+
+3. **Consider ts_orig constraint**:
+   - Evaluate making ts_orig NOT NULL
+   - Ensure all event creation paths set appropriate timestamps
+
+### Medium Priority
+
+1. **Remove test wrapper methods**:
+   - Delete unnecessary wrappers in TestContext
+   - Update tests to use repository methods directly
+
+2. **Improve event construction safety**:
+   - Add factory methods for different event categories
+   - Consider builder pattern with required fields
+
+3. **Document provenance patterns**:
+   - Clarify when (NULL, NULL) provenance is appropriate
+   - Document the three-tier event hierarchy
+
+### Long Term
+
+1. **Complete sensd implementation**:
+   - Implement gRPC server
+   - Refactor satellites to use MaterialSliceStream
+   - Remove direct I/O from satellites
+
+2. **Enhance type safety**:
+   - Consider state machines for event construction
+   - Add compile-time provenance enforcement where possible
+
+## Conclusion
+
+The Sinex architecture is fundamentally sound with excellent separation of concerns, proper transactional guarantees, and a well-designed event model. However, there is one critical architectural violation that needs correction:
+
+1. **Critical violation**: Events with (NULL, NULL) provenance violate the canonical architecture
+2. **Incomplete features** (sensd) blocking proper provenance implementation
+3. **Minor bugs** (validation_cache) that are easily fixed
+4. **Documentation gaps** about design intentions
+
+The provenance violation is serious - it undermines the "Source Material is Ground Truth" principle. ALL events must have provenance, either external (to Source Material) or internal (to parent events). The fix requires completing sensd so that all raw observations are first captured as Source Material, then converted to events with proper external provenance.
+
+## Appendix: Key Architectural Invariants
+
+From the canonical architecture, current compliance status:
+
+1. **Single-Writer Ingest**: ✅ All events flow through ingestd
+2. **Post-Commit Publish**: ✅ Transactional outbox pattern implemented
+3. **Dual-Layer Provenance**: ❌ XOR constraint violated - (NULL, NULL) events exist
+4. **Archive-on-Delete**: ✅ Trigger moves deleted events to audit table
+5. **Unified Processor Model**: ✅ All satellites use StatefulStreamProcessor
+
+The critical violation is Invariant #3 - the system currently allows events without any provenance, which violates the fundamental "Source Material is Ground Truth" principle. This must be fixed by:
+1. Completing sensd to capture all raw observations as Source Material
+2. Ensuring all first-order events reference their Source Material
+3. Enforcing the XOR constraint to prevent (NULL, NULL) states

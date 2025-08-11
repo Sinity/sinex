@@ -260,12 +260,13 @@ impl LeadershipGuard {
                 "operation_type": operation_type,
                 "previous_leader": existing_leader.as_ref().map(|l| l.instance_id),
                 "previous_leader_acquired_at": existing_leader.as_ref().map(|l| l.acquired_at)
-            })
+            }),
         )
         .with_host(HostName::new("sinex.distributed".to_string()));
 
         let event_repo = EventRepository::new(pool);
-        event_repo.insert_with_tx(&mut tx, leadership_intent_event)
+        event_repo
+            .insert_with_tx(&mut tx, leadership_intent_event)
             .await
             .map_err(SinexError::from)?;
 
@@ -290,11 +291,12 @@ impl LeadershipGuard {
                 "leader_instance_id": self.instance_id,
                 "operation_type": operation_type,
                 "previous_leader": existing_leader.as_ref().map(|l| l.instance_id)
-            })
+            }),
         )
         .with_host(HostName::new("sinex.distributed".to_string()));
 
-        event_repo.insert_with_tx(&mut tx, leadership_acquired_event)
+        event_repo
+            .insert_with_tx(&mut tx, leadership_acquired_event)
             .await
             .map_err(SinexError::from)?;
 
@@ -327,12 +329,13 @@ impl LeadershipGuard {
                     "service_name": self.service_name,
                     "leader_instance_id": self.instance_id,
                     "previous_heartbeat": heartbeat_info.last_heartbeat
-                })
+                }),
             )
             .with_host(HostName::new("sinex.distributed".to_string()));
 
             let event_repo = EventRepository::new(pool);
-            event_repo.insert_with_tx(&mut tx, heartbeat_intent_event)
+            event_repo
+                .insert_with_tx(&mut tx, heartbeat_intent_event)
                 .await
                 .map_err(SinexError::from)?;
 
@@ -354,11 +357,12 @@ impl LeadershipGuard {
                         "service_name": self.service_name,
                         "leader_instance_id": self.instance_id,
                         "previous_heartbeat": heartbeat_info.last_heartbeat
-                    })
+                    }),
                 )
                 .with_host(HostName::new("sinex.distributed".to_string()));
 
-                event_repo.insert_with_tx(&mut tx, heartbeat_updated_event)
+                event_repo
+                    .insert_with_tx(&mut tx, heartbeat_updated_event)
                     .await
                     .map_err(SinexError::from)?;
             }
