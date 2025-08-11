@@ -431,7 +431,6 @@ impl std::fmt::Debug for StreamProcessorContext {
 
 impl StreamProcessorContext {
     /// Send an event through the event channel
-    // TODO: Fix macro to use sinex_core instead of sinex_db
     #[cfg_attr(
         feature = "macros",
         sinex_macros::auto_event_metrics(event_type = "emit")

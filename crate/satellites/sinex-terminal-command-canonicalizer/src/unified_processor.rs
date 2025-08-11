@@ -425,29 +425,6 @@ impl StatefulStreamProcessor for TerminalCommandCanonicalizer {
         })
     }
 
-    // TODO: Remove event_filters after NatsStreamConsumer removal
-    // /// Get event filters for NATS consumption
-    // fn event_filters(&self) -> Vec<NatsEventFilter> {
-    //     vec![
-    //         // All shell command execution events
-    //         NatsEventFilter::new()
-    //             .with_source("shell.kitty")
-    //             .with_event_type("command.executed"),
-    //         NatsEventFilter::new()
-    //             .with_source("shell.atuin")
-    //             .with_event_type("command.executed"),
-    //         NatsEventFilter::new()
-    //             .with_source("shell.history.bash")
-    //             .with_event_type("command.executed"),
-    //         NatsEventFilter::new()
-    //             .with_source("shell.history.zsh")
-    //             .with_event_type("command.executed"),
-    //         NatsEventFilter::new()
-    //             .with_source("shell.history.fish")
-    //             .with_event_type("command.executed"),
-    //     ]
-    // }
-
     fn processor_name(&self) -> &str {
         "terminal-command-canonicalizer"
     }

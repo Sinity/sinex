@@ -24,14 +24,11 @@ impl EventAnnotations {
     pub const ID: &'static str = "id";
     pub const EVENT_ID: &'static str = "event_id";
     pub const ANNOTATION_TYPE: &'static str = "annotation_type";
-    pub const ANNOTATION_DATA: &'static str = "annotation_data";
-    pub const ANNOTATOR: &'static str = "annotator";
-    pub const CONFIDENCE_SCORE: &'static str = "confidence_score";
+    pub const CONTENT: &'static str = "content";
+    pub const METADATA: &'static str = "metadata";
+    pub const CREATED_BY: &'static str = "created_by";
     pub const CREATED_AT: &'static str = "created_at";
     pub const UPDATED_AT: &'static str = "updated_at";
-    pub const IS_HUMAN_VERIFIED: &'static str = "is_human_verified";
-    pub const VERIFICATION_TIMESTAMP: &'static str = "verification_timestamp";
-    pub const VERIFIED_BY: &'static str = "verified_by";
 
     /// Create the event annotations table
     pub fn create_table() -> String {
@@ -54,20 +51,17 @@ impl EventAnnotations {
                     .text()
                     .not_null(),
             )
+            .col(ColumnDef::new(Alias::new(Self::CONTENT)).text().not_null())
             .col(
-                ColumnDef::new(Alias::new(Self::ANNOTATION_DATA))
+                ColumnDef::new(Alias::new(Self::METADATA))
                     .json_binary()
-                    .not_null(),
+                    .not_null()
+                    .default(Expr::cust("'{}'::jsonb")),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::ANNOTATOR))
+                ColumnDef::new(Alias::new(Self::CREATED_BY))
                     .text()
                     .not_null(),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::CONFIDENCE_SCORE))
-                    .double()
-                    .default(1.0),
             )
             .col(
                 ColumnDef::new(Alias::new(Self::CREATED_AT))
@@ -81,16 +75,6 @@ impl EventAnnotations {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(
-                ColumnDef::new(Alias::new(Self::IS_HUMAN_VERIFIED))
-                    .boolean()
-                    .not_null()
-                    .default(false),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::VERIFICATION_TIMESTAMP)).timestamp_with_time_zone(),
-            )
-            .col(ColumnDef::new(Alias::new(Self::VERIFIED_BY)).text())
             .build(PostgresQueryBuilder)
     }
 
@@ -116,20 +100,12 @@ impl EventAnnotations {
                 .col(Alias::new(Self::EVENT_ID))
                 .col(Alias::new(Self::ANNOTATION_TYPE))
                 .build(PostgresQueryBuilder),
-            // GIN index on annotation_data
+            // GIN index on metadata
             format!(
-                "CREATE INDEX idx_event_annotations_data ON {}.{} USING GIN ({})",
+                "CREATE INDEX idx_event_annotations_metadata ON {}.{} USING GIN ({})",
                 Self::SCHEMA,
                 Self::TABLE,
-                Self::ANNOTATION_DATA
-            ),
-            // Partial index on human-verified annotations
-            format!(
-                "CREATE INDEX idx_event_annotations_verified ON {}.{} ({}) WHERE {} = true",
-                Self::SCHEMA,
-                Self::TABLE,
-                Self::EVENT_ID,
-                Self::IS_HUMAN_VERIFIED
+                Self::METADATA
             ),
         ]
     }

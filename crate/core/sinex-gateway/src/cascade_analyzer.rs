@@ -85,13 +85,14 @@ impl StreamingCascadeAnalyzer {
     pub async fn analyze_cascades(&self, event_ids: &[Ulid]) -> Result<CascadeAnalysis> {
         info!("Analyzing cascades for {} events", event_ids.len());
 
-        // Use PostgreSQL's built-in temp table mechanism - no SQL injection risk
-        // Temp tables are automatically cleaned up at end of session
-        let temp_table = format!(
-            "temp_cascade_analysis_{}",
+        // Generate unique session ID for this analysis
+        let session_id = format!(
+            "{}",
             chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
         );
-        self.create_temp_tables(&temp_table).await?;
+
+        // Create temp table with unique name
+        let temp_table = self.create_temp_tables(&session_id).await?;
 
         // Populate with initial events
         self.populate_initial_events(&temp_table, event_ids).await?;
@@ -126,7 +127,10 @@ impl StreamingCascadeAnalyzer {
     }
 
     /// Create temporary tables for analysis  
-    async fn create_temp_tables(&self, table_name: &str) -> Result<()> {
+    async fn create_temp_tables(&self, session_id: &str) -> Result<String> {
+        // Generate unique table name for this session
+        let table_name = format!("cascade_analysis_{}", session_id);
+
         // Note: PostgreSQL temp tables are session-scoped and auto-cleaned
         // Using TEMPORARY instead of TEMP for clarity
         let query = format!(
@@ -147,13 +151,13 @@ impl StreamingCascadeAnalyzer {
             table_name, table_name, table_name, table_name, table_name
         );
 
-        sqlx::query(&query)
-            .execute(&self.pool)
-            .await
-            .map_err(|e| db_error(e, "create temp cascade tables"))?;
+        sqlx::query(&query).execute(&self.pool).await.map_err(|e| {
+            error!("Failed to create temp table {}: {}", table_name, e);
+            db_error(e, "create temp cascade tables")
+        })?;
 
         debug!("Created temporary table {}", table_name);
-        Ok(())
+        Ok(table_name)
     }
 
     /// Populate initial events to analyze

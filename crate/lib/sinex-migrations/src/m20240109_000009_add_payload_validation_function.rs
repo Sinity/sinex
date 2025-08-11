@@ -29,7 +29,7 @@ impl MigrationTrait for Migration {
                     v_schema JSONB;
                 BEGIN
                     -- Fetch the schema content for the given ID
-                    SELECT json_schema INTO v_schema
+                    SELECT schema_content INTO v_schema
                     FROM sinex_schemas.event_payload_schemas
                     WHERE id = p_schema_id;
                     

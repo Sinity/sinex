@@ -1624,36 +1624,4 @@ mod tests {
 
         Ok(())
     }
-
-    // TODO: Fix this test - _process_file_with_staging method no longer exists
-    // #[sinex_test]
-    // async fn test_file_path_validation_in_staging(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    //     let config = FilesystemConfig {
-    //         watch_patterns: vec!["**/*.rs".to_string()],
-    //         ignore_patterns: vec![],
-    //         debounce_ms: 100,
-    //         max_depth: None,
-    //     };
-
-    //     let processor = FilesystemProcessor {
-    //         config,
-    //         context: None,
-    //         stage_context: None,
-    //         watch_roots: vec![],
-    //         rename_tracker: Arc::new(Mutex::new(HashMap::new())),
-    //         last_state: None,
-    //         checkpoint_manager: None,
-    //     };
-
-    //     // Test with path containing directory traversal
-    //     let invalid_path = Utf8Path::new("../../../etc/passwd");
-    //     let result = processor
-    //         ._process_file_with_staging(invalid_path, EventType::new("filesystem.file_modified"))
-    //         .await;
-
-    //     // Should be OK since stage_context is None (no actual staging happens)
-    //     assert!(result.is_ok());
-
-    //     Ok(())
-    // }
 }

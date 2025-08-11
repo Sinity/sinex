@@ -24,14 +24,15 @@ impl EventPayloadSchemas {
     pub const ID: &'static str = "id";
     pub const SCHEMA_NAME: &'static str = "schema_name";
     pub const SCHEMA_VERSION: &'static str = "schema_version";
-    pub const JSON_SCHEMA: &'static str = "json_schema";
+    pub const SCHEMA_CONTENT: &'static str = "schema_content";
+    pub const IS_ACTIVE: &'static str = "is_active";
+    pub const EVENT_TYPES: &'static str = "event_types";
     pub const DESCRIPTION: &'static str = "description";
+    pub const EXAMPLES: &'static str = "examples";
     pub const CREATED_AT: &'static str = "created_at";
     pub const UPDATED_AT: &'static str = "updated_at";
     pub const DEPRECATED_AT: &'static str = "deprecated_at";
-    pub const SUCCESSOR_ID: &'static str = "successor_id";
-    pub const CONTENT_HASH: &'static str = "content_hash";
-    pub const IS_ACTIVE: &'static str = "is_active";
+    pub const DEPRECATION_REASON: &'static str = "deprecation_reason";
 
     /// Create the event payload schemas table
     pub fn create_table() -> String {
@@ -55,11 +56,24 @@ impl EventPayloadSchemas {
                     .not_null(),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::JSON_SCHEMA))
+                ColumnDef::new(Alias::new(Self::SCHEMA_CONTENT))
                     .json_binary()
                     .not_null(),
             )
+            .col(
+                ColumnDef::new(Alias::new(Self::IS_ACTIVE))
+                    .boolean()
+                    .not_null()
+                    .default(true),
+            )
+            .col(
+                ColumnDef::new(Alias::new(Self::EVENT_TYPES))
+                    .array(sea_query::ColumnType::Text)
+                    .not_null()
+                    .default(Expr::cust("'{}'::text[]")),
+            )
             .col(ColumnDef::new(Alias::new(Self::DESCRIPTION)).text())
+            .col(ColumnDef::new(Alias::new(Self::EXAMPLES)).json_binary())
             .col(
                 ColumnDef::new(Alias::new(Self::CREATED_AT))
                     .timestamp_with_time_zone()
@@ -73,14 +87,7 @@ impl EventPayloadSchemas {
                     .default(Expr::current_timestamp()),
             )
             .col(ColumnDef::new(Alias::new(Self::DEPRECATED_AT)).timestamp_with_time_zone())
-            .col(ColumnDef::new(Alias::new(Self::SUCCESSOR_ID)).custom(Alias::new("ULID")))
-            .col(ColumnDef::new(Alias::new(Self::CONTENT_HASH)).text())
-            .col(
-                ColumnDef::new(Alias::new(Self::IS_ACTIVE))
-                    .boolean()
-                    .not_null()
-                    .default(true),
-            )
+            .col(ColumnDef::new(Alias::new(Self::DEPRECATION_REASON)).text())
             .build(PostgresQueryBuilder)
     }
 
@@ -95,11 +102,11 @@ impl EventPayloadSchemas {
                 .col(Alias::new(Self::SCHEMA_VERSION))
                 .unique()
                 .build(PostgresQueryBuilder),
-            // Index on content_hash for deduplication
+            // Index on is_active for active schema queries
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_event_payload_schemas_hash")
-                .col(Alias::new(Self::CONTENT_HASH))
+                .name("idx_event_payload_schemas_active")
+                .col(Alias::new(Self::IS_ACTIVE))
                 .build(PostgresQueryBuilder),
         ]
     }

@@ -40,11 +40,18 @@ impl AdvisoryLock {
 
             let cleanup = |lock: AdvisoryLock| async move {
                 if lock.acquired {
-                    let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                    match sqlx::query("SELECT pg_advisory_unlock($1)")
                         .bind(lock.lock_id)
                         .execute(&lock.pool)
-                        .await;
-                    tracing::debug!("Released advisory lock {}", lock.lock_id);
+                        .await
+                    {
+                        Ok(_) => tracing::debug!("Released advisory lock {}", lock.lock_id),
+                        Err(e) => tracing::error!(
+                            "Failed to release advisory lock {}: {}",
+                            lock.lock_id,
+                            e
+                        ),
+                    }
                 }
             };
 
@@ -81,11 +88,16 @@ impl AdvisoryLock {
 
         let cleanup = |lock: AdvisoryLock| async move {
             if lock.acquired {
-                let _ = sqlx::query("SELECT pg_advisory_unlock($1)")
+                match sqlx::query("SELECT pg_advisory_unlock($1)")
                     .bind(lock.lock_id)
                     .execute(&lock.pool)
-                    .await;
-                tracing::debug!("Released advisory lock {}", lock.lock_id);
+                    .await
+                {
+                    Ok(_) => tracing::debug!("Released advisory lock {}", lock.lock_id),
+                    Err(e) => {
+                        tracing::error!("Failed to release advisory lock {}: {}", lock.lock_id, e)
+                    }
+                }
             }
         };
 

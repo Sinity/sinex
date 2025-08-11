@@ -498,7 +498,7 @@ impl BlobManager {
 
         let blob_count = stats.total_blobs;
         let total_size = stats.total_size_bytes;
-        let failed_count = 0i64; // TODO: Track failed verifications
+        let failed_count = stats.failed_verifications.unwrap_or(0);
 
         // Insert metric event using EventRepository
         let new_event: RawEvent = Event::new(StorageStatisticsPayload {

@@ -144,21 +144,17 @@ impl ProcessorCheckpoints {
 
     pub const ID: &'static str = "id";
     pub const PROCESSOR_NAME: &'static str = "processor_name";
-    pub const PROCESSOR_VERSION: &'static str = "processor_version";
-    pub const CHECKPOINT_TYPE: &'static str = "checkpoint_type";
-    pub const STREAM_ID: &'static str = "stream_id";
-    pub const POSITION: &'static str = "position";
-    pub const SEQUENCE_NUMBER: &'static str = "sequence_number";
-    pub const TIMESTAMP: &'static str = "timestamp";
+    pub const CONSUMER_GROUP: &'static str = "consumer_group";
+    pub const CONSUMER_NAME: &'static str = "consumer_name";
+    pub const LAST_PROCESSED_ID: &'static str = "last_processed_id";
+    pub const LAST_PROCESSED_TS: &'static str = "last_processed_ts";
+    pub const PROCESSED_COUNT: &'static str = "processed_count";
+    pub const CHECKPOINT_DATA: &'static str = "checkpoint_data";
     pub const STATE_DATA: &'static str = "state_data";
-    pub const METRICS: &'static str = "metrics";
-    pub const ERROR_COUNT: &'static str = "error_count";
-    pub const LAST_ERROR: &'static str = "last_error";
+    pub const CHECKPOINT_VERSION: &'static str = "checkpoint_version";
+    pub const LAST_ACTIVITY: &'static str = "last_activity";
     pub const CREATED_AT: &'static str = "created_at";
     pub const UPDATED_AT: &'static str = "updated_at";
-    pub const PROCESSING_DURATION_MS: &'static str = "processing_duration_ms";
-    pub const EVENTS_PROCESSED: &'static str = "events_processed";
-    pub const LAST_EVENT_ID: &'static str = "last_event_id";
 
     /// Create the processor checkpoints table
     pub fn create_table() -> String {
@@ -177,39 +173,37 @@ impl ProcessorCheckpoints {
                     .not_null(),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::PROCESSOR_VERSION))
+                ColumnDef::new(Alias::new(Self::CONSUMER_GROUP))
                     .text()
                     .not_null(),
             )
             .col(
-                ColumnDef::new(Alias::new(Self::CHECKPOINT_TYPE))
+                ColumnDef::new(Alias::new(Self::CONSUMER_NAME))
                     .text()
                     .not_null(),
             )
-            .col(ColumnDef::new(Alias::new(Self::STREAM_ID)).text())
-            .col(ColumnDef::new(Alias::new(Self::POSITION)).text())
-            .col(ColumnDef::new(Alias::new(Self::SEQUENCE_NUMBER)).big_integer())
+            .col(ColumnDef::new(Alias::new(Self::LAST_PROCESSED_ID)).custom(Alias::new("ULID")))
+            .col(ColumnDef::new(Alias::new(Self::LAST_PROCESSED_TS)).timestamp_with_time_zone())
             .col(
-                ColumnDef::new(Alias::new(Self::TIMESTAMP))
-                    .timestamp_with_time_zone()
-                    .not_null(),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::STATE_DATA))
-                    .json_binary()
-                    .default(Expr::cust("'{}'::jsonb")),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::METRICS))
-                    .json_binary()
-                    .default(Expr::cust("'{}'::jsonb")),
-            )
-            .col(
-                ColumnDef::new(Alias::new(Self::ERROR_COUNT))
-                    .integer()
+                ColumnDef::new(Alias::new(Self::PROCESSED_COUNT))
+                    .big_integer()
+                    .not_null()
                     .default(0),
             )
-            .col(ColumnDef::new(Alias::new(Self::LAST_ERROR)).text())
+            .col(ColumnDef::new(Alias::new(Self::CHECKPOINT_DATA)).json_binary())
+            .col(ColumnDef::new(Alias::new(Self::STATE_DATA)).json_binary())
+            .col(
+                ColumnDef::new(Alias::new(Self::CHECKPOINT_VERSION))
+                    .integer()
+                    .not_null()
+                    .default(1),
+            )
+            .col(
+                ColumnDef::new(Alias::new(Self::LAST_ACTIVITY))
+                    .timestamp_with_time_zone()
+                    .not_null()
+                    .default(Expr::current_timestamp()),
+            )
             .col(
                 ColumnDef::new(Alias::new(Self::CREATED_AT))
                     .timestamp_with_time_zone()
@@ -222,43 +216,26 @@ impl ProcessorCheckpoints {
                     .not_null()
                     .default(Expr::current_timestamp()),
             )
-            .col(ColumnDef::new(Alias::new(Self::PROCESSING_DURATION_MS)).big_integer())
-            .col(ColumnDef::new(Alias::new(Self::EVENTS_PROCESSED)).big_integer())
-            .col(ColumnDef::new(Alias::new(Self::LAST_EVENT_ID)).custom(Alias::new("ULID")))
             .build(PostgresQueryBuilder)
     }
 
     /// Create indexes for the processor checkpoints table
     pub fn create_indexes() -> Vec<String> {
         vec![
-            // Index on processor name and version
+            // Unique index on (processor_name, consumer_group, consumer_name)
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_processor_checkpoints_processor")
+                .name("idx_processor_checkpoints_unique")
                 .col(Alias::new(Self::PROCESSOR_NAME))
-                .col(Alias::new(Self::PROCESSOR_VERSION))
+                .col(Alias::new(Self::CONSUMER_GROUP))
+                .col(Alias::new(Self::CONSUMER_NAME))
+                .unique()
                 .build(PostgresQueryBuilder),
-            // Index on stream_id for stream-specific queries
-            format!(
-                "CREATE INDEX idx_processor_checkpoints_stream ON {}.{} ({}) WHERE {} IS NOT NULL",
-                Self::SCHEMA,
-                Self::TABLE,
-                Self::STREAM_ID,
-                Self::STREAM_ID
-            ),
-            // Index on timestamp for time-based queries
+            // Index on last_activity for cleanup queries
             Index::create()
                 .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_processor_checkpoints_timestamp")
-                .col((Alias::new(Self::TIMESTAMP), IndexOrder::Desc))
-                .build(PostgresQueryBuilder),
-            // Composite index for latest checkpoint queries
-            Index::create()
-                .table((Alias::new(Self::SCHEMA), Alias::new(Self::TABLE)))
-                .name("idx_processor_checkpoints_latest")
-                .col(Alias::new(Self::PROCESSOR_NAME))
-                .col(Alias::new(Self::CHECKPOINT_TYPE))
-                .col((Alias::new(Self::TIMESTAMP), IndexOrder::Desc))
+                .name("idx_processor_checkpoints_activity")
+                .col((Alias::new(Self::LAST_ACTIVITY), IndexOrder::Desc))
                 .build(PostgresQueryBuilder),
         ]
     }
