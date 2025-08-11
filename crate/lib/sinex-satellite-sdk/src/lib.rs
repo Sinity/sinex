@@ -126,6 +126,7 @@ pub mod ingestion_helpers;
 pub mod lifecycle;
 pub mod nats;
 pub mod preflight;
+pub mod prelude;
 pub mod processor_runner;
 pub mod replay;
 pub mod replay_control;
@@ -142,7 +143,8 @@ pub use cli::{
     SourceState,
 };
 pub use config::{AutomatonConfig, EventSourceConfig, SatelliteConfig};
-pub use grpc_client::{GrpcClientConfig, IngestClient};
+pub use coordination::{HandoffRequest, InstanceMode, SatelliteCoordination};
+pub use grpc_client::{BatchResult, GrpcClientConfig, HealthStatus, IngestClient};
 pub use heartbeat::{HeartbeatCounterHandle, HeartbeatEmitter, HeartbeatMetrics};
 pub use lifecycle::{LifecycleManager, ServiceStatus};
 pub use processor_runner::{ProcessorMode, ProcessorRunner, ProcessorRunnerConfig};
@@ -152,6 +154,7 @@ pub use stream_processor::{
     ScanEstimate, ScanReport, StatefulStreamProcessor, StreamProcessorContext,
     StreamProcessorRunner, TimeHorizon,
 };
+pub use version::{SatelliteInstance, SatelliteVersion};
 
 /// Version information for satellite components
 #[derive(Debug, Clone)]

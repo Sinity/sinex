@@ -1573,6 +1573,17 @@ impl<'a> EventRepository<'a> {
         let result = sqlx::query!(
             r#"
             UPDATE core.event_annotations
+            SET deleted_at = CURRENT_TIMESTAMP,
+                deleted_by = $2,
+                deletion_reason = $3
+            WHERE id = $1
+            "#,
+            *id.as_ulid() as _,
+            deleted_by,
+            deletion_reason
+        )
+        .execute(&self.db_pool)
+        .await
         .map_err(|e| db_error(e, "delete annotation"))?;
 
         Ok(result.rows_affected() > 0)
@@ -1586,7 +1597,7 @@ impl<'a> EventRepository<'a> {
     ) -> DbResult<Vec<EventAnnotation>> {
         let limit = limit.unwrap_or(100);
 
-        sqlx::query_as!(
+        let rows = sqlx::query_as!(
             EventAnnotation,
             r#"
             SELECT 
@@ -2140,11 +2151,7 @@ impl<'a> EventRepository<'a> {
     /// Only use for test cleanup or administrative operations where
     /// you need to actually reclaim disk space.
     pub async fn hard_delete_by_source(&self, source: &EventSource) -> DbResult<u64> {
-        // Enable bypass mode
-        sqlx::query!("SELECT enable_audit_bypass()")
-            .execute(self.pool)
-            .await
-            .map_err(|e| db_error(e, "enable audit bypass"))?;
+        // Note: Audit bypass mode not implemented - performing direct delete
 
         // Perform the hard delete
         let result = sqlx::query!("DELETE FROM core.events WHERE source = $1", source.as_str())
