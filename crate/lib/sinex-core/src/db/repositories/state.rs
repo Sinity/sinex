@@ -1304,7 +1304,7 @@ pub struct ProcessorHealthSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct CheckpointGap {
     pub processor_name: String,
-    pub last_processed_id: Option<Id<RawEvent>>,
+    pub last_processed_id: Option<crate::EventId>,
     pub processed_count: Option<i64>,
     pub last_activity: Option<DateTime<Utc>>,
     pub events_after_checkpoint: Option<i64>,
