@@ -8,8 +8,11 @@
 //!
 //! ## Usage
 //! ```rust
-//! // Use default configuration (recommended for most cases)
-//! let client = IngestClient::new("/run/sinex/ingest.sock").await?;
+//! // Use environment-namespaced default socket (recommended for most cases)
+//! let client = IngestClient::default().await?;
+//!
+//! // Or connect to explicit path
+//! let client = IngestClient::new("/run/sinex-dev/ingest.sock").await?;
 //!
 //! // Use custom configuration for specific requirements
 //! let config = GrpcClientConfig {
@@ -19,7 +22,8 @@
 //!     circuit_breaker_threshold: 10,
 //!     circuit_breaker_recovery: Duration::from_secs(60),
 //! };
-//! let client = IngestClient::with_config("/run/sinex/ingest.sock", config).await?;
+//! let socket_path = IngestClient::default_socket_path();
+//! let client = IngestClient::with_config(&socket_path, config).await?;
 //! ```
 
 use crate::proto::{
@@ -27,7 +31,7 @@ use crate::proto::{
     RawEvent as ProtoRawEvent,
 };
 use crate::{SatelliteError, SatelliteResult};
-use sinex_core::RawEvent;
+use sinex_core::{environment::environment, RawEvent};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -156,6 +160,20 @@ pub struct IngestClient {
 }
 
 impl IngestClient {
+    /// Get the default environment-namespaced ingest socket path
+    pub fn default_socket_path() -> String {
+        let env = environment();
+        env.socket_path("/run/sinex/ingest.sock")
+            .to_string_lossy()
+            .to_string()
+    }
+
+    /// Create a new client connected to the environment-namespaced default socket
+    pub async fn default() -> SatelliteResult<Self> {
+        let socket_path = Self::default_socket_path();
+        Self::new(&socket_path).await
+    }
+
     /// Create a new client connected to the specified Unix Domain Socket with default config
     #[instrument(fields(socket_path))]
     pub async fn new(socket_path: &str) -> SatelliteResult<Self> {

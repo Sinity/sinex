@@ -7,7 +7,7 @@ use super::{
 };
 use async_nats::jetstream;
 use serde::{Deserialize, Serialize};
-use sinex_core::{EventSource, EventType, NatsSubject, ServiceName};
+use sinex_core::{environment::environment, EventSource, EventType, NatsSubject, ServiceName};
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -46,14 +46,18 @@ pub struct StreamConfig {
 impl StreamConfig {
     /// Create a stream config for raw events
     pub fn raw_events() -> Self {
+        let env = environment();
         Self {
-            name: "SINEX_RAW_EVENTS".to_string(),
-            subjects: vec![NatsSubject::from("sinex.events.raw.>".to_string())],
-            description: Some("Raw event stream for all Sinex events".to_string()),
+            name: env.nats_stream_name("SINEX_RAW_EVENTS"),
+            subjects: vec![NatsSubject::from(env.nats_subject("sinex.events.raw.>"))],
+            description: Some(format!(
+                "Raw event stream for all Sinex events ({})",
+                env.name()
+            )),
             max_age: std::time::Duration::from_secs(86400 * 30), // 30 days
             max_msgs: 0,                                         // unlimited
             max_bytes: 0,                                        // unlimited
-            replicas: 3,
+            replicas: if env.is_dev() { 1 } else { 3 },          // single replica for dev
             retention: RetentionPolicy::Limits,
             discard: DiscardPolicy::Old,
         }
@@ -61,14 +65,20 @@ impl StreamConfig {
 
     /// Create a stream config for processed events
     pub fn processed_events() -> Self {
+        let env = environment();
         Self {
-            name: "SINEX_PROCESSED_EVENTS".to_string(),
-            subjects: vec![NatsSubject::from("sinex.events.processed.>".to_string())],
-            description: Some("Processed event stream for canonicalized events".to_string()),
+            name: env.nats_stream_name("SINEX_PROCESSED_EVENTS"),
+            subjects: vec![NatsSubject::from(
+                env.nats_subject("sinex.events.processed.>"),
+            )],
+            description: Some(format!(
+                "Processed event stream for canonicalized events ({})",
+                env.name()
+            )),
             max_age: std::time::Duration::from_secs(86400 * 90), // 90 days
             max_msgs: 0,
             max_bytes: 0,
-            replicas: 3,
+            replicas: if env.is_dev() { 1 } else { 3 },
             retention: RetentionPolicy::Limits,
             discard: DiscardPolicy::Old,
         }
@@ -76,10 +86,14 @@ impl StreamConfig {
 
     /// Create a stream config for metrics
     pub fn metrics() -> Self {
+        let env = environment();
         Self {
-            name: "SINEX_METRICS".to_string(),
-            subjects: vec![NatsSubject::from("sinex.metrics.>".to_string())],
-            description: Some("Metrics stream for system telemetry".to_string()),
+            name: env.nats_stream_name("SINEX_METRICS"),
+            subjects: vec![NatsSubject::from(env.nats_subject("sinex.metrics.>"))],
+            description: Some(format!(
+                "Metrics stream for system telemetry ({})",
+                env.name()
+            )),
             max_age: std::time::Duration::from_secs(86400 * 7), // 7 days
             max_msgs: 0,
             max_bytes: 0,
@@ -91,14 +105,18 @@ impl StreamConfig {
 
     /// Create a stream config for alerts
     pub fn alerts() -> Self {
+        let env = environment();
         Self {
-            name: "SINEX_ALERTS".to_string(),
-            subjects: vec![NatsSubject::from("sinex.alerts.>".to_string())],
-            description: Some("Alert stream for system notifications".to_string()),
+            name: env.nats_stream_name("SINEX_ALERTS"),
+            subjects: vec![NatsSubject::from(env.nats_subject("sinex.alerts.>"))],
+            description: Some(format!(
+                "Alert stream for system notifications ({})",
+                env.name()
+            )),
             max_age: std::time::Duration::from_secs(86400 * 30), // 30 days
             max_msgs: 10000,
             max_bytes: 0,
-            replicas: 3,
+            replicas: if env.is_dev() { 1 } else { 3 },
             retention: RetentionPolicy::Limits,
             discard: DiscardPolicy::Old,
         }
@@ -106,14 +124,20 @@ impl StreamConfig {
 
     /// Create a stream config for satellite coordination
     pub fn satellite_control() -> Self {
+        let env = environment();
         Self {
-            name: "SINEX_SATELLITE_CONTROL".to_string(),
-            subjects: vec![NatsSubject::from("sinex.satellite.control.>".to_string())],
-            description: Some("Control stream for satellite coordination".to_string()),
+            name: env.nats_stream_name("SINEX_SATELLITE_CONTROL"),
+            subjects: vec![NatsSubject::from(
+                env.nats_subject("sinex.satellite.control.>"),
+            )],
+            description: Some(format!(
+                "Control stream for satellite coordination ({})",
+                env.name()
+            )),
             max_age: std::time::Duration::from_secs(3600), // 1 hour
             max_msgs: 1000,
             max_bytes: 0,
-            replicas: 3,
+            replicas: if env.is_dev() { 1 } else { 3 },
             retention: RetentionPolicy::WorkQueue,
             discard: DiscardPolicy::New,
         }
@@ -226,35 +250,47 @@ impl StreamManager {
 
     /// Create a subject for a specific event source and type
     pub fn event_subject(source: &EventSource, event_type: &EventType) -> String {
-        format!(
+        let env = environment();
+        env.nats_subject(&format!(
             "sinex.events.raw.{}.{}",
             source.as_str(),
             event_type.as_str()
-        )
+        ))
     }
 
     /// Create a subject for processed events
     pub fn processed_subject(source: &EventSource, event_type: &EventType) -> String {
-        format!(
+        let env = environment();
+        env.nats_subject(&format!(
             "sinex.events.processed.{}.{}",
             source.as_str(),
             event_type.as_str()
-        )
+        ))
     }
 
     /// Create a subject for metrics
     pub fn metrics_subject(component: &ServiceName, metric_type: &str) -> String {
-        format!("sinex.metrics.{}.{}", component.as_str(), metric_type)
+        let env = environment();
+        env.nats_subject(&format!(
+            "sinex.metrics.{}.{}",
+            component.as_str(),
+            metric_type
+        ))
     }
 
     /// Create a subject for alerts
     pub fn alert_subject(severity: &str, component: &str) -> String {
-        format!("sinex.alerts.{}.{}", severity, component)
+        let env = environment();
+        env.nats_subject(&format!("sinex.alerts.{}.{}", severity, component))
     }
 
     /// Create a subject for satellite control
     pub fn control_subject(satellite: &str, command: &str) -> String {
-        format!("sinex.satellite.control.{}.{}", satellite, command)
+        let env = environment();
+        env.nats_subject(&format!(
+            "sinex.satellite.control.{}.{}",
+            satellite, command
+        ))
     }
 
     /// List all configured streams

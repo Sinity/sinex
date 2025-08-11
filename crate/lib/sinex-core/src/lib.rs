@@ -94,7 +94,7 @@ pub use types::{
 pub use environment::{environment, SinexEnvironment};
 
 // Re-export event system at crate root for short imports
-pub use types::events::{Event, EventPayload};
+pub use types::events::EventPayload;
 
 // Create facade for event payloads to flatten hierarchy
 pub mod payloads {
@@ -183,8 +183,9 @@ pub mod prelude {
     // Core data types - all available at crate root for convenience
     pub use crate::{
         BlobRecord, CheckpointRepository, DbPoolExt, Entity, EntityRelation, Event, EventId,
-        EventRepository, EventSource, EventType, HostName, Id, JsonValue, OptionalTimestamp,
-        ProcessorName, Provenance, RawEvent, Repository, SourceMaterial, Timestamp, Ulid,
+        EventRecord, EventRepository, EventSource, EventType, HostName, Id, JsonValue,
+        OptionalTimestamp, ProcessorName, Provenance, RawEvent, Repository, SourceMaterial,
+        SourceMaterialRecord, Timestamp, Ulid,
     };
 
     // All commonly used nested types flattened for convenience

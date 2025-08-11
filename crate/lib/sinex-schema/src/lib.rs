@@ -46,6 +46,7 @@ mod m20250810_000001_create_outbox_table;
 mod m20250810_000006_add_archive_trigger;
 mod m20250810_132050_drop_obsolete_artifact_tables;
 mod m20250811_000002_add_path_validation_functions;
+mod m20250811_000003_add_sensd_tables;
 mod m20250811_000003_fix_idempotency_index;
 
 pub struct Migrator;
