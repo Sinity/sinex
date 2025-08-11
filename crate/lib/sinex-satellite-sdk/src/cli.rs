@@ -4,7 +4,6 @@
 //! implementing the service/scan/explore subcommand pattern.
 
 use crate::stream_processor::{Checkpoint, ScanReport, TimeHorizon};
-use camino::Utf8PathBuf;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use color_eyre::eyre::{self, Context};

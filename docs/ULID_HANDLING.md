@@ -3,8 +3,14 @@
 ## Overview
 The Sinex project uses ULID (Universally Unique Lexicographically Sortable Identifier) as the primary key type throughout the database. ULID provides time-ordered, lexicographically sortable identifiers that are superior to UUIDs for our use case.
 
+## How SQLx Handles ULID
+While we use the `Ulid` type in Rust, SQLx transmits ULID data to/from PostgreSQL as UUID bytes:
+- **Encoding**: `Ulid::encode_by_ref()` converts to UUID before sending to PostgreSQL
+- **Decoding**: PostgreSQL sends UUID bytes which are converted back to Ulid
+- **In PostgreSQL**: The pgx_ulid extension interprets these UUID bytes as ULID values
+
 ## The Problem
-PostgreSQL's ULID extension provides a custom `ulid` type, but internally, we work with UUIDs in Rust. SQLx's compile-time query checking (`sqlx::query!`) doesn't handle 2D arrays (arrays of arrays) of custom types well, which causes issues when inserting multiple events with array fields like `source_event_ids` and `associated_blob_ids`.
+SQLx's compile-time query checking (`sqlx::query!`) doesn't handle 2D arrays (arrays of arrays) properly, which causes issues when inserting multiple events with array fields like `source_event_ids` and `associated_blob_ids`.
 
 ## The Solution
 We use PostgreSQL's `ulid_from_uuid()` function to convert UUID values to ULID at the database level:
