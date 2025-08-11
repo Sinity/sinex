@@ -136,6 +136,20 @@ const DEFAULT_DEBOUNCE_MS: u64 = 100;
 /// Maximum number of sample file paths for diagnostics
 const MAX_DIAGNOSTIC_SAMPLES: usize = 100;
 
+// Error message constants
+const ERR_DEBOUNCER_CREATION: &str = "Failed to create debouncer";
+const ERR_WATCH_PATH_VALIDATION: &str = "Filesystem watch path validation failed";
+const ERR_CREATE_VALIDATED_DIR: &str = "Failed to create validated directory";
+const ERR_WATCH_VALIDATED_PATH: &str = "Failed to watch validated path";
+const ERR_NO_VALID_WATCH_ROOTS: &str = "No valid watch roots found after security validation";
+const ERR_PARSE_FILESYSTEM_CONFIG: &str = "Failed to parse filesystem config, using defaults";
+const ERR_INVALID_TARGET_PATH: &str = "Invalid target path";
+const MSG_SKIPPING_NON_UTF8_PATH: &str = "Skipping non-UTF8 path in filesystem event";
+const MSG_REJECTING_PATH_OUTSIDE_BOUNDARIES: &str =
+    "Rejecting filesystem event for path outside validated boundaries";
+const MSG_REJECTING_DISCOVERY_OUTSIDE_BOUNDARIES: &str =
+    "Rejecting filesystem discovery event for path outside validated boundaries";
+
 /// Filesystem monitoring configuration
 #[derive(Debug, Clone, Serialize, Deserialize, Validate)]
 pub struct FilesystemConfig {
@@ -552,35 +566,37 @@ impl FilesystemProcessor {
 
     /// Check if a path matches the configured patterns
     fn matches_patterns(&self, path: &Utf8Path) -> bool {
+        self.matches_watch_patterns(path) && !self.matches_ignore_patterns(path)
+    }
+
+    /// Check if a path matches any watch pattern
+    fn matches_watch_patterns(&self, path: &Utf8Path) -> bool {
         let path_str = path.as_str();
 
-        // Check if path matches any watch pattern
-        let mut matches_watch = false;
         for pattern in &self.config.watch_patterns {
             let expanded = shellexpand::tilde(pattern);
             if let Ok(glob_pattern) = glob::Pattern::new(&expanded) {
                 if glob_pattern.matches(&path_str) {
-                    matches_watch = true;
-                    break;
+                    return true;
                 }
             }
         }
 
-        if !matches_watch {
-            return false;
-        }
+        false
+    }
 
-        // Check ignore patterns
+    /// Check if a path matches any ignore pattern
+    fn matches_ignore_patterns(&self, path: &Utf8Path) -> bool {
         for pattern in &self.config.ignore_patterns {
             let expanded = shellexpand::tilde(pattern);
             if let Ok(glob_pattern) = glob::Pattern::new(&expanded) {
                 if self.pattern_matches_path(&glob_pattern, pattern, path) {
-                    return false;
+                    return true;
                 }
             }
         }
 
-        true
+        false
     }
 
     /// Check if a pattern matches a path with proper handling of different pattern types
@@ -627,56 +643,12 @@ impl FilesystemProcessor {
         path: &Utf8Path,
         metadata: &std::fs::Metadata,
     ) -> SatelliteResult<Vec<RawEvent>> {
-        // Validate path before processing
-        let path_str = path.as_str();
-
-        // SECURITY: Validate discovered file against watch roots
-        let mut path_validated = false;
-        for watch_root in &self.validated_watch_roots {
-            match validate_discovered_file(
-                path_str,
-                watch_root.as_str(),
-                &self.config.security_policy,
-            ) {
-                Ok(_) => {
-                    path_validated = true;
-                    break;
-                }
-                Err(_) => continue,
-            }
-        }
-
-        if !path_validated {
-            warn!(
-                "Rejecting filesystem discovery event for path outside validated boundaries: {}",
-                path_str
-            );
-            return Ok(vec![]); // Return empty events instead of error
-        }
-
-        let mut events = Vec::new();
-
-        if metadata.is_file() {
-            let event: RawEvent =
-                Event::from_payload(sinex_core::types::events::FileDiscoveredPayload {
-                    path: SanitizedPath::new_unchecked(path_str),
-                    size: metadata.len(),
-                    modified_at: Utc::now(),
-                    permissions: Self::get_permissions(metadata),
-                })
-                .into();
-            events.push(event);
-        } else if metadata.is_dir() {
-            let event: RawEvent =
-                Event::from_payload(sinex_core::types::events::DirDiscoveredPayload {
-                    path: SanitizedPath::new_unchecked(path_str),
-                    modified_at: Utc::now(),
-                })
-                .into();
-            events.push(event);
-        }
-
-        Ok(events)
+        Self::create_discovery_events_static(
+            path,
+            metadata,
+            &self.validated_watch_roots,
+            &self.config.security_policy,
+        )
     }
 
     /// Get file permissions for the current platform
@@ -732,17 +704,6 @@ impl FilesystemProcessor {
                             for event in events {
                                 debug!("Processing debounced event: {:?}", event);
 
-                                // Create a temporary processor instance for processing
-                                let temp_processor = FilesystemProcessor {
-                                    context: None,
-                                    config: config.clone(),
-                                    watch_roots: watch_roots.clone(),
-                                    rename_tracker: rename_tracker.clone(),
-                                    last_state: None,
-                                    checkpoint_manager: None,
-                                    stage_context: None, // TODO: Pass stage context for real-time provenance
-                                };
-
                                 // Convert the notify event to our Event type
                                 let notify_event = NotifyEvent {
                                     kind: event.kind,
@@ -750,7 +711,13 @@ impl FilesystemProcessor {
                                     attrs: Default::default(),
                                 };
 
-                                match temp_processor.convert_fs_event(notify_event, &host) {
+                                // Process event directly with borrowed config
+                                match Self::process_fs_event_with_config(
+                                    notify_event,
+                                    &config,
+                                    &watch_roots,
+                                    &host,
+                                ) {
                                     Ok(raw_events) => {
                                         for raw_event in raw_events {
                                             if let Err(e) = event_sender.send(raw_event) {
@@ -908,6 +875,22 @@ impl FilesystemProcessor {
         Ok(())
     }
 
+    /// Configure default watch patterns if none are specified
+    fn configure_default_watch_patterns(&mut self) {
+        if self.config.watch_patterns.is_empty() {
+            if let Some(home) = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok()) {
+                self.config.watch_patterns = vec![
+                    format!("{}/**/*", home.join("Documents").as_str()),
+                    format!("{}/**/*", home.join("Downloads").as_str()),
+                    format!("{}/**/*", home.join("Desktop").as_str()),
+                ];
+            } else {
+                // Fallback to current directory
+                self.config.watch_patterns = vec!["**/*".to_string()];
+            }
+        }
+    }
+
     /// Clean up old rename operations that didn't complete
     fn cleanup_old_rename_operations(rename_tracker: &Arc<Mutex<HashMap<u32, RenameOperation>>>) {
         const RENAME_TIMEOUT: Duration = Duration::from_secs(5);
@@ -931,6 +914,71 @@ impl FilesystemProcessor {
                 tracker.remove(&cookie);
             }
         }
+    }
+
+    /// Process filesystem event with provided config (static method to avoid cloning)
+    fn process_fs_event_with_config(
+        event: NotifyEvent,
+        config: &FilesystemConfig,
+        validated_watch_roots: &[Utf8PathBuf],
+        _host: &str,
+    ) -> SatelliteResult<Vec<RawEvent>> {
+        let mut events = Vec::new();
+
+        // Process each path in the notify event
+        for path in event.paths {
+            let utf8_path = match Utf8PathBuf::from_path_buf(path) {
+                Ok(p) => p,
+                Err(_) => {
+                    debug!(MSG_SKIPPING_NON_UTF8_PATH);
+                    continue;
+                }
+            };
+
+            // SECURITY: Validate discovered file against watch roots
+            let mut path_validated = false;
+            for watch_root in validated_watch_roots {
+                match validate_discovered_file(
+                    utf8_path.as_str(),
+                    watch_root.as_str(),
+                    &config.security_policy,
+                ) {
+                    Ok(_) => {
+                        path_validated = true;
+                        break;
+                    }
+                    Err(_) => continue,
+                }
+            }
+
+            if !path_validated {
+                warn!(
+                    "{}: {}",
+                    MSG_REJECTING_PATH_OUTSIDE_BOUNDARIES,
+                    utf8_path.as_str()
+                );
+                continue;
+            }
+
+            // Get file metadata for event creation
+            if let Ok(metadata) = std::fs::metadata(&utf8_path) {
+                match Self::create_discovery_events_static(
+                    &utf8_path,
+                    &metadata,
+                    validated_watch_roots,
+                    &config.security_policy,
+                ) {
+                    Ok(mut file_events) => {
+                        events.append(&mut file_events);
+                    }
+                    Err(e) => {
+                        warn!("Failed to create events for {}: {}", utf8_path, e);
+                    }
+                }
+            }
+        }
+
+        Ok(events)
     }
 
     /// Convert filesystem event to RawEvent with security validation (legacy method)
@@ -1075,18 +1123,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         }
 
         // Ensure we have some watch patterns
-        if self.config.watch_patterns.is_empty() {
-            if let Some(home) = dirs::home_dir().and_then(|p| Utf8PathBuf::from_path_buf(p).ok()) {
-                self.config.watch_patterns = vec![
-                    format!("{}/**/*", home.join("Documents").as_str()),
-                    format!("{}/**/*", home.join("Downloads").as_str()),
-                    format!("{}/**/*", home.join("Desktop").as_str()),
-                ];
-            } else {
-                // Fallback to current directory
-                self.config.watch_patterns = vec!["**/*".to_string()];
-            }
-        }
+        self.configure_default_watch_patterns();
 
         info!(
             patterns = ?self.config.watch_patterns,
@@ -1129,7 +1166,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
                 // Scan watch roots or specified targets
                 let targets = if args.targets.is_empty() {
-                    self.watch_roots.iter().map(|p| p.to_string()).collect()
+                    self.watch_roots.iter().map(|p| p.as_str()).collect()
                 } else {
                     args.targets.clone()
                 };
@@ -1137,7 +1174,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 for target in targets {
                     // Validate target path for security
                     validate_path(&target).map_err(|e| {
-                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                        SatelliteError::General(eyre!(
+                            "{} '{}': {}",
+                            ERR_INVALID_TARGET_PATH,
+                            target,
+                            e
+                        ))
                     })?;
 
                     let path = camino::Utf8Path::new(&target);
@@ -1167,7 +1209,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 );
 
                 let targets = if args.targets.is_empty() {
-                    self.watch_roots.iter().map(|p| p.to_string()).collect()
+                    self.watch_roots.iter().map(|p| p.as_str()).collect()
                 } else {
                     args.targets.clone()
                 };
@@ -1175,7 +1217,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 for target in targets {
                     // Validate target path for security
                     validate_path(&target).map_err(|e| {
-                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                        SatelliteError::General(eyre!(
+                            "{} '{}': {}",
+                            ERR_INVALID_TARGET_PATH,
+                            target,
+                            e
+                        ))
                     })?;
 
                     let path = camino::Utf8Path::new(&target);
@@ -1273,7 +1320,7 @@ impl StatefulStreamProcessor for FilesystemProcessor {
 
         // Estimate based on current directory contents
         let targets = if args.targets.is_empty() {
-            &self.watch_roots.iter().map(|p| p.to_string()).collect()
+            &self.watch_roots.iter().map(|p| p.as_str()).collect()
         } else {
             &args.targets
         };
