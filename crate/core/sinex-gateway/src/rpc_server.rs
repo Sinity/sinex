@@ -69,52 +69,41 @@ struct AppState {
     services: ServiceContainer,
 }
 
-/// RPC method handler type
-type RpcHandler = fn(
-    &ServiceContainer,
-    Value,
-) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>;
+/// Shared dispatch function for RPC methods (used by both rpc_server and native_messaging)
+pub async fn dispatch_rpc_method(
+    services: &ServiceContainer,
+    method: &str,
+    params: serde_json::Value,
+) -> color_eyre::eyre::Result<serde_json::Value> {
+    match method {
+        // Analytics methods
+        "analytics.event_count_by_source" => {
+            handle_event_count_by_source(services.analytics.as_ref(), params).await
+        }
 
-/// Create RPC method dispatch table
-fn create_dispatch_table() -> HashMap<&'static str, RpcHandler> {
-    let mut table = HashMap::new();
+        "analytics.activity_heatmap" => {
+            handle_activity_heatmap(services.analytics.as_ref(), params).await
+        }
 
-    // Analytics methods
-    table.insert("analytics.event_count_by_source", |services, params| {
-        Box::pin(handle_event_count_by_source(
-            services.analytics.as_ref(),
-            params,
-        ))
-    });
-    table.insert("analytics.activity_heatmap", |services, params| {
-        Box::pin(handle_activity_heatmap(services.analytics.as_ref(), params))
-    });
+        // PKM methods
+        "pkm.create_note" => handle_create_note(services.pkm.as_ref(), params).await,
 
-    // PKM methods
-    table.insert("pkm.create_note", |services, params| {
-        Box::pin(handle_create_note(services.pkm.as_ref(), params))
-    });
-    table.insert("pkm.create_entities_from_list", |services, params| {
-        Box::pin(handle_create_entities(services.pkm.as_ref(), params))
-    });
-    table.insert("pkm.link_entities", |services, params| {
-        Box::pin(handle_link_entities(services.pkm.as_ref(), params))
-    });
+        "pkm.create_entities_from_list" => {
+            handle_create_entities(services.pkm.as_ref(), params).await
+        }
 
-    // Search methods
-    table.insert("search.search_events", |services, params| {
-        Box::pin(handle_search_events(services.search.as_ref(), params))
-    });
+        "pkm.link_entities" => handle_link_entities(services.pkm.as_ref(), params).await,
 
-    // Content methods
-    table.insert("content.store_blob", |services, params| {
-        Box::pin(handle_store_blob(services.content.as_ref(), params))
-    });
-    table.insert("content.retrieve_blob", |services, params| {
-        Box::pin(handle_retrieve_blob(services.content.as_ref(), params))
-    });
+        // Search methods
+        "search.search_events" => handle_search_events(services.search.as_ref(), params).await,
 
-    table
+        // Content methods
+        "content.store_blob" => handle_store_blob(services.content.as_ref(), params).await,
+
+        "content.retrieve_blob" => handle_retrieve_blob(services.content.as_ref(), params).await,
+
+        _ => Err(color_eyre::eyre::eyre!("Unknown method: {}", method)),
+    }
 }
 
 /// Main RPC handler using dispatch table
@@ -130,17 +119,8 @@ async fn handle_rpc(
     let start = std::time::Instant::now();
     let method = request.method.clone();
 
-    // Use dispatch table for method routing
-    let dispatch_table = create_dispatch_table();
-    let result = if let Some(handler) = dispatch_table.get(request.method.as_str()) {
-        handler(&state.services, request.params).await
-    } else {
-        return Json(JsonRpcResponse::error(
-            request.id,
-            -32601,
-            format!("Method not found: {}", request.method),
-        ));
-    };
+    // Use shared dispatch function
+    let result = dispatch_rpc_method(&state.services, &request.method, request.params).await;
 
     // Record telemetry
     if let Some(ref telemetry) = state.services.telemetry {
@@ -154,6 +134,9 @@ async fn handle_rpc(
 
     match result {
         Ok(value) => Json(JsonRpcResponse::success(request.id, value)),
+        Err(err) if err.to_string().contains("Unknown method:") => {
+            Json(JsonRpcResponse::error(request.id, -32601, err.to_string()))
+        }
         Err(err) => {
             error!("RPC method {} failed: {}", method, err);
             Json(JsonRpcResponse::error(

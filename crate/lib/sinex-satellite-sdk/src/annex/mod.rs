@@ -66,8 +66,10 @@ use tokio::process::Command as AsyncCommand;
 use tracing::{debug, info, warn};
 
 pub mod blob_manager;
+pub mod path_validator;
 
 pub use blob_manager::{BlobManager, BlobMetadata};
+pub use path_validator::{create_secure_temp_path, validate_and_convert_path};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnnexConfig {

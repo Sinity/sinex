@@ -582,8 +582,12 @@ async fn check_nixos_compatibility() -> Result<Value> {
 }
 
 async fn validate_toml_file(path: &Utf8Path) -> Result<Value> {
-    let content = std::fs::read_to_string(path)
-        .wrap_err_with(|| format!("Failed to read TOML file: {:?}", path))?;
+    // Validate path before file operation to prevent path traversal
+    let validated_path = validate_path(path.as_str())
+        .wrap_err_with(|| format!("Invalid or dangerous path: {:?}", path))?;
+
+    let content = std::fs::read_to_string(&validated_path)
+        .wrap_err_with(|| format!("Failed to read TOML file: {:?}", validated_path))?;
 
     validate_toml_content(&content)
 }

@@ -355,6 +355,7 @@ mod deployment_scenario_utils;
 mod error_testing;
 mod fixture_config;
 mod fixtures;
+mod path_validation;
 mod property_testing;
 mod satellite_management_utils;
 mod test_context;
@@ -411,6 +412,11 @@ pub mod prelude {
 
     // Path handling
     pub use camino::{Utf8Path, Utf8PathBuf};
+
+    // Test path validation utilities
+    pub use crate::path_validation::{
+        create_test_temp_dir, create_test_temp_file, remove_test_dir, validate_test_path,
+    };
 
     // JSON handling
     pub use serde_json::{json, Value};

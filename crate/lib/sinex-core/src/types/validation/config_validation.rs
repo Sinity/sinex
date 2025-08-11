@@ -1,8 +1,16 @@
 //! Configuration validation using the validator crate
 //!
 //! This module provides reusable validation components for configuration structs.
+//! Includes secure path deserialization that validates all path fields during config loading.
 
-use serde::{Deserialize, Serialize};
+use crate::types::domain::SanitizedPath;
+use crate::types::validation::{validate_path, Result as ValidationResult};
+use camino::Utf8PathBuf;
+use serde::{
+    de::{self, Visitor},
+    Deserialize, Deserializer, Serialize,
+};
+use std::fmt;
 use validator::{Validate, ValidationError};
 
 /// Common configuration validation traits
@@ -116,6 +124,267 @@ pub struct SecurityConfig {
 
     #[validate(range(min = 1, max = 100))]
     pub max_login_attempts: u32,
+}
+
+/// Path validation levels for different security contexts
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathValidationLevel {
+    /// Basic validation - just check for null bytes and basic traversal
+    Basic,
+    /// Strict validation - comprehensive security checks including canonicalization
+    Strict,
+    /// Require absolute paths only
+    AbsoluteOnly,
+    /// Require relative paths only
+    RelativeOnly,
+}
+
+/// A path wrapper that enforces validation during deserialization
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecurePath {
+    inner: SanitizedPath,
+    validation_level: PathValidationLevel,
+}
+
+impl SecurePath {
+    /// Create a new SecurePath with validation
+    pub fn new(path: &str, level: PathValidationLevel) -> Result<Self, String> {
+        let sanitized = match level {
+            PathValidationLevel::Basic => {
+                // Just use SanitizedPath's basic validation
+                SanitizedPath::from_str_validated(path)?
+            }
+            PathValidationLevel::Strict => {
+                // Use our comprehensive path validation
+                let validated_path = validate_path(path).map_err(|e| e.to_string())?;
+                SanitizedPath::new_unchecked(validated_path.to_string())
+            }
+            PathValidationLevel::AbsoluteOnly => {
+                let sanitized = SanitizedPath::from_str_validated(path)?;
+                let path_buf = Utf8PathBuf::from(sanitized.as_str());
+                if !path_buf.is_absolute() {
+                    return Err("Path must be absolute".to_string());
+                }
+                sanitized
+            }
+            PathValidationLevel::RelativeOnly => {
+                let sanitized = SanitizedPath::from_str_validated(path)?;
+                let path_buf = Utf8PathBuf::from(sanitized.as_str());
+                if path_buf.is_absolute() {
+                    return Err("Path must be relative".to_string());
+                }
+                sanitized
+            }
+        };
+
+        Ok(Self {
+            inner: sanitized,
+            validation_level: level,
+        })
+    }
+
+    /// Get the inner SanitizedPath
+    pub fn inner(&self) -> &SanitizedPath {
+        &self.inner
+    }
+
+    /// Get the validation level used
+    pub fn validation_level(&self) -> PathValidationLevel {
+        self.validation_level
+    }
+
+    /// Convert to Utf8PathBuf
+    pub fn to_path_buf(&self) -> Utf8PathBuf {
+        Utf8PathBuf::from(self.inner.as_str())
+    }
+
+    /// Get the path as a string
+    pub fn as_str(&self) -> &str {
+        self.inner.as_str()
+    }
+}
+
+/// Custom deserializer for paths that validates during deserialization
+pub struct ValidatedPathDeserializer {
+    level: PathValidationLevel,
+}
+
+impl ValidatedPathDeserializer {
+    pub fn new(level: PathValidationLevel) -> Self {
+        Self { level }
+    }
+}
+
+struct PathVisitor {
+    level: PathValidationLevel,
+}
+
+impl<'de> Visitor<'de> for PathVisitor {
+    type Value = SecurePath;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        formatter.write_str("a valid file path")
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        SecurePath::new(value, self.level)
+            .map_err(|e| E::custom(format!("Invalid path '{}': {}", value, e)))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E>
+    where
+        E: de::Error,
+    {
+        self.visit_str(&value)
+    }
+}
+
+impl<'de> Deserializer<'de> for ValidatedPathDeserializer {
+    type Error = serde::de::value::Error;
+
+    fn deserialize_any<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        Err(de::Error::custom(
+            "ValidatedPathDeserializer can only deserialize strings",
+        ))
+    }
+
+    serde::forward_to_deserialize_any! {
+        bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char bytes
+        byte_buf option unit unit_struct newtype_struct seq tuple
+        tuple_struct map struct enum identifier ignored_any
+    }
+
+    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        // This won't be called directly, but we need to implement it
+        Err(de::Error::custom("Use deserialize_string instead"))
+    }
+
+    fn deserialize_string<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    where
+        V: Visitor<'de>,
+    {
+        // This won't be called directly either, but we implement for completeness
+        Err(de::Error::custom(
+            "ValidatedPathDeserializer should be used with serde_with",
+        ))
+    }
+}
+
+/// Convenience function to create a validated path deserializer
+pub fn validated_path_deserializer(level: PathValidationLevel) -> ValidatedPathDeserializer {
+    ValidatedPathDeserializer::new(level)
+}
+
+/// Helper for deserializing SanitizedPath with validation
+pub fn deserialize_sanitized_path<'de, D>(deserializer: D) -> Result<SanitizedPath, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path_str = String::deserialize(deserializer)?;
+    SanitizedPath::from_str_validated(&path_str)
+        .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))
+}
+
+/// Helper for deserializing Optional<SanitizedPath> with validation
+pub fn deserialize_optional_sanitized_path<'de, D>(
+    deserializer: D,
+) -> Result<Option<SanitizedPath>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path_opt: Option<String> = Option::deserialize(deserializer)?;
+    match path_opt {
+        Some(path_str) => {
+            let sanitized = SanitizedPath::from_str_validated(&path_str)
+                .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))?;
+            Ok(Some(sanitized))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Helper for deserializing Vec<SanitizedPath> with validation
+pub fn deserialize_sanitized_path_vec<'de, D>(
+    deserializer: D,
+) -> Result<Vec<SanitizedPath>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path_strings: Vec<String> = Vec::deserialize(deserializer)?;
+    let mut sanitized_paths = Vec::new();
+
+    for (i, path_str) in path_strings.into_iter().enumerate() {
+        let sanitized = SanitizedPath::from_str_validated(&path_str).map_err(|e| {
+            de::Error::custom(format!(
+                "Invalid path at index {}: '{}' - {}",
+                i, path_str, e
+            ))
+        })?;
+        sanitized_paths.push(sanitized);
+    }
+
+    Ok(sanitized_paths)
+}
+
+/// Helper for deserializing Utf8PathBuf with validation
+pub fn deserialize_validated_utf8_path<'de, D>(deserializer: D) -> Result<Utf8PathBuf, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path_str = String::deserialize(deserializer)?;
+    let validated_path = validate_path(&path_str)
+        .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))?;
+    Ok(validated_path)
+}
+
+/// Helper for deserializing Optional<Utf8PathBuf> with validation
+pub fn deserialize_optional_validated_utf8_path<'de, D>(
+    deserializer: D,
+) -> Result<Option<Utf8PathBuf>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path_opt: Option<String> = Option::deserialize(deserializer)?;
+    match path_opt {
+        Some(path_str) => {
+            let validated_path = validate_path(&path_str)
+                .map_err(|e| de::Error::custom(format!("Invalid path '{}': {}", path_str, e)))?;
+            Ok(Some(validated_path))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Helper for deserializing Vec<Utf8PathBuf> with validation  
+pub fn deserialize_validated_utf8_path_vec<'de, D>(
+    deserializer: D,
+) -> Result<Vec<Utf8PathBuf>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let path_strings: Vec<String> = Vec::deserialize(deserializer)?;
+    let mut validated_paths = Vec::new();
+
+    for (i, path_str) in path_strings.into_iter().enumerate() {
+        let validated_path = validate_path(&path_str).map_err(|e| {
+            de::Error::custom(format!(
+                "Invalid path at index {}: '{}' - {}",
+                i, path_str, e
+            ))
+        })?;
+        validated_paths.push(validated_path);
+    }
+
+    Ok(validated_paths)
 }
 
 #[cfg(test)]

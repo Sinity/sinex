@@ -37,6 +37,7 @@
 
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
 use std::collections::HashMap;
 use validator::Validate;
 
@@ -350,7 +351,16 @@ fn default_pool_size() -> u32 {
 }
 
 fn default_work_dir() -> Utf8PathBuf {
-    get_cache_dir_or_fallback().join("sinex")
+    let work_dir = get_cache_dir_or_fallback().join("sinex");
+
+    // Validate the default path
+    match validate_path(work_dir.as_str()) {
+        Ok(validated) => validated,
+        Err(_) => {
+            // Fallback to a safe default if validation fails
+            Utf8PathBuf::from("/tmp/sinex")
+        }
+    }
 }
 
 fn get_cache_dir_or_fallback() -> Utf8PathBuf {

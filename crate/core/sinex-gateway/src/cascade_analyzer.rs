@@ -3,8 +3,10 @@
 //! This module provides memory-efficient algorithms for analyzing event dependencies
 //! and planning safe cascade operations during replay.
 
+use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
+use sinex_core::db::query_helpers::{db_error, UlidArrayExt};
 use sinex_core::types::ulid::Ulid;
 use sqlx::PgPool;
 use std::collections::{HashMap, VecDeque};
@@ -85,8 +87,11 @@ impl StreamingCascadeAnalyzer {
 
         // Use PostgreSQL's built-in temp table mechanism - no SQL injection risk
         // Temp tables are automatically cleaned up at end of session
-        let temp_table = "temp_cascade_analysis";
-        self.create_temp_tables(temp_table).await?;
+        let temp_table = format!(
+            "temp_cascade_analysis_{}",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        );
+        self.create_temp_tables(&temp_table).await?;
 
         // Populate with initial events
         self.populate_initial_events(&temp_table, event_ids).await?;
@@ -142,7 +147,10 @@ impl StreamingCascadeAnalyzer {
             table_name, table_name, table_name, table_name, table_name
         );
 
-        sqlx::query(&query).execute(&self.pool).await?;
+        sqlx::query(&query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| db_error(e, "create temp cascade tables"))?;
 
         debug!("Created temporary table {}", table_name);
         Ok(())
@@ -165,9 +173,10 @@ impl StreamingCascadeAnalyzer {
         );
 
         sqlx::query(&query)
-            .bind(event_ids)
+            .bind(event_ids.to_uuid_vec())
             .execute(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| db_error(e, "populate initial events"))?;
 
         debug!("Populated {} initial events", event_ids.len());
         Ok(())
@@ -207,7 +216,8 @@ impl StreamingCascadeAnalyzer {
                 .bind(current_depth as i32)
                 .bind((current_depth + 1) as i32)
                 .fetch_all(&self.pool)
-                .await?;
+                .await
+                .map_err(|e| db_error(e, "build dependency graph - insert children"))?;
 
             // Mark current depth as processed
             let update_query = format!(
@@ -217,7 +227,8 @@ impl StreamingCascadeAnalyzer {
             sqlx::query(&update_query)
                 .bind(current_depth as i32)
                 .execute(&self.pool)
-                .await?;
+                .await
+                .map_err(|e| db_error(e, "build dependency graph - mark processed"))?;
 
             if inserted.is_empty() || current_depth >= MAX_DEPTH {
                 break;
@@ -249,7 +260,8 @@ impl StreamingCascadeAnalyzer {
 
         let rows = sqlx::query_as::<_, (i32, i64)>(&query)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| db_error(e, "calculate depth histogram"))?;
 
         let mut histogram = HashMap::new();
         for (depth, count) in rows {
@@ -265,7 +277,8 @@ impl StreamingCascadeAnalyzer {
 
         let row = sqlx::query_scalar::<_, i64>(&query)
             .fetch_one(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| db_error(e, "count affected events"))?;
 
         Ok(row as usize)
     }
@@ -295,7 +308,8 @@ impl StreamingCascadeAnalyzer {
 
         let rows = sqlx::query_as::<_, (Ulid, Ulid)>(&query)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| db_error(e, "find integrity violations"))?;
 
         let mut violations = Vec::new();
         for (live_id, archived_id) in rows {
@@ -354,7 +368,8 @@ impl StreamingCascadeAnalyzer {
 
         let rows = sqlx::query_as::<_, (Vec<Ulid>,)>(&query)
             .fetch_all(&self.pool)
-            .await?;
+            .await
+            .map_err(|e| db_error(e, "detect circular dependencies"))?;
 
         let mut cycles = Vec::new();
         for (path,) in rows {
@@ -374,7 +389,10 @@ impl StreamingCascadeAnalyzer {
     /// Clean up temporary tables
     async fn cleanup_temp_tables(&self, table_name: &str) -> Result<()> {
         let query = format!("DROP TABLE IF EXISTS {}", table_name);
-        sqlx::query(&query).execute(&self.pool).await?;
+        sqlx::query(&query)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| db_error(e, "cleanup temp tables"))?;
 
         debug!("Cleaned up temporary table {}", table_name);
         Ok(())
@@ -407,9 +425,10 @@ impl StreamingCascadeAnalyzer {
             WHERE event_id = ANY($1::ulid[])
             "#,
         )
-        .bind(event_ids)
+        .bind(event_ids.to_uuid_vec())
         .fetch_all(&self.pool)
-        .await?;
+        .await
+        .map_err(|e| db_error(e, "plan cascade order - query dependencies"))?;
 
         // Build graph
         for row in rows {

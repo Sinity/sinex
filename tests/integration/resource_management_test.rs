@@ -74,14 +74,14 @@ async fn test_advisory_lock_management(ctx: TestContext) -> color_eyre::eyre::Re
 
 #[sinex_test]
 async fn test_file_handle_cleanup(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    // Test file handle resource management
+    // Test file handle resource management with validated paths
 
     let cleanup_called = Arc::new(AtomicBool::new(false));
     let cleanup_flag = cleanup_called.clone();
 
     {
-        // Create a temporary file path
-        let file_path = std::env::temp_dir().join("sinex_test_resource.txt");
+        // Create a validated temporary file path using test utilities
+        let file_path = create_test_temp_file("resource_management_test", "test_resource.txt")?;
 
         // Write test content
         tokio::fs::write(&file_path, b"test content").await?;

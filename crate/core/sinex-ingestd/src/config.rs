@@ -3,6 +3,7 @@
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::{deserialize_validated_utf8_path, validate_path};
 use tracing::{error, info};
 use validator::Validate;
 
@@ -53,6 +54,7 @@ pub struct IngestdConfig {
     pub validate_schemas: bool,
 
     /// Working directory for temporary files
+    #[serde(deserialize_with = "deserialize_validated_utf8_path")]
     #[validate(custom(function = "validate_work_dir", message = "Invalid work directory"))]
     #[builder(default = default_work_dir())]
     pub work_dir: Utf8PathBuf,
@@ -243,13 +245,22 @@ fn default_database_url() -> String {
         .unwrap_or_else(|_| "postgresql:///sinex_dev?host=/run/postgresql".to_string())
 }
 
-/// Default work directory for ingestd
+/// Default work directory for ingestd (validated)
 fn default_work_dir() -> Utf8PathBuf {
-    dirs::cache_dir()
+    let base_dir = dirs::cache_dir()
         .and_then(|p| Utf8PathBuf::from_path_buf(p).ok())
-        .unwrap_or_else(|| Utf8PathBuf::from("/tmp"))
-        .join("sinex")
-        .join("ingestd")
+        .unwrap_or_else(|| Utf8PathBuf::from("/tmp"));
+
+    let work_dir = base_dir.join("sinex").join("ingestd");
+
+    // Validate the default path
+    match validate_path(work_dir.as_str()) {
+        Ok(validated) => validated,
+        Err(_) => {
+            // Fallback to a safe default if validation fails
+            Utf8PathBuf::from("/tmp/sinex/ingestd")
+        }
+    }
 }
 
 // Custom validator functions

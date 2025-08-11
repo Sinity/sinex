@@ -1074,9 +1074,9 @@ impl<'a> EventRepository<'a> {
             let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
                 match &event.provenance {
                     Some(Provenance::Events(ids)) => {
-                        let ulids: Vec<crate::types::Ulid> =
-                            ids.iter().map(|id| *id.as_ulid()).collect();
-                        (Some(ulids), None, None, None)
+                        let uuids: Vec<uuid::Uuid> =
+                            ids.iter().map(|id| ulid_to_uuid(*id.as_ulid())).collect();
+                        (Some(uuids), None, None, None)
                     }
                     Some(Provenance::Material {
                         id,
@@ -1097,11 +1097,12 @@ impl<'a> EventRepository<'a> {
             source_material_offset_ends.push(offset_end);
             anchor_bytes.push(event.anchor_byte);
 
-            let blob_ulids = event
-                .associated_blob_ids
-                .as_ref()
-                .map(|ids| ids.iter().copied().collect::<Vec<_>>());
-            associated_blob_id_arrays.push(blob_ulids);
+            let blob_uuids = event.associated_blob_ids.as_ref().map(|ids| {
+                ids.iter()
+                    .map(|ulid| ulid_to_uuid(*ulid))
+                    .collect::<Vec<_>>()
+            });
+            associated_blob_id_arrays.push(blob_uuids);
         }
 
         // Execute batch insert using UNNEST
@@ -1116,9 +1117,9 @@ impl<'a> EventRepository<'a> {
             )
             SELECT * FROM UNNEST(
                 $1::uuid[], $2::text[], $3::text[], $4::text[], $5::jsonb[],
-                $6::timestamptz[], $7::text[], $8::uuid[], $9::ulid[][],
+                $6::timestamptz[], $7::text[], $8::uuid[], $9::uuid[][],
                 $10::uuid[], $11::bigint[], $12::bigint[],
-                $13::bigint[], $14::ulid[][],
+                $13::bigint[], $14::uuid[][],
                 $15::text[], $16::text[]
             )
             "#,

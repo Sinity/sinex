@@ -2,6 +2,7 @@
 
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
+use sinex_core::types::validate_path;
 use std::time::Duration;
 use validator::Validate;
 
@@ -21,7 +22,11 @@ pub struct SensdConfig {
 
     /// Material storage path (for blobs)
     #[validate(length(min = 1))]
-    #[builder(default = String::from("/tmp/sinex/materials"))]
+    #[validate(custom(
+        function = "validate_material_path",
+        message = "Invalid material storage path"
+    ))]
+    #[builder(default = default_material_path())]
     pub material_storage_path: String,
 
     /// Temporal ledger configuration
@@ -167,4 +172,20 @@ impl SensdConfig {
         config.validate()?;
         Ok(config)
     }
+}
+
+/// Default material storage path (validated)
+fn default_material_path() -> String {
+    let path = "/tmp/sinex/materials";
+    match validate_path(path) {
+        Ok(validated) => validated.to_string(),
+        Err(_) => "/tmp/sinex/materials".to_string(), // Fallback to original if validation fails
+    }
+}
+
+/// Custom validator for material storage path
+fn validate_material_path(path: &str) -> Result<(), validator::ValidationError> {
+    validate_path(path)
+        .map(|_| ())
+        .map_err(|_| validator::ValidationError::new("invalid_material_path"))
 }

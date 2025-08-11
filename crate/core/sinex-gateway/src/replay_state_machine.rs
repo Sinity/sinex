@@ -6,10 +6,19 @@
 use chrono::{DateTime, Utc};
 use color_eyre::eyre::{eyre, Result};
 use serde::{Deserialize, Serialize};
+use sinex_core::db::query_helpers::db_error;
 use sinex_core::types::ulid::Ulid;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
+
+/// Helper function to extract lock ID from ULID for advisory locks
+fn ulid_to_lock_id(ulid: Ulid) -> i64 {
+    let bytes = ulid.to_bytes();
+    i64::from_le_bytes([
+        bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+    ])
+}
 
 /// Replay operation states with well-defined transitions
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
