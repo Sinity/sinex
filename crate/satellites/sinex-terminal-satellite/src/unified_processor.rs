@@ -13,6 +13,7 @@ use sinex_core::types::events::{
     Event, TerminalCommandHistoricalPayload, TerminalHistoryHistoricalPayload,
     TerminalMonitoringStartedPayload, TerminalSnapshotPayload,
 };
+use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     checkpoint::CheckpointManager,
     cli::{
@@ -1068,6 +1069,10 @@ impl ExplorationProvider for TerminalProcessor {
         path: &Utf8PathBuf,
         format: ExportFormat,
     ) -> color_eyre::eyre::Result<()> {
+        // Validate export path for security
+        validate_path(path.as_str())
+            .map_err(|e| color_eyre::eyre::eyre!("Invalid export path '{}': {}", path, e))?;
+
         if let Some(ref state) = self.last_state {
             let content = match format {
                 ExportFormat::Json => serde_json::to_string_pretty(state)?,

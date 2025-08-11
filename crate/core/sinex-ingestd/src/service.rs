@@ -638,6 +638,8 @@ impl IngestService {
         let mut source_material_offset_ends = Vec::with_capacity(event_count);
         let mut anchor_bytes = Vec::with_capacity(event_count);
         let mut associated_blob_id_arrays = Vec::with_capacity(event_count);
+        let mut payload_schema_names = Vec::with_capacity(event_count);
+        let mut payload_schema_versions = Vec::with_capacity(event_count);
 
         // Outbox entries for NATS publishing
         let mut outbox_entries = Vec::with_capacity(event_count);
@@ -660,6 +662,15 @@ impl IngestService {
             ingestor_versions.push(event.ingestor_version.as_deref());
 
             payload_schema_ids.push(event.payload_schema_id.map(ulid_to_uuid));
+
+            // Extract schema name and version from the event
+            // Format: {source}.{event_type} for schema name, actual version from schema
+            let schema_name = format!("{}.{}", event.source.as_str(), event.event_type.as_str());
+            payload_schema_names.push(Some(schema_name));
+
+            // For now, use a placeholder version since we don't have access to the validator here
+            // TODO: Pass validator context to get actual schema version
+            payload_schema_versions.push(Some("1.0.0".to_string()));
 
             // Extract provenance into separate database fields
             let (source_event_ids_opt, source_material_id, offset_start, offset_end) =
@@ -736,8 +747,8 @@ impl IngestService {
         .bind(&source_material_offset_ends)
         .bind(&anchor_bytes)
         .bind(serde_json::to_value(&associated_blob_id_arrays).unwrap())
-        .bind(&vec![None::<&str>; events.len()]) // payload_schema_name
-        .bind(&vec![None::<&str>; events.len()]) // payload_schema_version
+        .bind(&payload_schema_names)
+        .bind(&payload_schema_versions)
         .bind(&vec![None::<i32>; events.len()]) // processor_manifest_id
         .execute(&mut *tx)
         .await?;

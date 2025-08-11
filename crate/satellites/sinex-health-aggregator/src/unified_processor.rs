@@ -23,6 +23,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
+/// Health threshold constants
+const HEALTHY_THRESHOLD_MINUTES: i64 = 2;
+const DEGRADED_THRESHOLD_MINUTES: i64 = 5;
 
 /// System-wide health summary (internal representation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -98,6 +101,27 @@ impl HealthAggregator {
         Ok(())
     }
 
+    /// Create a scan report with common defaults
+    fn build_scan_report(
+        events_processed: u64,
+        start_time: DateTime<Utc>,
+        end_time: DateTime<Utc>,
+        checkpoint: Checkpoint,
+        target: &str,
+        time_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
+    ) -> ScanReport {
+        ScanReport {
+            events_processed,
+            duration: (end_time - start_time).to_std().unwrap_or_default(),
+            final_checkpoint: checkpoint,
+            time_range,
+            processor_stats: HashMap::new(),
+            successful_targets: vec![target.to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
     /// Generate health summary if enough time has passed
     async fn maybe_generate_summary(&mut self) -> SatelliteResult<Option<RawEvent>> {
         let now = Utc::now();
@@ -123,9 +147,9 @@ impl HealthAggregator {
         for expected in &self.expected_components {
             if let Some(health) = health_map.get(expected) {
                 let age = now - health.last_heartbeat;
-                if age < Duration::minutes(2) {
+                if age < Duration::minutes(HEALTHY_THRESHOLD_MINUTES) {
                     summary.healthy_components += 1;
-                } else if age < Duration::minutes(5) {
+                } else if age < Duration::minutes(DEGRADED_THRESHOLD_MINUTES) {
                     summary.degraded_components += 1;
                 } else {
                     summary.failed_components += 1;
@@ -207,15 +231,14 @@ impl StatefulStreamProcessor for HealthAggregator {
                 // TODO: Implement continuous health monitoring after NatsStreamConsumer removal
                 warn!("Health aggregator continuous mode not yet implemented after NatsStreamConsumer removal");
                 
-                Ok(ScanReport {
+                Ok(Self::build_scan_report(
                     events_processed,
-                    duration: std::time::Duration::from_millis(0),
-                    final_checkpoint: from,
-                    time_range: Some((start_time, Utc::now())),
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["health-aggregator".to_string()],
-                    failed_targets: HashMap::new(),
-                    warnings: Vec::new()})
+                    start_time,
+                    Utc::now(),
+                    from,
+                    "health-aggregator",
+                    Some((start_time, Utc::now())),
+                ))
             }
             TimeHorizon::Historical { end_time } => {
                 // Query historical events from PostgreSQL
@@ -265,15 +288,14 @@ impl StatefulStreamProcessor for HealthAggregator {
                     from.clone()
                 };
 
-                Ok(ScanReport {
+                Ok(Self::build_scan_report(
                     events_processed,
-                    duration: Utc::now() - start_time,
-                    final_checkpoint: Some(final_checkpoint),
-                    time_range: Some((start_time, end_time)),
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["postgresql".to_string()],
-                    failed_targets: HashMap::new(),
-                    warnings: Vec::new()})
+                    start_time,
+                    Utc::now(),
+                    final_checkpoint,
+                    "postgresql",
+                    Some((start_time, end_time)),
+                ))
             }
             TimeHorizon::Snapshot => {
                 // Generate immediate health snapshot
@@ -286,15 +308,14 @@ impl StatefulStreamProcessor for HealthAggregator {
                     }
                 }
 
-                Ok(ScanReport {
+                Ok(Self::build_scan_report(
                     events_processed,
-                    duration: Utc::now() - start_time,
-                    final_checkpoint: Some(Checkpoint::None),
-                    time_range: None,
-                    processor_stats: HashMap::new(),
-                    successful_targets: vec!["snapshot".to_string()],
-                    failed_targets: HashMap::new(),
-                    warnings: Vec::new()})
+                    start_time,
+                    Utc::now(),
+                    Checkpoint::None,
+                    "snapshot",
+                    None,
+                ))
             }
         }
     }

@@ -40,6 +40,23 @@ impl HealthAggregator {
     pub fn new() -> Self {
         Self { context: None }
     }
+
+    /// Create an empty scan report with default values
+    fn create_empty_scan_report(
+        events_processed: u64,
+        start_time: chrono::DateTime<Utc>,
+    ) -> ScanReport {
+        ScanReport {
+            events_processed,
+            duration: std::time::Duration::from_secs(0),
+            final_checkpoint: Checkpoint::None,
+            time_range: Some((start_time, Utc::now())),
+            processor_stats: HashMap::new(),
+            successful_targets: vec!["health".to_string()],
+            failed_targets: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
 }
 
 #[async_trait]
@@ -71,16 +88,10 @@ impl StatefulStreamProcessor for HealthAggregator {
             TimeHorizon::Continuous => 0,
         };
 
-        Ok(ScanReport {
-            events_processed: events_processed as u64,
-            duration: std::time::Duration::from_secs(0),
-            final_checkpoint: Checkpoint::None,
-            time_range: Some((start_time, Utc::now())),
-            processor_stats: HashMap::new(),
-            successful_targets: vec!["health".to_string()],
-            failed_targets: Vec::new(),
-            warnings: Vec::new(),
-        })
+        Ok(Self::create_empty_scan_report(
+            events_processed as u64,
+            start_time,
+        ))
     }
 
     fn processor_name(&self) -> &str {

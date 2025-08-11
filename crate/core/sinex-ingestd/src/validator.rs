@@ -31,13 +31,99 @@ struct SchemaCacheEntry {
     content_hash: Arc<String>,
 }
 
+/// Newtype wrapper for schema cache to provide cleaner interface
+#[derive(Clone, Debug, Default)]
+pub struct SchemaCache {
+    cache: Arc<parking_lot::RwLock<AHashMap<Arc<String>, SchemaCacheEntry>>>,
+}
+
+impl SchemaCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Arc::new(parking_lot::RwLock::new(AHashMap::new())),
+        }
+    }
+
+    pub fn get(&self, key: &Arc<String>) -> Option<SchemaCacheEntry> {
+        let cache = self.cache.read();
+        cache.get(key).cloned()
+    }
+
+    pub fn insert(&self, key: Arc<String>, value: SchemaCacheEntry) {
+        let mut cache = self.cache.write();
+        cache.insert(key, value);
+    }
+
+    pub fn len(&self) -> usize {
+        let cache = self.cache.read();
+        cache.len()
+    }
+
+    pub fn bulk_update(&self, new_cache: AHashMap<Arc<String>, SchemaCacheEntry>) {
+        let mut cache = self.cache.write();
+        *cache = new_cache;
+    }
+
+    pub fn clone_data(&self) -> AHashMap<Arc<String>, SchemaCacheEntry> {
+        let cache = self.cache.read();
+        cache.clone()
+    }
+
+    pub fn iter<F, R>(&self, f: F) -> Vec<R>
+    where
+        F: Fn((&Arc<String>, &SchemaCacheEntry)) -> R,
+    {
+        let cache = self.cache.read();
+        cache.iter().map(f).collect()
+    }
+}
+
+/// Newtype wrapper for schema lookup to provide cleaner interface
+#[derive(Clone, Debug, Default)]
+pub struct SchemaLookup {
+    lookup: Arc<parking_lot::RwLock<AHashMap<(Arc<String>, Arc<String>), Arc<String>>>>,
+}
+
+impl SchemaLookup {
+    pub fn new() -> Self {
+        Self {
+            lookup: Arc::new(parking_lot::RwLock::new(AHashMap::new())),
+        }
+    }
+
+    pub fn get(&self, key: &(Arc<String>, Arc<String>)) -> Option<Arc<String>> {
+        let lookup = self.lookup.read();
+        lookup.get(key).cloned()
+    }
+
+    pub fn insert(&self, key: (Arc<String>, Arc<String>), value: Arc<String>) {
+        let mut lookup = self.lookup.write();
+        lookup.insert(key, value);
+    }
+
+    pub fn len(&self) -> usize {
+        let lookup = self.lookup.read();
+        lookup.len()
+    }
+
+    pub fn bulk_update(&self, new_lookup: AHashMap<(Arc<String>, Arc<String>), Arc<String>>) {
+        let mut lookup = self.lookup.write();
+        *lookup = new_lookup;
+    }
+
+    pub fn clone_data(&self) -> AHashMap<(Arc<String>, Arc<String>), Arc<String>> {
+        let lookup = self.lookup.read();
+        lookup.clone()
+    }
+}
+
 /// Event validator that checks events against JSON schemas
 #[derive(Clone)]
 pub struct EventValidator {
     /// In-memory cache of compiled schemas keyed by schema ID
-    schema_cache: Arc<parking_lot::RwLock<AHashMap<Arc<String>, SchemaCacheEntry>>>,
+    schema_cache: SchemaCache,
     /// Map of (source, event_type) to schema ID for quick lookups
-    schema_lookup: Arc<parking_lot::RwLock<AHashMap<(Arc<String>, Arc<String>), Arc<String>>>>,
+    schema_lookup: SchemaLookup,
     validation_enabled: bool,
 }
 
@@ -45,8 +131,8 @@ impl EventValidator {
     /// Create a new event validator
     pub fn new(validation_enabled: bool) -> Self {
         Self {
-            schema_cache: Arc::new(parking_lot::RwLock::new(AHashMap::new())),
-            schema_lookup: Arc::new(parking_lot::RwLock::new(AHashMap::new())),
+            schema_cache: SchemaCache::new(),
+            schema_lookup: SchemaLookup::new(),
             validation_enabled,
         }
     }
@@ -110,6 +196,8 @@ impl EventValidator {
                         content_hash: content_hash.clone(),
                     };
 
+                    // Note: This is still using the local HashMap variables
+                    // These will be assigned to the validator later
                     cache.insert(schema_id.clone(), cache_entry);
                     lookup.insert((source.clone(), event_type.clone()), schema_id.clone());
                     compiled_count += 1;
@@ -135,8 +223,8 @@ impl EventValidator {
             }
         }
 
-        *validator.schema_cache.write() = cache;
-        *validator.schema_lookup.write() = lookup;
+        validator.schema_cache.bulk_update(cache);
+        validator.schema_lookup.bulk_update(lookup);
 
         info!(
             compiled = compiled_count,
@@ -161,8 +249,7 @@ impl EventValidator {
 
         // Find the schema in cache
         let schema_key = Arc::new(schema_id.to_string());
-        let cache = self.schema_cache.read();
-        let cache_entry = match cache.get(&schema_key) {
+        let cache_entry = match self.schema_cache.get(&schema_key) {
             Some(entry) => entry,
             None => {
                 warn!(
@@ -177,7 +264,6 @@ impl EventValidator {
 
         // Clone the Arc to avoid holding the lock during validation
         let schema = cache_entry.compiled_schema.clone();
-        drop(cache); // Release read lock early
 
         // Validate the payload
         let validation_result = schema.as_ref().validate(&event.payload);
@@ -219,21 +305,17 @@ impl EventValidator {
 
     /// Get available schemas
     pub fn get_available_schemas(&self) -> Vec<SchemaInfo> {
-        let cache = self.schema_cache.read();
-        cache
-            .iter()
-            .map(|(schema_id, entry)| SchemaInfo {
-                name: format!("{}.{}", entry.source, entry.event_type),
-                version: entry.version.clone(),
-                schema_key: schema_id.clone(),
-            })
-            .collect()
+        self.schema_cache.iter(|(schema_id, entry)| SchemaInfo {
+            name: format!("{}.{}", entry.source, entry.event_type),
+            version: entry.version.clone(),
+            schema_key: schema_id.clone(),
+        })
     }
 
     /// Check if a schema is available by ID
     pub fn has_schema_by_id(&self, schema_id: &sinex_core::types::ulid::Ulid) -> bool {
         let schema_key = Arc::new(schema_id.to_string());
-        self.schema_cache.read().contains_key(&schema_key)
+        self.schema_cache.get(&schema_key).is_some()
     }
 
     /// Get schema ID for a source and event type (latest version)
@@ -242,11 +324,10 @@ impl EventValidator {
         source: &EventSource,
         event_type: &EventType,
     ) -> Option<Arc<String>> {
-        let lookup = self.schema_lookup.read();
         // Create Arc strings to use as lookup keys
         let source_arc = Arc::new(source.as_str().to_string());
         let event_type_arc = Arc::new(event_type.as_str().to_string());
-        lookup.get(&(source_arc, event_type_arc)).cloned()
+        self.schema_lookup.get(&(source_arc, event_type_arc))
     }
 
     /// Load all schema versions from database (for validation of historical events)
@@ -320,7 +401,7 @@ impl EventValidator {
         }
 
         // Update the cache with all versions
-        *self.schema_cache.write() = cache;
+        self.schema_cache.bulk_update(cache);
 
         info!(
             compiled = compiled_count,
@@ -333,7 +414,7 @@ impl EventValidator {
 
     /// Get schema count
     pub fn schema_count(&self) -> usize {
-        self.schema_cache.read().len()
+        self.schema_cache.len()
     }
 
     /// Reload schemas from database
@@ -342,8 +423,10 @@ impl EventValidator {
         let old_count = self.schema_count();
 
         // Swap the caches atomically
-        *self.schema_cache.write() = new_validator.schema_cache.read().clone();
-        *self.schema_lookup.write() = new_validator.schema_lookup.read().clone();
+        self.schema_cache
+            .bulk_update(new_validator.schema_cache.clone_data());
+        self.schema_lookup
+            .bulk_update(new_validator.schema_lookup.clone_data());
 
         let new_count = self.schema_count();
         info!(
