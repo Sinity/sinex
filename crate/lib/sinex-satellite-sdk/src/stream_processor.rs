@@ -432,11 +432,10 @@ impl std::fmt::Debug for StreamProcessorContext {
 impl StreamProcessorContext {
     /// Send an event through the event channel
     // TODO: Fix macro to use sinex_core instead of sinex_db
-    // Issue: #XXX - Update macro to use correct module path
-    // #[cfg_attr(
-    //     feature = "macros",
-    //     sinex_macros::auto_event_metrics(event_type = "emit")
-    // )]
+    #[cfg_attr(
+        feature = "macros",
+        sinex_macros::auto_event_metrics(event_type = "emit")
+    )]
     pub async fn emit_event(&self, event: RawEvent) -> SatelliteResult<()> {
         let start = std::time::Instant::now();
         let event_type = event.event_type.clone();

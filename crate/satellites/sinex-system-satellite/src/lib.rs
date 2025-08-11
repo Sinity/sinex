@@ -179,6 +179,8 @@ impl SystemSatelliteError {
             | SystemSatelliteError::Configuration(d)
             | SystemSatelliteError::Io(d)
             | SystemSatelliteError::Json(d) => d,
+            // For transparent errors, we can't add context directly
+            SystemSatelliteError::StdIo(_) | SystemSatelliteError::SerdeJson(_) => return self,
         };
         details.context.insert(key.into(), value.to_string());
         self
@@ -201,6 +203,8 @@ impl SystemSatelliteError {
             | SystemSatelliteError::Configuration(d)
             | SystemSatelliteError::Io(d)
             | SystemSatelliteError::Json(d) => d,
+            // For transparent errors, we can't add source context directly
+            SystemSatelliteError::StdIo(_) | SystemSatelliteError::SerdeJson(_) => return self,
         };
         details.sources.push(source.to_string());
         self
@@ -214,20 +218,6 @@ impl SystemSatelliteError {
     /// Add duration context
     pub fn with_duration(self, duration: std::time::Duration) -> Self {
         self.with_context("duration_ms", duration.as_millis())
-    }
-}
-
-impl From<std::io::Error> for SystemSatelliteError {
-    fn from(err: std::io::Error) -> Self {
-        SystemSatelliteError::Io(
-            ErrorDetails::new(err.to_string()).with_source(format!("{:?}", err.kind())),
-        )
-    }
-}
-
-impl From<serde_json::Error> for SystemSatelliteError {
-    fn from(err: serde_json::Error) -> Self {
-        SystemSatelliteError::Json(ErrorDetails::new(err.to_string()))
     }
 }
 

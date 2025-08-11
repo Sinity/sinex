@@ -5,6 +5,7 @@ use camino::Utf8PathBuf;
 use color_eyre::eyre::Result;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 use tower::ServiceBuilder;
 use tower_http::cors::CorsLayer;
 use tracing::{debug, error, info};
@@ -68,7 +69,55 @@ struct AppState {
     services: ServiceContainer,
 }
 
-/// Main RPC handler
+/// RPC method handler type
+type RpcHandler = fn(
+    &ServiceContainer,
+    Value,
+) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Value>> + Send>>;
+
+/// Create RPC method dispatch table
+fn create_dispatch_table() -> HashMap<&'static str, RpcHandler> {
+    let mut table = HashMap::new();
+
+    // Analytics methods
+    table.insert("analytics.event_count_by_source", |services, params| {
+        Box::pin(handle_event_count_by_source(
+            services.analytics.as_ref(),
+            params,
+        ))
+    });
+    table.insert("analytics.activity_heatmap", |services, params| {
+        Box::pin(handle_activity_heatmap(services.analytics.as_ref(), params))
+    });
+
+    // PKM methods
+    table.insert("pkm.create_note", |services, params| {
+        Box::pin(handle_create_note(services.pkm.as_ref(), params))
+    });
+    table.insert("pkm.create_entities_from_list", |services, params| {
+        Box::pin(handle_create_entities(services.pkm.as_ref(), params))
+    });
+    table.insert("pkm.link_entities", |services, params| {
+        Box::pin(handle_link_entities(services.pkm.as_ref(), params))
+    });
+
+    // Search methods
+    table.insert("search.search_events", |services, params| {
+        Box::pin(handle_search_events(services.search.as_ref(), params))
+    });
+
+    // Content methods
+    table.insert("content.store_blob", |services, params| {
+        Box::pin(handle_store_blob(services.content.as_ref(), params))
+    });
+    table.insert("content.retrieve_blob", |services, params| {
+        Box::pin(handle_retrieve_blob(services.content.as_ref(), params))
+    });
+
+    table
+}
+
+/// Main RPC handler using dispatch table
 async fn handle_rpc(
     State(state): State<AppState>,
     Json(request): Json<JsonRpcRequest>,
@@ -81,48 +130,16 @@ async fn handle_rpc(
     let start = std::time::Instant::now();
     let method = request.method.clone();
 
-    let result = match request.method.as_str() {
-        // Analytics methods
-        "analytics.event_count_by_source" => {
-            handle_event_count_by_source(state.services.analytics.as_ref(), request.params).await
-        }
-
-        "analytics.activity_heatmap" => {
-            handle_activity_heatmap(state.services.analytics.as_ref(), request.params).await
-        }
-
-        // PKM methods
-        "pkm.create_note" => handle_create_note(state.services.pkm.as_ref(), request.params).await,
-
-        "pkm.create_entities_from_list" => {
-            handle_create_entities(state.services.pkm.as_ref(), request.params).await
-        }
-
-        "pkm.link_entities" => {
-            handle_link_entities(state.services.pkm.as_ref(), request.params).await
-        }
-
-        // Search methods
-        "search.search_events" => {
-            handle_search_events(state.services.search.as_ref(), request.params).await
-        }
-
-        // Content methods
-        "content.store_blob" => {
-            handle_store_blob(state.services.content.as_ref(), request.params).await
-        }
-
-        "content.retrieve_blob" => {
-            handle_retrieve_blob(state.services.content.as_ref(), request.params).await
-        }
-
-        _ => {
-            return Json(JsonRpcResponse::error(
-                request.id,
-                -32601,
-                format!("Method not found: {}", request.method),
-            ));
-        }
+    // Use dispatch table for method routing
+    let dispatch_table = create_dispatch_table();
+    let result = if let Some(handler) = dispatch_table.get(request.method.as_str()) {
+        handler(&state.services, request.params).await
+    } else {
+        return Json(JsonRpcResponse::error(
+            request.id,
+            -32601,
+            format!("Method not found: {}", request.method),
+        ));
     };
 
     // Record telemetry
@@ -148,17 +165,32 @@ async fn handle_rpc(
     }
 }
 
-/// Run the RPC server on the specified socket
-pub async fn run(socket_path: Utf8PathBuf, services: ServiceContainer) -> Result<()> {
-    // Remove existing socket if it exists
-    if socket_path.exists() {
-        std::fs::remove_file(&socket_path)?;
-    }
+/// Server bind address configuration
+#[derive(Debug)]
+enum BindAddress {
+    Tcp { host: String, port: u16 },
+    UnixSocket { path: Utf8PathBuf },
+}
 
-    // Create parent directory if needed
-    if let Some(parent) = socket_path.parent() {
-        std::fs::create_dir_all(parent)?;
+impl BindAddress {
+    /// Create bind address from environment variables or defaults
+    fn from_env_or_socket_path(socket_path: Utf8PathBuf) -> Self {
+        // Check for explicit TCP configuration
+        if let Ok(host) = std::env::var("SINEX_GATEWAY_HOST") {
+            let port = std::env::var("SINEX_GATEWAY_PORT")
+                .and_then(|p| p.parse().map_err(|_| std::env::VarError::NotPresent))
+                .unwrap_or(9999);
+            return BindAddress::Tcp { host, port };
+        }
+
+        // Default to Unix socket
+        BindAddress::UnixSocket { path: socket_path }
     }
+}
+
+/// Run the RPC server with configurable binding
+pub async fn run(socket_path: Utf8PathBuf, services: ServiceContainer) -> Result<()> {
+    let bind_address = BindAddress::from_env_or_socket_path(socket_path);
 
     let state = AppState { services };
 
@@ -171,12 +203,63 @@ pub async fn run(socket_path: Utf8PathBuf, services: ServiceContainer) -> Result
         )
         .with_state(state);
 
-    // For simplicity, bind to TCP instead of Unix socket for now
-    let addr = "127.0.0.1:9999";
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    info!("RPC server listening on {}", addr);
+    match bind_address {
+        BindAddress::Tcp { host, port } => {
+            let addr = format!("{}:{}", host, port);
+            let listener = tokio::net::TcpListener::bind(&addr).await?;
+            info!("RPC server listening on TCP {}", addr);
+            axum::serve(listener, app).await?;
+        }
+        BindAddress::UnixSocket { path } => {
+            // Remove existing socket if it exists
+            if path.exists() {
+                std::fs::remove_file(&path)?;
+            }
 
-    axum::serve(listener, app).await?;
+            // Create parent directory if needed
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+
+            #[cfg(unix)]
+            {
+                let listener = tokio::net::UnixListener::bind(&path)?;
+                info!("RPC server listening on Unix socket {}", path);
+
+                let service =
+                    tower::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
+                        let app = app.clone();
+                        async move { app.oneshot(req).await }
+                    });
+
+                loop {
+                    let (stream, _) = listener.accept().await?;
+                    let service = service.clone();
+
+                    tokio::spawn(async move {
+                        if let Err(e) = hyper::server::conn::http1::Builder::new()
+                            .serve_connection(stream, service)
+                            .await
+                        {
+                            error!("Error serving connection: {}", e);
+                        }
+                    });
+                }
+            }
+
+            #[cfg(not(unix))]
+            {
+                // Fall back to TCP on non-Unix systems
+                let addr = "127.0.0.1:9999";
+                let listener = tokio::net::TcpListener::bind(addr).await?;
+                info!(
+                    "RPC server listening on TCP {} (Unix socket not available)",
+                    addr
+                );
+                axum::serve(listener, app).await?;
+            }
+        }
+    }
 
     Ok(())
 }

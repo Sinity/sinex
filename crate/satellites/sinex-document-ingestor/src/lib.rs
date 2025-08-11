@@ -12,7 +12,9 @@ use color_eyre::eyre::eyre;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::models::RawEvent;
+use sinex_core::types::domain::SanitizedPath;
 use sinex_core::types::events::{DocumentIngestedPayload, Event};
+use sinex_core::types::validate_path;
 use sinex_satellite_sdk::{
     cli::{
         CoverageAnalysis, ExplorationProvider, ExportFormat, IngestionHistoryEntry, SourceState,
@@ -66,7 +68,7 @@ impl DocumentProcessor {
     }
 
     /// Process a file using stage-as-you-go pattern for real-time provenance
-    async fn process_file(&self, file_path: &Utf8Path) -> SatelliteResult<()> {
+    async fn process_file(&self, file_path: &SanitizedPath) -> SatelliteResult<()> {
         let _ctx = self.context.as_ref().ok_or_else(|| {
             SatelliteError::Processing("Document ingestor context not initialized".to_string())
         })?;
@@ -74,27 +76,28 @@ impl DocumentProcessor {
         if let Some(ref stage_context) = self.stage_context {
             // Use stage-as-you-go pattern for immediate provenance
 
-            // Read file content
-            let content = match tokio::fs::read(file_path).await {
+            // Read file content - using validated path
+            let utf8_path = Utf8Path::new(file_path.as_str());
+            let content = match tokio::fs::read(utf8_path).await {
                 Ok(content) => content,
                 Err(e) => {
-                    warn!("Failed to read file {}: {}", file_path.as_str(), e);
+                    warn!("Failed to read file {}: {}", utf8_path.as_str(), e);
                     return Ok(()); // Skip unreadable files
                 }
             };
 
             // Determine material type and metadata
-            let mime_type = mime_guess::from_path(file_path)
+            let mime_type = mime_guess::from_path(utf8_path)
                 .first_or_octet_stream()
                 .to_string();
             let material_type = determine_material_type(&mime_type);
-            let source_uri = format!("file://{}", file_path.as_str());
+            let source_uri = format!("file://{}", utf8_path.as_str());
 
             // Step 1: Register in-flight source material
             let initial_metadata = json!({
-                "original_path": file_path.as_str(),
-                "file_extension": file_path.extension(),
-                "parent_directory": file_path.parent().map(|p| p.as_str()),
+                "original_path": utf8_path.as_str(),
+                "file_extension": utf8_path.extension(),
+                "parent_directory": utf8_path.parent().map(|p| p.as_str()),
                 "material_type": material_type,
                 "mime_type": mime_type,
                 "source_uri": source_uri,
@@ -119,7 +122,7 @@ impl DocumentProcessor {
 
             // Step 2: Create and emit document.ingested event with provenance
             let event: RawEvent = Event::from_payload(DocumentIngestedPayload {
-                file_path: file_path.to_string(),
+                file_path: utf8_path.to_string(),
                 source_material_id: source_material_id.to_string(),
                 size_bytes: content.len() as u64,
                 mime_type: Some(mime_type.clone()),
@@ -148,7 +151,7 @@ impl DocumentProcessor {
                 .await?;
 
             info!(
-                file_path = %file_path.as_str(),
+                file_path = %utf8_path.as_str(),
                 source_material_id = %source_material_id,
                 material_type = %material_type,
                 size_bytes = content.len(),
@@ -214,7 +217,21 @@ impl StatefulStreamProcessor for DocumentProcessor {
                 info!("Starting document snapshot scan");
 
                 for target in &args.targets {
-                    let path = Utf8Path::new(target);
+                    // Validate and sanitize target path for security
+                    validate_path(target).map_err(|e| {
+                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                    })?;
+
+                    let sanitized_target =
+                        SanitizedPath::from_str_validated(target).map_err(|e| {
+                            SatelliteError::General(eyre!(
+                                "Failed to sanitize path '{}': {}",
+                                target,
+                                e
+                            ))
+                        })?;
+
+                    let path = Utf8Path::new(sanitized_target.as_str());
                     if path.is_dir() {
                         // Recursively scan directory
                         let mut entries = tokio::fs::read_dir(path).await?;
@@ -227,13 +244,20 @@ impl StatefulStreamProcessor for DocumentProcessor {
                                             "Path contains invalid UTF-8"
                                         ))
                                     })?;
-                                self.process_file(&utf8_path).await?;
-                                events_processed += 1;
+                                // Validate each discovered file path
+                                if let Ok(sanitized_file_path) =
+                                    SanitizedPath::from_str_validated(utf8_path.as_str())
+                                {
+                                    self.process_file(&sanitized_file_path).await?;
+                                    events_processed += 1;
+                                } else {
+                                    warn!("Skipping invalid file path: {}", utf8_path.as_str());
+                                }
                             }
                         }
                     } else if path.is_file() {
                         // Process single file
-                        self.process_file(path).await?;
+                        self.process_file(&sanitized_target).await?;
                         events_processed += 1;
                     }
                 }

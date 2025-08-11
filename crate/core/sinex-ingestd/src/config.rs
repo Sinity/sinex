@@ -3,7 +3,7 @@
 use crate::{IngestdResult, SinexError};
 use camino::Utf8PathBuf;
 use serde::{Deserialize, Serialize};
-use tracing::info;
+use tracing::{error, info};
 use validator::Validate;
 
 /// Configuration for the ingestion daemon
@@ -255,10 +255,15 @@ fn default_work_dir() -> Utf8PathBuf {
 // Custom validator functions
 
 fn validate_postgres_url(url: &str) -> Result<(), validator::ValidationError> {
-    if url.starts_with("postgresql://") || url.starts_with("postgres://") {
-        Ok(())
-    } else {
-        Err(validator::ValidationError::new("not_postgres_url"))
+    match url::Url::parse(url) {
+        Ok(parsed_url) => {
+            if matches!(parsed_url.scheme(), "postgresql" | "postgres") {
+                Ok(())
+            } else {
+                Err(validator::ValidationError::new("not_postgres_url"))
+            }
+        }
+        Err(_) => Err(validator::ValidationError::new("invalid_url")),
     }
 }
 

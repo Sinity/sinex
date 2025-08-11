@@ -52,16 +52,21 @@ enum Commands {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    color_eyre::install()?;
-    // Initialize tracing
+/// Initialize tracing subscriber for the gateway
+fn setup_tracing() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "sinex_host=info".into()),
         )
-        .init();
+        .try_init()
+        .map_err(|e| color_eyre::eyre::eyre!("Failed to initialize tracing: {}", e))
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    color_eyre::install()?;
+    setup_tracing()?;
 
     let cli = Cli::parse();
 
@@ -73,20 +78,28 @@ async fn main() -> Result<()> {
             info!("Starting RPC server on {:?}", socket);
 
             // Initialize service container
-            let services = ServiceContainer::new(database_url).await?;
+            let services = ServiceContainer::new(database_url).await.map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
+            })?;
 
             // Start RPC server
-            rpc_server::run(socket, services).await?;
+            rpc_server::run(socket, services)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("RPC server failed").wrap_err(e))?;
         }
 
         Commands::NativeMessaging { database_url } => {
             info!("Starting native messaging mode");
 
             // Initialize service container
-            let services = ServiceContainer::new(database_url).await?;
+            let services = ServiceContainer::new(database_url).await.map_err(|e| {
+                color_eyre::eyre::eyre!("Failed to initialize services").wrap_err(e)
+            })?;
 
             // Start native messaging loop
-            native_messaging::run(services).await?;
+            native_messaging::run(services)
+                .await
+                .map_err(|e| color_eyre::eyre::eyre!("Native messaging failed").wrap_err(e))?;
         }
     }
 

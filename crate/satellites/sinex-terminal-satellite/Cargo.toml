@@ -23,6 +23,7 @@ tracing-subscriber.workspace = true
 clap = { workspace = true, features = ["derive"] }
 serde.workspace = true
 serde_json.workspace = true
+bon = { workspace = true }
 
 # Filesystem monitoring
 notify = "6.1"

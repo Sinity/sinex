@@ -1,6 +1,7 @@
 //! Personal Knowledge Management (PKM) service
 
 use crate::error::{Result as ServiceResult, SinexError};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sinex_core::db::models::Entity as DbEntity;
 use sinex_core::db::models::RawEvent;
@@ -9,10 +10,91 @@ use sinex_core::db::DbPool;
 use sinex_core::types::ulid::Ulid;
 use sinex_core::types::Id;
 use std::collections::HashMap;
+use std::convert::From;
 use tracing::{debug, info};
 
 pub struct PkmService {
     pool: DbPool,
+}
+
+/// Material summary for API responses
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MaterialSummary {
+    pub blob_id: String,
+    pub material_type: String,
+    pub source_uri: Option<String>,
+    pub ingestion_time: chrono::DateTime<chrono::Utc>,
+    pub file_size_bytes: Option<serde_json::Value>,
+    pub mime_type: Option<serde_json::Value>,
+    pub metadata: serde_json::Value,
+    pub content_preview: Option<String>,
+}
+
+/// Metadata builder for consistent JSON structure
+struct MetadataBuilder {
+    data: serde_json::Map<String, serde_json::Value>,
+}
+
+impl MetadataBuilder {
+    pub fn new() -> Self {
+        Self {
+            data: serde_json::Map::new(),
+        }
+    }
+
+    pub fn with_tags(mut self, tags: Vec<String>) -> Self {
+        self.data.insert("tags".to_string(), json!(tags));
+        self
+    }
+
+    pub fn with_created_at(mut self, timestamp: chrono::DateTime<chrono::Utc>) -> Self {
+        self.data
+            .insert("created_at".to_string(), json!(timestamp.to_rfc3339()));
+        self
+    }
+
+    pub fn with_source_material_id(mut self, id: Option<Ulid>) -> Self {
+        if let Some(id) = id {
+            self.data
+                .insert("source_material_id".to_string(), json!(id.to_string()));
+        }
+        self
+    }
+
+    pub fn with_created_by(mut self, created_by: &str) -> Self {
+        self.data
+            .insert("created_by".to_string(), json!(created_by));
+        self
+    }
+
+    pub fn with_extraction_method(mut self, method: &str) -> Self {
+        self.data
+            .insert("extraction_method".to_string(), json!(method));
+        self
+    }
+
+    pub fn build(self) -> serde_json::Value {
+        serde_json::Value::Object(self.data)
+    }
+}
+
+/// Entity type mapping with From trait for better maintainability
+struct EntityTypeMapper;
+
+impl EntityTypeMapper {
+    pub fn create_entity_from_type(name: &str, entity_type: &str) -> CreateEntity {
+        match entity_type {
+            "person" => CreateEntity::person(name),
+            "project" => CreateEntity::project(name),
+            "topic" => CreateEntity::topic(name),
+            "organization" => CreateEntity::organization(name),
+            "location" => CreateEntity::location(name),
+            "concept" => CreateEntity::concept(name),
+            "tool" => CreateEntity::tool(name),
+            "event" => CreateEntity::event(name),
+            _ => CreateEntity::concept(name), // Default fallback
+        }
+    }
 }
 
 impl PkmService {
@@ -29,10 +111,11 @@ impl PkmService {
         created_by: &str,
         source_material_id: Option<Ulid>,
     ) -> ServiceResult<Ulid> {
-        let metadata = serde_json::json!({
-            "tags": tags,
-            "created_at": chrono::Utc::now().to_rfc3339(),
-            "source_material_id": source_material_id.map(|id| id.to_string())});
+        let metadata = MetadataBuilder::new()
+            .with_tags(tags)
+            .with_created_at(chrono::Utc::now())
+            .with_source_material_id(source_material_id)
+            .build();
 
         let annotation = self
             .pool
@@ -76,22 +159,14 @@ impl PkmService {
         let mut entity_ids = Vec::new();
 
         for (name, entity_type) in entities {
-            let entity = match entity_type.as_str() {
-                "person" => CreateEntity::person(&name),
-                "project" => CreateEntity::project(&name),
-                "topic" => CreateEntity::topic(&name),
-                "organization" => CreateEntity::organization(&name),
-                "location" => CreateEntity::location(&name),
-                "concept" => CreateEntity::concept(&name),
-                "tool" => CreateEntity::tool(&name),
-                "event" => CreateEntity::event(&name),
-                _ => CreateEntity::concept(&name),
-            }
-            .with_metadata(serde_json::json!({
-                "source_material_id": source_material_id.to_string(),
-                "created_by": created_by,
-                "extraction_method": "manual"
-            }));
+            let metadata = MetadataBuilder::new()
+                .with_source_material_id(Some(source_material_id))
+                .with_created_by(created_by)
+                .with_extraction_method("manual")
+                .build();
+
+            let entity = EntityTypeMapper::create_entity_from_type(&name, &entity_type)
+                .with_metadata(metadata);
 
             let entity = self.pool.knowledge_graph().create_entity(entity).await?;
 
@@ -180,12 +255,7 @@ impl PkmService {
             }
         }
 
-        // Create content preview (first 500 chars if text)
-        let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
-            String::from_utf8_lossy(&content[..content.len().min(500)]).to_string()
-        } else {
-            format!("[Binary content - {} bytes]", content.len())
-        };
+        let content_preview = Self::create_safe_content_preview(content, mime_type);
 
         // Enhance metadata with file size, checksum, and mime type
         let mut enhanced_metadata = metadata;
@@ -278,7 +348,7 @@ impl PkmService {
         let inserted_blob = self.pool.blobs().insert(blob).await?;
 
         let content_preview = if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
-            Some(String::from_utf8_lossy(&content[..content.len().min(500)]).to_string())
+            Some(Self::create_safe_content_preview(content, mime_type))
         } else {
             None
         };
@@ -324,19 +394,23 @@ impl PkmService {
             materials
         };
 
-        Ok(filtered_materials
+        let summaries: Vec<MaterialSummary> = filtered_materials
             .into_iter()
-            .map(|m| {
-                serde_json::json!({
-                    "blob_id": m.id.to_string(),
-                    "material_type": m.material_type,
-                    "source_uri": m.source_uri,
-                    "ingestion_time": m.ingestion_time,
-                    "file_size_bytes": m.metadata.get("file_size_bytes"),
-                    "mime_type": m.metadata.get("mime_type"),
-                    "metadata": m.metadata,
-                    "content_preview": m.content_preview})
+            .map(|m| MaterialSummary {
+                blob_id: m.id.to_string(),
+                material_type: m.material_type,
+                source_uri: m.source_uri,
+                ingestion_time: m.ingestion_time,
+                file_size_bytes: m.metadata.get("file_size_bytes").cloned(),
+                mime_type: m.metadata.get("mime_type").cloned(),
+                metadata: m.metadata,
+                content_preview: m.content_preview,
             })
+            .collect();
+
+        Ok(summaries
+            .into_iter()
+            .map(|s| serde_json::to_value(s).unwrap())
             .collect())
     }
 
@@ -352,17 +426,41 @@ impl PkmService {
             .search_by_metadata(key, &value, None)
             .await?;
 
-        Ok(materials
+        let summaries: Vec<MaterialSummary> = materials
             .into_iter()
-            .map(|m| {
-                serde_json::json!({
-                    "blob_id": m.id.to_string(),
-                    "material_type": m.material_type,
-                    "source_uri": m.source_uri,
-                    "ingestion_time": m.ingestion_time,
-                    "metadata": m.metadata})
+            .map(|m| MaterialSummary {
+                blob_id: m.id.to_string(),
+                material_type: m.material_type,
+                source_uri: m.source_uri,
+                ingestion_time: m.ingestion_time,
+                file_size_bytes: None,
+                mime_type: None,
+                metadata: m.metadata,
+                content_preview: None,
             })
+            .collect();
+
+        Ok(summaries
+            .into_iter()
+            .map(|s| serde_json::to_value(s).unwrap())
             .collect())
+    }
+
+    /// Create a safe content preview with UTF-8 character boundary awareness
+    fn create_safe_content_preview(content: &[u8], mime_type: Option<&str>) -> String {
+        if mime_type.map(|m| m.starts_with("text/")).unwrap_or(false) {
+            let max_chars = 500;
+            // Convert to string and safely truncate at character boundaries
+            let content_str = String::from_utf8_lossy(content);
+            if content_str.chars().count() <= max_chars {
+                content_str.into_owned()
+            } else {
+                let truncated: String = content_str.chars().take(max_chars).collect();
+                format!("{}...", truncated)
+            }
+        } else {
+            format!("[Binary content - {} bytes]", content.len())
+        }
     }
 }
 

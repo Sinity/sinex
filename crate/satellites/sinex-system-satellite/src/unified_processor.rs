@@ -120,28 +120,16 @@ impl SystemProcessor {
         // 3. Track udev hardware changes
 
         Self {
-            context: None,
             config: SystemConfig::default(),
-            dbus_watcher: None,
-            journal_watcher: None,
-            udev_watcher: None,
-            systemd_watcher: None,
-            last_state: None,
-            checkpoint_manager: None,
+            ..Default::default()
         }
     }
 
     /// Create processor with custom configuration
     pub fn with_config(config: SystemConfig) -> Self {
         Self {
-            context: None,
             config,
-            dbus_watcher: None,
-            journal_watcher: None,
-            udev_watcher: None,
-            systemd_watcher: None,
-            last_state: None,
-            checkpoint_manager: None,
+            ..Default::default()
         }
     }
 

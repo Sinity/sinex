@@ -20,6 +20,23 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
+/// Configuration for monitoring a specific D-Bus bus
+#[derive(Debug, Clone)]
+struct MonitorConfig {
+    bus_type: &'static str,
+    tx: mpsc::UnboundedSender<RawEvent>,
+    config: DbusConfig,
+}
+
+/// Helper to create processing errors with consistent formatting
+fn dbus_error(
+    message: &str,
+    source: impl std::fmt::Display,
+) -> sinex_satellite_sdk::SatelliteError {
+    use sinex_satellite_sdk::SatelliteError::Processing;
+    Processing(format!("{}: {}", message, source))
+}
+
 /// D-Bus watcher with real-time signal subscription
 pub struct DbusWatcher {
     config: DbusConfig,
@@ -41,20 +58,28 @@ impl DbusWatcher {
 
         let mut tasks = Vec::new();
 
-        // Helper closure to spawn monitoring tasks
-        let spawn_monitor =
-            |bus_type: &'static str, tx: mpsc::UnboundedSender<RawEvent>, config: DbusConfig| {
-                tokio::spawn(async move { Self::monitor_bus(bus_type, tx, config).await })
-            };
-
         // Monitor session bus if enabled
         if self.config.monitor_session {
-            tasks.push(spawn_monitor("session", tx.clone(), self.config.clone()));
+            let monitor_config = MonitorConfig {
+                bus_type: "session",
+                tx: tx.clone(),
+                config: self.config.clone(),
+            };
+            tasks.push(tokio::spawn(async move {
+                Self::monitor_bus_with_config(monitor_config).await
+            }));
         }
 
         // Monitor system bus if enabled
         if self.config.monitor_system {
-            tasks.push(spawn_monitor("system", tx.clone(), self.config.clone()));
+            let monitor_config = MonitorConfig {
+                bus_type: "system",
+                tx: tx.clone(),
+                config: self.config.clone(),
+            };
+            tasks.push(tokio::spawn(async move {
+                Self::monitor_bus_with_config(monitor_config).await
+            }));
         }
 
         if tasks.is_empty() {
@@ -69,26 +94,41 @@ impl DbusWatcher {
         Ok(())
     }
 
-    /// Monitor a specific D-Bus bus with real-time signal subscription
+    /// Monitor a specific D-Bus bus with configuration struct
+    async fn monitor_bus_with_config(monitor_config: MonitorConfig) -> SatelliteResult<()> {
+        Self::monitor_bus(
+            monitor_config.bus_type,
+            monitor_config.tx,
+            monitor_config.config,
+        )
+        .await
+    }
+
+    /// Monitor a specific D-Bus bus with real-time signal subscription using tokio-retry
     async fn monitor_bus(
         bus_type: &str,
         tx: mpsc::UnboundedSender<RawEvent>,
         config: DbusConfig,
     ) -> SatelliteResult<()> {
-        loop {
+        use tokio_retry::{strategy::ExponentialBackoff, Retry};
+
+        let retry_strategy = ExponentialBackoff::from_millis(1000)
+            .max_delay(Duration::from_secs(30))
+            .take(5);
+
+        Retry::spawn(retry_strategy, || async {
             match Self::monitor_bus_inner(bus_type, &tx, &config).await {
                 Ok(()) => {
                     warn!("D-Bus {} bus monitoring ended normally", bus_type);
+                    Ok(())
                 }
                 Err(e) => {
                     error!("D-Bus {} bus monitoring failed: {}", bus_type, e);
+                    Err(e)
                 }
             }
-
-            // Wait before reconnecting
-            tokio::time::sleep(Duration::from_secs(5)).await;
-            info!("Reconnecting to D-Bus {} bus", bus_type);
-        }
+        })
+        .await
     }
 
     /// Inner monitoring loop with proper error handling
@@ -101,15 +141,11 @@ impl DbusWatcher {
 
         // Establish D-Bus connection
         let (resource, conn) = if bus_type == "session" {
-            connection::new_session_sync().map_err(|e| {
-                use sinex_satellite_sdk::SatelliteError::Processing;
-                Processing(format!("Failed to connect to session bus: {}", e))
-            })?
+            connection::new_session_sync()
+                .map_err(|e| dbus_error("Failed to connect to session bus", e))?
         } else {
-            connection::new_system_sync().map_err(|e| {
-                use sinex_satellite_sdk::SatelliteError::Processing;
-                Processing(format!("Failed to connect to system bus: {}", e))
-            })?
+            connection::new_system_sync()
+                .map_err(|e| dbus_error("Failed to connect to system bus", e))?
         };
 
         // Spawn the connection resource handler
@@ -121,16 +157,14 @@ impl DbusWatcher {
 
         // Add match rules for signals and method calls
         let signal_rule = MatchRule::new().with_type(MessageType::Signal);
-        conn.add_match(signal_rule).await.map_err(|e| {
-            use sinex_satellite_sdk::SatelliteError::Processing;
-            Processing(format!("Failed to add signal match rule: {}", e))
-        })?;
+        conn.add_match(signal_rule)
+            .await
+            .map_err(|e| dbus_error("Failed to add signal match rule", e))?;
 
         let method_rule = MatchRule::new().with_type(MessageType::MethodCall);
-        conn.add_match(method_rule).await.map_err(|e| {
-            use sinex_satellite_sdk::SatelliteError::Processing;
-            Processing(format!("Failed to add method call match rule: {}", e))
-        })?;
+        conn.add_match(method_rule)
+            .await
+            .map_err(|e| dbus_error("Failed to add method call match rule", e))?;
 
         info!("D-Bus {} bus monitoring started", bus_type);
 

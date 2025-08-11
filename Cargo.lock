@@ -4909,6 +4909,7 @@ name = "sinex-terminal-satellite"
 version = "0.4.2"
 dependencies = [
  "async-trait",
+ "bon",
  "camino",
  "chrono",
  "clap",

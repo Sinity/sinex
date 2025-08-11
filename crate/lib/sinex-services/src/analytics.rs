@@ -18,37 +18,40 @@ impl AnalyticsService {
         Self { pool }
     }
 
+    /// Common helper for time range filtering logic
+    fn apply_time_range_filter<T, F>(
+        data: Vec<T>,
+        end_time: Option<DateTime<Utc>>,
+        get_timestamp: F,
+    ) -> Vec<T>
+    where
+        F: Fn(&T) -> Option<DateTime<Utc>>,
+    {
+        if let Some(end) = end_time {
+            data.into_iter()
+                .filter(|item| get_timestamp(item).map(|ts| ts <= end).unwrap_or(false))
+                .collect()
+        } else {
+            data
+        }
+    }
+
     /// Get event count by source for a time range
     pub async fn get_event_count_by_source(
         &self,
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
-        let mut result = HashMap::new();
+        let start = start_time.unwrap_or(EPOCH_START);
+        let rows = self.pool.events().get_source_activity(start).await?;
 
-        match (start_time, end_time) {
-            (Some(start), Some(end)) => {
-                let rows = self.pool.events().get_source_activity(start).await?;
+        // Apply client-side end time filtering
+        let filtered_rows = Self::apply_time_range_filter(rows, end_time, |row| row.last_event);
 
-                for row in rows {
-                    // Filter by end time on client side
-                    if let Some(last_event) = row.last_event {
-                        if last_event <= end {
-                            result.insert(row.source, row.event_count);
-                        }
-                    }
-                }
-            }
-            _ => {
-                // For all-time stats, use a timestamp far in the past
-                let very_old = EPOCH_START;
-                let rows = self.pool.events().get_source_activity(very_old).await?;
-
-                for row in rows {
-                    result.insert(row.source, row.event_count);
-                }
-            }
-        };
+        let result = filtered_rows
+            .into_iter()
+            .map(|row| (row.source, row.event_count))
+            .collect();
 
         Ok(result)
     }
@@ -59,28 +62,20 @@ impl AnalyticsService {
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
     ) -> ServiceResult<HashMap<String, i64>> {
-        let mut result = HashMap::new();
-
-        match (start_time, end_time) {
+        let rows = match (start_time, end_time) {
             (Some(start), Some(end)) => {
-                let rows = self
-                    .pool
+                self.pool
                     .events()
                     .count_by_type_in_range(start, end)
-                    .await?;
-
-                for row in rows {
-                    result.insert(row.event_type, row.count);
-                }
+                    .await?
             }
-            _ => {
-                let rows = self.pool.events().count_by_type_all_time().await?;
-
-                for row in rows {
-                    result.insert(row.event_type, row.count);
-                }
-            }
+            _ => self.pool.events().count_by_type_all_time().await?,
         };
+
+        let result = rows
+            .into_iter()
+            .map(|row| (row.event_type, row.count))
+            .collect();
 
         Ok(result)
     }
@@ -125,7 +120,9 @@ impl AnalyticsService {
             }
         };
 
-        Ok(commands.into_iter().map(|c| (c.command, c.count)).collect())
+        let result = commands.into_iter().map(|c| (c.command, c.count)).collect();
+
+        Ok(result)
     }
 
     /// Get most active time periods

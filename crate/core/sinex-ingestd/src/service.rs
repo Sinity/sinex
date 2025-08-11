@@ -38,8 +38,63 @@ use tracing::{debug, error, info, instrument, warn};
 // Shared ingestor version as a compile-time constant
 const INGESTOR_VERSION: &str = "0.4.2";
 
-// Cache for NATS subject strings to avoid repeated allocations
-type SubjectCache = Mutex<AHashMap<(String, String), Arc<String>>>;
+/// Helper function to create a shutdown signal future
+async fn shutdown_signal(shutdown_flag: &Arc<AtomicBool>) {
+    loop {
+        if shutdown_flag.load(Ordering::Relaxed) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Cache for NATS subject strings to avoid repeated allocations
+#[derive(Debug, Default)]
+pub struct SubjectCache {
+    cache: Mutex<AHashMap<(String, String), Arc<String>>>,
+}
+
+impl SubjectCache {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(AHashMap::new()),
+        }
+    }
+
+    /// Get or create a cached subject string for the given source and event type
+    pub async fn get_subject(&self, source: &str, event_type: &str) -> Arc<String> {
+        let key = (source.to_string(), event_type.to_string());
+
+        // Fast path: check if already in cache
+        {
+            let cache = self.cache.lock().await;
+            if let Some(cached) = cache.get(&key) {
+                return cached.clone();
+            }
+        }
+
+        // Slow path: create and cache the subject
+        let subject = Arc::new(format!(
+            "events.{}.{}",
+            source.replace('.', "_"),
+            event_type.replace('.', "_")
+        ));
+
+        let mut cache = self.cache.lock().await;
+        // Double-check in case another task inserted while we were waiting
+        if let Some(cached) = cache.get(&key) {
+            return cached.clone();
+        }
+
+        cache.insert(key, subject.clone());
+        subject
+    }
+
+    /// Get the current cache size for monitoring
+    pub async fn len(&self) -> usize {
+        self.cache.lock().await.len()
+    }
+}
 
 /// Main ingestion service
 pub struct IngestService {
@@ -146,7 +201,7 @@ impl IngestService {
             event_buffer: Arc::new(Mutex::new(Vec::with_capacity(config.batch_size))),
             last_flush: Arc::new(Mutex::new(SystemTime::now())),
             telemetry,
-            subject_cache: Arc::new(Mutex::new(AHashMap::new())),
+            subject_cache: Arc::new(SubjectCache::new()),
         };
 
         info!("Ingestion service initialized");
@@ -247,14 +302,7 @@ impl IngestService {
                     _ = interval.tick() => {
                         stats.log_stats();
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
@@ -323,18 +371,10 @@ impl IngestService {
                                 db_pool.as_ref(),
                                 jetstream.as_ref(),
                                 &stats,
-                                &subject_cache,
-                            ).await;
+                                ).await;
                         }
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         // Final flush on shutdown
                         Self::flush_events_static(
                             &event_buffer,
@@ -343,7 +383,6 @@ impl IngestService {
                             db_pool.as_ref(),
                             jetstream.as_ref(),
                             &stats,
-                            &subject_cache,
                         ).await;
                         break;
                     }
@@ -356,6 +395,7 @@ impl IngestService {
     async fn start_outbox_processor_task(&self, pool: PgPool, js: jetstream::Context) {
         let shutdown_flag = self.shutdown_flag.clone();
         let stats = self.stats.clone();
+        let telemetry = self.telemetry.clone();
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_millis(100));
@@ -371,18 +411,14 @@ impl IngestService {
                             }
                             Err(e) => {
                                 error!("Failed to process outbox: {}", e);
+                                if let Some(ref telemetry) = telemetry {
+                                    telemetry.record_error("nats", "outbox_processing");
+                                }
                                 stats.nats_errors.fetch_add(1, Ordering::Relaxed);
                             }
                         }
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(10)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         // Final outbox processing on shutdown
                         match Self::process_outbox(&pool, &js).await {
                             Ok(processed) => {
@@ -514,14 +550,7 @@ impl IngestService {
                             warn!("Failed to reload schemas: {}", e);
                         }
                     }
-                    _ = async {
-                        loop {
-                            if shutdown_flag.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            tokio::time::sleep(Duration::from_millis(100)).await;
-                        }
-                    } => {
+                    _ = shutdown_signal(&shutdown_flag) => {
                         break;
                     }
                 }
@@ -537,7 +566,6 @@ impl IngestService {
         db_pool: Option<&PgPool>,
         _jetstream: Option<&jetstream::Context>, // No longer used - outbox processor handles NATS
         stats: &IngestStats,
-        _subject_cache: &Arc<SubjectCache>, // No longer used - subjects handled in outbox
     ) {
         // Take events from buffer
         let events = {
@@ -565,6 +593,8 @@ impl IngestService {
         if let Some(pool) = db_pool {
             if let Err(e) = Self::batch_write_to_db(pool, &events).await {
                 error!("Failed to write events to database: {}", e);
+                // Note: This is in a static context, so telemetry is not available here
+                // Consider refactoring to pass telemetry if needed
                 stats.db_errors.fetch_add(1, Ordering::Relaxed);
                 return;
             }

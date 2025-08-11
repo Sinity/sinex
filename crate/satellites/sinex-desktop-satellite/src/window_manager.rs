@@ -154,17 +154,16 @@ struct MonitorInfo {
 /// Cache entry for hyprctl results
 #[derive(Debug, Clone)]
 struct CacheEntry {
-    _data: Value,
     timestamp: Instant,
 }
 
-/// Focus history entry
+/// Focus history entry  
 #[derive(Debug, Clone)]
 struct FocusHistoryEntry {
-    _timestamp: chrono::DateTime<Utc>,
-    _window_address: String,
-    _window_class: Option<String>,
-    _window_title: Option<String>,
+    timestamp: chrono::DateTime<Utc>,
+    window_address: String,
+    window_class: Option<String>,
+    window_title: Option<String>,
 }
 
 /// Window augmentation level
@@ -199,12 +198,6 @@ pub struct WindowManagerWatcher {
     last_state_capture: SystemTime,
     // Advanced features
     hyprctl_cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
-    _focus_history: Arc<Mutex<VecDeque<FocusHistoryEntry>>>,
-    _window_augmentation: WindowAugmentation,
-    _workspace_tracking: WorkspaceTracking,
-    _track_focus_history: bool,
-    _connection_backoff_delay: Duration,
-    _max_backoff_delay: Duration,
 }
 
 impl WindowManagerWatcher {
@@ -223,12 +216,6 @@ impl WindowManagerWatcher {
             state_capture_interval: Duration::from_secs(300),
             last_state_capture: SystemTime::UNIX_EPOCH,
             hyprctl_cache: Arc::new(Mutex::new(HashMap::new())),
-            _focus_history: Arc::new(Mutex::new(VecDeque::new())),
-            _window_augmentation: WindowAugmentation::Basic,
-            _workspace_tracking: WorkspaceTracking::Events,
-            _track_focus_history: true,
-            _connection_backoff_delay: Duration::from_secs(1),
-            _max_backoff_delay: Duration::from_secs(60),
         };
 
         // Discover socket paths based on WM type

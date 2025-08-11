@@ -155,31 +155,57 @@ fn parse_checkpoint_stream(checkpoint_str: &str) -> Checkpoint {
 
 /// Parse checkpoint from string representation
 pub fn parse_checkpoint(checkpoint_str: &str) -> eyre::Result<Checkpoint> {
-    match checkpoint_str.to_lowercase().as_str() {
-        "none" | "start" => Ok(Checkpoint::None),
-        _ => parse_checkpoint_json(checkpoint_str)
+    if matches!(
+        checkpoint_str,
+        "none" | "start" | "None" | "Start" | "NONE" | "START"
+    ) {
+        Ok(Checkpoint::None)
+    } else {
+        parse_checkpoint_json(checkpoint_str)
             .or_else(|_| parse_checkpoint_timestamp(checkpoint_str))
-            .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str))),
+            .or_else(|_| Ok(parse_checkpoint_stream(checkpoint_str)))
     }
 }
 
 /// Parse time horizon from string representation
 pub fn parse_time_horizon(horizon_str: &str) -> eyre::Result<TimeHorizon> {
-    match horizon_str.to_lowercase().as_str() {
-        "continuous" | "stream" | "sensor" => Ok(TimeHorizon::Continuous),
-        "snapshot" | "current" | "now" => Ok(TimeHorizon::Snapshot),
-        _ => {
-            // Try to parse as ISO timestamp for historical scan
-            horizon_str
-                .parse::<DateTime<Utc>>()
-                .map(|dt| TimeHorizon::Historical { end_time: dt })
-                .with_context(|| {
-                    format!(
-                        "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp",
-                        horizon_str
-                    )
-                })
-        }
+    if matches!(
+        horizon_str,
+        "continuous"
+            | "stream"
+            | "sensor"
+            | "Continuous"
+            | "Stream"
+            | "Sensor"
+            | "CONTINUOUS"
+            | "STREAM"
+            | "SENSOR"
+    ) {
+        Ok(TimeHorizon::Continuous)
+    } else if matches!(
+        horizon_str,
+        "snapshot"
+            | "current"
+            | "now"
+            | "Snapshot"
+            | "Current"
+            | "Now"
+            | "SNAPSHOT"
+            | "CURRENT"
+            | "NOW"
+    ) {
+        Ok(TimeHorizon::Snapshot)
+    } else {
+        // Try to parse as ISO timestamp for historical scan
+        horizon_str
+            .parse::<DateTime<Utc>>()
+            .map(|dt| TimeHorizon::Historical { end_time: dt })
+            .with_context(|| {
+                format!(
+                    "Invalid time horizon '{}'. Use 'continuous', 'snapshot', or ISO timestamp",
+                    horizon_str
+                )
+            })
     }
 }
 

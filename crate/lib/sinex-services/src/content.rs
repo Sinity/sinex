@@ -14,8 +14,11 @@ impl ContentService {
         Self { blob_manager }
     }
 
-    /// Store large content as blob and return source material reference
-    pub async fn store_large_content(
+    /// Store content as blob and return source material reference
+    ///
+    /// All content is stored via the blob manager regardless of size, providing
+    /// consistent storage, deduplication, and source material tracking.
+    pub async fn store_content(
         &self,
         content: &[u8],
         filename: &str,
@@ -37,18 +40,6 @@ impl ContentService {
         // The blob manager has already created the source material record
         // Return the annex key for referencing the stored content
         Ok(blob_metadata.annex_key)
-    }
-
-    /// Store content via BlobManager (convenience method for store_large_content)
-    pub async fn store_content(
-        &self,
-        content: &[u8],
-        filename: &str,
-        content_type: &str,
-        _source: &str,
-    ) -> ServiceResult<String> {
-        self.store_large_content(content, filename, content_type, _source)
-            .await
     }
 
     /// Retrieve content by annex key

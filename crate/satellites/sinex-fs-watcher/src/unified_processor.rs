@@ -1014,6 +1014,11 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 };
 
                 for target in targets {
+                    // Validate target path for security
+                    validate_path(&target).map_err(|e| {
+                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                    })?;
+
                     let path = camino::Utf8Path::new(&target);
                     if path.exists() {
                         match self
@@ -1047,6 +1052,11 @@ impl StatefulStreamProcessor for FilesystemProcessor {
                 };
 
                 for target in targets {
+                    // Validate target path for security
+                    validate_path(&target).map_err(|e| {
+                        SatelliteError::General(eyre!("Invalid target path '{}': {}", target, e))
+                    })?;
+
                     let path = camino::Utf8Path::new(&target);
                     if path.exists() {
                         match self
@@ -1148,6 +1158,12 @@ impl StatefulStreamProcessor for FilesystemProcessor {
         };
 
         for target in targets {
+            // Validate target path for security
+            if let Err(e) = validate_path(target) {
+                warnings.push(format!("Invalid target path '{}': {}", target, e));
+                continue;
+            }
+            
             let path = camino::Utf8Path::new(target);
             if path.exists() {
                 // Quick estimate by counting entries

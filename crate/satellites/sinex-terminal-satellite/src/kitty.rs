@@ -75,6 +75,30 @@ pub struct KittyProcessInfo {
     parent_pid: Option<u32>,
 }
 
+/// JSON structures for Kitty response parsing
+#[derive(Debug, serde::Deserialize)]
+struct KittyTabJson {
+    id: i64,
+    title: String,
+    index: u32,
+    is_focused: bool,
+    windows: Vec<KittyWindowJson>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct KittyWindowJson {
+    id: i64,
+    cwd: Option<String>,
+    last_cmd_exit_status: Option<i64>,
+    foreground_processes: Option<Vec<KittyProcessJson>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct KittyProcessJson {
+    pid: u64,
+    name: String,
+}
+
 /// Kitty terminal watcher
 pub struct KittyWatcher {
     socket_path: Option<String>,
@@ -130,15 +154,7 @@ impl KittyWatcher {
     }
 
     async fn discover_kitty_socket(&mut self) -> SatelliteResult<String> {
-        // Try common socket locations
-        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
-        let current_uid = unsafe { libc::getuid() };
-        let socket_candidates = vec![
-            format!("{}/kitty_socket_{}", tmp_dir, std::process::id()),
-            format!("{}/kitty-{}.sock", tmp_dir, whoami::username()),
-            format!("/run/user/{}/kitty.sock", current_uid),
-            format!("{}/kitty.sock", tmp_dir),
-        ];
+        let socket_candidates = Self::generate_socket_candidates();
 
         for candidate in &socket_candidates {
             if Utf8Path::new(&candidate).exists() {
@@ -154,6 +170,38 @@ impl KittyWatcher {
             "No accessible Kitty socket found. Tried: {:?}",
             socket_candidates
         )))
+    }
+
+    /// Generate socket path candidates using iterator combinators
+    fn generate_socket_candidates() -> Vec<String> {
+        let tmp_dir = std::env::var("SINEX_TMP_DIR").unwrap_or_else(|_| "/tmp".to_string());
+        let current_uid = unsafe { libc::getuid() };
+        let process_id = std::process::id();
+        let username = whoami::username();
+
+        [
+            ("kitty_socket_{}", process_id.to_string()),
+            ("kitty-{}.sock", username),
+            ("kitty.sock", String::new()),
+        ]
+        .iter()
+        .map(|(pattern, suffix)| {
+            if suffix.is_empty() {
+                format!("{}/kitty.sock", tmp_dir)
+            } else {
+                format!("{}/{}", tmp_dir, pattern.replace("{}", suffix))
+            }
+        })
+        .chain(std::iter::once(format!(
+            "/run/user/{}/kitty.sock",
+            current_uid
+        )))
+        .collect()
+    }
+
+    /// Helper to check if elapsed duration exceeds threshold
+    fn duration_exceeded(start_time: SystemTime, threshold: Duration) -> bool {
+        start_time.elapsed().unwrap_or(Duration::ZERO) >= threshold
     }
 
     async fn send_kitty_command(
@@ -224,43 +272,30 @@ impl KittyWatcher {
                         is_focused,
                     ));
 
-                    // Extract windows from this tab
-                    if let Some(tab_windows) = tab.get("windows").and_then(|w| w.as_array()) {
-                        for window in tab_windows {
-                            if let Some(id) = window.get("id").and_then(|i| i.as_i64()) {
-                                // Extract foreground processes if available
-                                let mut foreground_processes = Vec::with_capacity(8); // Typical processes per window
-                                if let Some(processes) = window
-                                    .get("foreground_processes")
-                                    .and_then(|p| p.as_array())
-                                {
-                                    for process in processes {
-                                        if let (Some(pid), Some(name)) = (
-                                            process.get("pid").and_then(|p| p.as_u64()),
-                                            process.get("name").and_then(|n| n.as_str()),
-                                        ) {
-                                            foreground_processes.push(KittyProcess {
-                                                pid: pid as u32,
-                                                name: name.to_string(),
-                                            });
-                                        }
-                                    }
-                                }
+                    // Extract windows from this tab using structured parsing
+                    if let Ok(tab_windows) = serde_json::from_value::<Vec<KittyWindowJson>>(
+                        tab.get("windows").cloned().unwrap_or(serde_json::json!([])),
+                    ) {
+                        for window_json in tab_windows {
+                            let foreground_processes = window_json
+                                .foreground_processes
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|process| KittyProcess {
+                                    pid: process.pid as u32,
+                                    name: process.name,
+                                })
+                                .collect();
 
-                                windows.push(KittyWindow {
-                                    id,
-                                    cwd: window
-                                        .get("cwd")
-                                        .and_then(|c| c.as_str())
-                                        .map(String::from),
-                                    foreground_processes,
-                                    last_cmd_exit_status: window
-                                        .get("last_cmd_exit_status")
-                                        .and_then(|s| s.as_i64())
-                                        .map(|s| s as i32),
-                                    parent_tab_id: tab_id_str.clone(),
-                                });
-                            }
+                            windows.push(KittyWindow {
+                                id: window_json.id,
+                                cwd: window_json.cwd,
+                                foreground_processes,
+                                last_cmd_exit_status: window_json
+                                    .last_cmd_exit_status
+                                    .map(|s| s as i32),
+                                parent_tab_id: tab_id_str.clone(),
+                            });
                         }
                     }
                 }
@@ -538,9 +573,7 @@ impl KittyWatcher {
                         }
 
                         // Capture incremental scrollback every 3 minutes (safety net)
-                        if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO)
-                            >= scrollback_interval
-                        {
+                        if Self::duration_exceeded(last_scrollback_capture, scrollback_interval) {
                             if let Err(e) = self.capture_incremental_scrollback(&window, &tx).await
                             {
                                 error!(
@@ -552,9 +585,7 @@ impl KittyWatcher {
                     }
 
                     // Update scrollback capture timestamp
-                    if last_scrollback_capture.elapsed().unwrap_or(Duration::ZERO)
-                        >= scrollback_interval
-                    {
+                    if Self::duration_exceeded(last_scrollback_capture, scrollback_interval) {
                         last_scrollback_capture = SystemTime::now();
                     }
                 }
