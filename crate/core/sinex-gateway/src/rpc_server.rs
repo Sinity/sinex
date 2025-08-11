@@ -182,6 +182,7 @@ pub async fn run(socket_path: Utf8PathBuf, services: ServiceContainer) -> Result
 
     let app = Router::new()
         .route("/rpc", post(handle_rpc))
+        .route("/", post(handle_rpc)) // Accept RPC calls at base path for CLI compatibility
         .layer(
             ServiceBuilder::new()
                 .layer(CorsLayer::permissive())

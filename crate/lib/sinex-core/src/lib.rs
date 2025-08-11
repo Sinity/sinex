@@ -122,8 +122,11 @@ pub use db::{
 
 // Re-export the most commonly used database models at crate root
 pub use db::models::{
-    Blob, BlobRecord, Entity, EntityRelation, Provenance, RawEvent, SourceMaterial,
+    Entity, EntityRelation, Event, EventId, Provenance, RawEvent, SourceMaterial,
 };
+
+// Re-export records from sinex-schema
+pub use sinex_schema::schema::records::{BlobRecord, EventRecord, SourceMaterialRecord};
 
 // Re-export all repository traits and types at crate root for short imports
 pub use db::repositories::{
@@ -132,9 +135,8 @@ pub use db::repositories::{
     EnhancedRepository, EntityRecord, EntityRelationRecord, EntityType, EventAnnotation,
     EventPayloadSchema, EventRepository, EventSearchFilters, EventTypeCount,
     KnowledgeGraphRepository, NewSchema, Operation, OperationRecord, OperationStatistics,
-    Repository, SourceActivity, SourceMaterialExt, SourceMaterialRecord, SourceMaterialRepository,
-    StateRepository, StorageStats, SystemHealthReport, TableDef, TransactionSupport,
-    TransactionalRepository,
+    Repository, SourceActivity, SourceMaterialExt, SourceMaterialRepository, StateRepository,
+    StorageStats, SystemHealthReport, TableDef, TransactionSupport, TransactionalRepository,
 };
 
 // Re-export all domain types at crate root for short imports
