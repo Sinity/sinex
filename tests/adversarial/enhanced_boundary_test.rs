@@ -31,7 +31,7 @@ async fn test_maximum_payload_sizes(ctx: TestContext) -> color_eyre::eyre::Resul
         );
 
         // Test should handle large payloads gracefully
-        let result = ctx.insert_event(&event).await;
+        let result = ctx.pool.events().insert(event).await;
 
         // Very large payloads might fail, but shouldn't crash
         if size <= 1024 * 1024 {
@@ -56,7 +56,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Res
         "empty_payload",
         serde_json::json!({}),
     );
-    ctx.insert_event(&empty_event).await?;
+    ctx.pool.events().insert(empty_event).await?;
 
     // Test minimal string
     let minimal_event = ctx.create_test_event(
@@ -64,7 +64,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Res
         "minimal_payload",
         serde_json::json!({"data": ""}),
     );
-    ctx.insert_event(&minimal_event).await?;
+    ctx.pool.events().insert(minimal_event).await?;
 
     // Test single character
     let single_char_event = ctx.create_test_event(
@@ -72,7 +72,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Res
         "single_char",
         serde_json::json!({"data": "a"}),
     );
-    ctx.insert_event(&single_char_event).await?;
+    ctx.pool.events().insert(single_char_event).await?;
 
     // Test zero values
     let zero_event = ctx.create_test_event(
@@ -85,7 +85,7 @@ async fn test_minimal_boundary_values(ctx: TestContext) -> color_eyre::eyre::Res
             "object": {}
         }),
     );
-    ctx.insert_event(&zero_event).await?;
+    ctx.pool.events().insert(zero_event).await?;
 
     ctx.wait_for_event_count(4).await?;
     Ok(())
@@ -122,7 +122,7 @@ async fn test_unicode_boundary_cases(ctx: TestContext) -> color_eyre::eyre::Resu
             }),
         );
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     ctx.wait_for_event_count(unicode_cases.len()).await?;
@@ -159,7 +159,7 @@ async fn test_timestamp_boundaries(ctx: TestContext) -> color_eyre::eyre::Result
             *ts,
         );
 
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     Ok(())
@@ -177,7 +177,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> color_eyre::eyre::Resul
             "count": 0
         }),
     );
-    ctx.insert_event(&empty_array).await?;
+    ctx.pool.events().insert(empty_array).await?;
 
     // Large array
     let large_array: Vec<i32> = (0..10000).collect();
@@ -190,7 +190,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> color_eyre::eyre::Resul
         }),
     );
 
-    match ctx.insert_event(&large_array_event).await {
+    match ctx.pool.events().insert(large_array_event).await {
         Ok(_) => println!("Large array accepted"),
         Err(e) => println!("Large array rejected: {}", e),
     }
@@ -210,7 +210,7 @@ async fn test_collection_boundaries(ctx: TestContext) -> color_eyre::eyre::Resul
         }),
     );
 
-    match ctx.insert_event(&nested_event).await {
+    match ctx.pool.events().insert(nested_event).await {
         Ok(_) => println!("Deeply nested array accepted"),
         Err(e) => println!("Deeply nested array rejected: {}", e),
     }
@@ -244,7 +244,7 @@ async fn test_numeric_boundaries(ctx: TestContext) -> color_eyre::eyre::Result<(
             }),
         );
 
-        match ctx.insert_event(&event).await {
+        match ctx.pool.events().insert(event).await {
             Ok(_) => println!("Numeric boundary {} accepted", name),
             Err(e) => println!("Numeric boundary {} rejected: {}", name, e),
         }
@@ -276,7 +276,7 @@ async fn test_concurrent_access_boundaries(ctx: TestContext) -> color_eyre::eyre
                     }),
                 );
 
-                if let Err(e) = ctx_clone.insert_event(&event).await {
+                if let Err(e) = ctx_clone.pool.events().insert(event).await {
                     eprintln!("Failed to insert event: {}", e);
                     return Err(e);
                 }
@@ -328,7 +328,7 @@ async fn test_string_length_boundaries(ctx: TestContext) -> color_eyre::eyre::Re
             }),
         );
 
-        match ctx.insert_event(&event).await {
+        match ctx.pool.events().insert(event).await {
             Ok(_) => println!("String length {} accepted", length),
             Err(e) => println!("String length {} rejected: {}", length, e),
         }
@@ -369,7 +369,7 @@ async fn test_property_based_boundaries(ctx: TestContext) -> color_eyre::eyre::R
             );
 
             // We don't assert success, just that it doesn't panic
-            let _ = ctx.insert_event(&event).await;
+            let _ = ctx.pool.events().insert(event).await;
         });
     });
 

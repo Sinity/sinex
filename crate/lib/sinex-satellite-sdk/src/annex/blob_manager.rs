@@ -80,6 +80,25 @@ impl BlobManager {
         })
     }
 
+    /// Create BlobManager for testing - creates a dummy IngestClient that will fail if used
+    /// Tests should avoid calling methods that emit events (ingest_file, verify_blob, etc.)
+    #[cfg(test)]
+    pub async fn new_for_testing(annex_config: AnnexConfig, db_pool: DbPool) -> Result<Self> {
+        let annex = GitAnnex::new(annex_config)?;
+
+        // Create a dummy IngestClient that will fail when used
+        // This is a temporary solution for tests - proper mocking should be implemented
+        let dummy_client = IngestClient::new("/tmp/nonexistent-test-socket.sock")
+            .await
+            .unwrap_or_else(|_| panic!("Test IngestClient creation failed as expected"));
+
+        Ok(BlobManager {
+            annex,
+            db_pool,
+            ingest_client: dummy_client,
+        })
+    }
+
     /// Ingest a file into the blob management system
     pub async fn ingest_file(
         &self,
@@ -510,7 +529,7 @@ impl BlobManager {
         let total_size = stats.total_size_bytes;
         let failed_count = 0; // TODO: Add failed_verifications field to StorageStats if needed
 
-        // Insert metric event using EventRepository
+        // Insert metric event via ingestd
         let new_event: RawEvent = Event::new(StorageStatisticsPayload {
             total_blobs: blob_count,
             total_size_bytes: total_size,
@@ -520,11 +539,11 @@ impl BlobManager {
         .with_ts_orig(Some(Utc::now()))
         .into();
 
-        self.db_pool
-            .events()
-            .insert(new_event)
+        let mut client = self.ingest_client.clone();
+        client
+            .ingest_event(&new_event)
             .await
-            .wrap_err("Failed to emit blob storage statistics")?;
+            .map_err(|e| eyre!("Failed to emit blob storage statistics via ingestd: {}", e))?;
 
         Ok(())
     }

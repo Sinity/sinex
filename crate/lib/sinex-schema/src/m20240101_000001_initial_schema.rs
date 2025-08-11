@@ -22,6 +22,7 @@ impl MigrationTrait for Migration {
                 CREATE EXTENSION IF NOT EXISTS "pg_jsonschema";
                 CREATE EXTENSION IF NOT EXISTS "ulid";
                 CREATE EXTENSION IF NOT EXISTS "vector";
+                CREATE EXTENSION IF NOT EXISTS "pgcrypto";
                 "#,
             )
             .await?;

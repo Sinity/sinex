@@ -88,7 +88,7 @@ async fn test_out_of_order_timestamps(ctx: TestContext) -> color_eyre::Result<()
             .build()
             .with_ts_orig(Some(ts));
 
-        let inserted = ctx.insert_event(&event).await?;
+        let inserted = ctx.pool.events().insert(event).await?;
         inserted_events.push(inserted);
     }
 
@@ -240,7 +240,7 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
         .with_ts_orig(Some(Utc::now()));
 
     // This should succeed
-    let result = ctx.insert_event(&valid_event).await;
+    let result = ctx.pool.events().insert(valid_event).await;
     assert!(result.is_ok(), "Valid timestamp should be accepted");
 
     // Test edge case: distant future (should work but might be logged)
@@ -252,7 +252,7 @@ async fn test_timestamp_validation(ctx: TestContext) -> color_eyre::Result<()> {
         .build()
         .with_ts_orig(Some(far_future));
 
-    let future_result = ctx.insert_event(&future_event).await;
+    let future_result = ctx.pool.events().insert(future_event).await;
     match future_result {
         Ok(_) => println!("Far future timestamp accepted"),
         Err(e) => println!("Far future timestamp rejected: {}", e),

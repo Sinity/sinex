@@ -284,7 +284,7 @@ async fn test_sql_injection_protection(ctx: TestContext) -> color_eyre::eyre::Re
     let factory = EventFactory::new(sources::SHELL_KITTY);
     let event = factory.create_event(event_types::shell::COMMAND_EXECUTED, legitimate_event)?;
 
-    ctx.insert_event(&event).await?;
+    ctx.pool.events().insert(event).await?;
 
     println!("SQL injection protection test completed:");
     println!("  Payloads tested: {}", 10);
@@ -461,7 +461,7 @@ async fn test_resource_exhaustion_protection(ctx: TestContext) -> color_eyre::ey
         let factory = EventFactory::new(sources::TEST);
         match factory.create_event(event_types::test::GENERIC, event) {
             Ok(evt) => {
-                if ctx.insert_event(&evt).await.is_ok() {
+                if ctx.pool.events().insert(evt).await.is_ok() {
                     insert_count += 1;
                 }
             }
@@ -555,7 +555,7 @@ async fn test_query_interface_exploits(ctx: TestContext) -> color_eyre::eyre::Re
             event_types::test::GENERIC,
             json!({ "index": i, "sensitive": "secret_data" })
         )?;
-        ctx.insert_event(&event).await?;
+        ctx.pool.events().insert(event).await?;
     }
 
     // Test various query exploit attempts

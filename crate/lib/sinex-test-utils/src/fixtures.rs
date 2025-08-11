@@ -1178,7 +1178,11 @@ mod tests {
 
         // Events should exist in database
         for event_id in &fixture.event_ids {
-            ctx.assert_event_exists(*event_id).await?;
+            assert!(
+                ctx.pool.events().exists_by_id(event_id).await?,
+                "Event with ID {} should exist",
+                event_id
+            );
         }
 
         Ok(())
@@ -1356,7 +1360,7 @@ mod tests {
             EventType::from_static("test.started"),
             json!({}),
         );
-        let start = ctx.insert_event(&start_event).await?;
+        let start = ctx.pool.events().insert(start_event).await?;
         event_ids.push(start.id.expect("Inserted event must have ID"));
 
         // Insert middle events
@@ -1366,7 +1370,7 @@ mod tests {
                 EventType::from_static("test.started"),
                 json!({"index": i}),
             );
-            let event = ctx.insert_event(&middle_event).await?;
+            let event = ctx.pool.events().insert(middle_event).await?;
             event_ids.push(event.id.expect("Inserted event must have ID"));
         }
 
@@ -1376,7 +1380,7 @@ mod tests {
             EventType::from_static("test.completed"),
             json!({}),
         );
-        let end = ctx.insert_event(&end_event).await?;
+        let end = ctx.pool.events().insert(end_event).await?;
         event_ids.push(end.id.expect("Inserted event must have ID"));
 
         assert_eq!(event_ids.len(), 7); // 1 + 5 + 1

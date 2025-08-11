@@ -161,6 +161,7 @@ impl MigrationTrait for Migration {
                     schema_record RECORD;
                     validation_result BOOLEAN;
                     validation_errors_json JSONB;
+                    payload_hash_value TEXT;
                 BEGIN
                     -- Get the event
                     SELECT e.*, s.schema_name, s.schema_version, s.schema_content
@@ -178,6 +179,25 @@ impl MigrationTrait for Migration {
                                            jsonb_build_object('error', 'No schema associated with event')::JSONB,
                                            NULL::TEXT,
                                            NULL::TEXT;
+                        RETURN;
+                    END IF;
+                    
+                    -- Calculate payload hash for cache key
+                    payload_hash_value := encode(digest(event_record.payload::text, 'sha256'), 'hex');
+                    
+                    -- Check cache first
+                    SELECT vc.is_valid, vc.validation_errors 
+                    INTO validation_result, validation_errors_json
+                    FROM sinex_schemas.validation_cache vc
+                    WHERE vc.payload_hash = payload_hash_value 
+                      AND vc.schema_id = event_record.payload_schema_id;
+                    
+                    -- If found in cache, return cached result
+                    IF FOUND THEN
+                        RETURN QUERY SELECT validation_result, 
+                                           validation_errors_json,
+                                           event_record.schema_name,
+                                           event_record.schema_version;
                         RETURN;
                     END IF;
                     
@@ -206,10 +226,10 @@ impl MigrationTrait for Migration {
                     
                     -- Cache the result
                     INSERT INTO sinex_schemas.validation_cache 
-                        (event_id, schema_id, is_valid, validation_errors)
+                        (payload_hash, schema_id, is_valid, validation_errors)
                     VALUES 
-                        (event_id_param, event_record.payload_schema_id, validation_result, validation_errors_json)
-                    ON CONFLICT (event_id, schema_id) 
+                        (payload_hash_value, event_record.payload_schema_id, validation_result, validation_errors_json)
+                    ON CONFLICT (payload_hash, schema_id) 
                     DO UPDATE SET 
                         is_valid = EXCLUDED.is_valid,
                         validation_errors = EXCLUDED.validation_errors,

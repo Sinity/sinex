@@ -143,6 +143,17 @@ impl ClipboardWatcher {
         let annex_path_str = std::env::var("SINEX_ANNEX_PATH")
             .unwrap_or_else(|_| "/tmp/sinex-clipboard-annex".to_string());
 
+        // Create IngestClient for proper event routing
+        let ingest_socket = std::env::var("SINEX_INGEST_SOCKET").ok()?;
+        let ingest_client =
+            match sinex_satellite_sdk::grpc_client::IngestClient::new(&ingest_socket).await {
+                Ok(client) => client,
+                Err(e) => {
+                    warn!("Failed to create ingest client for blob manager: {}", e);
+                    return None;
+                }
+            };
+
         // Validate annex path
         let annex_path = match SanitizedPath::from_str_validated(&annex_path_str) {
             Ok(path) => Utf8PathBuf::from(path.as_str()),
@@ -172,7 +183,7 @@ impl ClipboardWatcher {
             large_files: None,
         };
 
-        match BlobManager::new(annex_config, pool) {
+        match BlobManager::new(annex_config, pool, ingest_client) {
             Ok(manager) => Some(manager),
             Err(e) => {
                 warn!("Failed to create blob manager: {}", e);

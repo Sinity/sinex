@@ -230,8 +230,8 @@
 //!     .some(&optional_value)?;
 //!
 //! // Event-specific assertions
-//! ctx.assert_event_count(5).await?;
-//! ctx.assert_event_exists(event_id).await?;
+//! let count = ctx.pool.events().count_all().await?;
+//! assert!(ctx.pool.events().exists_by_id(&event_id).await?);
 //! ctx.assert_no_events().await?;
 //!
 //! // Error assertions
@@ -965,7 +965,7 @@ mod tests {
         ctx: TestContext,
     ) -> color_eyre::eyre::Result<()> {
         // Test that event counting is accurate across operations
-        let initial_count = ctx.test_event_count().await;
+        let initial_count = ctx.pool.events().count_all().await.unwrap_or(0);
         assert_eq!(initial_count, 0, "Should start with zero events");
 
         // Insert events one by one and verify count
@@ -973,7 +973,7 @@ mod tests {
             ctx.create_test_event("count-test", "increment", json!({"index": i}))
                 .await?;
 
-            let current_count = ctx.test_event_count().await;
+            let current_count = ctx.pool.events().count_all().await.unwrap_or(0);
             assert_eq!(
                 current_count as usize, i,
                 "Count should match inserted events"
@@ -993,7 +993,7 @@ mod tests {
 
         ctx.insert_events(&batch_events).await?;
 
-        let final_count = ctx.test_event_count().await;
+        let final_count = ctx.pool.events().count_all().await.unwrap_or(0);
         assert_eq!(
             final_count, 15,
             "Should have all individual and batch events"
@@ -1145,7 +1145,7 @@ mod tests {
     #[sinex_test]
     async fn test_fixture_lazy_initialization(ctx: TestContext) -> color_eyre::eyre::Result<()> {
         // Test that context initialization is lazy and doesn't create unnecessary events
-        let initial_count = ctx.test_event_count().await;
+        let initial_count = ctx.pool.events().count_all().await.unwrap_or(0);
 
         // Context should start with zero events
         assert_eq!(initial_count, 0, "Context should start with zero events");
@@ -1155,7 +1155,7 @@ mod tests {
             .await?;
 
         // Should have created one event
-        let after_event = ctx.test_event_count().await;
+        let after_event = ctx.pool.events().count_all().await.unwrap_or(0);
         assert_eq!(
             after_event, 1,
             "Should have exactly one event after creation"

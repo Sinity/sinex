@@ -238,7 +238,7 @@ async fn test_shell_payload_system(ctx: TestContext) -> color_eyre::eyre::Result
     assert_eq!(atuin_event.event_type.as_str(), "command.executed");
 
     // Verify both shell events exist
-    let shell_events = ctx.test_event_count().await;
+    let shell_events = ctx.pool.events().count_all().await?;
     assert!(shell_events >= 2, "Should have at least 2 events");
 
     Ok(())

@@ -49,88 +49,62 @@ impl SensorJobs {
                 ColumnDef::new(SensorJobs::JobId)
                     .custom(Alias::new("ULID"))
                     .not_null()
-                    .primary_key()
+                    .primary_key(),
             )
             // Core job definition
-            .col(
-                ColumnDef::new(SensorJobs::SensorType)
-                    .text()
-                    .not_null()
-            )
-            .col(
-                ColumnDef::new(SensorJobs::TargetUri)
-                    .text()
-                    .not_null()
-            )
+            .col(ColumnDef::new(SensorJobs::SensorType).text().not_null())
+            .col(ColumnDef::new(SensorJobs::TargetUri).text().not_null())
             .col(
                 ColumnDef::new(SensorJobs::SourceIdentifier)
                     .text()
-                    .not_null()
+                    .not_null(),
             )
             .col(
                 ColumnDef::new(SensorJobs::AcquisitionMode)
                     .json_binary()
-                    .not_null()
+                    .not_null(),
             )
             .col(
                 ColumnDef::new(SensorJobs::Parameters)
                     .json_binary()
                     .not_null()
-                    .default("'{}'")
+                    .default("'{}'"),
             )
             // Ownership and limits
-            .col(
-                ColumnDef::new(SensorJobs::Owner)
-                    .text()
-            )
-            .col(
-                ColumnDef::new(SensorJobs::ResourceLimits)
-                    .json_binary()
-            )
+            .col(ColumnDef::new(SensorJobs::Owner).text())
+            .col(ColumnDef::new(SensorJobs::ResourceLimits).json_binary())
             // Status and priority
             .col(
                 ColumnDef::new(SensorJobs::Status)
                     .text()
                     .not_null()
-                    .default("'pending'")
+                    .default("'pending'"),
             )
             .col(
                 ColumnDef::new(SensorJobs::Priority)
                     .integer()
                     .not_null()
-                    .default(1000)
+                    .default(1000),
             )
             // Timestamps
             .col(
                 ColumnDef::new(SensorJobs::CreatedAt)
                     .timestamp_with_time_zone()
                     .not_null()
-                    .default(Expr::current_timestamp())
+                    .default(Expr::current_timestamp()),
             )
             .col(
                 ColumnDef::new(SensorJobs::UpdatedAt)
                     .timestamp_with_time_zone()
                     .not_null()
-                    .default(Expr::current_timestamp())
+                    .default(Expr::current_timestamp()),
             )
-            .col(
-                ColumnDef::new(SensorJobs::StartedAt)
-                    .timestamp_with_time_zone()
-            )
-            .col(
-                ColumnDef::new(SensorJobs::CompletedAt)
-                    .timestamp_with_time_zone()
-            )
+            .col(ColumnDef::new(SensorJobs::StartedAt).timestamp_with_time_zone())
+            .col(ColumnDef::new(SensorJobs::CompletedAt).timestamp_with_time_zone())
             // Error handling
-            .col(
-                ColumnDef::new(SensorJobs::ErrorMessage)
-                    .text()
-            )
+            .col(ColumnDef::new(SensorJobs::ErrorMessage).text())
             // Result tracking
-            .col(
-                ColumnDef::new(SensorJobs::MaterialId)
-                    .custom(Alias::new("ULID"))
-            )
+            .col(ColumnDef::new(SensorJobs::MaterialId).custom(Alias::new("ULID")))
             .to_owned()
     }
 

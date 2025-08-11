@@ -103,7 +103,7 @@ async fn test_database_high_load_resilience(ctx: TestContext) -> color_eyre::eyr
     }
 
     // Verify all events were created successfully
-    let event_count = ctx.test_event_count().await;
+    let event_count = ctx.pool.events().count_all().await?;
     assert!(
         event_count >= 1000,
         "Should have created at least 1000 events, got {}",

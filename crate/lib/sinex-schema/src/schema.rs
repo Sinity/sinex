@@ -17,7 +17,9 @@ pub mod outbox;
 pub mod processors;
 pub mod records;
 pub mod schemas;
+pub mod sensor_jobs;
 pub mod source_materials;
+pub mod temporal_ledger;
 
 // Re-export everything from modules
 pub use annotations::*;
@@ -33,7 +35,9 @@ pub use records::*;
 // Re-export key record types for backwards compatibility
 pub use records::{BlobRecord, EventRecord, SourceMaterialRecord};
 pub use schemas::*;
+pub use sensor_jobs::*;
 pub use source_materials::*;
+pub use temporal_ledger::*;
 
 /// Trait for table definitions that can be used with generic repository operations
 pub trait TableDef: Copy + Clone {

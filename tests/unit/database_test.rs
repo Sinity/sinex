@@ -220,14 +220,14 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> color_eyre::eyre::
 
 #[sinex_test]
 async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result<()> {
-    let initial_count = ctx.test_event_count().await;
+    let initial_count = ctx.pool.events().count_all().await?;
 
     // Test successful transaction
     let _success_event = ctx
         .create_test_event("transaction-test", "success", json!({"test": "commit"}))
         .await?;
 
-    let after_success = ctx.test_event_count().await;
+    let after_success = ctx.pool.events().count_all().await?;
     assert_eq!(after_success, initial_count + 1);
 
     // Note: Complex transaction rollback testing requires low-level database access
@@ -243,7 +243,7 @@ async fn test_transaction_rollback(ctx: TestContext) -> color_eyre::eyre::Result
     assert!(invalid_result.is_err(), "Empty source should be rejected");
 
     // Event count should be unchanged after rejection
-    let after_rejection = ctx.test_event_count().await;
+    let after_rejection = ctx.pool.events().count_all().await?;
     assert_eq!(after_rejection, after_success);
 
     // Verify no rollback events were persisted
@@ -418,7 +418,7 @@ async fn test_ulid_persistence(ctx: TestContext) -> color_eyre::eyre::Result<()>
         json!({"ulid": test_ulid.to_string()}),
     );
 
-    let inserted_event = ctx.insert_event(&event).await?;
+    let inserted_event = ctx.pool.events().insert(event).await?;
 
     // Verify the event was inserted (ULID is auto-generated)
     assert!(inserted_event.id.is_some());
@@ -453,7 +453,7 @@ async fn test_timestamp_handling(ctx: TestContext) -> color_eyre::eyre::Result<(
         .build();
 
     let before_insert = Utc::now();
-    let inserted_event = ctx.insert_event(&event).await?;
+    let inserted_event = ctx.pool.events().insert(event).await?;
     let after_insert = Utc::now();
 
     // Verify original timestamp preserved

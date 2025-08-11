@@ -45,17 +45,15 @@ pub struct ProcessorCli {
     #[arg(long)]
     pub processor_config: Option<String>,
 
-    /// Use direct NATS publishing instead of gRPC (bypasses ingestd - violates single-writer principle)
-    #[arg(long, env = "SINEX_USE_NATS")]
+    /// DEPRECATED: Direct NATS publishing bypasses ingestd single-writer principle (ignored)
+    #[arg(long, env = "SINEX_USE_NATS", hide = true)]
+    #[allow(dead_code)]
     pub use_nats: bool,
 
-    /// NATS server URLs (comma-separated) - only used with --use-nats flag
-    #[arg(
-        long,
-        env = "SINEX_NATS_SERVERS",
-        default_value = "nats://localhost:4222"
-    )]
-    pub nats_servers: String,
+    /// DEPRECATED: NATS server URLs - no longer used, all events go through gRPC to ingestd
+    #[arg(long, env = "SINEX_NATS_SERVERS", hide = true)]
+    #[allow(dead_code)]
+    pub nats_servers: Option<String>,
 
     #[command(subcommand)]
     pub command: ProcessorCommand,
@@ -526,51 +524,29 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // Initialize runner with gRPC by default, NATS as legacy bypass option
+                // Always use gRPC to enforce single-writer principle through ingestd
                 if args.use_nats {
-                    // Legacy NATS mode - bypasses ingestd single-writer principle
-                    warn!("Using legacy NATS mode - bypasses ingestd single-writer principle");
-
-                    // Create ingest client
-                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
-                        .await
-                        .context("Failed to create ingest client")?;
-
-                    // Initialize runner
-                    runner
-                        .initialize(
-                            service_name.clone(),
-                            processor_config,
-                            db_pool.clone(),
-                            ingest_client,
-                            std::path::PathBuf::from(work_dir.as_str()),
-                            dry_run,
-                        )
-                        .await?;
-                } else {
-                    // Default to NATS
-                    info!("Using NATS JetStream for event publishing");
-
-                    // Create NATS configuration
-                    let mut nats_config = NatsConfig::default();
-                    nats_config.servers = args
-                        .nats_servers
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .collect();
-                    nats_config.client_name = format!("sinex-{}", service_name);
-
-                    runner
-                        .initialize_with_grpc_legacy(
-                            service_name.clone(),
-                            processor_config,
-                            db_pool.clone(),
-                            "/run/sinex/ingest.sock".to_string(),
-                            std::path::PathBuf::from(work_dir.as_str()),
-                            dry_run,
-                        )
-                        .await?;
+                    warn!("--use-nats flag is deprecated and ignored. All events now go through gRPC to ingestd to enforce single-writer principle.");
                 }
+
+                info!("Using gRPC for event publishing");
+
+                // Create ingest client
+                let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
+                    .await
+                    .context("Failed to create ingest client")?;
+
+                // Initialize runner
+                runner
+                    .initialize(
+                        service_name.clone(),
+                        processor_config,
+                        db_pool.clone(),
+                        ingest_client,
+                        std::path::PathBuf::from(work_dir.as_str()),
+                        dry_run,
+                    )
+                    .await?;
 
                 // Run service with satellite coordination
                 if dry_run {
@@ -668,25 +644,11 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                         .context("Failed to connect to database using DATABASE_URL")?
                 };
 
-                // Initialize runner with NATS by default (unless dry run or legacy mode)
-                if args.use_grpc || dry_run {
-                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
-                        .await
-                        .context("Failed to create ingest client")?;
+                // Initialize runner with gRPC by default (always for dry runs, optional NATS bypass)
+                if args.use_nats && !dry_run {
+                    // Legacy NATS mode - bypasses ingestd single-writer principle
+                    warn!("Using legacy NATS mode - bypasses ingestd single-writer principle");
 
-                    // Initialize runner
-                    runner
-                        .initialize(
-                            service_name,
-                            processor_config,
-                            db_pool,
-                            ingest_client,
-                            std::path::PathBuf::from(work_dir.as_str()),
-                            dry_run,
-                        )
-                        .await?;
-                } else {
-                    // Default to NATS for non-dry runs
                     let mut nats_config = NatsConfig::default();
                     nats_config.servers = args
                         .nats_servers
@@ -701,6 +663,25 @@ impl<T: crate::stream_processor::StatefulStreamProcessor + ExplorationProvider +
                             processor_config,
                             db_pool,
                             "/run/sinex/ingest.sock".to_string(),
+                            std::path::PathBuf::from(work_dir.as_str()),
+                            dry_run,
+                        )
+                        .await?;
+                } else {
+                    // Default to gRPC (always for dry runs)
+                    info!("Using gRPC for event publishing");
+
+                    let ingest_client = IngestClient::new(args.ingest_socket_path.as_str())
+                        .await
+                        .context("Failed to create ingest client")?;
+
+                    // Initialize runner
+                    runner
+                        .initialize(
+                            service_name,
+                            processor_config,
+                            db_pool,
+                            ingest_client,
                             std::path::PathBuf::from(work_dir.as_str()),
                             dry_run,
                         )

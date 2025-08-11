@@ -56,14 +56,29 @@ impl ServiceContainer {
                 .with_source(e.to_string())
         })?;
 
+        // Create IngestClient for BlobManager (required for proper event routing)
+        let ingest_client = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
+            IngestClient::new(&ingest_socket).await.map_err(|e| {
+                SinexError::service("Failed to create ingest client for blob manager")
+                    .with_source(e.to_string())
+            })?
+        } else {
+            return Err(SinexError::configuration(
+                "SINEX_INGEST_SOCKET environment variable not set - required for blob manager",
+            )
+            .into());
+        };
+
         let annex_config = sinex_satellite_sdk::annex::AnnexConfig {
             repo_path: annex_path,
             num_copies: None,
             large_files: None,
         };
-        let blob_manager = Arc::new(BlobManager::new(annex_config, pool.clone()).map_err(|e| {
-            SinexError::service("Failed to create blob manager").with_source(e.to_string())
-        })?);
+        let blob_manager = Arc::new(
+            BlobManager::new(annex_config, pool.clone(), ingest_client.clone()).map_err(|e| {
+                SinexError::service("Failed to create blob manager").with_source(e.to_string())
+            })?,
+        );
 
         // Initialize telemetry
         let telemetry = if let Ok(ingest_socket) = std::env::var("SINEX_INGEST_SOCKET") {
@@ -71,16 +86,8 @@ impl ServiceContainer {
             let (tx, mut rx) = mpsc::channel(500);
 
             // Spawn task to forward telemetry events to ingestd
-            let ingest_socket_clone = ingest_socket.clone();
+            let mut telemetry_client = ingest_client.clone();
             tokio::spawn(async move {
-                let mut ingest_client = match IngestClient::new(&ingest_socket_clone).await {
-                    Ok(client) => client,
-                    Err(e) => {
-                        tracing::error!("Failed to create ingest client for telemetry: {}", e);
-                        return;
-                    }
-                };
-
                 let mut batch = Vec::new();
                 let mut last_flush = std::time::Instant::now();
 
@@ -89,7 +96,7 @@ impl ServiceContainer {
 
                     // Flush on batch size or timeout
                     if batch.len() >= 10 || last_flush.elapsed() > Duration::from_secs(5) {
-                        if let Err(e) = ingest_client.ingest_batch(&batch).await {
+                        if let Err(e) = telemetry_client.ingest_batch(&batch).await {
                             tracing::warn!("Failed to send telemetry batch: {}", e);
                         }
                         batch.clear();
@@ -99,7 +106,7 @@ impl ServiceContainer {
 
                 // Final flush
                 if !batch.is_empty() {
-                    if let Err(e) = ingest_client.ingest_batch(&batch).await {
+                    if let Err(e) = telemetry_client.ingest_batch(&batch).await {
                         tracing::warn!("Failed to send final telemetry batch: {}", e);
                     }
                 }
