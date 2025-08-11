@@ -313,7 +313,7 @@ fn test_event_schemaless_builder() -> color_eyre::eyre::Result<()> {
     assert_eq!(event.event_type, event_type);
     assert_eq!(event.payload, payload);
     assert!(event.id.is_some());
-    assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).unwrap());
+    assert!(event.ts_ingest > chrono::DateTime::from_timestamp(0, 0).expect("Should create valid timestamp from epoch"));
     Ok(())
 }
 
@@ -388,7 +388,7 @@ fn test_result_type_compatibility() -> color_eyre::eyre::Result<()> {
     // Test success case
     let success_result = returns_success();
     assert!(success_result.is_ok());
-    assert_eq!(success_result.unwrap(), "success");
+    assert_eq!(success_result.expect("Success result should be Ok"), "success");
 
     // Test error case
     let error_result = returns_error();
@@ -459,7 +459,7 @@ fn test_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
         let handle = thread::spawn(move || {
             for _ in 0..100 {
                 let ulid = Ulid::new();
-                ulids_clone.lock().unwrap().push(ulid);
+                ulids_clone.lock().expect("Thread should lock mutex successfully").push(ulid);
             }
         });
         handles.push(handle);
@@ -467,10 +467,10 @@ fn test_concurrent_ulid_generation() -> color_eyre::eyre::Result<()> {
 
     // Wait for all threads
     for handle in handles {
-        handle.join().unwrap();
+        handle.join().expect("Thread should complete successfully");
     }
 
-    let final_ulids = ulids.lock().unwrap();
+    let final_ulids = ulids.lock().expect("Should lock mutex successfully");
 
     // Should have 1000 ULIDs
     assert_eq!(final_ulids.len(), 1000);
@@ -509,7 +509,7 @@ fn test_large_payload_creation() -> color_eyre::eyre::Result<()> {
     );
 
     assert_eq!(event.payload, large_payload);
-    assert_eq!(event.payload["large_data"].as_str().unwrap().len(), 100_000);
+    assert_eq!(event.payload["large_data"].as_str().expect("Should extract large_data as string").len(), 100_000);
     Ok(())
 }
 
@@ -524,15 +524,15 @@ fn test_domain_type_serialization() -> color_eyre::eyre::Result<()> {
     let event_type = EventType::from_static("serialize.test");
 
     // Test JSON serialization
-    let source_json = serde_json::to_string(&source).unwrap();
-    let type_json = serde_json::to_string(&event_type).unwrap();
+    let source_json = serde_json::to_string(&source).expect("Should serialize EventSource to JSON");
+    let type_json = serde_json::to_string(&event_type).expect("Should serialize EventType to JSON");
 
     assert_eq!(source_json, r#""serialization-test""#);
     assert_eq!(type_json, r#""serialize.test""#);
 
     // Test JSON deserialization
-    let deserialized_source: EventSource = serde_json::from_str(&source_json).unwrap();
-    let deserialized_type: EventType = serde_json::from_str(&type_json).unwrap();
+    let deserialized_source: EventSource = serde_json::from_str(&source_json).expect("Should deserialize EventSource from JSON");
+    let deserialized_type: EventType = serde_json::from_str(&type_json).expect("Should deserialize EventType from JSON");
 
     assert_eq!(deserialized_source, source);
     assert_eq!(deserialized_type, event_type);
@@ -555,10 +555,10 @@ fn test_event_json_roundtrip() -> color_eyre::eyre::Result<()> {
     );
 
     // Serialize to JSON
-    let json_str = serde_json::to_string(&original_event).unwrap();
+    let json_str = serde_json::to_string(&original_event).expect("Should serialize event to JSON");
 
     // Deserialize back
-    let deserialized_event: DbEvent = serde_json::from_str(&json_str).unwrap();
+    let deserialized_event: DbEvent = serde_json::from_str(&json_str).expect("Should deserialize event from JSON");
 
     // Should be equal
     assert_eq!(deserialized_event.source, original_event.source);

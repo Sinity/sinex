@@ -159,7 +159,7 @@ async fn test_ulid_ordering_and_consistency(ctx: TestContext) -> color_eyre::eyr
             .create_test_event("ulid-test", "ordering.test", json!({"sequence": i}))
             .await?;
 
-        event_ids.push(event.id.unwrap());
+        event_ids.push(event.id.expect("Event should have an ID after saving"));
 
         // Small delay to ensure different timestamps
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
@@ -317,7 +317,7 @@ async fn test_concurrent_event_insertion(ctx: TestContext) -> Result<()> {
                 )
                 .await?;
 
-            Ok::<_, color_eyre::eyre::Error>(event.id.unwrap())
+            Ok::<_, color_eyre::eyre::Error>(event.id.expect("Event should have ID after creation"))
         });
         handles.push(handle);
     }
@@ -487,12 +487,12 @@ async fn test_large_payload_handling(ctx: TestContext) -> color_eyre::eyre::Resu
     let retrieved = ctx
         .pool
         .events()
-        .get_by_id(event.id.unwrap())
+        .get_by_id(event.id.expect("Event should have ID after creation"))
         .await?
         .expect("Event should exist");
 
     assert_eq!(retrieved.payload, large_payload);
-    assert_eq!(retrieved.payload["data"].as_str().unwrap().len(), 10_000);
+    assert_eq!(retrieved.payload["data"].as_str().expect("Should extract data field as string").len(), 10_000);
 
     Ok(())
 }
@@ -617,7 +617,7 @@ async fn test_unicode_and_special_characters(ctx: TestContext) -> color_eyre::ey
         let retrieved = ctx
             .pool
             .events()
-            .get_by_id(event.id.unwrap())
+            .get_by_id(event.id.expect("Event should have ID after creation"))
             .await?
             .expect("Event should exist");
 
