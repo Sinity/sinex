@@ -26,6 +26,27 @@ pub enum Events {
 }
 
 impl Events {
+    // SCREAMING_SNAKE_CASE constants for compatibility with existing repository code
+    pub const SCHEMA: &'static str = "core";
+    pub const TABLE: &'static str = "events";
+    pub const ID: &'static str = "id";
+    pub const TS_INGEST: &'static str = "ts_ingest";
+    pub const TS_ORIG: &'static str = "ts_orig";
+    pub const SOURCE: &'static str = "source";
+    pub const EVENT_TYPE: &'static str = "event_type";
+    pub const HOST: &'static str = "host";
+    pub const PAYLOAD: &'static str = "payload";
+    pub const INGESTOR_VERSION: &'static str = "ingestor_version";
+    pub const PAYLOAD_SCHEMA_ID: &'static str = "payload_schema_id";
+    pub const PAYLOAD_SCHEMA_NAME: &'static str = "payload_schema_name";
+    pub const PAYLOAD_SCHEMA_VERSION: &'static str = "payload_schema_version";
+    pub const SOURCE_EVENT_IDS: &'static str = "source_event_ids";
+    pub const SOURCE_MATERIAL_ID: &'static str = "source_material_id";
+    pub const SOURCE_MATERIAL_OFFSET_START: &'static str = "source_material_offset_start";
+    pub const SOURCE_MATERIAL_OFFSET_END: &'static str = "source_material_offset_end";
+    pub const ANCHOR_BYTE: &'static str = "anchor_byte";
+    pub const ASSOCIATED_BLOB_IDS: &'static str = "associated_blob_ids";
+
     pub fn create_table() -> String {
         Table::create()
             .table((Alias::new("core"), Events::Table))
